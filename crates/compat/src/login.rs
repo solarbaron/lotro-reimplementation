@@ -231,6 +231,18 @@ pub enum LoginError {
         reason: String,
     },
 
+    /// The request was not sent (`F03_SERVICE_UNAVAILABLE`): the service was not reached,
+    /// or the client refused to send it. Which of the two is [`NotSentKind`]; only
+    /// [`NotSentKind::Unreached`] lets the login ask an upgraded `http://` address as given
+    /// (decision 0044 as amended, `crate::connector::login_phase::exchange`).
+    #[error("login request not sent: {reason}")]
+    NotSent {
+        /// Why nothing was sent.
+        kind: NotSentKind,
+        /// Description of the failure (never a host, path or account).
+        reason: String,
+    },
+
     /// Authentication rejected by `AuthServer` SOAP `Fault` (`F04_AUTH_REJECTED`).
     #[error("account authentication rejected (faultcode={fault_code})")]
     AuthRejected {
@@ -295,6 +307,18 @@ pub enum LoginError {
     },
 }
 
+/// Why a login request was not sent ([`LoginError::NotSent`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotSentKind {
+    /// The service was not reached: the name did not resolve, the connection was refused,
+    /// unreachable or timed out, or the TLS handshake or certificate check failed. No byte
+    /// of the request left the client.
+    Unreached,
+    /// The client refused to send: the attempt was cancelled or stopped, the network right
+    /// was revoked, or the request asked for weaker checks.
+    Refused,
+}
+
 impl LoginError {
     /// Returns the user-facing [`LoginFailureClass`] corresponding to this error (§5.3).
     #[must_use]
@@ -304,7 +328,7 @@ impl LoginError {
             Self::ConfigInvalid { .. } | Self::VersionResource(_) => {
                 LoginFailureClass::F02ConfigInvalid
             }
-            Self::ServiceUnavailable { .. } | Self::InvalidState { .. } => {
+            Self::ServiceUnavailable { .. } | Self::NotSent { .. } | Self::InvalidState { .. } => {
                 LoginFailureClass::F03ServiceUnavailable
             }
             Self::AuthRejected { .. } => LoginFailureClass::F04AuthRejected,
@@ -315,6 +339,21 @@ impl LoginError {
             Self::TicketInaccessible { .. } => LoginFailureClass::F09TicketInaccessible,
             Self::RefreshExhausted => LoginFailureClass::F10RefreshExhausted,
         }
+    }
+
+    /// Whether the request failed before anything of it was sent because the service was
+    /// not reached: name lookup, connection (refused, unreachable, connect timeout), TLS
+    /// handshake or certificate check ([`NotSentKind::Unreached`]). A cancel, a revoked
+    /// right or any failure after the connection was made is not such a failure.
+    #[must_use]
+    pub const fn is_unreached(&self) -> bool {
+        matches!(
+            self,
+            Self::NotSent {
+                kind: NotSentKind::Unreached,
+                ..
+            }
+        )
     }
 
     /// Returns `true` if this error is an [`LoginError::AuthRejected`] whose
@@ -2379,8 +2418,9 @@ pub trait HttpClient {
     ///
     /// # Errors
     ///
-    /// Returns [`LoginError::ServiceUnavailable`] on DNS, TLS, timeout, or
-    /// socket failure.
+    /// Returns [`LoginError::NotSent`] when nothing was sent (the service was not reached,
+    /// or the client refused to send) and [`LoginError::ServiceUnavailable`] for a failure
+    /// after the connection was made (the request may have been sent).
     fn execute(&mut self, request: &HttpRequest) -> Result<HttpResponse, LoginError>;
 }
 

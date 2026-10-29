@@ -2,15 +2,15 @@
 //! The network operations of the live connector, all through [`NetworkAccess`]
 //! (`official-entry.md` §6.1).
 //!
-//! [`ConnectorNet`] is what the connector's thread may do on a network: HTTPS requests,
+//! [`ConnectorNet`] is what the connector's thread may do on a network: HTTP(S) requests,
 //! name resolution, the local address towards a server and binding the session's UDP
 //! socket. [`LiveNet`] does each through the run's network-access value; tests use a
 //! synthetic implementation that opens nothing.
 
 use std::net::{Ipv4Addr, SocketAddrV4};
 
-use crate::login::{HttpClient, HttpMethod, HttpRequest, HttpResponse, LoginError};
-use crate::net_access::{HttpsClient, NetworkAccess, StdUdpTransport};
+use crate::login::{HttpClient, HttpRequest, HttpResponse, LoginError, NotSentKind};
+use crate::net_access::{LoginHttpClient, NetworkAccess, StdUdpTransport};
 use crate::session::{SessionError, UdpDatagramTransport};
 
 /// An HTTP client the connector can hand to another thread (the ticket refresh, which
@@ -26,7 +26,8 @@ pub trait ConnectorNet: Send + std::fmt::Debug + 'static {
     ///
     /// # Errors
     ///
-    /// [`LoginError::ServiceUnavailable`] when the exchange fails.
+    /// The client's failure ([`HttpClient::execute`]): [`LoginError::NotSent`] when nothing
+    /// was sent, [`LoginError::ServiceUnavailable`] after the connection was made.
     fn http(&mut self, request: &HttpRequest) -> Result<HttpResponse, LoginError>;
 
     /// A separate HTTP client for a background request.
@@ -69,12 +70,13 @@ pub trait ConnectorNet: Send + std::fmt::Debug + 'static {
 
 /// Whether `request` carries the password or the ticket: `LoginAccount` and
 /// `RefreshTicket` (`official-login.md` §3.4, §4.3) and the queue's form posts (§3.5,
-/// `ticket=` / the subscription). Such a request follows the rule of every other
-/// (`login_phase` "HTTPS first, then the address as given"); tests use this to check where
-/// a credential went.
+/// `ticket=` / the subscription). Tests only: such a request follows the rule of every
+/// other (`login_phase` "HTTPS first, then the address as given"), and the tests use this
+/// to check where a credential went.
+#[cfg(test)]
 #[must_use]
-pub fn carries_secret(request: &HttpRequest) -> bool {
-    if request.method != HttpMethod::Post {
+pub(crate) fn carries_secret(request: &HttpRequest) -> bool {
+    if request.method != crate::login::HttpMethod::Post {
         return false;
     }
     let soap = request
@@ -86,13 +88,11 @@ pub fn carries_secret(request: &HttpRequest) -> bool {
     soap || form
 }
 
-/// Whether `url` is an `https://` URL that [`https_form`] accepts as it is: the one parse
-/// decides both, so a form one of them refuses (whitespace or a control character inside,
-/// user information, an empty host, a port that is not a decimal number) the other refuses
-/// too.
+/// Whether `url` is an `https://` URL that [`https_form`] accepts as it is (tests only).
+#[cfg(test)]
 #[must_use]
-pub fn is_https(url: &str) -> bool {
-    parse_chain_url(url).is_some_and(|p| p.https)
+pub(crate) fn is_https(url: &str) -> bool {
+    https_form(url).is_some_and(|h| !h.upgraded)
 }
 
 /// The HTTPS form of an address of the login chain, the one tried first (decision 0044 as
@@ -104,6 +104,10 @@ pub struct HttpsUrl {
     pub url: String,
     /// The chain gave the address as `http://`: this is its HTTPS form.
     pub upgraded: bool,
+    /// The host without its port, ASCII lower case (brackets of an IPv6 literal kept): the
+    /// key under which a login remembers that this host's HTTPS form was not reached
+    /// (`login_phase::PlainSteps`).
+    pub host: String,
 }
 
 /// The HTTPS form of `url`, `None` when it has none:
@@ -116,24 +120,27 @@ pub struct HttpsUrl {
 /// - any other scheme, user information (`user@host`), an empty host, a port that is not a
 ///   decimal number, or a control character or space anywhere has no HTTPS form
 ///   (engineering choice, spec silent: no HTTPS form is guessed for it), for `https://` and
-///   `http://` alike; [`is_https`] is `false` for it, and the login asks it as given
+///   `http://` alike; the login refuses such an address and sends nothing to it
 ///   (`crate::connector::login_phase::exchange`).
 #[must_use]
 pub fn https_form(url: &str) -> Option<HttpsUrl> {
     let p = parse_chain_url(url)?;
+    let host = p.host.to_ascii_lowercase();
     if p.https {
         return Some(HttpsUrl {
             url: p.trimmed.to_owned(),
             upgraded: false,
+            host,
         });
     }
     Some(HttpsUrl {
         url: format!("https://{}{}", p.host, p.tail),
         upgraded: true,
+        host,
     })
 }
 
-/// An `http://` or `https://` address as [`is_https`] and [`https_form`] read it.
+/// An `http://` or `https://` address as [`https_form`] reads it.
 struct ChainUrl<'a> {
     /// The address without surrounding whitespace.
     trimmed: &'a str,
@@ -145,7 +152,7 @@ struct ChainUrl<'a> {
     tail: &'a str,
 }
 
-/// The one parse behind [`is_https`] and [`https_form`].
+/// The parse behind [`https_form`].
 fn parse_chain_url(url: &str) -> Option<ChainUrl<'_>> {
     // Only ASCII whitespace around the address is removed; any other space or control
     // character, anywhere, refuses it.
@@ -206,9 +213,9 @@ fn authority_host(authority: &str) -> Option<&str> {
     port.bytes().all(|b| b.is_ascii_digit()).then_some(host)
 }
 
-/// The scheme of `url` for a log line: `"https"`, `"http"`, `"other"` or `"none"`, never
-/// more of the URL (a host or a path may identify the user's service, `official-entry.md`
-/// §7.3).
+/// The scheme of `url`: `"https"`, `"http"`, `"other"` or `"none"`, never more of the URL
+/// (a host or a path may identify the user's service, `official-entry.md` §7.3). The login
+/// client logs it with a failure (`crate::net_access`).
 #[must_use]
 pub fn scheme_label(url: &str) -> &'static str {
     let url = url.trim();
@@ -254,11 +261,47 @@ impl<'a, N: ConnectorNet> NetHttp<'a, N> {
 impl<N: ConnectorNet> HttpClient for NetHttp<'_, N> {
     fn execute(&mut self, request: &HttpRequest) -> Result<HttpResponse, LoginError> {
         if (self.stop)() || !self.net.is_live() {
-            return Err(LoginError::ServiceUnavailable {
-                reason: "the login was cancelled".to_owned(),
-            });
+            return Err(cancelled());
         }
         self.net.http(request)
+    }
+}
+
+/// The refusal of a request after a stop or cancel: nothing was sent.
+fn cancelled() -> LoginError {
+    LoginError::NotSent {
+        kind: NotSentKind::Refused,
+        reason: "the login was cancelled".to_owned(),
+    }
+}
+
+/// Any HTTP client, stopped by `stop`: checked before every request, so once it holds no
+/// further request starts, the plain request after a failed HTTPS form included (the
+/// ticket refresh's thread, `session_phase`).
+pub struct StopCheckedHttp<'a> {
+    http: &'a mut dyn HttpClient,
+    stop: &'a dyn Fn() -> bool,
+}
+
+impl std::fmt::Debug for StopCheckedHttp<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StopCheckedHttp").finish_non_exhaustive()
+    }
+}
+
+impl<'a> StopCheckedHttp<'a> {
+    /// `http`, refused once `stop` holds.
+    pub fn new(http: &'a mut dyn HttpClient, stop: &'a dyn Fn() -> bool) -> Self {
+        Self { http, stop }
+    }
+}
+
+impl HttpClient for StopCheckedHttp<'_> {
+    fn execute(&mut self, request: &HttpRequest) -> Result<HttpResponse, LoginError> {
+        if (self.stop)() {
+            return Err(cancelled());
+        }
+        self.http.execute(request)
     }
 }
 
@@ -268,14 +311,14 @@ impl<N: ConnectorNet> HttpClient for NetHttp<'_, N> {
 #[derive(Debug)]
 pub struct LiveNet {
     access: std::sync::Arc<NetworkAccess>,
-    http: HttpsClient,
+    http: LoginHttpClient,
 }
 
 impl LiveNet {
     /// The network of one login attempt, through `access`.
     #[must_use]
     pub fn new(access: NetworkAccess) -> Self {
-        let http = access.https_client();
+        let http = access.login_http_client();
         Self {
             access: std::sync::Arc::new(access),
             http,
@@ -297,7 +340,7 @@ impl ConnectorNet for LiveNet {
     }
 
     fn background_http(&self) -> SendHttpClient {
-        Box::new(self.access.https_client())
+        Box::new(self.access.login_http_client())
     }
 
     fn is_live(&self) -> bool {

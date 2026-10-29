@@ -310,8 +310,11 @@ struct Service {
     /// connection would).
     plain_http: bool,
     /// Addresses (host and path, without the scheme) whose HTTPS request fails as a failed
-    /// TLS handshake would.
+    /// TLS handshake would (nothing sent).
     https_down: Vec<String>,
+    /// Addresses (host and path) whose HTTPS request is taken and then fails, as a stall or
+    /// a reset after the request was sent would.
+    https_after_send: Vec<String>,
     /// HTTPS answers that replace the routed one: (HTTPS URL, status, body).
     answers: Vec<(String, u16, String)>,
 }
@@ -338,6 +341,7 @@ impl Default for Service {
             queue_url: "https://gls.example.invalid/queue".to_owned(),
             plain_http: false,
             https_down: Vec::new(),
+            https_after_send: Vec::new(),
             answers: Vec::new(),
         }
     }
@@ -413,7 +417,8 @@ impl World {
         let mut s = self.shared.lock().expect("shared");
         if !self.live() {
             s.dead_attempts += 1;
-            return Err(LoginError::ServiceUnavailable {
+            return Err(LoginError::NotSent {
+                kind: crate::login::NotSentKind::Refused,
                 reason: "revoked".to_owned(),
             });
         }
@@ -438,17 +443,25 @@ impl World {
             g.wait();
         }
         // Every attempt is recorded above; a plain request fails unless the service answers
-        // plain HTTP, and an address in `https_down` fails over HTTPS.
+        // plain HTTP, an address in `https_down` fails over HTTPS before anything is sent,
+        // and one in `https_after_send` after the request was taken.
         let plain = !is_https(&req.url);
         if plain && !self.service.plain_http {
-            return Err(LoginError::ServiceUnavailable {
-                reason: "the connection was refused".to_owned(),
+            return Err(LoginError::NotSent {
+                kind: crate::login::NotSentKind::Unreached,
+                reason: "the connection failed".to_owned(),
             });
         }
         let rest = req.url.split_once("://").map_or("", |(_, r)| r);
         if !plain && self.service.https_down.iter().any(|d| d == rest) {
-            return Err(LoginError::ServiceUnavailable {
+            return Err(LoginError::NotSent {
+                kind: crate::login::NotSentKind::Unreached,
                 reason: "the TLS handshake or certificate check failed".to_owned(),
+            });
+        }
+        if !plain && self.service.https_after_send.iter().any(|d| d == rest) {
+            return Err(LoginError::ServiceUnavailable {
+                reason: "the request timed out".to_owned(),
             });
         }
         let url = route(&req.url);
@@ -1495,7 +1508,8 @@ fn an_http_chain_whose_https_form_is_refused_logs_in_over_plain_http() {
         run.choose(0);
         wait_binds(&mut run, 1);
         let reqs = run.world.requests();
-        // Each step: once at its HTTPS form (refused), then once as given.
+        // Each host's HTTPS form is tried once, at its first step (refused); from then on
+        // every step of that host goes to its address as given at once.
         for step in CHAIN {
             let https = reqs
                 .iter()
@@ -1505,8 +1519,14 @@ fn an_http_chain_whose_https_form_is_refused_logs_in_over_plain_http() {
                 .iter()
                 .filter(|r| r.1 == format!("http://{step}"))
                 .count();
-            assert!(https >= 1 && https == plain, "{step}: {https} {plain}");
+            let first_of_host = matches!(
+                step,
+                "gls.example.invalid/datacenter" | "auth.example.invalid/login"
+            );
+            assert_eq!(https, usize::from(first_of_host), "{step}: {reqs:?}");
+            assert!(plain >= 1, "{step}: {plain}");
         }
+
         // The account and the ticket went over plain HTTP, the chain worked no other way.
         assert!(
             plain_requests(&run.world)
@@ -1718,7 +1738,7 @@ fn a_real_https_answer_of_a_status_or_queue_is_not_retried_over_http() {
 }
 
 #[test]
-fn an_address_without_an_https_form_is_asked_as_given() {
+fn an_address_without_an_https_form_is_refused_and_nothing_is_sent_to_it() {
     let _one = plain_lock();
     let given = "http://user@auth.example.invalid/login";
     let mut run = start(
@@ -1729,7 +1749,11 @@ fn an_address_without_an_https_form_is_asked_as_given() {
         },
         true,
     );
-    run.wait_event(is_world_list);
+    run.wait_event(is_disconnected);
+    assert_eq!(
+        run.refused().map(|r| r.0),
+        Some(LoginRefusal::ServiceUnavailable)
+    );
     let to_auth: Vec<String> = run
         .world
         .requests()
@@ -1737,7 +1761,73 @@ fn an_address_without_an_https_form_is_asked_as_given() {
         .filter(|r| r.1.contains("auth.example.invalid"))
         .map(|r| r.1)
         .collect();
-    assert_eq!(to_auth, [given.to_owned()]);
+    assert!(to_auth.is_empty(), "{to_auth:?}");
+    assert!(plain_requests(&run.world).is_empty());
+}
+
+#[test]
+fn an_https_form_that_fails_after_taking_the_request_is_never_retried_over_http() {
+    // The auth server, the queue and the status URL: the HTTPS form takes the request (the
+    // password or the ticket) and then stalls or resets. The step fails; the plain address
+    // is never contacted.
+    let login = Service::default().login_server;
+    let mut run = start(
+        Service {
+            auth: AUTH_HTTP.to_owned(),
+            https_after_send: vec!["auth.example.invalid/login".to_owned()],
+            plain_http: true,
+            ..Service::default()
+        },
+        true,
+    );
+    run.wait_event(is_disconnected);
+    assert_eq!(
+        run.refused().map(|r| r.0),
+        Some(LoginRefusal::ServiceUnavailable)
+    );
+    assert!(plain_requests(&run.world).is_empty());
+    assert_eq!(login_requests(&run.world), 1, "the HTTPS form only");
+
+    let mut run = start(
+        Service {
+            queue_url: "http://gls.example.invalid/queue".to_owned(),
+            alpha_queue: true,
+            https_after_send: vec!["gls.example.invalid/queue".to_owned()],
+            beta_status: Some(status(false, &login)),
+            plain_http: true,
+            ..Service::default()
+        },
+        true,
+    );
+    run.wait_event(is_world_list);
+    run.choose(0);
+    run.wait_event(|e| {
+        matches!(
+            e,
+            Event::Account(AccountEvent::WorldRefused {
+                world: WorldId(0),
+                ..
+            })
+        )
+    });
+    assert!(plain_requests(&run.world).is_empty());
+    let _ = run.session.send(Instant::now(), Command::Disconnect);
+
+    let mut run = start(
+        Service {
+            alpha_status_url: ALPHA_HTTP.to_owned(),
+            https_after_send: vec!["gls.example.invalid/status/alpha".to_owned()],
+            plain_http: true,
+            ..Service::default()
+        },
+        true,
+    );
+    let list = run.wait_event(is_world_list);
+    assert_eq!(
+        alpha_in_list(&list),
+        Some(tessera_net::account::WorldStatus::Unknown)
+    );
+    assert!(plain_requests(&run.world).is_empty());
     let _ = run.session.send(Instant::now(), Command::Disconnect);
 }
 
@@ -3495,74 +3585,282 @@ fn the_https_form_keeps_host_and_path_and_drops_a_plain_port() {
     assert_eq!(scheme_label("a.example.invalid/x"), "none");
 }
 
-#[test]
-fn an_exchange_tries_https_first_and_the_address_as_given_only_after_a_transport_failure() {
-    use super::login_phase::{ChainStep, PlainSteps, exchange};
-    let _one = plain_lock();
-    /// Answers `answer` to HTTPS requests (an `Err` stands for a transport or TLS failure)
-    /// and 200 to plain ones; records the URLs.
-    struct Fake {
-        https: Result<u16, ()>,
-        urls: Vec<String>,
-    }
-    impl HttpClient for Fake {
-        fn execute(&mut self, req: &HttpRequest) -> Result<HttpResponse, LoginError> {
-            self.urls.push(req.url.clone());
-            let code = if is_https(&req.url) {
-                self.https.map_err(|()| LoginError::ServiceUnavailable {
-                    reason: "TLS".to_owned(),
-                })?
-            } else {
-                200
-            };
-            Ok(HttpResponse {
-                status_code: code,
-                body: Vec::new(),
-            })
+/// What the exchange fake does with a request of one scheme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    /// An HTTP answer with this status.
+    Answer(u16),
+    /// Not reached: refused, unreachable, a TLS or certificate failure (nothing sent).
+    Unreached,
+    /// A failure once connected: a timeout, a reset, a bad body (the request may be sent).
+    AfterSend,
+    /// Refused by the client (a cancel or a revoked right; nothing sent).
+    Refused,
+}
+
+/// An HTTP client for [`super::login_phase::exchange`]: `https` for `https://` requests,
+/// `plain` for the others; records the URLs, and sets `stop_on_https` (when given) while
+/// it handles an HTTPS request, as a Disconnect during that attempt would.
+struct ExchangeFake {
+    https: Outcome,
+    plain: Outcome,
+    urls: Vec<String>,
+    stop_on_https: Option<Arc<AtomicBool>>,
+}
+
+impl ExchangeFake {
+    fn new(https: Outcome, plain: Outcome) -> Self {
+        Self {
+            https,
+            plain,
+            urls: Vec::new(),
+            stop_on_https: None,
         }
     }
-    let run = |given: &str, https: Result<u16, ()>| {
-        let mut fake = Fake {
-            https,
-            urls: Vec::new(),
-        };
-        let plain = PlainSteps::default();
-        let mut req = crate::login::build_world_status_request("unused");
-        let code = exchange(&mut fake, ChainStep::TicketRefresh, given, &mut req, &plain)
-            .map(|r| r.status_code)
-            .ok();
-        (code, fake.urls, plain.went_plain(ChainStep::TicketRefresh))
-    };
-    let s = |v: &[&str]| v.iter().map(|u| (*u).to_owned()).collect::<Vec<_>>();
+}
+
+impl HttpClient for ExchangeFake {
+    fn execute(&mut self, req: &HttpRequest) -> Result<HttpResponse, LoginError> {
+        let https = is_https(&req.url);
+        let outcome = if https { self.https } else { self.plain };
+        if let (true, Some(stop)) = (https, &self.stop_on_https) {
+            stop.store(true, Ordering::SeqCst);
+        }
+        match outcome {
+            Outcome::Refused => {
+                return Err(LoginError::NotSent {
+                    kind: crate::login::NotSentKind::Refused,
+                    reason: "cancelled".to_owned(),
+                });
+            }
+            Outcome::Unreached => {
+                return Err(LoginError::NotSent {
+                    kind: crate::login::NotSentKind::Unreached,
+                    reason: "TLS".to_owned(),
+                });
+            }
+            Outcome::AfterSend | Outcome::Answer(_) => {}
+        }
+        // Only a request that went out is recorded.
+        self.urls.push(req.url.clone());
+        match outcome {
+            Outcome::Answer(code) => Ok(HttpResponse {
+                status_code: code,
+                body: Vec::new(),
+            }),
+            _ => Err(LoginError::ServiceUnavailable {
+                reason: "the request timed out".to_owned(),
+            }),
+        }
+    }
+}
+
+/// One exchange of `given` through `fake` with a fresh login record: the status (`None`
+/// for a failure), the URLs that went out, and whether the step was logged as plain.
+fn exchange_once(fake: &mut ExchangeFake, given: &str) -> (Option<u16>, Vec<String>, bool) {
+    use super::login_phase::{ChainStep, PlainSteps, exchange};
+    let plain = PlainSteps::default();
+    let mut req = crate::login::build_world_status_request("unused");
+    let code = exchange(fake, ChainStep::TicketRefresh, given, &mut req, &plain)
+        .map(|r| r.status_code)
+        .ok();
+    (
+        code,
+        std::mem::take(&mut fake.urls),
+        plain.went_plain(ChainStep::TicketRefresh),
+    )
+}
+
+fn strings(v: &[&str]) -> Vec<String> {
+    v.iter().map(|u| (*u).to_owned()).collect()
+}
+
+#[test]
+fn an_exchange_tries_https_first_and_the_address_as_given_only_when_https_was_not_reached() {
+    use Outcome::{AfterSend, Answer, Refused, Unreached};
+    let _one = plain_lock();
+    let up = "http://a.example.invalid:80/x";
+    let https = "https://a.example.invalid/x";
+    let run = |h, p, given: &str| exchange_once(&mut ExchangeFake::new(h, p), given);
     // An https:// address: as given, never anything else.
     assert_eq!(
-        run("https://a.example.invalid/x", Err(())),
-        (None, s(&["https://a.example.invalid/x"]), false)
+        run(AfterSend, Answer(200), "https://a.example.invalid/x"),
+        (None, strings(&[https]), false)
+    );
+    assert_eq!(
+        run(Unreached, Answer(200), "https://a.example.invalid/x"),
+        (None, strings(&[]), false)
     );
     // An http:// address whose HTTPS form answers, with any status: that answer.
     for code in [200, 404, 503] {
         assert_eq!(
-            run("http://a.example.invalid:80/x", Ok(code)),
-            (Some(code), s(&["https://a.example.invalid/x"]), false)
+            run(Answer(code), Answer(200), up),
+            (Some(code), strings(&[https]), false)
         );
     }
-    // Its HTTPS form fails at the transport: once more, as given, over plain HTTP.
+    // Its HTTPS form was not reached (refused, TLS): once more, as given, over plain HTTP.
     assert_eq!(
-        run("http://a.example.invalid:80/x", Err(())),
-        (
-            Some(200),
-            s(&[
-                "https://a.example.invalid/x",
-                "http://a.example.invalid:80/x"
-            ]),
-            true
-        )
+        run(Unreached, Answer(200), up),
+        (Some(200), strings(&[up]), true)
     );
-    // No HTTPS form: as given.
+    // The HTTPS form took the request and then failed (a stall, a reset, a bad body): final,
+    // the plain address is never contacted.
     assert_eq!(
-        run("http://u@a.example.invalid/x", Ok(200)),
-        (Some(200), s(&["http://u@a.example.invalid/x"]), true)
+        run(AfterSend, Answer(200), up),
+        (None, strings(&[https]), false)
     );
+    // A cancel or a revoked right during the HTTPS attempt: nothing more.
+    assert_eq!(run(Refused, Answer(200), up), (None, strings(&[]), false));
+    // The address as given refuses too (cancelled meanwhile) or is not reached either:
+    // not logged as a plain step, nothing went out.
+    assert_eq!(run(Unreached, Refused, up), (None, strings(&[]), false));
+    assert_eq!(run(Unreached, Unreached, up), (None, strings(&[]), false));
+    // The plain request went out and failed: it was made, so it is logged.
+    assert_eq!(run(Unreached, AfterSend, up), (None, strings(&[up]), true));
+}
+
+#[test]
+fn an_address_without_an_https_form_is_refused_with_the_step_named() {
+    use super::login_phase::{ChainStep, PlainSteps, exchange};
+    for given in [
+        "http://u@a.example.invalid/x",
+        "http://a.example.invalid:8x/x",
+        "http://a.example.invalid/x\r\nHost: b",
+        "https://u:pw@a.example.invalid/x",
+        "ftp://a.example.invalid/x",
+        "a.example.invalid/x",
+    ] {
+        let mut fake = ExchangeFake::new(Outcome::Answer(200), Outcome::Answer(200));
+        let plain = PlainSteps::default();
+        let mut req = crate::login::build_world_status_request("unused");
+        let err =
+            exchange(&mut fake, ChainStep::AuthServer, given, &mut req, &plain).expect_err(given);
+        assert!(fake.urls.is_empty(), "{given:?}: {:?}", fake.urls);
+        assert!(!plain.went_plain(ChainStep::AuthServer));
+        let LoginError::ServiceUnavailable { reason } = err else {
+            panic!("{given:?}: {err:?}");
+        };
+        assert!(reason.contains("auth server"), "{reason}");
+        assert!(!reason.contains("example"), "{reason}");
+    }
+}
+
+#[test]
+fn a_host_whose_https_form_was_not_reached_is_asked_as_given_for_the_rest_of_the_login() {
+    use super::login_phase::{ChainStep, PlainSteps, exchange};
+    let _one = plain_lock();
+    let plain = PlainSteps::default();
+    let ask = |fake: &mut ExchangeFake, step, given: &str| {
+        let mut req = crate::login::build_world_status_request("unused");
+        let code = exchange(fake, step, given, &mut req, &plain)
+            .map(|r| r.status_code)
+            .ok();
+        (code, std::mem::take(&mut fake.urls))
+    };
+    // A failure once connected is never remembered: the next exchange tries HTTPS again.
+    let mut after = ExchangeFake::new(Outcome::AfterSend, Outcome::Answer(200));
+    for _ in 0..2 {
+        assert_eq!(
+            ask(
+                &mut after,
+                ChainStep::QueueUrl,
+                "http://q.example.invalid/queue"
+            ),
+            (None, strings(&["https://q.example.invalid/queue"]))
+        );
+    }
+    // Not reached once: the host goes to the address as given from then on, other steps
+    // and paths of that host (any case) included, and the refresh shares the record.
+    let mut down = ExchangeFake::new(Outcome::Unreached, Outcome::Answer(200));
+    let status = |p: &str| format!("http://s.example.invalid/{p}");
+    assert_eq!(
+        ask(&mut down, ChainStep::StatusUrl, &status("a")),
+        (Some(200), vec![status("a")])
+    );
+    let mut working = ExchangeFake::new(Outcome::Answer(200), Outcome::Answer(200));
+    assert_eq!(
+        ask(&mut working, ChainStep::StatusUrl, &status("b")),
+        (Some(200), vec![status("b")])
+    );
+    let upper = "http://S.EXAMPLE.INVALID:8080/refresh";
+    let refresh = plain.clone();
+    let mut req = crate::login::build_world_status_request("unused");
+    let code = exchange(
+        &mut working,
+        ChainStep::TicketRefresh,
+        upper,
+        &mut req,
+        &refresh,
+    )
+    .map(|r| r.status_code)
+    .ok();
+    assert_eq!(
+        (code, std::mem::take(&mut working.urls)),
+        (Some(200), strings(&[upper]))
+    );
+    // Another host still tries HTTPS first; an https:// address of the host stays as given.
+    assert_eq!(
+        ask(
+            &mut working,
+            ChainStep::QueueUrl,
+            "http://q.example.invalid/queue"
+        ),
+        (Some(200), strings(&["https://q.example.invalid/queue"]))
+    );
+    assert_eq!(
+        ask(
+            &mut working,
+            ChainStep::AuthServer,
+            "https://s.example.invalid/login"
+        ),
+        (Some(200), strings(&["https://s.example.invalid/login"]))
+    );
+    assert!(plain.went_plain(ChainStep::StatusUrl));
+    assert!(plain.went_plain(ChainStep::TicketRefresh));
+    assert!(!plain.went_plain(ChainStep::QueueUrl));
+}
+
+#[test]
+fn a_refresh_stopped_during_its_https_form_sends_no_plain_request() {
+    use super::login_phase::{ChainStep, PlainSteps, exchange};
+    use super::net::StopCheckedHttp;
+    let stop = Arc::new(AtomicBool::new(false));
+    let mut fake = ExchangeFake::new(Outcome::Unreached, Outcome::Answer(200));
+    fake.stop_on_https = Some(Arc::clone(&stop));
+    let halted = || stop.load(Ordering::SeqCst);
+    let plain = PlainSteps::default();
+    let mut req = crate::login::build_world_status_request("unused");
+    let result = exchange(
+        &mut StopCheckedHttp::new(&mut fake, &halted),
+        ChainStep::TicketRefresh,
+        "http://r.example.invalid/refresh",
+        &mut req,
+        &plain,
+    );
+    assert!(matches!(
+        result,
+        Err(LoginError::NotSent {
+            kind: crate::login::NotSentKind::Refused,
+            ..
+        })
+    ));
+    assert!(fake.urls.is_empty(), "{:?}", fake.urls);
+    assert!(!plain.went_plain(ChainStep::TicketRefresh));
+    // Not stopped: the same exchange goes plain once.
+    stop.store(false, Ordering::SeqCst);
+    fake.stop_on_https = None;
+    let mut req = crate::login::build_world_status_request("unused");
+    let code = exchange(
+        &mut StopCheckedHttp::new(&mut fake, &halted),
+        ChainStep::TicketRefresh,
+        "http://r2.example.invalid/refresh",
+        &mut req,
+        &plain,
+    )
+    .map(|r| r.status_code)
+    .ok();
+    assert_eq!(code, Some(200));
+    assert_eq!(fake.urls, strings(&["http://r2.example.invalid/refresh"]));
 }
 
 #[test]

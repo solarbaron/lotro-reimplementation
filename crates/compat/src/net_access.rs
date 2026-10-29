@@ -18,7 +18,7 @@ use std::time::Duration;
 use crate::CompatError;
 use crate::consent::ConsentProof;
 use crate::login::{
-    HttpClient, HttpMethod, HttpRequest, HttpResponse, LoginError, MAX_XML_INPUT_BYTES,
+    HttpClient, HttpMethod, HttpRequest, HttpResponse, LoginError, MAX_XML_INPUT_BYTES, NotSentKind,
 };
 use crate::session::{MAX_DATAGRAM_BUF, SessionError, UdpDatagramTransport, candidate_bind_ports};
 
@@ -183,11 +183,11 @@ impl NetworkAccess {
         )
     }
 
-    /// The HTTPS client of the login exchanges (`official-login.md` §3, §4.3, §6.2). It
+    /// The HTTP(S) client of the login exchanges (`official-login.md` §3, §4.3, §6.2). It
     /// shares this value's right: once that is revoked the client refuses every request.
     #[must_use]
-    pub fn https_client(&self) -> HttpsClient {
-        HttpsClient::new(self.right.clone())
+    pub fn login_http_client(&self) -> LoginHttpClient {
+        LoginHttpClient::new(self.right.clone())
     }
 
     /// Resolves `host` (a name or an IPv4 literal) and `port` to the first IPv4 address
@@ -275,13 +275,16 @@ pub const USER_AGENT: &str = "login-client/1";
 /// anything larger than [`MAX_XML_INPUT_BYTES`], so one more byte is enough to tell.
 const MAX_RESPONSE_BYTES: u64 = MAX_XML_INPUT_BYTES as u64 + 1;
 
-/// The longest wait for a connection of the login client (decision 0044 as amended
-/// 2026-10-27: a short connect timeout for the HTTPS form of an `http://` address;
-/// engineering choice, 5 s, applied to every login request).
+/// The longest wait for a connection of the login client, TCP and TLS handshake together,
+/// and, separately, for its name lookup (decision 0044 as amended 2026-10-27: a short connect
+/// timeout for the HTTPS form of an `http://` address; engineering choice, 5 s, applied to
+/// every login request). Only a failure within these two phases lets the login ask an
+/// upgraded address as given, so that attempt costs at most twice this before the plain
+/// request starts (`crate::connector::login_phase::exchange`).
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The HTTPS client of the login exchanges (`official-login.md` §3, §4.3), made only by
-/// [`NetworkAccess::https_client`].
+/// The HTTP(S) client of the login exchanges (`official-login.md` §3, §4.3), made only by
+/// [`NetworkAccess::login_http_client`].
 ///
 /// - TLS 1.2 or 1.3 through rustls with the ring provider, the operating system's
 ///   certificate verifier and hostname verification; verification is never turned off
@@ -292,28 +295,60 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 ///   crate's defaults read) are not used, so a request goes only to the host its URL names
 ///   (engineering choice, spec silent).
 /// - A neutral `User-Agent` ([`USER_AGENT`], engineering choice, spec silent).
-/// - The request's `timeout_sec` bounds the whole exchange (§5.2), and the connection
-///   itself is given at most [`CONNECT_TIMEOUT`], so an `http://` address whose HTTPS form
-///   does not answer falls back to the address as given soon (decision 0044 as amended
-///   2026-10-27, `crate::connector::login_phase` "HTTPS first, then the address as given");
-///   a response head is at most [`MAX_RESPONSE_HEADER_BYTES`].
+/// - The request's `timeout_sec` bounds the whole exchange (§5.2); the name lookup and the
+///   connection (TCP and TLS handshake) are each given at most [`CONNECT_TIMEOUT`]; a
+///   response head is at most [`MAX_RESPONSE_HEADER_BYTES`].
 /// - Response bodies are read up to the login parsers' input bound plus one byte, into a
 ///   buffer allocated once at that size, so no copy of a body is left behind by a
 ///   reallocation. The HTTP and TLS crates' own buffers cannot be wiped from here (known
 ///   limitation, `official-login.md` §6.3 is best effort).
 /// - A URL is sent with the scheme it has: `https://` with the checks above, `http://` as
 ///   given. Which one a step uses is the login phase's rule (decision 0044 as amended
-///   2026-10-27: HTTPS first, plain HTTP only when HTTPS fails at the transport or TLS
-///   level).
+///   2026-10-27: HTTPS first, plain HTTP only when the HTTPS form failed before the request
+///   was sent).
+/// - Where a failure happened is reported: [`LoginError::NotSent`] with
+///   [`NotSentKind::Unreached`] when the connection was never made (name lookup, connect,
+///   connect timeout, TLS handshake or certificate check: no byte of the request left the
+///   client), [`NotSentKind::Refused`] when the client refused to send, and
+///   [`LoginError::ServiceUnavailable`] for any failure once the connection was made (the
+///   request may have been sent). Each request opens its own connection (no connection is
+///   kept for reuse), so "the connection was made" is known for every request
+///   (engineering choice, spec silent).
 /// - It shares the right of the [`NetworkAccess`] that made it: once that is revoked every
 ///   request is refused before anything is sent.
 #[derive(Debug)]
-pub struct HttpsClient {
+pub struct LoginHttpClient {
     agent: ureq::Agent,
     right: Right,
+    /// Set by [`ReachWatch`] once the request's connection (TCP and, for `https://`, TLS)
+    /// was made; cleared before each request.
+    reached: Arc<AtomicBool>,
 }
 
-impl HttpsClient {
+/// The HTTP crate's connector chain, watched: it marks the moment a connection is made.
+#[derive(Debug)]
+struct ReachWatch {
+    inner: ureq::unversioned::transport::DefaultConnector,
+    reached: Arc<AtomicBool>,
+}
+
+impl ureq::unversioned::transport::Connector<()> for ReachWatch {
+    type Out = Box<dyn ureq::unversioned::transport::Transport>;
+
+    fn connect(
+        &self,
+        details: &ureq::unversioned::transport::ConnectionDetails,
+        chained: Option<()>,
+    ) -> Result<Option<Self::Out>, ureq::Error> {
+        let out = self.inner.connect(details, chained)?;
+        if out.is_some() {
+            self.reached.store(true, Ordering::SeqCst);
+        }
+        Ok(out)
+    }
+}
+
+impl LoginHttpClient {
     fn new(right: Right) -> Self {
         let tls = ureq::tls::TlsConfig::builder()
             .provider(ureq::tls::TlsProvider::Rustls)
@@ -325,52 +360,96 @@ impl HttpsClient {
             .proxy(None)
             .user_agent(USER_AGENT)
             .http_status_as_error(false)
+            .timeout_resolve(Some(CONNECT_TIMEOUT))
             .timeout_connect(Some(CONNECT_TIMEOUT))
             .max_redirects(0)
             .max_redirects_will_error(false)
             .max_response_header_size(MAX_RESPONSE_HEADER_BYTES)
-            .max_idle_connections(4)
+            .max_idle_connections(0)
+            .max_idle_connections_per_host(0)
             .build();
+        let reached = Arc::new(AtomicBool::new(false));
+        let connector = ReachWatch {
+            inner: ureq::unversioned::transport::DefaultConnector::default(),
+            reached: Arc::clone(&reached),
+        };
         Self {
-            agent: config.new_agent(),
+            agent: ureq::Agent::with_parts(
+                config,
+                connector,
+                ureq::unversioned::resolver::DefaultResolver::default(),
+            ),
             right,
+            reached,
         }
     }
 }
 
-fn http_failure(e: &ureq::Error) -> LoginError {
+/// The failure of a request: [`NotSentKind::Unreached`] when `reached` is `false` and the
+/// failure is one of reaching the service, otherwise final.
+fn http_failure(e: &ureq::Error, reached: bool, scheme: &'static str) -> LoginError {
     let reason = match e {
         ureq::Error::Timeout(_) => "the request timed out",
         ureq::Error::HostNotFound => "the service name did not resolve",
-        ureq::Error::Tls(_) => "the TLS handshake or certificate check failed",
+        ureq::Error::ConnectionFailed => "the connection failed",
+        ureq::Error::Io(_) if !reached => "the connection failed",
+        ureq::Error::Tls(_) | ureq::Error::Rustls(_) => {
+            "the TLS handshake or certificate check failed"
+        }
         ureq::Error::BodyExceedsLimit(_) => "the response is too large",
         ureq::Error::LargeResponseHeader(_, _) => "the response head is too large",
         ureq::Error::BadUri(_) => "the service URL is not valid",
         ureq::Error::RequireHttpsOnly(_) => "a request that needs HTTPS named another scheme",
         _ => "the request failed",
     };
-    // The kind only: the HTTP crate's text can name the URL.
-    tracing::debug!(reason, "official HTTPS request failed");
-    LoginError::ServiceUnavailable {
-        reason: reason.to_owned(),
+    let unreached = !reached
+        && matches!(
+            e,
+            ureq::Error::Timeout(_)
+                | ureq::Error::HostNotFound
+                | ureq::Error::ConnectionFailed
+                | ureq::Error::Io(_)
+                | ureq::Error::Tls(_)
+                | ureq::Error::Rustls(_)
+        );
+    // The kind and the scheme only: the HTTP crate's text can name the URL.
+    tracing::debug!(
+        reason,
+        scheme,
+        before_sending = unreached,
+        "official login request failed"
+    );
+    if unreached {
+        LoginError::NotSent {
+            kind: NotSentKind::Unreached,
+            reason: reason.to_owned(),
+        }
+    } else {
+        LoginError::ServiceUnavailable {
+            reason: reason.to_owned(),
+        }
     }
 }
 
-impl HttpClient for HttpsClient {
+impl HttpClient for LoginHttpClient {
     fn execute(&mut self, request: &HttpRequest) -> Result<HttpResponse, LoginError> {
         if !self.right.live() {
-            return Err(LoginError::ServiceUnavailable {
+            return Err(LoginError::NotSent {
+                kind: NotSentKind::Refused,
                 reason: "the network access was revoked".to_owned(),
             });
         }
         if !request.require_tls_validation {
             // Every request of the login module asks for validation (§6.2); one that does
             // not is refused rather than sent with weaker checks.
-            return Err(LoginError::ServiceUnavailable {
+            return Err(LoginError::NotSent {
+                kind: NotSentKind::Refused,
                 reason: "a request without certificate validation was refused".to_owned(),
             });
         }
+        let scheme = crate::connector::net::scheme_label(&request.url);
         let timeout = Some(Duration::from_secs(request.timeout_sec.clamp(1, 300)));
+        self.reached.store(false, Ordering::SeqCst);
         let result = match request.method {
             HttpMethod::Get => {
                 let mut b = self
@@ -397,7 +476,8 @@ impl HttpClient for HttpsClient {
                 b.send(request.body.as_slice())
             }
         };
-        let mut response = result.map_err(|e| http_failure(&e))?;
+        let mut response =
+            result.map_err(|e| http_failure(&e, self.reached.load(Ordering::SeqCst), scheme))?;
         let status_code = response.status().as_u16();
         // One allocation of the full bound: `read_to_end` never grows it (the reader stops
         // at the bound), so no partial copy of a body is freed unwiped.
@@ -409,6 +489,8 @@ impl HttpClient for HttpsClient {
             .read_to_end(&mut body);
         if read.is_err() {
             crate::login::zeroize_vec(&mut body);
+            // A status line arrived: this is the service's answer, never one to ask again.
+            tracing::debug!(scheme, "official login request failed: body unreadable");
             return Err(LoginError::ServiceUnavailable {
                 reason: "the response could not be read".to_owned(),
             });
@@ -588,7 +670,7 @@ mod tests {
         let (url, server) =
             serve(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfault".to_vec());
         let resp = access
-            .https_client()
+            .login_http_client()
             .execute(&request(HttpMethod::Post, &url, b"<x/>"))
             .expect("answer");
         assert_eq!(resp.status_code, 500);
@@ -606,7 +688,7 @@ mod tests {
                 .to_vec(),
         );
         let resp = access
-            .https_client()
+            .login_http_client()
             .execute(&request(HttpMethod::Get, &url, b""))
             .expect("answer");
         assert_eq!(resp.status_code, 302);
@@ -623,7 +705,7 @@ mod tests {
         answer.extend(std::iter::repeat_n(b'a', size));
         let (url, server) = serve(answer);
         let resp = access
-            .https_client()
+            .login_http_client()
             .execute(&request(HttpMethod::Get, &url, b""))
             .expect("answer");
         assert_eq!(resp.body.len() as u64, MAX_RESPONSE_BYTES);
@@ -635,7 +717,7 @@ mod tests {
         let (_f, access) = access();
         let mut req = request(HttpMethod::Get, "https://a.example.invalid/", b"");
         req.require_tls_validation = false;
-        assert!(access.https_client().execute(&req).is_err());
+        assert!(access.login_http_client().execute(&req).is_err());
     }
 
     #[test]
@@ -678,7 +760,7 @@ mod tests {
         let mut req = request(HttpMethod::Get, &url, b"");
         req.timeout_sec = 1;
         let t = std::time::Instant::now();
-        assert!(access.https_client().execute(&req).is_err());
+        assert!(access.login_http_client().execute(&req).is_err());
         assert!(t.elapsed() < Duration::from_secs(4), "{:?}", t.elapsed());
         drop(server);
     }
@@ -693,11 +775,141 @@ mod tests {
         answer.extend(b"Content-Length: 0\r\n\r\n");
         let (url, server) = serve(answer);
         let err = access
-            .https_client()
+            .login_http_client()
             .execute(&request(HttpMethod::Get, &url, b""))
             .expect_err("refused");
         assert!(matches!(err, LoginError::ServiceUnavailable { .. }));
+        assert!(!err.is_unreached(), "a head arrived: final");
         let _ = server.join();
+    }
+
+    /// A server that accepts one connection, keeps what it reads for `read_for` (or until
+    /// the peer closes), then sends `answer` and closes; returns what it read.
+    fn take_then(
+        answer: Vec<u8>,
+        read_for: Duration,
+    ) -> (SocketAddr, std::thread::JoinHandle<Vec<u8>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
+        let addr = listener.local_addr().expect("addr");
+        let handle = std::thread::spawn(move || {
+            let Ok((mut s, _)) = listener.accept() else {
+                return Vec::new();
+            };
+            let _ = s.set_read_timeout(Some(Duration::from_millis(200)));
+            let start = std::time::Instant::now();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 4096];
+            while start.elapsed() < read_for {
+                match s.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => seen.extend_from_slice(&buf[..n]),
+                    Err(_) => {}
+                }
+            }
+            let _ = s.write_all(&answer);
+            seen
+        });
+        (addr, handle)
+    }
+
+    #[test]
+    fn a_refused_connection_is_not_reached() {
+        let (_f, access) = access();
+        let port = {
+            let l = TcpListener::bind("127.0.0.1:0").expect("loopback");
+            l.local_addr().expect("addr").port()
+        };
+        let err = access
+            .login_http_client()
+            .execute(&request(
+                HttpMethod::Post,
+                &format!("http://127.0.0.1:{port}/x"),
+                b"secret",
+            ))
+            .expect_err("refused");
+        assert!(err.is_unreached(), "{err:?}");
+    }
+
+    #[test]
+    fn a_failed_tls_handshake_is_not_reached_and_sends_no_request() {
+        // The server speaks plain HTTP on the HTTPS form's port: the handshake fails, and
+        // the request (its path and body) never left the client.
+        let (_f, access) = access();
+        let (addr, server) = take_then(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec(),
+            Duration::from_millis(500),
+        );
+        let mut req = request(HttpMethod::Post, &format!("https://{addr}/path"), b"secret");
+        req.timeout_sec = 5;
+        let err = access
+            .login_http_client()
+            .execute(&req)
+            .expect_err("no TLS");
+        assert!(err.is_unreached(), "{err:?}");
+        let seen = server.join().expect("server");
+        assert!(!seen.windows(5).any(|w| w == b"/path"));
+        assert!(!seen.windows(6).any(|w| w == b"secret"));
+    }
+
+    #[test]
+    fn a_server_that_takes_the_request_and_stalls_or_resets_is_final() {
+        let (_f, access) = access();
+        // Stalls past the request's timeout.
+        let (addr, server) = take_then(Vec::new(), Duration::from_secs(3));
+        let mut req = request(HttpMethod::Post, &format!("http://{addr}/x"), b"secret");
+        req.timeout_sec = 1;
+        let err = access.login_http_client().execute(&req).expect_err("stall");
+        assert!(
+            matches!(err, LoginError::ServiceUnavailable { .. }),
+            "{err:?}"
+        );
+        assert!(server.join().expect("server").ends_with(b"secret"));
+        // Closes the connection after taking the request.
+        let (addr, server) = take_then(Vec::new(), Duration::from_millis(300));
+        let mut req = request(HttpMethod::Post, &format!("http://{addr}/x"), b"secret");
+        req.timeout_sec = 5;
+        let err = access.login_http_client().execute(&req).expect_err("reset");
+        assert!(!err.is_unreached(), "{err:?}");
+        assert!(server.join().expect("server").ends_with(b"secret"));
+        // A status line, then a body cut short.
+        let (addr, server) = take_then(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort".to_vec(),
+            Duration::from_millis(300),
+        );
+        let mut req = request(HttpMethod::Get, &format!("http://{addr}/x"), b"");
+        req.timeout_sec = 5;
+        let err = access.login_http_client().execute(&req).expect_err("body");
+        assert!(
+            matches!(err, LoginError::ServiceUnavailable { .. }),
+            "{err:?}"
+        );
+        let _ = server.join();
+    }
+
+    #[test]
+    fn a_revoked_or_unvalidated_request_is_refused_not_unreached() {
+        let (_f, access) = access();
+        let mut http = access.login_http_client();
+        let mut req = request(HttpMethod::Get, "https://a.example.invalid/", b"");
+        req.require_tls_validation = false;
+        let err = http.execute(&req).expect_err("refused");
+        assert!(matches!(
+            err,
+            LoginError::NotSent {
+                kind: NotSentKind::Refused,
+                ..
+            }
+        ));
+        access.revocation().revoke();
+        req.require_tls_validation = true;
+        let err = http.execute(&req).expect_err("revoked");
+        assert!(matches!(
+            err,
+            LoginError::NotSent {
+                kind: NotSentKind::Refused,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -709,7 +921,7 @@ mod tests {
         let mut req = request(HttpMethod::Post, &url, b"secret");
         req.headers
             .push(("SOAPAction".to_owned(), "\"x/LoginAccount\"".to_owned()));
-        let resp = access.https_client().execute(&req).expect("answered");
+        let resp = access.login_http_client().execute(&req).expect("answered");
         assert_eq!(resp.status_code, 200);
         let seen = server.join().expect("server");
         assert!(seen.ends_with(b"secret"));
@@ -722,7 +934,7 @@ mod tests {
             .bind_udp(Ipv4Addr::LOCALHOST, 0, false)
             .expect("bind");
         let me = udp.local_addr().expect("addr");
-        let mut http = access.https_client();
+        let mut http = access.login_http_client();
         assert!(access.is_live());
         access.revocation().revoke();
         assert!(!access.is_live());

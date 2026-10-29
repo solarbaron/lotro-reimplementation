@@ -43,8 +43,8 @@ use crate::play::chat::{MAX_ARGUMENT_UNITS, MAX_CHAT_UNITS};
 use crate::play::{check_units, clean_display_name};
 use crate::session::{
     BitTreeCodec, ConnectionState, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, MAX_DATAGRAM_BUF,
-    SessionAuthHeader, SessionConnection, SessionEvent, SessionMultiplexer, UdpDatagramTransport,
-    WireCodecs,
+    SendChecksumRule, SessionAuthHeader, SessionConnection, SessionEvent, SessionMultiplexer,
+    UdpDatagramTransport, WireCodecs,
 };
 use crate::world::{PropertySchemaLookup, decode_event_envelope, encode_event_envelope};
 
@@ -104,6 +104,10 @@ pub struct ChatConfig {
     ticket_base64: Option<String>,
     /// Unix time in seconds when the transport was initialised (`clientTimestamp`).
     pub client_timestamp: u32,
+    /// The `payloadSum` rule of every datagram the chat connection sends
+    /// (`official-session.md` §4.4.2; `crate::connector::diag` "The send checksum switch");
+    /// the default is the spec's sender rule.
+    pub send_checksum: SendChecksumRule,
 }
 
 impl Drop for ChatConfig {
@@ -124,6 +128,7 @@ impl std::fmt::Debug for ChatConfig {
             .field("account", &"<redacted>")
             .field("ticket", &self.ticket_base64.as_ref().map(|_| "<redacted>"))
             .field("client_timestamp", &self.client_timestamp)
+            .field("send_checksum", &self.send_checksum)
             .finish()
     }
 }
@@ -143,7 +148,16 @@ impl ChatConfig {
             account: account.into(),
             ticket_base64,
             client_timestamp,
+            send_checksum: SendChecksumRule::default(),
         }
+    }
+
+    /// This configuration with the send checksum `rule` for every datagram of the chat
+    /// connection.
+    #[must_use]
+    pub fn with_send_checksum(mut self, rule: SendChecksumRule) -> Self {
+        self.send_checksum = rule;
+        self
     }
 
     /// Replaces the ticket after an in-game refresh (`official-login.md` §4.3); the next
@@ -506,7 +520,10 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         let id = self.mux.create_connection(self.config.endpoint, now)?;
         self.transport_used = true;
         match self.mux.connection_mut(id) {
-            Some(conn) => conn.start_login(auth, now)?,
+            Some(conn) => {
+                conn.set_send_checksum_rule(self.config.send_checksum);
+                conn.start_login(auth, now)?;
+            }
             None => return Err(PlayError::ChatNotReady),
         }
         self.conn = Some(id);
@@ -771,6 +788,24 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         Ok(out)
     }
 
+    /// The failure line of the current connection when it closed from its handshake
+    /// (`crate::connector::diag::log_chat_failed`): counts only, no endpoint.
+    fn log_handshake_failure(&self, reason: &crate::session::DisconnectReason) {
+        let Some(conn) = self.conn.and_then(|id| self.mux.connection(id)) else {
+            return;
+        };
+        if let Some(state) = conn.closed_from().filter(|s| in_handshake(*s)) {
+            crate::connector::diag::log_chat_failed(
+                reason,
+                state,
+                &conn.handshake_counts(),
+                self.counters.transport_errors,
+                self.counters.recv_errors,
+                conn.send_checksum_rule(),
+            );
+        }
+    }
+
     /// The current connection was reaped by the multiplexer: the session is gone.
     fn forget_reaped(&mut self, reaped: &[u16]) {
         if self.conn.is_some_and(|id| reaped.contains(&id)) {
@@ -879,7 +914,8 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         for ev in session_events {
             match ev {
                 SessionEvent::Connected { .. } => self.state.on_transport_connected(now),
-                SessionEvent::Disconnected { .. } => {
+                SessionEvent::Disconnected { reason } => {
+                    self.log_handshake_failure(&reason);
                     self.state.on_transport_lost(now);
                     self.drop_session();
                     return;

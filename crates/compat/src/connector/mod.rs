@@ -51,6 +51,7 @@
 
 mod control;
 pub mod data;
+pub mod diag;
 pub mod entities;
 pub mod login_phase;
 pub mod net;
@@ -263,9 +264,14 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
             commands: cmd_rx,
             events: ev_tx,
         };
+        // The worker logs where the starting thread logs: the process's subscriber, or the
+        // one a test set for its own thread (log-capture tests of the login's lines).
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
         let worker = std::thread::Builder::new()
             .name("tessera-official".into())
-            .spawn(move || worker::run(net, input));
+            .spawn(move || {
+                tracing::dispatcher::with_default(&dispatch, || worker::run(net, input))
+            });
         let worker = match worker {
             Ok(w) => w,
             Err(_) => {

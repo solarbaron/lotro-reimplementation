@@ -16,7 +16,10 @@ use tessera_net::account::{
 };
 use tessera_net::{Command, DisconnectReason, Event};
 
-use crate::login::{QueueEvaluation, SessionHandoff, TicketRefresher, WorldDescriptor};
+use crate::login::{
+    LoginFailureClass, QueueEvaluation, SessionHandoff, TicketRefresher, WorldDescriptor,
+    WorldStatus as ServiceStatus, is_rfc1918_queue_url,
+};
 
 use super::control::{Control, Msg};
 use super::data::{InstallDataLoader, LocalInputs, LocalPaths, SchemaView, discover_local};
@@ -216,6 +219,9 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
     };
     let stop = || control.cancelled();
     let clock = Instant::now();
+    // Read once per attempt, before any network operation (`super::diag` "The send
+    // checksum switch").
+    let send_checksum = super::diag::send_checksum_from_env();
     out.progress(LoginStage::Authenticating);
     if let Some(locate) = locate {
         match locate() {
@@ -382,6 +388,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         codec_uuids: local.codec_uuids.clone(),
         schema: SchemaView(local.data.clone()),
         cancel: control.cancel_flag(),
+        send_checksum,
     };
     let now = || clock.elapsed().as_secs_f64();
     let mut driver = match SessionDriver::start(&mut net, start, now(), &stop) {
@@ -464,6 +471,63 @@ struct Ctx<'a> {
     t0: f64,
 }
 
+/// How the `TakeANumber` step of a world choice ended (§3.5), for its one line
+/// ([`log_queue_step`]); a world with no queue URL logs `skipped` instead.
+#[derive(Debug, Clone, Copy)]
+enum QueueStep {
+    /// The queue let the user in.
+    Ready,
+    /// An exchange failed or the service answered a negative `HResult`.
+    Failed(LoginFailureClass),
+    /// The user left the queue (`LeaveQueue` follows).
+    Left,
+    /// The attempt ended while queued: a cancel, the backend letting go or a revoked
+    /// network right.
+    Ended,
+}
+
+/// The chosen world's status as one `info` line (§3.3): how many login servers and queue
+/// URLs the answer lists, and whether the chosen queue URL ([`ServiceStatus::queue_url`])
+/// has an RFC 1918 private-range host. Counts and labels only, never an address.
+fn log_world_status(status: &ServiceStatus) {
+    let chosen_queue_url = match status.queue_url() {
+        None => "none",
+        Some(u) if is_rfc1918_queue_url(u) => "private range (RFC 1918)",
+        Some(_) => "not a private range",
+    };
+    tracing::info!(
+        login_servers = status.login_servers.len(),
+        queue_urls = status.queue_urls.len(),
+        chosen_queue_url,
+        "official login: world status read"
+    );
+}
+
+/// The one `info` line of the `TakeANumber` step (§3.5) after `polls` requests: the outcome
+/// and, for a failure, its class only, never an address, a position or a ticket.
+fn log_queue_step(step: QueueStep, polls: u32) {
+    match step {
+        QueueStep::Ready => tracing::info!(
+            outcome = "ready",
+            polls,
+            "official login: queue step (TakeANumber)"
+        ),
+        QueueStep::Failed(class) => {
+            tracing::info!(outcome = "failed", polls, class = %class, "official login: queue step (TakeANumber)");
+        }
+        QueueStep::Left => tracing::info!(
+            outcome = "left",
+            polls,
+            "official login: queue step (TakeANumber)"
+        ),
+        QueueStep::Ended => tracing::info!(
+            outcome = "ended",
+            polls,
+            "official login: queue step (TakeANumber)"
+        ),
+    }
+}
+
 /// After `ChooseWorld`: the world's status, the billing-role check, the queue and the
 /// hand-off values (§3.3–§3.6, §4.2), with the login server's and the chat server's
 /// addresses resolved (an unusable login server refuses the world, §5.1 `S7`). The cancel
@@ -503,14 +567,20 @@ fn choose<N: ConnectorNet>(
             return Choice::Refused(world_refusal(&e));
         }
     };
+    log_world_status(&status);
     if let Some(queue_url) = status.queue_url() {
         let wait = queue_poll_interval(&auth.remote);
+        // `TakeANumber` requests made so far (the queue step's line, [`log_queue_step`]).
+        let mut polls: u32 = 0;
         loop {
             if let Some(h) = halted(net) {
+                log_queue_step(QueueStep::Ended, polls);
                 return h;
             }
+            polls = polls.saturating_add(1);
             match take_a_number(&mut NetHttp::new(net, stop), auth, queue_url) {
                 Ok(QueueEvaluation::Ready) => {
+                    log_queue_step(QueueStep::Ready, polls);
                     out.progress(LoginStage::JoiningWorld);
                     break;
                 }
@@ -518,6 +588,8 @@ fn choose<N: ConnectorNet>(
                     ahead,
                     context_number,
                 }) => {
+                    // The position only, at debug level: it changes with every poll.
+                    tracing::debug!(position = ahead, polls, "official login: queued");
                     out.one(Event::Account(AccountEvent::LoginQueueChanged {
                         position: Some(ahead),
                         length: None,
@@ -532,9 +604,11 @@ fn choose<N: ConnectorNet>(
                         match ctx.commands.recv_timeout(left.min(COMMAND_WAIT)) {
                             Ok(Msg::Command(_)) if halted(net).is_some() => {
                                 // Dropped unread: the attempt ended.
+                                log_queue_step(QueueStep::Ended, polls);
                                 return halted(net).unwrap_or(Choice::Shutdown);
                             }
                             Ok(Msg::Command(Command::Account(AccountCommand::LeaveLoginQueue))) => {
+                                log_queue_step(QueueStep::Left, polls);
                                 leave_queue(
                                     &mut NetHttp::new(net, stop),
                                     auth,
@@ -549,6 +623,7 @@ fn choose<N: ConnectorNet>(
                             ),
                             Ok(Msg::Wake) | Err(RecvTimeoutError::Timeout) => {
                                 if let Some(h) = halted(net) {
+                                    log_queue_step(QueueStep::Ended, polls);
                                     return h;
                                 }
                             }
@@ -556,17 +631,29 @@ fn choose<N: ConnectorNet>(
                             // `LeaveQueue` (the place lapses on the service's side).
                             // Engineering choice, spec silent (question with the spec
                             // writers).
-                            Err(RecvTimeoutError::Disconnected) => return Choice::Shutdown,
+                            Err(RecvTimeoutError::Disconnected) => {
+                                log_queue_step(QueueStep::Ended, polls);
+                                return Choice::Shutdown;
+                            }
                         }
                     }
                 }
-                Err(_) if halted(net).is_some() => return halted(net).unwrap_or(Choice::Shutdown),
+                Err(_) if halted(net).is_some() => {
+                    log_queue_step(QueueStep::Ended, polls);
+                    return halted(net).unwrap_or(Choice::Shutdown);
+                }
                 Err(e) => {
-                    tracing::info!(class = %e.failure_class(), "official login: queue failed");
+                    log_queue_step(QueueStep::Failed(e.failure_class()), polls);
                     return Choice::Refused(WorldRefusal::Other);
                 }
             }
         }
+    } else {
+        tracing::info!(
+            outcome = "skipped",
+            reason = "no queue URL",
+            "official login: queue step (TakeANumber)"
+        );
     }
     let auth_url = auth
         .remote
@@ -751,7 +838,7 @@ fn session_loop<N: ConnectorNet>(
 /// revocation during the shutdown ends it at once.
 fn shutdown<N: ConnectorNet>(net: &N, driver: &mut SessionDriver<N>, now: &impl Fn() -> f64) {
     if !net.is_live() {
-        driver.abandon();
+        driver.abandon(now());
         tracing::info!("official session closed: the network access was revoked");
         return;
     }

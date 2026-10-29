@@ -5,6 +5,7 @@
 //! (RFC 5737).
 
 mod deadlines;
+mod diagnostics;
 mod world_feed;
 
 use std::collections::{BTreeMap, VecDeque};
@@ -379,6 +380,8 @@ struct Shared {
     /// HTTPS answers set while the test runs ([`World::set_answers`]); they come before
     /// `Service::answers`.
     answers: Vec<(String, u16, String)>,
+    /// How many of the next session socket reads fail ([`World::fail_reads`]).
+    failing_reads: usize,
 }
 
 /// The network right as the synthetic network sees it (`Service::follow_withdraw`).
@@ -557,6 +560,11 @@ impl World {
             .push_back((datagram, from));
     }
 
+    /// The next `n` reads of the session socket fail (as an ICMP port-unreachable can).
+    fn fail_reads(&self, n: usize) {
+        self.shared.lock().expect("shared").failing_reads = n;
+    }
+
     /// A datagram from the chat server, to the chat sockets.
     fn deliver_chat(&self, datagram: Vec<u8>) {
         self.shared
@@ -630,6 +638,10 @@ impl UdpDatagramTransport for FakeUdp {
             return Err(revoked_io());
         }
         let mut s = self.0.shared.lock().expect("shared");
+        if !self.1 && s.failing_reads > 0 {
+            s.failing_reads -= 1;
+            return Err(SessionError::Io("synthetic read failure".to_owned()));
+        }
         let next = if self.1 {
             s.chat_inbound.pop_front()
         } else {
@@ -2449,6 +2461,7 @@ fn session_start(
         codec_uuids: Vec::new(),
         schema: SchemaView(Arc::new(records())),
         cancel,
+        send_checksum: Default::default(),
     }
 }
 

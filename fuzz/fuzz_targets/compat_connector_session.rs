@@ -37,15 +37,17 @@ use tessera_compat::connector::entities::{
 use tessera_compat::connector::net::{ConnectorNet, SendHttpClient};
 use tessera_compat::connector::session_phase::{SessionDriver, SessionStart};
 use tessera_compat::login::{
-    HttpClient, HttpRequest, HttpResponse, LoginError, SessionHandoff, TicketRefresher, VersionInfo,
+    HttpClient, HttpRequest, HttpResponse, LoginError, NetPreferences, SessionHandoff,
+    TicketRefresher, VersionInfo,
 };
 use tessera_compat::play::PlayError;
 use tessera_compat::play::chat::{
     PID_CHAT_CATEGORY, PID_CHAT_SENDER_ID, PID_CHAT_SENDER_NAME, PID_CHAT_TEXT,
 };
 use tessera_compat::session::{
-    BitTreeTable, ConnectChallengeHeader, DatagramHeader, IsaacCipher, OptionalHeaders,
-    SessionError, UdpDatagramTransport, WorldReferralHeader, encode_datagram, split_blob,
+    BindPlan, BitTreeTable, ConnectChallengeHeader, DatagramHeader, IsaacCipher,
+    MAX_UNIQUE_PORT_ATTEMPTS, OptionalHeaders, SessionError, UdpDatagramTransport,
+    WorldReferralHeader, encode_datagram, split_blob,
 };
 use tessera_compat::world::{
     CharacterListResponse, CharacterSummaryEntry, EncodedPropertyTable, EncodedPropertyValue,
@@ -187,11 +189,16 @@ impl ConnectorNet for Net {
         Some(*LOCAL.ip())
     }
 
-    fn bind_udp(&mut self, _ip: Ipv4Addr, _port: u16, _unique: bool) -> Result<Udp, SessionError> {
+    fn bind_udp(&mut self, plan: BindPlan) -> Result<Udp, SessionError> {
+        // §3.2: Case B tries at most its bounded candidate list.
+        assert!(plan.ports.candidates().len() <= MAX_UNIQUE_PORT_ATTEMPTS);
         Ok(Udp(Arc::clone(&self.session)))
     }
 
-    fn chat_binder(&self) -> Option<Box<dyn FnMut() -> Result<Udp, PlayError> + Send>> {
+    fn chat_binder(
+        &self,
+        _first_local: Option<Ipv4Addr>,
+    ) -> Option<Box<dyn FnMut() -> Result<Udp, PlayError> + Send>> {
         let chat = Arc::clone(self.chat.as_ref()?);
         Some(Box::new(move || Ok(Udp(Arc::clone(&chat)))))
     }
@@ -377,6 +384,12 @@ fn start(net: &mut Net, flags: u8) -> Option<SessionDriver<Net>> {
         schema: SchemaView(Arc::new(NoData)),
         cancel: Arc::new(AtomicBool::new(flags & 0x40 != 0)),
         send_checksum: Default::default(),
+        // Bit 5 of the first byte: `Net.ComputeUniquePort` off (§3.2 Case C).
+        net: NetPreferences {
+            compute_unique_port: flags & 0x20 == 0,
+            connection_speed_kbps: f64::from(flags),
+            ..NetPreferences::default()
+        },
     };
     SessionDriver::start(net, start, 0.0, &|| false).ok()
 }
@@ -414,7 +427,7 @@ fuzz_target!(|data: &[u8]| {
         let stop = || flags & 0x40 != 0;
         driver.step(now, true, &stop);
         if let Some((player, name)) = driver.wants_chat(now) {
-            match net.chat_binder() {
+            match net.chat_binder(driver.first_local_ipv4()) {
                 Some(b) => driver.attach_chat(b, player, &name, now, &stop),
                 None => driver.chat_failed(now),
             }

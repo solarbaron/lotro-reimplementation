@@ -41,12 +41,11 @@
 //! State-`1` or State-`2` timeout; it is for a session that connects but whose later
 //! traffic goes unanswered. Engineering choices, spec silent.
 
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::Ipv4Addr;
 
 use crate::session::{
-    AUTH_FLAG_HAS_EXTRA_BLOB, AUTH_FLAG_HAS_SECOND_STRING, AUTH_TYPE_ACCOUNT, AUTH_TYPE_TICKET,
-    ConnectionState, HandshakeCounts, SendChecksumRule, SessionError, candidate_bind_ports,
-    decode_datagram,
+    AUTH_FLAG_HAS_EXTRA_BLOB, AUTH_FLAG_HAS_SECOND_STRING, AUTH_TYPE_CHAT, AUTH_TYPE_PRIMARY,
+    BindPorts, ConnectionState, HandshakeCounts, SendChecksumRule, SessionError, decode_datagram,
 };
 
 /// The environment variable of the send checksum switch (module docs).
@@ -84,47 +83,27 @@ pub fn send_checksum_from_env() -> SendChecksumRule {
     send_checksum_rule(std::env::var_os(SEND_CHECKSUM_ENV).as_deref())
 }
 
-/// Which case of `official-session.md` §3.2 item 2 gave the session's local port, as a
-/// label (never the port). It is read back from the bound port ([`Self::of`]): an
-/// ephemeral port the system picked that happens to be a Case A or Case B candidate is
-/// labelled that case.
+/// Which case of `official-session.md` §3.2 item 3 chose the session's local port, as a
+/// label (never the port). It is the case of the bind plan: since the bind has no fallback,
+/// a socket that is bound was bound by its case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindCase {
-    /// Case A: the explicit base port plus `k`.
-    ExplicitBase,
-    /// Case B: the computed unique port.
+    /// Case A: the explicit port (`--outport` or `Net.UserSpecifiedPort`), one bind.
+    ExplicitPort,
+    /// Case B: the computed unique port, seeded from the first local IPv4 address.
     ComputedUnique,
-    /// Case C: an ephemeral port on the chosen local address.
+    /// Case C: an ephemeral port (unique-port computation off, or no local IPv4 address).
     Ephemeral,
-    /// Case C's last fallback: an ephemeral port on any address (`0.0.0.0`).
-    EphemeralAnyAddress,
-    /// The socket's local address could not be read.
-    Unknown,
 }
 
 impl BindCase {
-    /// The case of a socket bound at `bound` for the local address `local_ip`, the explicit
-    /// base port `explicit_base_port` and the `Net.ComputeUniquePort` value `compute_unique`
-    /// (the inputs of [`candidate_bind_ports`]).
+    /// The case of the port plan `ports`.
     #[must_use]
-    pub fn of(
-        local_ip: Ipv4Addr,
-        explicit_base_port: u16,
-        compute_unique: bool,
-        bound: SocketAddrV4,
-    ) -> Self {
-        if *bound.ip() != local_ip {
-            return Self::EphemeralAnyAddress;
-        }
-        let port = bound.port();
-        let listed = port != 0
-            && candidate_bind_ports(local_ip, explicit_base_port, compute_unique).contains(&port);
-        if listed && explicit_base_port != 0 {
-            Self::ExplicitBase
-        } else if listed && compute_unique && !local_ip.is_unspecified() {
-            Self::ComputedUnique
-        } else {
-            Self::Ephemeral
+    pub const fn of(ports: &BindPorts) -> Self {
+        match ports {
+            BindPorts::Explicit(_) => Self::ExplicitPort,
+            BindPorts::Unique { .. } => Self::ComputedUnique,
+            BindPorts::Ephemeral => Self::Ephemeral,
         }
     }
 
@@ -132,25 +111,23 @@ impl BindCase {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::ExplicitBase => "Case A (explicit base port)",
-            Self::ComputedUnique => "Case B (computed unique port)",
+            Self::ExplicitPort => "Case A (explicit port)",
+            Self::ComputedUnique => "Case B (computed unique port, seed from the routed address)",
             Self::Ephemeral => "Case C (ephemeral port)",
-            Self::EphemeralAnyAddress => "Case C (ephemeral port, any address)",
-            Self::Unknown => "unknown (local address not readable)",
         }
     }
 }
 
-/// Where the session's local IPv4 address came from (`official-session.md` §3.2 item 1),
+/// Which local IPv4 address the session's socket binds (`official-session.md` §3.2 item 2),
 /// as a label (never the address).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalSource {
     /// The `localHost` segment of the two-colon `-h` form.
     HostSegment,
-    /// The address the system routes towards the server.
-    Routed,
-    /// None: `0.0.0.0`.
-    Unspecified,
+    /// `Net.BindInterface` of `UserPreferences.ini`.
+    BindInterface,
+    /// Neither: the wildcard `0.0.0.0`.
+    Wildcard,
 }
 
 impl LocalSource {
@@ -159,8 +136,8 @@ impl LocalSource {
     pub const fn label(self) -> &'static str {
         match self {
             Self::HostSegment => "host local segment",
-            Self::Routed => "routed toward the server",
-            Self::Unspecified => "unspecified",
+            Self::BindInterface => "Net.BindInterface",
+            Self::Wildcard => "wildcard (0.0.0.0)",
         }
     }
 }
@@ -247,11 +224,17 @@ impl RemoteName {
 /// selection rule, §6.5), as a label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthMode {
-    /// `SessionAuthHeader`, `authType 0x40000002`, `authFlags 0x04` (`extraBlob` ticket).
+    /// `SessionAuthHeader`, `authType 0x00000001`, `authFlags 0x04` (primary connection,
+    /// ticket text in `extraBlob`).
     Ticket,
-    /// `SessionAuthHeader`, `authType 0x00000001`, `authFlags 0x02` (ticket in `secondStr`).
-    TicketInSecondString,
-    /// `SessionAuthHeader`, `authType 0x00000001`, `authFlags 0x00` (account only).
+    /// `SessionAuthHeader`, `authType 0x00000001`, `authFlags 0x06` (primary connection,
+    /// ticket and password).
+    TicketAndPassword,
+    /// `SessionAuthHeader`, `authType 0x40000002`, `authFlags 0x04` (chat connection,
+    /// ticket text in `extraBlob`).
+    ChatTicket,
+    /// `SessionAuthHeader`, `authType 0x00000001` or `0x40000002`, `authFlags 0x00`
+    /// (account only).
     AccountOnly,
     /// Another `(authType, authFlags)` pair (never sent: the header refuses it).
     Other,
@@ -263,10 +246,12 @@ impl AuthMode {
     /// The mode of a `SessionAuthHeader` with `auth_type` and `auth_flags`.
     #[must_use]
     pub const fn of(auth_type: u32, auth_flags: u32) -> Self {
+        const BOTH: u32 = AUTH_FLAG_HAS_EXTRA_BLOB | AUTH_FLAG_HAS_SECOND_STRING;
         match (auth_type, auth_flags) {
-            (AUTH_TYPE_TICKET, AUTH_FLAG_HAS_EXTRA_BLOB) => Self::Ticket,
-            (AUTH_TYPE_ACCOUNT, AUTH_FLAG_HAS_SECOND_STRING) => Self::TicketInSecondString,
-            (AUTH_TYPE_ACCOUNT, 0) => Self::AccountOnly,
+            (AUTH_TYPE_PRIMARY, AUTH_FLAG_HAS_EXTRA_BLOB) => Self::Ticket,
+            (AUTH_TYPE_PRIMARY, BOTH) => Self::TicketAndPassword,
+            (AUTH_TYPE_CHAT, AUTH_FLAG_HAS_EXTRA_BLOB) => Self::ChatTicket,
+            (AUTH_TYPE_PRIMARY | AUTH_TYPE_CHAT, 0) => Self::AccountOnly,
             _ => Self::Other,
         }
     }
@@ -275,11 +260,14 @@ impl AuthMode {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Ticket => "authType 0x40000002 authFlags 0x04 (ticket in extraBlob)",
-            Self::TicketInSecondString => {
-                "authType 0x00000001 authFlags 0x02 (ticket in secondStr)"
+            Self::Ticket => "authType 0x00000001 authFlags 0x04 (ticket text in extraBlob)",
+            Self::TicketAndPassword => {
+                "authType 0x00000001 authFlags 0x06 (ticket text and password)"
             }
-            Self::AccountOnly => "authType 0x00000001 authFlags 0x00 (account only)",
+            Self::ChatTicket => {
+                "authType 0x40000002 authFlags 0x04 (chat, ticket text in extraBlob)"
+            }
+            Self::AccountOnly => "authFlags 0x00 (account only)",
             Self::Other => "other",
             Self::Referral => "ReferralAuthHeader (referral cookie)",
         }
@@ -442,9 +430,9 @@ pub struct HandshakeReport {
     /// Socket reads that failed (the whole session; an ICMP port-unreachable can show up as
     /// one on some systems).
     pub recv_errors: u64,
-    /// The §3.2 bind case.
+    /// The §3.2 port case.
     pub bind: BindCase,
-    /// Where the local address came from.
+    /// Which local address the socket binds.
     pub local: LocalSource,
     /// The form of the remote address.
     pub remote: RemoteForm,

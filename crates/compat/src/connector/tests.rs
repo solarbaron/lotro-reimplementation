@@ -6,6 +6,7 @@
 
 mod deadlines;
 mod diagnostics;
+mod handshake;
 mod world_feed;
 
 use std::collections::{BTreeMap, VecDeque};
@@ -182,6 +183,7 @@ fn launcher(queue_url: &str) -> String {
 <configuration><appSettings>
 <add key="GameClient.WIN32.ArgTemplate" value="-a {{SUBSCRIPTION}}" />
 <add key="WorldQueue.LoginQueue.URL" value="{queue_url}" />
+<add key="WorldQueue.LoginQueue.RefreshSeconds" value="1" />
 <add key="WorldQueue.TakeANumber.Parameters" value="command=TakeANumber&amp;subscription={{0}}&amp;ticket={{1}}&amp;ticket_type=GLS&amp;queue_url={{2}}" />
 <add key="WorldQueue.LeaveQueue.Parameters" value="command=LeaveQueue&amp;subscription={{0}}&amp;context={{1}}&amp;ticket_type=GLS&amp;queue_url={{2}}" />
 </appSettings></configuration>"#
@@ -367,6 +369,8 @@ struct UdpState {
 struct Shared {
     requests: Vec<Recorded>,
     binds: usize,
+    /// The plans of the session sockets bound (`official-session.md` §3.2).
+    bind_plans: Vec<crate::session::BindPlan>,
     udp: UdpState,
     /// What the chat server sends (the chat sockets read only this).
     chat_inbound: VecDeque<(Vec<u8>, SocketAddrV4)>,
@@ -710,24 +714,21 @@ impl ConnectorNet for FakeNet {
         Some(*LOCAL.ip())
     }
 
-    fn bind_udp(
-        &mut self,
-        _local_ip: Ipv4Addr,
-        _explicit_base_port: u16,
-        _compute_unique: bool,
-    ) -> Result<FakeUdp, SessionError> {
+    fn bind_udp(&mut self, plan: crate::session::BindPlan) -> Result<FakeUdp, SessionError> {
         let mut s = self.0.shared.lock().expect("shared");
         if !self.0.live() {
             s.dead_attempts += 1;
             return Err(revoked_io());
         }
         s.binds += 1;
+        s.bind_plans.push(plan);
         drop(s);
         Ok(FakeUdp(self.0.clone(), false))
     }
 
     fn chat_binder(
         &self,
+        _first_local: Option<Ipv4Addr>,
     ) -> Option<Box<dyn FnMut() -> Result<FakeUdp, crate::play::PlayError> + Send>> {
         if self.0.service.chat_socket {
             let world = self.0.clone();
@@ -2099,7 +2100,10 @@ fn the_session_reaches_the_character_list_and_the_world() {
         .opt_headers
         .session_auth
         .expect("SessionAuth");
-    assert_eq!(sa.auth_type, 0x4000_0002);
+    // The primary connection's mode (`official-session.md` §6.2.1 rule 1).
+    assert_eq!((sa.auth_type, sa.auth_flags), (0x0000_0001, 0x04));
+    assert!(sa.net_version.starts_with("180804_netver:9999; didver:"));
+    assert_eq!(sa.credentials.ticket.as_deref(), Some(TICKET));
     let mut login = Server::new(0x0111, 0xBEEF_0001);
     login.connect(&run, 0xBEEF_0001, LOGIN_SERVER);
     let req = login.event(0x12F, &[]);
@@ -2345,10 +2349,12 @@ fn a_full_event_queue_stops_reading_the_socket() {
     let total = 3 * EVENT_QUEUE;
     for i in 0..total {
         let q = LoginQueueStatusMessage {
-            login_result: 0,
+            login_result: crate::session::LOGON_RESULT_QUEUED,
             detail_text: String::new(),
-            queue_position: u32::try_from(i + 1).expect("small"),
-            queue_total: 10_000,
+            queue: Some(crate::session::LoginQueuePosition {
+                position: u32::try_from(i + 1).expect("small"),
+                total: 10_000,
+            }),
         }
         .encode();
         let d = login.blob(0x130, &encode_event_envelope(&q));
@@ -2462,6 +2468,7 @@ fn session_start(
         schema: SchemaView(Arc::new(records())),
         cancel,
         send_checksum: Default::default(),
+        net: Default::default(),
     }
 }
 
@@ -3105,7 +3112,13 @@ fn driver_with_chat_handshake() -> (World, SessionDriver<FakeNet>, Server) {
     assert!(d.in_world());
     let (player, name) = d.wants_chat(1.2).expect("the chat session is due");
     let net = FakeNet(world.clone());
-    d.attach_chat(net.chat_binder().expect("binder"), player, &name, 1.2, &go);
+    d.attach_chat(
+        net.chat_binder(None).expect("binder"),
+        player,
+        &name,
+        1.2,
+        &go,
+    );
     // The first attempt follows the initial delay (§6.6.3, 1 s).
     d.step(2.3, true, &go);
     assert!(
@@ -3189,7 +3202,7 @@ fn a_chat_attachment_after_the_cancel_binds_nothing() {
     let (player, name) = d.wants_chat(1.2).expect("the chat session is due");
     let net = FakeNet(world.clone());
     d.attach_chat(
-        net.chat_binder().expect("binder"),
+        net.chat_binder(None).expect("binder"),
         player,
         &name,
         1.2,

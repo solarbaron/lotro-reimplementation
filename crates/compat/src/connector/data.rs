@@ -15,9 +15,10 @@ use std::sync::Arc;
 use crate::chat_session::ChatCodecs;
 use crate::login::{
     DICT_KEY_CLIENT_TO_SERVER, DICT_KEY_SERVER_TO_CLIENT_DEFERRED, DataIdMap, LauncherConfig,
-    LoginError, NetworkVersionDiscovery, NetworkVersionQuery, UserPreferences, VersionInfo,
-    compression_dictionary_map_did, discover_network_version, extract_didver_from_dat_file,
-    resolve_bit_tree_table, resolve_install_language, root_did_map_from_superblock,
+    LoginError, NetPreferences, NetworkVersionDiscovery, NetworkVersionQuery, UserPreferences,
+    VersionInfo, compression_dictionary_map_did, discover_network_version,
+    extract_didver_from_dat_file, resolve_bit_tree_table, resolve_install_language,
+    root_did_map_from_superblock,
 };
 use crate::play::chat::{CATEGORY_SAY, CATEGORY_TELL, ChatCategories, LiteralTexts, TextResolver};
 use crate::session::{BitTreeCodec, BitTreeTable};
@@ -227,6 +228,9 @@ pub struct LocalInputs {
     pub codecs: ChatCodecs,
     /// The `codecUuid`s of the loaded dictionaries (`official-session.md` §6.4 step 3).
     pub codec_uuids: Vec<[u8; 16]>,
+    /// The `[Net]` keys of `UserPreferences.ini` (`official-session.md` §3.2 item 1), the
+    /// defaults without a preferences file.
+    pub net: NetPreferences,
     /// The install's records and tables.
     pub data: Arc<dyn InstallData>,
 }
@@ -374,12 +378,14 @@ pub fn discover_local(
         invalid("the install's records cannot be read")
     })?;
     let (codecs, codec_uuids) = load_codecs(root, data.as_ref())?;
+    let net = prefs.map(|p| p.net).unwrap_or_default();
     Ok(LocalInputs {
         config,
         language,
         version,
         codecs,
         codec_uuids,
+        net,
         data,
     })
 }

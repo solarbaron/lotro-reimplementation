@@ -11,7 +11,7 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use crate::login::{HttpClient, HttpRequest, HttpResponse, LoginError, NotSentKind};
 use crate::net_access::{LoginHttpClient, NetworkAccess, StdUdpTransport};
-use crate::session::{SessionError, UdpDatagramTransport};
+use crate::session::{BindPlan, SessionError, UdpDatagramTransport};
 
 /// An HTTP client the connector can hand to another thread (the ticket refresh, which
 /// must not stall the session loop, `official-login.md` §4.3).
@@ -45,26 +45,27 @@ pub trait ConnectorNet: Send + std::fmt::Debug + 'static {
     /// [`SessionError::Io`] when the name does not resolve to an IPv4 address.
     fn resolve(&mut self, host: &str, port: u16) -> Result<SocketAddrV4, SessionError>;
 
-    /// The local address towards `remote` (`official-session.md` §3.2 item 1).
+    /// The first local IPv4 address, the Case B seed of `official-session.md` §3.2 item 2:
+    /// the address the system routes towards `remote`.
     fn local_ipv4_toward(&mut self, remote: SocketAddrV4) -> Option<Ipv4Addr>;
 
-    /// Binds the session's socket (`official-session.md` §3.1–§3.2).
+    /// Binds the session's socket at `plan` (`official-session.md` §3.1–§3.2).
     ///
     /// # Errors
     ///
-    /// [`SessionError::Io`] when no port can be bound.
-    fn bind_udp(
-        &mut self,
-        local_ip: Ipv4Addr,
-        explicit_base_port: u16,
-        compute_unique: bool,
-    ) -> Result<Self::Udp, SessionError>;
+    /// [`SessionError::Io`] or [`SessionError::LocalPortsExhausted`] when no port can be
+    /// bound.
+    fn bind_udp(&mut self, plan: BindPlan) -> Result<Self::Udp, SessionError>;
 
     /// A maker of fresh sockets for the chat-server client (each connection attempt binds
     /// its own, `official-messages-play.md` §6.6), or `None` when this network has none.
+    /// Every socket binds by the chat transport's defaults (`official-session.md` §3.2
+    /// item 1: [`BindPlan::chat_defaults`]): the wildcard address and Case B seeded from
+    /// `first_local`, the session's first local IPv4 address (Case C without one).
     #[allow(clippy::type_complexity)]
     fn chat_binder(
         &self,
+        first_local: Option<Ipv4Addr>,
     ) -> Option<Box<dyn FnMut() -> Result<Self::Udp, crate::play::PlayError> + Send>>;
 }
 
@@ -355,27 +356,19 @@ impl ConnectorNet for LiveNet {
         self.access.local_ipv4_toward(remote)
     }
 
-    fn bind_udp(
-        &mut self,
-        local_ip: Ipv4Addr,
-        explicit_base_port: u16,
-        compute_unique: bool,
-    ) -> Result<StdUdpTransport, SessionError> {
-        self.access
-            .bind_udp(local_ip, explicit_base_port, compute_unique)
+    fn bind_udp(&mut self, plan: BindPlan) -> Result<StdUdpTransport, SessionError> {
+        self.access.bind_udp(plan)
     }
 
     fn chat_binder(
         &self,
+        first_local: Option<Ipv4Addr>,
     ) -> Option<Box<dyn FnMut() -> Result<StdUdpTransport, crate::play::PlayError> + Send>> {
         let access = self.access();
-        // `0.0.0.0:0`: the chat session's own socket takes no preference
-        // (`Net.BindInterface`, `Net.ComputeUniquePort` are not read) and no computed port.
-        // Engineering choice, spec silent (question with the spec writers).
+        // The chat transport reads no `[Net]` key: the defaults (§3.2 item 1).
+        let plan = BindPlan::chat_defaults(first_local);
         Some(Box::new(move || {
-            access
-                .bind_udp(Ipv4Addr::UNSPECIFIED, 0, false)
-                .map_err(crate::play::PlayError::from)
+            access.bind_udp(plan).map_err(crate::play::PlayError::from)
         }))
     }
 }

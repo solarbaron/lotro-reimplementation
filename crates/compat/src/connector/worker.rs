@@ -389,6 +389,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         schema: SchemaView(local.data.clone()),
         cancel: control.cancel_flag(),
         send_checksum,
+        net: local.net.clone(),
     };
     let now = || clock.elapsed().as_secs_f64();
     let mut driver = match SessionDriver::start(&mut net, start, now(), &stop) {
@@ -772,7 +773,7 @@ fn session_loop<N: ConnectorNet>(
         if let Some((player, name)) = driver.wants_chat(t)
             && !control.cancelled()
         {
-            match net.chat_binder() {
+            match net.chat_binder(driver.first_local_ipv4()) {
                 Some(binder) => driver.attach_chat(binder, player, &name, t, &stop),
                 None => driver.chat_failed(t),
             }

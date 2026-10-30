@@ -87,8 +87,16 @@ pub const MAX_PAK_SIZE: u16 = 0xFF7B;
 /// Allowed wire bitmask for `DatagramHeader.flags` (`0x0F7FFB00`, §4.3, §10.1 rule 3).
 pub const VALID_DATAGRAM_FLAGS_MASK: u32 = 0x0F7F_FB00;
 
-/// Disallowed wire bitmask for `DatagramHeader.flags` (`0xF08004FF`, §4.3, §10.1 rule 3).
+/// Send-side disallowed bitmask for `DatagramHeader.flags` (`0xF08004FF`, the complement of
+/// `0x0F7FFB00`): an outgoing datagram clears low-byte bits `0..7`, so every flag it sends
+/// lies within [`VALID_DATAGRAM_FLAGS_MASK`] (§4.3 "On send", §10.1 rule 3).
 pub const INVALID_DATAGRAM_FLAGS_MASK: u32 = !VALID_DATAGRAM_FLAGS_MASK;
+
+/// Receive-side forbidden bitmask for `DatagramHeader.flags` (`0xF08004F9`, the complement
+/// of `0x0F7FFB06`): a received packet with any of these bits set is rejected; the low-byte
+/// bits `0x02` and `0x04` are ignored if present (§4.3 "On receive", §10.1 rule 3, §11
+/// item 5).
+pub const RECEIVE_FORBIDDEN_FLAGS_MASK: u32 = 0xF080_04F9;
 
 /// Defined flag bits that carry no optional header bytes on the wire: bit 25
 /// (`MaskedChecksumFlag`) and bit 26 (`HasFragmentedBlobsFlag`) (§4.3).
@@ -406,10 +414,13 @@ pub enum SessionError {
         /// Count value in header.
         count: u32,
     },
-    /// `SessionAuthHeader` version prefix was not `"180804\0"` (§6.2).
-    #[error("invalid SessionAuth protocol version string")]
+    /// `SessionAuthHeader.netVersion` is not `"180804"` or `"180804_"` followed by a
+    /// printable ASCII version stamp, or is longer than [`MAX_SESSION_NET_VERSION_LEN`]
+    /// (§6.2).
+    #[error("invalid SessionAuth netVersion string")]
     InvalidSessionAuthVersion,
-    /// `SessionAuthHeader` authentication block length or alignment was invalid (§6.2).
+    /// `SessionAuthHeader.authBlockLen` does not match the authentication block, or the
+    /// block is malformed (§6.2, §6.2.1).
     #[error("invalid SessionAuth authBlock length or structure")]
     InvalidAuthBlock,
     /// UTF-16LE string in `SessionAuthHeader` was truncated or invalid UTF-16 (§6.2.1).
@@ -424,7 +435,8 @@ pub enum SessionError {
         /// Fragment count.
         count: usize,
     },
-    /// Blob fragment had an invalid `queueId` outside `1..=4` (§5.6.2).
+    /// Blob fragment had an invalid `queueId`: outside `1..=4` on send, `1..=6` on receive
+    /// (§5.6.2).
     #[error("invalid fragmented blob delivery queue ID {queue_id}")]
     InvalidQueueId {
         /// Decoded `queueId`.
@@ -568,8 +580,8 @@ pub enum SessionError {
         /// The assigned recipient ID.
         rec_id: u16,
     },
-    /// Every local recipient ID in `0x0100..=0xFEFF` is in use.
-    #[error("no free local recipient ID")]
+    /// Every connection handle of a multiplexer is in use.
+    #[error("no free connection handle")]
     RecipientIdsExhausted,
     /// Unpacking nested containers produced more output than the configured
     /// budget allows (decompressed bytes or messages, summed over the tree).
@@ -588,8 +600,8 @@ pub enum SessionError {
         /// Message opcode.
         opcode: u32,
     },
-    /// `SessionAuthHeader` `(authType, authFlags)` is not one of the three modes of §6.2.1:
-    /// `(0x40000002, 0x04)`, `(0x00000001, 0x00)` or `(0x00000001, 0x02)`.
+    /// `SessionAuthHeader` `(authType, authFlags)` is not one of the modes of §6.2.1
+    /// ([`SUPPORTED_AUTH_MODES`]).
     #[error(
         "unsupported SessionAuthHeader mode authType {auth_type:#010x}, authFlags {auth_flags:#010x}"
     )]
@@ -622,8 +634,8 @@ pub enum SessionError {
         /// The count.
         count: usize,
     },
-    /// Bytes are left after the last field of a message (`0x00000179`: §9.4.2 lists the
-    /// fields only; refusing bytes after `resultCode` is an engineering choice, spec silent).
+    /// Bytes are left after the last field of a message whose reader refuses them (none of
+    /// the session layer's own readers does: §9.4.2 ignores bytes after a container).
     #[error("{remaining} trailing bytes after message {opcode:#010x}")]
     TrailingMessageBytes {
         /// Message opcode.
@@ -631,9 +643,14 @@ pub enum SessionError {
         /// Unparsed byte count.
         remaining: usize,
     },
-    /// A GLS ticket string is not valid Base64 (RFC 4648) or decodes to no bytes (§6.2.1).
-    #[error("GLS ticket is not valid Base64")]
+    /// A GLS ticket string is empty, longer than [`MAX_TICKET_STRING_LEN`] or not printable
+    /// ASCII; it is sent as text and never decoded (§6.2.1).
+    #[error("GLS ticket is not a printable ASCII string")]
     InvalidTicketEncoding,
+    /// Every Case B candidate port was in use ([`MAX_UNIQUE_PORT_ATTEMPTS`] attempts, §3.2,
+    /// `OPEN-SESSION-7`).
+    #[error("no free local UDP port among the computed candidates")]
+    LocalPortsExhausted,
     /// Operation is invalid in the current connection state (§6.1).
     #[error("invalid operation in connection state {state:?}")]
     InvalidState {
@@ -655,51 +672,119 @@ impl From<std::io::Error> for SessionError {
 // §3.1–§3.2 Local Port Selection & Transport
 // ---------------------------------------------------------------------------
 
-/// The value `ip_be` of §3.2 Case B: the four network-order address bytes read as a
-/// host (little-endian) `u32`, so `127.0.0.1` gives `0x0100007F` (§3.2 item 1).
+/// The modulus of the §3.2 Case B seed (`64,007`).
+pub const UNIQUE_PORT_MODULUS: u32 = 64_007;
+
+/// The step added before each Case B bind attempt (`256`, modulo `65,536`, §3.2).
+pub const UNIQUE_PORT_STEP: u16 = 256;
+
+/// The lowest Case B port: a candidate below it is raised to it (`1,024`, §3.2).
+pub const MIN_UNIQUE_PORT: u16 = 1024;
+
+/// Most Case B bind attempts before Tessera reports local port exhaustion (`256`): a
+/// Tessera resource bound, not an observed rule of the official client (§3.2,
+/// `OPEN-SESSION-7`, `P9-BIND`).
+pub const MAX_UNIQUE_PORT_ATTEMPTS: usize = 256;
+
+/// The unsigned value of §3.2 Case B: the address octets a, b, c, d read as
+/// a × 2²⁴ + b × 2¹⁶ + c × 2⁸ + d (the host-order value), so `192.0.2.10` gives
+/// `0xC000020A`.
 #[must_use]
 pub fn unique_port_ip_value(ip: Ipv4Addr) -> u32 {
-    u32::from_le_bytes(ip.octets())
+    u32::from(ip)
 }
 
-/// The §3.2 Case B candidate port for attempt index `k`:
-/// `candidate_port = (ip_be mod 0xFA07) + 256 * k`. Returns `None` when the candidate is
-/// privileged (`<= 0x03FF`; the spec moves on to the next `k`) or, for `k` near `11`, above
-/// `0xFFFF`. The spec gives no rule for a candidate above `0xFFFF`; Tessera skips it
-/// rather than truncate it (engineering choice, spec silent).
+/// The §3.2 Case B seed: [`unique_port_ip_value`] modulo [`UNIQUE_PORT_MODULUS`]
+/// (`9,712` for `192.0.2.10`).
 #[must_use]
-pub fn compute_unique_port(ip_be: u32, k: u32) -> Option<u16> {
-    let candidate = u64::from(ip_be % 0xFA07) + 256 * u64::from(k);
-    if candidate <= 0x03FF {
-        return None;
+pub fn unique_port_seed(ip: Ipv4Addr) -> u16 {
+    // The remainder is below 64,007, so it fits a `u16`.
+    u16::try_from(unique_port_ip_value(ip) % UNIQUE_PORT_MODULUS).unwrap_or(u16::MAX)
+}
+
+/// The Case B candidate after `previous` (the seed for the first attempt): `previous + 256`
+/// modulo `65,536`, raised to [`MIN_UNIQUE_PORT`] when below it (§3.2).
+#[must_use]
+pub fn next_unique_port(previous: u16) -> u16 {
+    previous.wrapping_add(UNIQUE_PORT_STEP).max(MIN_UNIQUE_PORT)
+}
+
+/// The Case B candidates for the first local address `ip`, in the order they are tried:
+/// at most [`MAX_UNIQUE_PORT_ATTEMPTS`] (§3.2; `9,968`, `10,224`, ... for `192.0.2.10`).
+#[must_use]
+pub fn unique_port_candidates(ip: Ipv4Addr) -> Vec<u16> {
+    let mut port = unique_port_seed(ip);
+    (0..MAX_UNIQUE_PORT_ATTEMPTS)
+        .map(|_| {
+            port = next_unique_port(port);
+            port
+        })
+        .collect()
+}
+
+/// How the local UDP port is chosen (§3.2 item 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindPorts {
+    /// Case A: the explicit port (`--outport` or `Net.UserSpecifiedPort`), tried once.
+    Explicit(u16),
+    /// Case B: the computed unique port, seeded from the first local IPv4 address; an
+    /// address-in-use failure moves to the next candidate, any other failure ends.
+    Unique {
+        /// The first local IPv4 address (non-zero).
+        seed_ip: Ipv4Addr,
+    },
+    /// Case C: port `0` (the system's choice), tried once.
+    Ephemeral,
+}
+
+impl BindPorts {
+    /// The case of §3.2 item 3 for the explicit port `explicit_port` (`0`: none),
+    /// `Net.ComputeUniquePort` `compute_unique` and the first local IPv4 address
+    /// `first_local` (`None` or `0.0.0.0`: none).
+    #[must_use]
+    pub fn select(explicit_port: u16, compute_unique: bool, first_local: Option<Ipv4Addr>) -> Self {
+        if explicit_port != 0 {
+            return Self::Explicit(explicit_port);
+        }
+        match first_local.filter(|ip| !ip.is_unspecified()) {
+            Some(seed_ip) if compute_unique => Self::Unique { seed_ip },
+            _ => Self::Ephemeral,
+        }
     }
-    u16::try_from(candidate).ok()
+
+    /// The ports tried, in order: one for Cases A and C, [`unique_port_candidates`] for
+    /// Case B.
+    #[must_use]
+    pub fn candidates(&self) -> Vec<u16> {
+        match *self {
+            Self::Explicit(port) => vec![port],
+            Self::Unique { seed_ip } => unique_port_candidates(seed_ip),
+            Self::Ephemeral => vec![0],
+        }
+    }
 }
 
-/// Returns the up to 12 candidate ports for local socket binding (§3.2 Cases A, B, C).
-#[must_use]
-pub fn candidate_bind_ports(
-    local_ip: Ipv4Addr,
-    explicit_base_port: u16,
-    compute_unique: bool,
-) -> Vec<u16> {
-    if explicit_base_port != 0 {
-        // Case A: explicit base port + k for k = 0..11
-        // (a base port near 0xFFFF gives fewer candidates instead of wrapping to 0:
-        // engineering choice, spec silent)
-        (0..12u16)
-            .filter_map(|k| explicit_base_port.checked_add(k))
-            .collect()
-    } else if compute_unique && !local_ip.is_unspecified() {
-        // Case B: the candidates for k = 0, 1, ... while k < 12; privileged (and, by an
-        // engineering choice, out-of-range) candidates use up their k and are skipped.
-        let ip_be = unique_port_ip_value(local_ip);
-        (0..12u32)
-            .filter_map(|k| compute_unique_port(ip_be, k))
-            .collect()
-    } else {
-        // Case C: wildcard ephemeral port
-        vec![0]
+/// Where and how the session's UDP socket binds (§3.2 items 2 and 3): the local address
+/// (`0.0.0.0` unless `Net.BindInterface` or the `localHost` segment of `-h` selects one)
+/// and the port case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BindPlan {
+    /// The local IPv4 address bound.
+    pub address: Ipv4Addr,
+    /// The port case.
+    pub ports: BindPorts,
+}
+
+impl BindPlan {
+    /// The plan of the secondary chat-server transport (§3.2 item 1): the defaults
+    /// (`BindInterface = ""`, `UserSpecifiedPort = 0`, `ComputeUniquePort = true`), so the
+    /// wildcard address and Case B when a first local address is known.
+    #[must_use]
+    pub fn chat_defaults(first_local: Option<Ipv4Addr>) -> Self {
+        Self {
+            address: Ipv4Addr::UNSPECIFIED,
+            ports: BindPorts::select(0, true, first_local),
+        }
     }
 }
 
@@ -1361,15 +1446,18 @@ pub struct DatagramHeader {
     pub pak_size: u16,
     /// Bitmask of optional headers and packet flags (validated against `0x0F7FFB00`).
     pub flags: u32,
-    /// Packet sequence number (`0` for initial handshake; `>= 2` for sequenced packets).
+    /// Packet sequence number: the current `sendSeqNum` on unsequenced packets (`1` on the
+    /// handshake packets, §5.1), `>= 2` on sequenced packets.
     pub seq_num: u32,
     /// 32-bit packet checksum (`headerChecksum + payloadChecksum`, with ISAAC XOR masking if `flags & 0x02000000`).
     pub checksum: u32,
-    /// Routing / referral iteration byte (`0x10`).
+    /// Routing / referral iteration byte (`0x10`; always `0` on client-to-server datagrams).
     pub iteration: u8,
-    /// Server routing table index (`0x11`).
+    /// Server routing table index (`0x11`; always `0` on client-to-server datagrams).
     pub table: u8,
-    /// 16-bit millisecond tick delta (`0x12..0x13`).
+    /// 16-bit millisecond timestamp (`0x12..0x13`): `0` on the handshake packets, the
+    /// network time in milliseconds modulo 65,536 with a timing header (§4.2,
+    /// [`network_time_ms`]).
     pub time: u16,
 }
 
@@ -1389,11 +1477,12 @@ impl DatagramHeader {
         buf
     }
 
-    /// Parses a 20-byte big-endian `DatagramHeader` and validates its `flags` mask (`0x0F7FFB00`, §4.2, §4.3).
+    /// Parses a received 20-byte big-endian `DatagramHeader` and validates its `flags`
+    /// against the receive mask [`RECEIVE_FORBIDDEN_FLAGS_MASK`] (§4.2, §4.3, §10.1 rule 3).
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError`] if `bytes.len() < 20`, `(flags & 0xF08004FF) != 0`, or `pak_size > 0xFF7B`.
+    /// Returns [`SessionError`] if `bytes.len() < 20`, `(flags & 0xF08004F9) != 0`, or `pak_size > 0xFF7B`.
     pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self, SessionError> {
         if bytes.len() < DATAGRAM_HEADER_BYTES {
             return Err(SessionError::DatagramTooShort { len: bytes.len() });
@@ -1407,7 +1496,7 @@ impl DatagramHeader {
         let table = bytes[17];
         let time = u16::from_be_bytes([bytes[18], bytes[19]]);
 
-        if (flags & INVALID_DATAGRAM_FLAGS_MASK) != 0 {
+        if (flags & RECEIVE_FORBIDDEN_FLAGS_MASK) != 0 {
             return Err(SessionError::InvalidHeaderFlags { flags });
         }
         if pak_size > MAX_PAK_SIZE {
@@ -1503,13 +1592,18 @@ pub fn compute_packet_checksum(
 }
 
 /// `payloadSum` by the send rule of §4.4.2 step 2: [`compute_datagram_checksum`] summed
-/// (modulo 2^32) over each attached optional header buffer and over each fragment (its
-/// header, alignment pad and attachment together with its payload slice).
+/// (modulo 2^32) over each attached optional header buffer in ascending flag-bit order and,
+/// for each fragment, over its even-length fragment header and over its `fragDataLen`-byte
+/// payload slice as separate buffers. A standalone control packet (one optional header,
+/// such as `SessionAuthHeader`) is one buffer, so its sum is the single-call sum.
 ///
-/// When a buffer other than the last has a length that is not a multiple of 4 (for example
-/// the 6-byte `FlowControlHeader`), or any buffer but the first is unaligned, this sum
-/// differs from the receive rule's whole-payload sum. The two rules of §4.4.2 are kept as
-/// written; how they reconcile is a question for the spec writers.
+/// A fragment's 28-byte attachment (`HasAttachment`) is counted with its header buffer;
+/// §4.4.2 names only the header and the payload slice (engineering choice; Tessera never
+/// sends an attachment).
+///
+/// When a buffer other than the last has a length that is not a multiple of 4 (the 6-byte
+/// `FlowControlHeader` before a fragment, or a fragment header of length `2 mod 4`), this sum
+/// differs from the receive rule's whole-payload sum; the sender uses this rule (§4.4.2).
 ///
 /// # Errors
 ///
@@ -1529,22 +1623,24 @@ pub fn send_payload_checksum(
         sum = sum.wrapping_add(compute_datagram_checksum(&buffer.buf));
     }
     for frag in fragments {
-        let mut buffer = Vec::new();
-        frag.encode(&mut buffer)?;
-        sum = sum.wrapping_add(compute_datagram_checksum(&buffer));
+        let mut header = Vec::new();
+        frag.header.encode(&mut header)?;
+        sum = sum
+            .wrapping_add(compute_datagram_checksum(&header))
+            .wrapping_add(compute_datagram_checksum(&frag.payload));
     }
     Ok(sum)
 }
 
 /// Which `payloadSum` rule of §4.4.2 step 2 the client applies to the datagrams it sends.
 ///
-/// §4.4.2 gives the sender rule (a sum per optional header buffer and per fragment) and the
-/// receiver rule (one sum over the whole `pakSize` payload); they differ for some packets
-/// (see [`send_payload_checksum`]) and how they reconcile is a question for the spec
-/// writers (`docs/m8-remediation.md` §15, S §4.4.2). [`Self::PerBuffer`] is the spec's
-/// sender rule and the default; [`Self::WholePayload`] is a diagnostic switch for live
-/// verification only (`TESSERA_OFFICIAL_SEND_CHECKSUM`, `docs/DEVELOPMENT.md`). The receive
-/// rule never changes with it.
+/// §4.4.2 gives the sender rule (a sum per optional header buffer, per fragment header and
+/// per fragment payload slice) and the receiver rule (one sum over the whole `pakSize`
+/// payload); they differ for some packets (see [`send_payload_checksum`]). A clean-room
+/// sender uses the sender rule, so [`Self::PerBuffer`] is the default (§4.4.2 step 2);
+/// [`Self::WholePayload`] is a diagnostic switch for live verification only
+/// (`TESSERA_OFFICIAL_SEND_CHECKSUM`, `docs/DEVELOPMENT.md`). The receive rule never changes
+/// with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SendChecksumRule {
     /// The §4.4.2 send rule: [`send_payload_checksum`].
@@ -2115,29 +2211,37 @@ impl IsaacCipher {
 // §4.3, §5.2–§5.5, §6.2–§6.7, §8.1–§8.2 Optional Headers
 // ---------------------------------------------------------------------------
 
-/// `SessionAuthHeader` (`0x00010000`) literal wire magic (`"180804\0"`, 7 bytes, §6.2).
-pub const LOGIN_NET_VERSION: [u8; 7] = *b"180804\0";
+/// The protocol stamp that opens every `SessionAuthHeader.netVersion` (`"180804"`, §6.2).
+pub const NET_VERSION_STAMP: &str = "180804";
 
-/// `authType` of the ticket-authenticated mode (`0x40000002`, §6.2.1 selection rule 1).
-pub const AUTH_TYPE_TICKET: u32 = 0x4000_0002;
-/// `authType` of the account-only mode and of the alternate ticket encoding (`0x00000001`,
-/// §6.2.1 selection rule 2).
-pub const AUTH_TYPE_ACCOUNT: u32 = 0x0000_0001;
+/// `authType` on the primary login/world connection (`0x00000001`, §6.2.1).
+pub const AUTH_TYPE_PRIMARY: u32 = 0x0000_0001;
+/// `authType` on the secondary chat-server connection (`0x40000002`, §6.2.1).
+pub const AUTH_TYPE_CHAT: u32 = 0x4000_0002;
 /// `authFlags` bit 1 (`0x02`, `HasSecondString`): `secondStr` is present (§6.2.1).
 pub const AUTH_FLAG_HAS_SECOND_STRING: u32 = 0x02;
 /// `authFlags` bit 2 (`0x04`, `HasExtraBlob`): `extraBlob` is present (§6.2.1).
 pub const AUTH_FLAG_HAS_EXTRA_BLOB: u32 = 0x04;
-/// The three `(authType, authFlags)` modes of §6.2.1 (`official-login.md` §4.2.1), the only
-/// ones Tessera emits or accepts: the ticket mode `(0x40000002, 0x04)` (`extraBlob`), the
-/// account-only mode `(0x00000001, 0x00)`, and the alternate ticket encoding
-/// `(0x00000001, 0x02)` (`secondStr`, accepted from a peer). Bit 0 is `0` on the wire and
-/// bits `3..11` are further conditional fields whose layout is not specified, so any other
-/// combination is refused (engineering choice, spec silent: §6.2.1 rejects only bits above
+/// The `(authType, authFlags)` modes of the §6.2.1 selection rule, the only ones Tessera
+/// emits or accepts:
+///
+/// 1. the primary connection with a ticket: `(0x00000001, 0x04)`, or `(0x00000001, 0x06)`
+///    with a password as well;
+/// 2. the chat connection with a ticket: `(0x40000002, 0x04)`;
+/// 3. account only: `(0x00000001, 0x00)` or `(0x40000002, 0x00)`.
+///
+/// Bit 0 is `0` on the wire and the other bits name no field Tessera can serialize, so any
+/// other combination is refused (engineering choice: §6.2.1 rejects only bits above
 /// `0x800`).
-pub const SUPPORTED_AUTH_MODES: [(u32, u32); 3] = [
-    (AUTH_TYPE_TICKET, AUTH_FLAG_HAS_EXTRA_BLOB),
-    (AUTH_TYPE_ACCOUNT, 0),
-    (AUTH_TYPE_ACCOUNT, AUTH_FLAG_HAS_SECOND_STRING),
+pub const SUPPORTED_AUTH_MODES: [(u32, u32); 5] = [
+    (AUTH_TYPE_PRIMARY, AUTH_FLAG_HAS_EXTRA_BLOB),
+    (
+        AUTH_TYPE_PRIMARY,
+        AUTH_FLAG_HAS_EXTRA_BLOB | AUTH_FLAG_HAS_SECOND_STRING,
+    ),
+    (AUTH_TYPE_CHAT, AUTH_FLAG_HAS_EXTRA_BLOB),
+    (AUTH_TYPE_PRIMARY, 0),
+    (AUTH_TYPE_CHAT, 0),
 ];
 
 /// Whether `(auth_type, auth_flags)` is one of [`SUPPORTED_AUTH_MODES`].
@@ -2146,10 +2250,84 @@ pub fn is_supported_auth_mode(auth_type: u32, auth_flags: u32) -> bool {
     SUPPORTED_AUTH_MODES.contains(&(auth_type, auth_flags))
 }
 
-/// Largest GLS ticket string accepted for Base64 decoding (`4,095` characters, the
-/// registry ticket buffer of `official-login.md` §4.1, applied to every ticket: engineering
-/// choice, spec silent).
+/// Longest GLS ticket string accepted (`4,095` characters, the registry ticket buffer of
+/// `official-login.md` §4.1, applied to every ticket: engineering choice, spec silent).
 pub const MAX_TICKET_STRING_LEN: usize = 4095;
+
+/// Longest `SessionAuthHeader.netVersion` accepted or built: `"180804_"`, `"netver:"`, a
+/// network version of at most `official-login.md`'s 64 characters, `"; didver:"` and the
+/// 36-character GUID (`123` bytes), rounded up. Engineering choice, spec silent.
+pub const MAX_SESSION_NET_VERSION_LEN: usize = 128;
+
+/// Which connection a `SessionAuthHeader` opens (§6.2, §6.2.1): it decides `netVersion` and
+/// `authType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthConnection {
+    /// The primary login/world connection: `netVersion` `"180804_"` + the version stamp,
+    /// `authType 0x00000001`.
+    Primary,
+    /// The secondary chat-server connection: `netVersion` `"180804"`,
+    /// `authType 0x40000002`.
+    Chat,
+}
+
+impl AuthConnection {
+    /// The `authType` of this connection (§6.2.1).
+    #[must_use]
+    pub const fn auth_type(self) -> u32 {
+        match self {
+            Self::Primary => AUTH_TYPE_PRIMARY,
+            Self::Chat => AUTH_TYPE_CHAT,
+        }
+    }
+
+    /// The `netVersion` text of this connection (§6.2): `"180804_"` followed by
+    /// `version_string` (`"netver:<netver_string>; didver:<didver_string>"`,
+    /// `official-login.md` §2.4.1) on the primary connection, `"180804"` on the chat
+    /// connection (where `version_string` is not used).
+    #[must_use]
+    pub fn net_version(self, version_string: &str) -> String {
+        match self {
+            Self::Primary => format!("{NET_VERSION_STAMP}_{version_string}"),
+            Self::Chat => NET_VERSION_STAMP.to_owned(),
+        }
+    }
+}
+
+/// Whether `text` is a `netVersion` Tessera sends or accepts (§6.2): exactly `"180804"`, or
+/// `"180804_"` followed by printable ASCII (`0x20..=0x7E`), at most
+/// [`MAX_SESSION_NET_VERSION_LEN`] bytes.
+#[must_use]
+pub fn is_valid_net_version(text: &str) -> bool {
+    if text.len() > MAX_SESSION_NET_VERSION_LEN {
+        return false;
+    }
+    match text.strip_prefix(NET_VERSION_STAMP) {
+        Some("") => true,
+        Some(rest) => rest.strip_prefix('_').is_some_and(|stamp| {
+            !stamp.is_empty() && stamp.bytes().all(|b| (0x20..=0x7E).contains(&b))
+        }),
+        None => false,
+    }
+}
+
+/// Checks a GLS ticket string before it is sent as text in `extraBlob` (§6.2.1; never
+/// Base64-decoded): `1` to [`MAX_TICKET_STRING_LEN`] printable ASCII characters
+/// (`0x21..=0x7E`, so no whitespace or NUL). Engineering choice: §6.2.1 calls it a raw ASCII
+/// Base64 string and gives no further rule.
+///
+/// # Errors
+///
+/// [`SessionError::InvalidTicketEncoding`] for any other string.
+pub fn check_ticket_text(ticket: &str) -> Result<(), SessionError> {
+    let ok = (1..=MAX_TICKET_STRING_LEN).contains(&ticket.len())
+        && ticket.bytes().all(|b| (0x21..=0x7E).contains(&b));
+    if ok {
+        Ok(())
+    } else {
+        Err(SessionError::InvalidTicketEncoding)
+    }
+}
 
 /// Writes an `AccountString`: 4-tier `VariableU32` UTF-16 code-unit count + UTF-16LE units
 /// (§6.2.1).
@@ -2198,11 +2376,6 @@ impl SecretBuf {
             secret,
         }
     }
-
-    /// Hands the bytes to the caller, who then owns the wipe.
-    fn into_inner(mut self) -> Vec<u8> {
-        std::mem::take(&mut self.buf)
-    }
 }
 
 impl Drop for SecretBuf {
@@ -2235,60 +2408,6 @@ fn decode_wstring(bytes: &[u8]) -> Result<(String, usize), SessionError> {
     Ok((s, total))
 }
 
-/// Decodes a GLS ticket string with the standard RFC 4648 Base64 alphabet (`A-Z`, `a-z`,
-/// `0-9`, `+`, `/`; `=` padding at the end only). The decoded byte count is the
-/// `extraBlob` length `blobLen` of `SessionAuthHeader` (§6.2.1, `official-login.md` §3.4).
-/// Unpadded input whose length is `2` or `3` modulo `4` is accepted; surrounding ASCII
-/// whitespace is trimmed.
-///
-/// # Errors
-///
-/// Returns [`SessionError::InvalidTicketEncoding`] for an empty, over-long
-/// ([`MAX_TICKET_STRING_LEN`]) or malformed string.
-pub fn decode_ticket_base64(ticket: &str) -> Result<Vec<u8>, SessionError> {
-    fn sextet(b: u8) -> Option<u32> {
-        match b {
-            b'A'..=b'Z' => Some(u32::from(b - b'A')),
-            b'a'..=b'z' => Some(u32::from(b - b'a') + 26),
-            b'0'..=b'9' => Some(u32::from(b - b'0') + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
-    }
-    let raw = ticket.trim().as_bytes();
-    if raw.is_empty() || raw.len() > MAX_TICKET_STRING_LEN {
-        return Err(SessionError::InvalidTicketEncoding);
-    }
-    let pad = raw.iter().rev().take_while(|&&b| b == b'=').count();
-    let data = raw
-        .get(..raw.len() - pad)
-        .ok_or(SessionError::InvalidTicketEncoding)?;
-    // Padding completes the last 4-character group: at most two `=`, and only then.
-    if pad > 2 || (pad > 0 && !raw.len().is_multiple_of(4)) || data.len() % 4 == 1 {
-        return Err(SessionError::InvalidTicketEncoding);
-    }
-    // The exact decoded size is reserved, so the buffer never moves; a failed decode wipes
-    // the bytes decoded so far (`official-login.md` §6.3).
-    let mut out = SecretBuf::with_capacity(data.len() / 4 * 3 + 2, true);
-    for group in data.chunks(4) {
-        let mut acc = 0u32;
-        for &b in group {
-            acc = (acc << 6) | sextet(b).ok_or(SessionError::InvalidTicketEncoding)?;
-        }
-        acc <<= 6 * (4 - group.len() as u32);
-        let mut bytes = acc.to_be_bytes();
-        let take = group.len().saturating_sub(1);
-        out.buf
-            .extend_from_slice(bytes.get(1..1 + take).unwrap_or_default());
-        crate::login::zeroize_bytes(&mut bytes);
-    }
-    if out.buf.is_empty() {
-        return Err(SessionError::InvalidTicketEncoding);
-    }
-    Ok(out.into_inner())
-}
-
 /// Credentials payload of a `SessionAuthHeader` `authBlock` (`authFlags` bit 0 clear:
 /// unencrypted, §6.2.1).
 #[derive(Clone, PartialEq, Eq)]
@@ -2296,15 +2415,17 @@ pub struct SessionAuthCredentials {
     /// `accountOrTicketStr` (`AccountString`): the account / subscription identifier
     /// (`--account`).
     pub account_or_ticket: String,
-    /// Optional `secondStr` (`AccountString`, present when `authFlags & 0x02 != 0`).
+    /// Optional `secondStr` (`AccountString`, present when `authFlags & 0x02 != 0`): the
+    /// password (`--password`).
     pub second_string: Option<String>,
-    /// Optional `extraBlob` (`u32` LE `blobLen` + `blobLen` bytes, present when
-    /// `authFlags & 0x04 != 0`): the Base64-decoded GLS ticket.
-    pub extra_blob: Option<Vec<u8>>,
+    /// Optional `extraBlob` (present when `authFlags & 0x04 != 0`): the GLS ticket as its
+    /// raw ASCII Base64 text, never decoded. On the wire it is `u32` LE `extraBlobLen`, then
+    /// a `VariableU32` byte length and the ticket's ASCII bytes (§6.2.1).
+    pub ticket: Option<String>,
 }
 
 impl std::fmt::Debug for SessionAuthCredentials {
-    // The account name and ticket bytes are credentials (`official-login.md` §6.3).
+    // The account name, password and ticket are credentials (`official-login.md` §6.3).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SessionAuthCredentials")
             .field("account_or_ticket", &"<REDACTED>")
@@ -2312,23 +2433,29 @@ impl std::fmt::Debug for SessionAuthCredentials {
                 "second_string",
                 &self.second_string.as_ref().map(|_| "<REDACTED>"),
             )
-            .field("extra_blob_len", &self.extra_blob.as_ref().map(Vec::len))
+            .field("ticket_len", &self.ticket.as_ref().map(String::len))
             .finish()
     }
 }
 
 impl Drop for SessionAuthCredentials {
-    // The account name and the ticket are wiped when the credentials go away
+    // The account name, the password and the ticket are wiped when the credentials go away
     // (`official-login.md` §6.3).
     fn drop(&mut self) {
         crate::login::zeroize_string(&mut self.account_or_ticket);
         if let Some(second) = self.second_string.as_mut() {
             crate::login::zeroize_string(second);
         }
-        if let Some(blob) = self.extra_blob.as_mut() {
-            crate::login::zeroize_bytes(blob);
+        if let Some(ticket) = self.ticket.as_mut() {
+            crate::login::zeroize_string(ticket);
         }
     }
+}
+
+/// The `extraBlobLen` of a ticket of `len` ASCII bytes: its `VariableU32` length prefix
+/// plus the bytes (§6.2.1; `146` for a 144-character ticket).
+fn extra_blob_len(len: usize) -> usize {
+    variable_u32_len(u32::try_from(len).unwrap_or(u32::MAX)).saturating_add(len)
 }
 
 impl SessionAuthCredentials {
@@ -2339,34 +2466,50 @@ impl SessionAuthCredentials {
         if let Some(second) = &self.second_string {
             len = len.saturating_add(wstring_encoded_len(second));
         }
-        if let Some(extra) = &self.extra_blob {
-            len = len.saturating_add(4).saturating_add(extra.len());
+        if let Some(ticket) = &self.ticket {
+            len = len
+                .saturating_add(4)
+                .saturating_add(extra_blob_len(ticket.len()));
         }
         len
     }
 
-    /// Serializes `credentialsPayload` in the §6.2.1 field order. The buffer is reserved
-    /// at its exact size, so no reallocation leaves a copy of the credentials behind
-    /// (`official-login.md` §6.3); the caller wipes it.
-    #[must_use]
-    pub fn encode(&self) -> Vec<u8> {
+    /// Serializes `credentialsPayload` in the §6.2.1 field order, with no padding anywhere:
+    /// `accountOrTicketStr`, `secondStr` when present, and `extraBlob` (`u32` LE
+    /// `extraBlobLen`, the ticket's `VariableU32` byte length, its ASCII bytes) when
+    /// present. The buffer is reserved at its exact size, so no reallocation leaves a copy
+    /// of the credentials behind (`official-login.md` §6.3); the caller wipes it.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::InvalidTicketEncoding`] for a ticket that fails
+    /// [`check_ticket_text`].
+    pub fn encode(&self) -> Result<Vec<u8>, SessionError> {
+        if let Some(ticket) = &self.ticket {
+            check_ticket_text(ticket)?;
+        }
         let mut buf = Vec::with_capacity(self.encoded_len());
         encode_wstring(&self.account_or_ticket, &mut buf);
         if let Some(second) = &self.second_string {
             encode_wstring(second, &mut buf);
         }
-        if let Some(extra) = &self.extra_blob {
-            buf.extend_from_slice(&(extra.len() as u32).to_le_bytes());
-            buf.extend_from_slice(extra);
+        if let Some(ticket) = &self.ticket {
+            let blob_len = u32::try_from(extra_blob_len(ticket.len()))
+                .map_err(|_| SessionError::InvalidTicketEncoding)?;
+            buf.extend_from_slice(&blob_len.to_le_bytes());
+            encode_variable_u32(ticket.len() as u32, &mut buf);
+            buf.extend_from_slice(ticket.as_bytes());
         }
-        buf
+        Ok(buf)
     }
 
-    /// Decodes `credentialsPayload` for the given `auth_flags` (§6.2.1).
+    /// Decodes `credentialsPayload` for the given `auth_flags` (§6.2.1). `extraBlob` must
+    /// hold exactly one `VariableU32`-prefixed ASCII string (the ticket text).
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError`] if any string or byte array is truncated.
+    /// Returns [`SessionError`] if any string is truncated or `extraBlob` is not one
+    /// printable ASCII ticket string filling `extraBlobLen` exactly.
     pub fn decode(bytes: &[u8], auth_flags: u32) -> Result<(Self, usize), SessionError> {
         let mut cursor = 0usize;
         let (account_or_ticket, n1) = decode_wstring(bytes)?;
@@ -2379,19 +2522,26 @@ impl SessionAuthCredentials {
         } else {
             None
         };
-        let extra_blob = if (auth_flags & AUTH_FLAG_HAS_EXTRA_BLOB) != 0 {
+        let ticket = if (auth_flags & AUTH_FLAG_HAS_EXTRA_BLOB) != 0 {
             let len_bytes: [u8; 4] = bytes
                 .get(cursor..cursor.saturating_add(4))
                 .and_then(|b| b.try_into().ok())
                 .ok_or(SessionError::InvalidAuthBlock)?;
-            let len = u32::from_le_bytes(len_bytes) as usize;
+            let blob_len = u32::from_le_bytes(len_bytes) as usize;
             cursor += 4;
             let blob = bytes
-                .get(cursor..cursor.saturating_add(len))
-                .ok_or(SessionError::InvalidAuthBlock)?
-                .to_vec();
-            cursor += len;
-            Some(blob)
+                .get(cursor..cursor.saturating_add(blob_len))
+                .ok_or(SessionError::InvalidAuthBlock)?;
+            let (text_len, prefix) =
+                decode_variable_u32(blob).map_err(|_| SessionError::InvalidAuthBlock)?;
+            let text = blob
+                .get(prefix..)
+                .filter(|t| t.len() == text_len as usize)
+                .ok_or(SessionError::InvalidAuthBlock)?;
+            let text = std::str::from_utf8(text).map_err(|_| SessionError::InvalidAuthBlock)?;
+            check_ticket_text(text)?;
+            cursor += blob_len;
+            Some(text.to_owned())
         } else {
             None
         };
@@ -2399,7 +2549,7 @@ impl SessionAuthCredentials {
             Self {
                 account_or_ticket,
                 second_string,
-                extra_blob,
+                ticket,
             },
             cursor,
         ))
@@ -2407,10 +2557,17 @@ impl SessionAuthCredentials {
 }
 
 /// `SessionAuthHeader` (`0x00010000`) optional header: the first client packet of a login,
-/// world or chat connection (§6.2, §6.2.1).
+/// world or chat connection (§6.2, §6.2.1). Its wire form is unaligned, with no padding
+/// anywhere: `netVersion` (`VariableU32` byte length + ASCII, no NUL), `u32` LE
+/// `authBlockLen` (the exact length of `authBlock`), and `authBlock` (`authType`,
+/// `authFlags`, `clientTimestamp`, `credentialsPayload`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionAuthHeader {
-    /// `authType` (`u32` LE at `authBlock + 0x00`): [`AUTH_TYPE_TICKET`] or [`AUTH_TYPE_ACCOUNT`].
+    /// `netVersion`: `"180804_netver:<netver_string>; didver:<didver_string>"` on the
+    /// primary connection, `"180804"` on the chat connection ([`AuthConnection::net_version`]).
+    pub net_version: String,
+    /// `authType` (`u32` LE at `authBlock + 0x00`): [`AUTH_TYPE_PRIMARY`] or
+    /// [`AUTH_TYPE_CHAT`].
     pub auth_type: u32,
     /// `authFlags` (`u32` LE at `authBlock + 0x04`). Together with `auth_type` it must be
     /// one of [`SUPPORTED_AUTH_MODES`], and `credentials` must carry exactly the fields it
@@ -2424,66 +2581,102 @@ pub struct SessionAuthHeader {
 }
 
 impl SessionAuthHeader {
-    /// Builds the header by the deterministic `authType` / `authFlags` selection rule
-    /// (§6.2.1; `official-login.md` §4.2.1):
+    /// Builds the header by the deterministic selection rule (§6.2.1;
+    /// `official-login.md` §4.2.1) for `connection`:
     ///
-    /// 1. With a GLS ticket: `authType = 0x40000002`, `authFlags = 0x04` (`HasExtraBlob`),
-    ///    `accountOrTicketStr` = `account`, and `extraBlob` = the Base64-decoded ticket
-    ///    (its `blobLen` is the decoded byte count).
-    /// 2. Without a ticket: `authType = 0x00000001`, `authFlags = 0`, `accountOrTicketStr` only.
+    /// - `netVersion` is [`AuthConnection::net_version`] of `version_string` (the
+    ///   `"netver:<netver_string>; didver:<didver_string>"` of `official-login.md` §2.4.1;
+    ///   not used on the chat connection);
+    /// - `authType` is [`AuthConnection::auth_type`];
+    /// - with a ticket, `authFlags` has `HasExtraBlob` (`0x04`) and `extraBlob` carries the
+    ///   ticket text undecoded; with a password as well, `HasSecondString` (`0x02`) and
+    ///   `secondStr`; with neither, `authFlags` is `0` (account only).
     ///
-    /// The same rule applies on the login/world connection and on the chat connection.
+    /// An empty ticket or password counts as none.
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError::InvalidTicketEncoding`] if `ticket_base64` is not valid Base64.
-    pub fn for_login(
+    /// [`SessionError::InvalidTicketEncoding`] for a ticket that fails
+    /// [`check_ticket_text`], [`SessionError::InvalidSessionAuthVersion`] for a
+    /// `netVersion` that fails [`is_valid_net_version`], and
+    /// [`SessionError::UnsupportedAuthMode`] for a combination outside
+    /// [`SUPPORTED_AUTH_MODES`] (a password without a ticket, or on the chat connection).
+    pub fn for_connection(
+        connection: AuthConnection,
+        version_string: &str,
         account: &str,
-        ticket_base64: Option<&str>,
+        ticket: Option<&str>,
+        password: Option<&str>,
         client_timestamp: u32,
     ) -> Result<Self, SessionError> {
-        Ok(match ticket_base64 {
-            Some(ticket) => Self {
-                auth_type: AUTH_TYPE_TICKET,
-                auth_flags: AUTH_FLAG_HAS_EXTRA_BLOB,
-                client_timestamp,
-                credentials: SessionAuthCredentials {
-                    account_or_ticket: account.to_owned(),
-                    second_string: None,
-                    extra_blob: Some(decode_ticket_base64(ticket)?),
-                },
-            },
-            None => Self {
-                auth_type: AUTH_TYPE_ACCOUNT,
-                auth_flags: 0,
-                client_timestamp,
-                credentials: SessionAuthCredentials {
-                    account_or_ticket: account.to_owned(),
-                    second_string: None,
-                    extra_blob: None,
-                },
+        let net_version = connection.net_version(version_string);
+        if !is_valid_net_version(&net_version) {
+            return Err(SessionError::InvalidSessionAuthVersion);
+        }
+        let ticket = ticket.filter(|t| !t.is_empty());
+        let password = password.filter(|p| !p.is_empty());
+        if let Some(t) = ticket {
+            check_ticket_text(t)?;
+        }
+        let mut auth_flags = 0;
+        if ticket.is_some() {
+            auth_flags |= AUTH_FLAG_HAS_EXTRA_BLOB;
+        }
+        if password.is_some() {
+            auth_flags |= AUTH_FLAG_HAS_SECOND_STRING;
+        }
+        let auth_type = connection.auth_type();
+        if !is_supported_auth_mode(auth_type, auth_flags) {
+            return Err(SessionError::UnsupportedAuthMode {
+                auth_type,
+                auth_flags,
+            });
+        }
+        Ok(Self {
+            net_version,
+            auth_type,
+            auth_flags,
+            client_timestamp,
+            credentials: SessionAuthCredentials {
+                account_or_ticket: account.to_owned(),
+                second_string: password.map(str::to_owned),
+                ticket: ticket.map(str::to_owned),
             },
         })
     }
 
-    /// The byte length of [`Self::encode`]'s output: the `7`-byte magic, the `4`-byte
-    /// `authBlockPaddedLen` and the `authBlock` padded to a multiple of `4` (§6.2).
-    #[must_use]
-    pub fn encoded_len(&self) -> usize {
-        let block = self.credentials.encoded_len().saturating_add(12);
-        11usize.saturating_add(block.saturating_add(3) & !3)
+    /// The byte length of `authBlock`: the 12-byte prefix and the credentials, unpadded.
+    fn auth_block_len(&self) -> usize {
+        self.credentials.encoded_len().saturating_add(12)
     }
 
-    /// Serializes this header into `out` (§6.2): `"180804\0"` (`7` B), `authBlockPaddedLen`
-    /// (`u32` LE), and `authBlock` zero-padded to a multiple of `4` bytes. `auth_type` and
-    /// `auth_flags` are written as they are; they are never replaced.
+    /// The byte length of [`Self::encode`]'s output: `netVersion` with its `VariableU32`
+    /// prefix, the `4`-byte `authBlockLen` and the unpadded `authBlock` (§6.2).
+    #[must_use]
+    pub fn encoded_len(&self) -> usize {
+        let version = self.net_version.len();
+        variable_u32_len(u32::try_from(version).unwrap_or(u32::MAX))
+            .saturating_add(version)
+            .saturating_add(4)
+            .saturating_add(self.auth_block_len())
+    }
+
+    /// Serializes this header into `out` (§6.2): `netVersion` (`VariableU32` byte length +
+    /// ASCII, no NUL), `authBlockLen` (`u32` LE, the exact length) and `authBlock`, with no
+    /// padding anywhere. `auth_type` and `auth_flags` are written as they are; they are
+    /// never replaced.
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError::UnsupportedAuthMode`] if `(auth_type, auth_flags)` is not one
-    /// of [`SUPPORTED_AUTH_MODES`], or [`SessionError::AuthCredentialsMismatch`] if the
-    /// credentials do not carry exactly the optional fields `auth_flags` names.
+    /// Returns [`SessionError::InvalidSessionAuthVersion`] for a `net_version` that fails
+    /// [`is_valid_net_version`], [`SessionError::UnsupportedAuthMode`] if
+    /// `(auth_type, auth_flags)` is not one of [`SUPPORTED_AUTH_MODES`],
+    /// [`SessionError::AuthCredentialsMismatch`] if the credentials do not carry exactly
+    /// the optional fields `auth_flags` names, or [`SessionError::InvalidTicketEncoding`].
     pub fn encode(&self, out: &mut Vec<u8>) -> Result<usize, SessionError> {
+        if !is_valid_net_version(&self.net_version) {
+            return Err(SessionError::InvalidSessionAuthVersion);
+        }
         if !is_supported_auth_mode(self.auth_type, self.auth_flags) {
             return Err(SessionError::UnsupportedAuthMode {
                 auth_type: self.auth_type,
@@ -2493,66 +2686,73 @@ impl SessionAuthHeader {
         let wants_second = (self.auth_flags & AUTH_FLAG_HAS_SECOND_STRING) != 0;
         let wants_extra = (self.auth_flags & AUTH_FLAG_HAS_EXTRA_BLOB) != 0;
         if wants_second != self.credentials.second_string.is_some()
-            || wants_extra != self.credentials.extra_blob.is_some()
+            || wants_extra != self.credentials.ticket.is_some()
         {
             return Err(SessionError::AuthCredentialsMismatch {
                 auth_flags: self.auth_flags,
             });
         }
         let start = out.len();
-        // `out` is reserved first, so writing the ticket into it never moves it; the two
-        // temporary buffers are reserved at their exact sizes (`official-login.md` §6.3).
+        // `out` is reserved first, so writing the ticket into it never moves it; the
+        // temporary buffer is reserved at its exact size (`official-login.md` §6.3).
         out.reserve(self.encoded_len());
-        let mut credentials = self.credentials.encode();
-        let mut auth_block = Vec::with_capacity((12 + credentials.len() + 3) & !3);
-        auth_block.extend_from_slice(&self.auth_type.to_le_bytes());
-        auth_block.extend_from_slice(&self.auth_flags.to_le_bytes());
-        auth_block.extend_from_slice(&self.client_timestamp.to_le_bytes());
-        auth_block.extend_from_slice(&credentials);
-        let padded_len = (auth_block.len() + 3) & !3;
-        auth_block.resize(padded_len, 0x00);
-
-        out.extend_from_slice(&LOGIN_NET_VERSION);
-        out.extend_from_slice(&(padded_len as u32).to_le_bytes());
-        out.extend_from_slice(&auth_block);
-        // The temporary copies hold the ticket: wipe them (`official-login.md` §6.3).
+        let mut credentials = self.credentials.encode()?;
+        let block_len = u32::try_from(credentials.len().saturating_add(12))
+            .map_err(|_| SessionError::InvalidAuthBlock)?;
+        encode_variable_u32(self.net_version.len() as u32, out);
+        out.extend_from_slice(self.net_version.as_bytes());
+        out.extend_from_slice(&block_len.to_le_bytes());
+        out.extend_from_slice(&self.auth_type.to_le_bytes());
+        out.extend_from_slice(&self.auth_flags.to_le_bytes());
+        out.extend_from_slice(&self.client_timestamp.to_le_bytes());
+        out.extend_from_slice(&credentials);
+        // The temporary copy holds the ticket: wipe it (`official-login.md` §6.3).
         crate::login::zeroize_bytes(&mut credentials);
-        crate::login::zeroize_bytes(&mut auth_block);
         Ok(out.len() - start)
     }
 
     /// Decodes a `SessionAuthHeader` from `bytes` (§6.2, §6.2.1), returning
-    /// `(header, total_bytes_consumed)`. Both ticket encodings are accepted:
-    /// `0x40000002` with `extraBlob`, and the alternate `0x00000001` with `secondStr`.
+    /// `(header, total_bytes_consumed)`.
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError`] if the magic is not `"180804\0"`, `authBlock` is malformed,
-    /// or `(authType, authFlags)` is not one of [`SUPPORTED_AUTH_MODES`].
+    /// Returns [`SessionError`] if `netVersion` fails [`is_valid_net_version`], the header
+    /// overruns `bytes`, `authBlockLen` does not match the block's content exactly, or
+    /// `(authType, authFlags)` is not one of [`SUPPORTED_AUTH_MODES`].
     pub fn decode(bytes: &[u8]) -> Result<(Self, usize), SessionError> {
-        let (Some(magic), Some(len_bytes)) = (bytes.get(0..7), bytes.get(7..11)) else {
-            return Err(SessionError::OptionalHeaderOverrun {
-                flag: FLAG_SESSION_AUTH,
-            });
+        let overrun = SessionError::OptionalHeaderOverrun {
+            flag: FLAG_SESSION_AUTH,
         };
-        if magic != LOGIN_NET_VERSION {
+        let (version_len, prefix) = decode_variable_u32(bytes).map_err(|_| overrun.clone())?;
+        let version_len = version_len as usize;
+        if version_len > MAX_SESSION_NET_VERSION_LEN {
             return Err(SessionError::InvalidSessionAuthVersion);
         }
-        let padded_len =
-            u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]) as usize;
-        if !padded_len.is_multiple_of(4) || padded_len < 12 {
+        let version_end = prefix.saturating_add(version_len);
+        let version = bytes.get(prefix..version_end).ok_or(overrun.clone())?;
+        let net_version = std::str::from_utf8(version)
+            .ok()
+            .filter(|v| is_valid_net_version(v))
+            .ok_or(SessionError::InvalidSessionAuthVersion)?
+            .to_owned();
+        let len_bytes: [u8; 4] = bytes
+            .get(version_end..version_end.saturating_add(4))
+            .and_then(|b| b.try_into().ok())
+            .ok_or(overrun.clone())?;
+        let block_len = u32::from_le_bytes(len_bytes) as usize;
+        if block_len < 12 {
             return Err(SessionError::InvalidAuthBlock);
         }
-        let total_len = 11usize
-            .checked_add(padded_len)
+        let block_start = version_end + 4;
+        let total_len = block_start
+            .checked_add(block_len)
             .ok_or(SessionError::InvalidAuthBlock)?;
-        let Some(block) = bytes.get(11..total_len) else {
-            return Err(SessionError::OptionalHeaderOverrun {
-                flag: FLAG_SESSION_AUTH,
-            });
-        };
+        let block = bytes.get(block_start..total_len).ok_or(overrun)?;
         let word = |at: usize| {
-            u32::from_le_bytes([block[at], block[at + 1], block[at + 2], block[at + 3]])
+            block
+                .get(at..at + 4)
+                .and_then(|b| <[u8; 4]>::try_from(b).ok())
+                .map_or(0, u32::from_le_bytes)
         };
         let auth_type = word(0);
         let auth_flags = word(4);
@@ -2568,13 +2768,15 @@ impl SessionAuthHeader {
                 auth_flags,
             });
         }
-        let (credentials, used) = SessionAuthCredentials::decode(&block[12..], auth_flags)?;
-        // Everything after the credentials is the zero padding to `authBlockPaddedLen`.
-        if block[12 + used..].iter().any(|&b| b != 0) {
+        let rest = block.get(12..).unwrap_or_default();
+        let (credentials, used) = SessionAuthCredentials::decode(rest, auth_flags)?;
+        // `authBlockLen` is the exact length: no padding or other bytes follow (§6.2).
+        if used != rest.len() {
             return Err(SessionError::InvalidAuthBlock);
         }
         Ok((
             Self {
+                net_version,
                 auth_type,
                 auth_flags,
                 client_timestamp,
@@ -2697,27 +2899,47 @@ impl ConnectChallengeHeader {
     }
 }
 
+/// `maxRecvRate` of the secondary chat-server connection (`0x00040000` = `262,144`
+/// bytes/s, §3.2 item 1, §6.4).
+pub const CHAT_MAX_RECV_RATE: u32 = 0x0004_0000;
+
+/// The primary connection's `maxRecvRate` for `Net.ConnectionSpeed` `kbps` (§6.4): `0` for
+/// the default `0.00` (and for a value that is not a positive finite number), otherwise
+/// `floor(kbps × 102.4)`, saturated to `u32`.
+#[must_use]
+pub fn max_recv_rate_for_speed(kbps: f64) -> u32 {
+    if !kbps.is_finite() || kbps <= 0.0 {
+        return 0;
+    }
+    let rate = (kbps * 102.4).floor();
+    if rate >= f64::from(u32::MAX) {
+        u32::MAX
+    } else {
+        rate as u32
+    }
+}
+
 /// `ConnectAcceptHeader` (`0x00080000`, 28 bytes) optional header (§6.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ConnectAcceptHeader {
     /// `checkValue` (`u64` LE at `+0x00`): [`ConnectChallengeHeader::check_value`] of the
     /// challenge being answered (§6.4).
     pub check_value: u64,
-    /// Client's 16-bit local connection ID (`u16` LE at `+0x08`).
-    pub local_rec_id: u16,
-    /// Echo of `clientConnIdx` from `ConnectChallengeHeader` (`u16` LE at `+0x0A`).
-    pub client_conn_idx: u16,
-    /// Echo of the 16-byte `codecUuid` selected from `ConnectChallengeHeader` (`+0x0C..+0x1C`).
+    /// Echo of the 16-byte `codecUuid` selected from `ConnectChallengeHeader`
+    /// (`+0x08..+0x17`; all zeros when uncompressed).
     pub codec_uuid: [u8; 16],
+    /// `maxRecvRate` in bytes/s (`u32` LE at `+0x18`): `0` or the `Net.ConnectionSpeed`
+    /// value on the primary connection ([`max_recv_rate_for_speed`]),
+    /// [`CHAT_MAX_RECV_RATE`] on the chat connection.
+    pub max_recv_rate: u32,
 }
 
 impl ConnectAcceptHeader {
     /// Serializes this 28-byte `ConnectAcceptHeader` into `out` (§6.4).
     pub fn encode(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.check_value.to_le_bytes());
-        out.extend_from_slice(&self.local_rec_id.to_le_bytes());
-        out.extend_from_slice(&self.client_conn_idx.to_le_bytes());
         out.extend_from_slice(&self.codec_uuid);
+        out.extend_from_slice(&self.max_recv_rate.to_le_bytes());
     }
 
     /// Decodes a 28-byte `ConnectAcceptHeader` from `bytes` (§6.4).
@@ -2726,23 +2948,25 @@ impl ConnectAcceptHeader {
     ///
     /// Returns [`SessionError::OptionalHeaderOverrun`] if `bytes.len() < 28`.
     pub fn decode(bytes: &[u8]) -> Result<Self, SessionError> {
-        if bytes.len() < 28 {
-            return Err(SessionError::OptionalHeaderOverrun {
-                flag: FLAG_CONNECT_ACCEPT,
-            });
-        }
-        let check_value = u64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ]);
-        let local_rec_id = u16::from_le_bytes([bytes[8], bytes[9]]);
-        let client_conn_idx = u16::from_le_bytes([bytes[10], bytes[11]]);
-        let mut codec_uuid = [0u8; 16];
-        codec_uuid.copy_from_slice(&bytes[12..28]);
+        let overrun = || SessionError::OptionalHeaderOverrun {
+            flag: FLAG_CONNECT_ACCEPT,
+        };
+        let check: [u8; 8] = bytes
+            .get(0..8)
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(overrun)?;
+        let codec_uuid: [u8; 16] = bytes
+            .get(8..24)
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(overrun)?;
+        let rate: [u8; 4] = bytes
+            .get(24..28)
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(overrun)?;
         Ok(Self {
-            check_value,
-            local_rec_id,
-            client_conn_idx,
+            check_value: u64::from_le_bytes(check),
             codec_uuid,
+            max_recv_rate: u32::from_le_bytes(rate),
         })
     }
 }
@@ -3131,7 +3355,8 @@ impl OptionalHeaders {
 
     /// Decodes optional headers from `payload` in strict ascending bit order (§4.3, §10.1 rules 3, 7).
     ///
-    /// - Rejects any wire flags outside `0x0F7FFB00` (`(flags & 0xF08004FF) != 0`, §10.1 rule 3).
+    /// - Rejects any wire flag in the receive mask (`(flags & 0xF08004F9) != 0`, §4.3,
+    ///   §10.1 rule 3); the low-byte bits `0x02` and `0x04` are ignored.
     /// - On the client receive path (`from_server == true`) rejects `0x00400000`
     ///   (`ClientControlHeader`, §10.1 rule 7).
     /// - Bits 25 (`MaskedChecksumFlag`) and 26 (`HasFragmentedBlobsFlag`) carry no optional
@@ -3146,7 +3371,7 @@ impl OptionalHeaders {
         payload: &[u8],
         from_server: bool,
     ) -> Result<(Self, usize), SessionError> {
-        if (flags & INVALID_DATAGRAM_FLAGS_MASK) != 0 {
+        if (flags & RECEIVE_FORBIDDEN_FLAGS_MASK) != 0 {
             return Err(SessionError::InvalidHeaderFlags { flags });
         }
         if from_server && (flags & SERVER_FORBIDDEN_OPT_FLAGS_MASK) != 0 {
@@ -3429,10 +3654,30 @@ pub struct FragmentAttachment {
     pub word32: u32,
 }
 
+/// The highest delivery queue a sender uses (`4`, §5.6.2).
+pub const MAX_SEND_QUEUE_ID: u8 = 4;
+
+/// The highest delivery queue a receiver accepts (`6`: slots `5` and `6` share the
+/// `orderNum` + `blobId` framing of queues `2` and `4`, §5.6.2, §5.6.3).
+pub const MAX_RECEIVE_QUEUE_ID: u8 = 6;
+
+/// Whether a fragment of queue `queue_id` carries `orderNum` (field 3b, §5.6.3): queues
+/// `2..=6`.
+const fn has_order_num(queue_id: u8) -> bool {
+    matches!(queue_id, 2..=6)
+}
+
+/// Whether a fragment of queue `queue_id` carries `blobId` (field 4, §5.6.3): queues `2`,
+/// `4`, `5` and `6` always, queues `1` and `3` when the blob is fragmented.
+const fn has_blob_id(queue_id: u8, fragmented: bool) -> bool {
+    matches!(queue_id, 2 | 4 | 5 | 6) || (matches!(queue_id, 1 | 3) && fragmented)
+}
+
 /// Compact variable-length blob fragment header (fields 1–10 in §5.6.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobFragmentHeader {
-    /// Delivery queue ID (`1..=4`, bits `0..6` of `queueAndOpt`, §5.6.2).
+    /// Delivery queue ID (bits `0..6` of `queueAndOpt`, §5.6.2): `1..=4` on send,
+    /// `1..=6` on receive.
     pub queue_id: u8,
     /// Optional 16-bit extension word (`Some` when bit 7 `0x80` of `queueAndOpt` is set, field 6).
     pub ext_word: Option<u16>,
@@ -3440,9 +3685,10 @@ pub struct BlobFragmentHeader {
     pub blob_flags: u8,
     /// Sequence group ID (present when `queue_id == 3`, field 3a; defaults to `0`).
     pub seq_group: u16,
-    /// Per-queue ordering number (present when `queue_id` in `2..=4`, field 3b; defaults to `0xFFFF`).
+    /// Per-queue ordering number (present when `queue_id` in `2..=6`, field 3b; defaults to `0xFFFF`).
     pub order_num: u16,
-    /// 16-bit blob identifier (present when `queue_id` in `{2, 4}` or (`queue_id == 1` and `IsFragmented`), field 4).
+    /// 16-bit blob identifier (present when `queue_id` in `{2, 4, 5, 6}` or (`queue_id` in
+    /// `{1, 3}` and `IsFragmented`), field 4).
     pub blob_id: u16,
     /// Zero-based fragment index (`0..num_frags - 1`, field 5a).
     pub frag_index: u32,
@@ -3464,10 +3710,10 @@ impl BlobFragmentHeader {
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError`] if `queue_id` is outside `1..=4`, `num_frags == 0`,
-    /// `num_frags <= frag_index`, or `frag_data_len >= 0x01D1`.
+    /// Returns [`SessionError`] if `queue_id` is outside `1..=4` (the sender's queues,
+    /// §5.6.2), `num_frags == 0`, `num_frags <= frag_index`, or `frag_data_len >= 0x01D1`.
     pub fn encode(&self, out: &mut Vec<u8>) -> Result<usize, SessionError> {
-        if !(1..=4).contains(&self.queue_id) {
+        if !(1..=MAX_SEND_QUEUE_ID).contains(&self.queue_id) {
             return Err(SessionError::InvalidQueueId {
                 queue_id: self.queue_id,
             });
@@ -3510,14 +3756,11 @@ impl BlobFragmentHeader {
             encode_variable_u32(u32::from(self.seq_group), out);
         }
         // Field 3b: orderNum if queueId in {2, 3, 4}
-        if (2..=4).contains(&self.queue_id) {
+        if has_order_num(self.queue_id) {
             out.extend_from_slice(&self.order_num.to_le_bytes());
         }
-        // Field 4: blobId if queueId in {2, 4} or (queueId == 1 and IsFragmented)
-        if self.queue_id == 2
-            || self.queue_id == 4
-            || (self.queue_id == 1 && (flags & BLOB_FLAG_IS_FRAGMENTED) != 0)
-        {
+        // Field 4: blobId if queueId in {2, 4} or (queueId in {1, 3} and IsFragmented)
+        if has_blob_id(self.queue_id, (flags & BLOB_FLAG_IS_FRAGMENTED) != 0) {
             out.extend_from_slice(&self.blob_id.to_le_bytes());
         }
         // Field 5a & 5b: fragIndex and numFrags if IsFragmented
@@ -3561,8 +3804,9 @@ impl BlobFragmentHeader {
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError`] if `bytes` is truncated, `queue_id` is outside `1..=4`,
-    /// `num_frags == 0`, `num_frags <= frag_index`, `frag_data_len >= 0x01D1`, or `alignPad != 0x00`.
+    /// Returns [`SessionError`] if `bytes` is truncated, `queue_id` is outside `1..=6`
+    /// (§5.6.2: a receiver accepts queues `5` and `6`), `num_frags == 0`,
+    /// `num_frags <= frag_index`, `frag_data_len >= 0x01D1`, or `alignPad != 0x00`.
     pub fn decode(bytes: &[u8]) -> Result<(Self, usize), SessionError> {
         if bytes.len() < 2 {
             return Err(SessionError::FragmentPayloadOverrun);
@@ -3570,7 +3814,7 @@ impl BlobFragmentHeader {
         let queue_and_opt = bytes[0];
         let blob_flags = bytes[1];
         let queue_id = queue_and_opt & 0x7F;
-        if !(1..=4).contains(&queue_id) {
+        if !(1..=MAX_RECEIVE_QUEUE_ID).contains(&queue_id) {
             return Err(SessionError::InvalidQueueId { queue_id });
         }
 
@@ -3586,7 +3830,7 @@ impl BlobFragmentHeader {
         };
 
         // Field 3b: orderNum
-        let order_num = if (2..=4).contains(&queue_id) {
+        let order_num = if has_order_num(queue_id) {
             if bytes.len() < cursor + 2 {
                 return Err(SessionError::FragmentPayloadOverrun);
             }
@@ -3598,10 +3842,7 @@ impl BlobFragmentHeader {
         };
 
         // Field 4: blobId
-        let blob_id = if queue_id == 2
-            || queue_id == 4
-            || (queue_id == 1 && (blob_flags & BLOB_FLAG_IS_FRAGMENTED) != 0)
-        {
+        let blob_id = if has_blob_id(queue_id, (blob_flags & BLOB_FLAG_IS_FRAGMENTED) != 0) {
             if bytes.len() < cursor + 2 {
                 return Err(SessionError::FragmentPayloadOverrun);
             }
@@ -3879,7 +4120,7 @@ pub fn split_blob(
 /// A completed, reassembled `FragmentedBlob` (§5.6.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReassembledBlob {
-    /// Delivery queue ID (`1..=4`).
+    /// Delivery queue ID (`1..=6`, §5.6.2).
     pub queue_id: u8,
     /// Per-queue ordering number (`0xFFFF` for `queueId == 1`).
     pub order_num: u16,
@@ -4194,14 +4435,18 @@ pub struct DecodedPacket {
     pub raw_payload: Vec<u8>,
 }
 
-/// Encodes a packet (`header`, `opt_headers`, `fragments`) into a raw UDP datagram (§4.1–§4.4).
+/// Encodes a packet (`header`, `opt_headers`, `fragments`) into a raw UDP datagram (§4.1–§4.4)
+/// that any receiver of §4.4.2 accepts: `payloadSum` is the receive rule's single sum over
+/// the whole payload. This is the encoder of synthetic peers (tests, fuzzing); the client's
+/// own connections send with [`encode_datagram_with_rule`] and their [`SendChecksumRule`],
+/// whose default is the §4.4.2 sender rule. For a datagram of one buffer (every handshake
+/// and standalone control packet) the two rules give the same bytes.
 ///
 /// - Computes `pak_size` from the serialized optional headers and blob fragments.
 /// - Sets `FLAG_HAS_FRAGMENTED_BLOBS` (`0x04000000`) if `fragments` is non-empty, and `FLAG_MASKED_CHECKSUM`
 ///   (`0x02000000`) if `xor_mask.is_some()`.
 /// - Computes `DatagramHeader.checksum` using the `0xBADD70DD` header placeholder, the
-///   send rule's per-buffer `payloadSum` ([`send_payload_checksum`]) and optional `xor_mask`
-///   (§4.4.2).
+///   whole-payload `payloadSum` and optional `xor_mask` (§4.4.2).
 /// - Prepends `0x0000` when `wire_codec` is `None`, or `header.rec_id` (big-endian) followed by
 ///   the bit-tree compressed `[DatagramHeader[2..20] | payload]` when `wire_codec` is `Some` (§4.1.1, §4.1.2).
 ///   A packet with a `SessionAuthHeader` is a control packet and is always written
@@ -4225,7 +4470,7 @@ pub fn encode_datagram(
         fragments,
         xor_mask,
         wire_codec,
-        SendChecksumRule::PerBuffer,
+        SendChecksumRule::WholePayload,
     )
 }
 
@@ -4558,11 +4803,23 @@ pub struct HandshakeCounts {
     pub received_ok: u64,
 }
 
+/// `DatagramHeader.time` for the network time `network_sec` (§4.2): the floor of
+/// `network_sec × 1,000`, reduced modulo `65,536`. A time that is not finite gives `0`.
+#[must_use]
+pub fn network_time_ms(network_sec: f64) -> u16 {
+    let ms = (network_sec * 1000.0).floor();
+    if !ms.is_finite() {
+        return 0;
+    }
+    // `as` saturates out-of-range values; the reduction keeps the low 16 bits.
+    u16::try_from((ms as i64).rem_euclid(65_536)).unwrap_or(0)
+}
+
 /// Per-connection state machine, sequence window, ISAAC generators, and fragmented blob reassembler (§3.4, §5–§8).
 pub struct SessionConnection {
     local_rec_id: u16,
     server_rec_id: u16,
-    client_conn_idx: u16,
+    max_recv_rate: u32,
     remote_addr: SocketAddrV4,
     state: ConnectionState,
     state_entered_at_sec: f64,
@@ -4632,14 +4889,16 @@ impl Drop for SessionConnection {
 }
 
 impl SessionConnection {
-    /// Creates a new `SessionConnection` in State `0` (`Idle`) bound to `local_rec_id` (`0x0100..=0xFEFF`)
-    /// and `remote_addr` (§3.4, §5.1, §6.1).
+    /// Creates a new `SessionConnection` to `remote_addr` in State `0` (`Idle`) with
+    /// `localRecId = 0x0000`, `remoteRecId = 0x0000` and `sendSeqNum = 1`: the local ID is
+    /// the one a `ConnectChallengeHeader` assigns later (§3.4, §5.1, §6.1, §6.2). Its
+    /// `maxRecvRate` is `0` until [`Self::set_max_recv_rate`] (§6.4).
     #[must_use]
-    pub fn new(local_rec_id: u16, remote_addr: SocketAddrV4, now_sec: f64) -> Self {
+    pub fn new(remote_addr: SocketAddrV4, now_sec: f64) -> Self {
         Self {
-            local_rec_id: local_rec_id.clamp(MIN_LOCAL_REC_ID, MAX_LOCAL_REC_ID),
+            local_rec_id: 0,
             server_rec_id: 0,
-            client_conn_idx: 0,
+            max_recv_rate: 0,
             remote_addr,
             state: ConnectionState::Idle,
             state_entered_at_sec: now_sec,
@@ -4678,6 +4937,19 @@ impl SessionConnection {
             counts: HandshakeCounts::default(),
             closed_from: None,
         }
+    }
+
+    /// Sets the `maxRecvRate` this connection sends in its `ConnectAcceptHeader` (§6.4): `0`
+    /// or [`max_recv_rate_for_speed`] on the primary connection, [`CHAT_MAX_RECV_RATE`] on
+    /// the chat connection.
+    pub fn set_max_recv_rate(&mut self, rate: u32) {
+        self.max_recv_rate = rate;
+    }
+
+    /// The `maxRecvRate` of this connection's `ConnectAcceptHeader` (§6.4).
+    #[must_use]
+    pub fn max_recv_rate(&self) -> u32 {
+        self.max_recv_rate
     }
 
     /// Sets the `payloadSum` rule of every datagram this connection queues from now on
@@ -4720,7 +4992,8 @@ impl SessionConnection {
             && now_sec - self.state_entered_at_sec >= CLOSING_CLEANUP_SEC
     }
 
-    /// Returns the local client `recId` (`0x0100..=0xFEFF`).
+    /// Returns the local client `recId`: `0x0000` until a `ConnectChallengeHeader` assigns
+    /// one in `0x0100..=0xFEFF` (§3.4; an assigned `0` keeps `0x0000`, §6.3).
     #[must_use]
     pub fn local_rec_id(&self) -> u16 {
         self.local_rec_id
@@ -4809,11 +5082,10 @@ impl SessionConnection {
         self.events.pop_front()
     }
 
-    /// The `DatagramHeader` of an outgoing packet. `iteration` and `table` are sent as `0`:
-    /// §4.2 names the fields but not the values a client sends (engineering choice, spec
-    /// silent).
-    fn base_datagram_header(&self, seq_num: u32, now_sec: f64) -> DatagramHeader {
-        let time_ms = ((now_sec * 1000.0) as u64 & 0xFFFF) as u16;
+    /// The `DatagramHeader` of an outgoing packet with `seq_num` and `time` (§4.2):
+    /// `recId` is `remoteRecId` (`0x0000` before the challenge), `iteration` and `table` are
+    /// always `0x00` on client-to-server datagrams.
+    fn base_datagram_header(&self, seq_num: u32, time: u16) -> DatagramHeader {
         DatagramHeader {
             rec_id: self.server_rec_id,
             pak_size: 0,
@@ -4822,7 +5094,22 @@ impl SessionConnection {
             checksum: 0,
             iteration: 0,
             table: 0,
-            time: time_ms,
+            time,
+        }
+    }
+
+    /// `DatagramHeader.time` of an outgoing packet carrying `opt` (§4.2): with a
+    /// `ClockSyncHeader` or `FlowControlHeader` attached, the current network time in
+    /// milliseconds (floor of seconds × 1,000) modulo 65,536 ([`network_time_ms`]); `0`
+    /// otherwise. The handshake packets (`SessionAuthHeader`, `ReferralAuthHeader`,
+    /// `ConnectAcceptHeader`) carry neither and send `0`, as §4.2 gives. What the client
+    /// sends on a post-handshake packet without either timing header is unconfirmed
+    /// (`OPEN-SESSION-8`): Tessera keeps `0` there and prescribes nothing else.
+    fn packet_time(&self, opt: &OptionalHeaders, now_sec: f64) -> u16 {
+        if opt.clock_sync.is_some() || opt.flow_control.is_some() {
+            network_time_ms(now_sec + self.server_clock_offset_sec)
+        } else {
+            0
         }
     }
 
@@ -4880,8 +5167,10 @@ impl SessionConnection {
     }
 
     /// Initiates a session by transitioning from State `0` to State `1` and queueing an
-    /// unsequenced `SessionAuthHeader` (`0x00010000`) datagram (§6.1, §6.2). Build the header
-    /// with [`SessionAuthHeader::for_login`].
+    /// unsequenced `SessionAuthHeader` (`0x00010000`) datagram (§6.1, §6.2): `wirePrefix`
+    /// `0x0000`, `recId` `0x0000`, `seqNum` `1` (the current `sendSeqNum`, §5.1), `time`
+    /// `0`, `iteration` and `table` `0`. Build the header with
+    /// [`SessionAuthHeader::for_connection`].
     ///
     /// # Errors
     ///
@@ -4899,7 +5188,7 @@ impl SessionConnection {
         self.state_entered_at_sec = now_sec;
         self.last_handshake_retransmit_sec = now_sec;
 
-        let hdr = self.base_datagram_header(0, now_sec);
+        let hdr = self.base_datagram_header(self.send_seq_num, 0);
         let opt = OptionalHeaders {
             session_auth: Some(session_auth),
             ..OptionalHeaders::default()
@@ -4911,7 +5200,8 @@ impl SessionConnection {
     }
 
     /// Initiates a world-server session by transitioning from State `0` to State `1` and queueing
-    /// an unsequenced `ReferralAuthHeader` (`0x00020000`) datagram (§6.1, §6.5).
+    /// an unsequenced `ReferralAuthHeader` (`0x00020000`) datagram (§6.1, §6.5) with `seqNum`
+    /// `1` and `time` `0` (§4.2, §5.1).
     ///
     /// # Errors
     ///
@@ -4930,7 +5220,7 @@ impl SessionConnection {
         self.state_entered_at_sec = now_sec;
         self.last_handshake_retransmit_sec = now_sec;
 
-        let hdr = self.base_datagram_header(0, now_sec);
+        let hdr = self.base_datagram_header(self.send_seq_num, 0);
         let opt = OptionalHeaders {
             referral_auth: Some(wlr),
             ..OptionalHeaders::default()
@@ -5000,7 +5290,7 @@ impl SessionConnection {
         let xor_mask = outgoing.next_mask();
         self.send_seq_num = next_seq;
 
-        let hdr = self.base_datagram_header(next_seq, now_sec);
+        let hdr = self.base_datagram_header(next_seq, self.packet_time(&opt_headers, now_sec));
         let codec = self.data_codec(outgoing_codec);
         let dgram = encode_datagram_with_rule(
             hdr,
@@ -5085,7 +5375,9 @@ impl SessionConnection {
             0xFFFF
         };
         let is_multi = payload.len() > MAX_BLOB_FRAG_PAYLOAD;
-        let blob_id = if queue_id == 2 || queue_id == 4 || (queue_id == 1 && is_multi) {
+        // `blobId` is on the wire for queues 2 and 4, and for queues 1 and 3 when the blob
+        // is fragmented (§5.6.2, §5.6.3 field 4).
+        let blob_id = if has_blob_id(queue_id, is_multi) {
             let bid = self.next_blob_id;
             self.next_blob_id = if bid == u16::MAX { 1 } else { bid + 1 };
             bid
@@ -5194,10 +5486,14 @@ impl SessionConnection {
                 );
                 return Err(SessionError::UnexpectedConnectChallenge { state: self.state });
             }
-            // A peer may not take a recipient ID held by another connection.
+            // §3.4, §6.4 step 1: when another active connection occupies the assigned slot,
+            // the challenge is ignored (nothing changes, nothing is answered).
             let id = cr.assigned_client_rec_id;
             if Self::accepts_assigned_rec_id(id) && id != self.local_rec_id && rec_id_in_use(id) {
-                tracing::debug!(rec_id = id, "assigned recipient ID already in use");
+                tracing::debug!(
+                    rec_id = id,
+                    "assigned recipient ID already in use; challenge ignored"
+                );
                 return Err(SessionError::RecipientIdCollision { rec_id: id });
             }
         }
@@ -5209,7 +5505,9 @@ impl SessionConnection {
             .opt_headers
             .connect_challenge
             .as_ref()
-            .map_or(self.server_rec_id, |cr| cr.server_rec_id);
+            .map_or(self.server_rec_id, |cr| {
+                Self::challenge_server_rec_id(cr, hdr.rec_id)
+            });
 
         // Rule 8: every fragment is checked before anything is committed.
         self.reassembler
@@ -5257,7 +5555,7 @@ impl SessionConnection {
         }
 
         // Process optional headers (§5.2–§5.4, §6.3–§6.7, §8.1–§8.2)
-        self.process_optional_headers(&pkt.opt_headers, now_sec, codecs.outgoing)?;
+        self.process_optional_headers(&pkt.opt_headers, hdr.rec_id, now_sec, codecs.outgoing)?;
 
         // Process blob fragments (checked above; duplicate sequenced packets were dropped,
         // §5.6.4)
@@ -5333,6 +5631,16 @@ impl SessionConnection {
         (MIN_LOCAL_REC_ID..=MAX_LOCAL_REC_ID).contains(&id)
     }
 
+    /// The `remoteRecId` a challenge gives (§6.4 step 1): its `serverRecId`, or, when that
+    /// is `0`, the `recId` of the incoming packet's `DatagramHeader`.
+    fn challenge_server_rec_id(cr: &ConnectChallengeHeader, incoming_rec_id: u16) -> u16 {
+        if cr.server_rec_id == 0 {
+            incoming_rec_id
+        } else {
+            cr.server_rec_id
+        }
+    }
+
     fn enter_connected_state(&mut self, now_sec: f64) -> Result<(), SessionError> {
         self.state = ConnectionState::Connected;
         self.state_entered_at_sec = now_sec;
@@ -5342,20 +5650,22 @@ impl SessionConnection {
             server_rec_id: self.server_rec_id,
         });
         // Immediately queue the initial ClockSyncHeader (0x01000000) on entering State 5 (§6.4, §8.1)
-        let hdr = self.base_datagram_header(self.send_seq_num, now_sec);
         let opt = OptionalHeaders {
             clock_sync: Some(now_sec + self.server_clock_offset_sec),
             ..OptionalHeaders::default()
         };
+        let hdr = self.base_datagram_header(self.send_seq_num, self.packet_time(&opt, now_sec));
         let dgram = encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
         self.outbound_datagrams.push_back(dgram);
         Ok(())
     }
 
-    /// Answers a `ConnectChallengeHeader` (§6.4 steps 1–4).
+    /// Answers a `ConnectChallengeHeader` that arrived in a packet with `DatagramHeader.recId`
+    /// `incoming_rec_id` (§6.4 steps 1–4).
     fn accept_challenge(
         &mut self,
         cr: &ConnectChallengeHeader,
+        incoming_rec_id: u16,
         now_sec: f64,
     ) -> Result<(), SessionError> {
         self.counts.challenges = self.counts.challenges.saturating_add(1);
@@ -5367,8 +5677,9 @@ impl SessionConnection {
                 uuid: cr.codec_uuid,
             });
         }
-        // Step 1: take the assigned local ID (`0` keeps the existing one, §6.3), the server's
-        // recipient ID and connection index, and the server clock.
+        // Step 1: take the assigned local ID (`0` keeps the existing one, §6.3; the slot was
+        // checked free before), the server's recipient ID (`0` keeps the packet's `recId`)
+        // and the server clock.
         if Self::accepts_assigned_rec_id(cr.assigned_client_rec_id) {
             self.local_rec_id = cr.assigned_client_rec_id;
         } else if cr.assigned_client_rec_id != 0 {
@@ -5377,27 +5688,25 @@ impl SessionConnection {
                 "assigned recipient ID outside 0x0100..=0xFEFF ignored"
             );
         }
-        self.server_rec_id = cr.server_rec_id;
-        self.client_conn_idx = cr.client_conn_idx;
+        self.server_rec_id = Self::challenge_server_rec_id(cr, incoming_rec_id);
         self.active_codec_uuid = cr.codec_uuid;
         self.server_clock_offset_sec = cr.server_time - now_sec;
         // Step 2: seed the directional ISAAC generators (§7.2).
         self.outgoing_isaac = Some(IsaacCipher::from_seed(cr.outgoing_seed));
         self.incoming_isaac = Some(IsaacCipher::from_seed(cr.incoming_seed));
 
-        // Step 4: ConnectAcceptHeader with the derived checkValue.
+        // Step 4: ConnectAcceptHeader with the derived checkValue, the codec echo and this
+        // connection's maxRecvRate.
         let resp = ConnectAcceptHeader {
             check_value: cr.check_value(),
-            local_rec_id: self.local_rec_id,
-            client_conn_idx: self.client_conn_idx,
             codec_uuid: self.active_codec_uuid,
+            max_recv_rate: self.max_recv_rate,
         };
         self.stored_connect_accept = Some(resp);
 
-        // Unsequenced packets after session setup carry the last assigned `sendSeqNum`
-        // without `MaskedChecksumFlag` (§4.2, §5.1); only the packets before the
-        // ConnectChallengeHeader carry `0`.
-        let hdr = self.base_datagram_header(self.send_seq_num, now_sec);
+        // Unsequenced, uncompressed, `recId = remoteRecId`, `seqNum` the current
+        // `sendSeqNum` (`1` in the handshake), `time` `0` (§4.2, §5.1, §6.4 step 4).
+        let hdr = self.base_datagram_header(self.send_seq_num, 0);
         let resp_opt = OptionalHeaders {
             connect_accept: Some(resp),
             ..OptionalHeaders::default()
@@ -5421,12 +5730,13 @@ impl SessionConnection {
     fn process_optional_headers(
         &mut self,
         opt: &OptionalHeaders,
+        incoming_rec_id: u16,
         now_sec: f64,
         outgoing_codec: Option<&dyn BitTreeCodec>,
     ) -> Result<(), SessionError> {
         // ConnectChallengeHeader (0x00040000, §6.3, §6.4)
         if let Some(cr) = &opt.connect_challenge {
-            self.accept_challenge(cr, now_sec)?;
+            self.accept_challenge(cr, incoming_rec_id, now_sec)?;
         }
 
         // CumulativeAckHeader (0x00004000, big-endian u32, §5.2)
@@ -5448,7 +5758,10 @@ impl SessionConnection {
                 if let Some(rec) = self.retransmit_table.get(&s)
                     && rec.retransmit_eligible
                 {
-                    let hdr = self.base_datagram_header(rec.seq_num, now_sec);
+                    let hdr = self.base_datagram_header(
+                        rec.seq_num,
+                        self.packet_time(&rec.opt_headers, now_sec),
+                    );
                     let dgram = encode_datagram_with_rule(
                         hdr,
                         &rec.opt_headers,
@@ -5575,7 +5888,9 @@ impl SessionConnection {
                 }
                 if now_sec - self.last_handshake_retransmit_sec >= SESSION_AUTH_RETRANSMIT_SEC {
                     self.last_handshake_retransmit_sec = now_sec;
-                    let hdr = self.base_datagram_header(0, now_sec);
+                    // The stored first datagram again: `seqNum` is the unchanged
+                    // `sendSeqNum` (`1`), `time` `0` (§4.2, §5.1).
+                    let hdr = self.base_datagram_header(self.send_seq_num, 0);
                     let opt = OptionalHeaders {
                         session_auth: self.stored_session_auth.clone(),
                         referral_auth: self.stored_referral_auth,
@@ -5596,7 +5911,7 @@ impl SessionConnection {
                     && let Some(resp) = self.stored_connect_accept
                 {
                     self.last_handshake_retransmit_sec = now_sec;
-                    let hdr = self.base_datagram_header(self.send_seq_num, now_sec);
+                    let hdr = self.base_datagram_header(self.send_seq_num, 0);
                     let opt = OptionalHeaders {
                         connect_accept: Some(resp),
                         ..OptionalHeaders::default()
@@ -5787,7 +6102,7 @@ impl SessionConnection {
     /// Queues an unsequenced control packet that carries the last assigned `seqNum` without
     /// `MaskedChecksumFlag` and goes out uncompressed (§4.1.1, §5.1).
     fn queue_control(&mut self, now_sec: f64, opt: OptionalHeaders) -> Result<(), SessionError> {
-        let hdr = self.base_datagram_header(self.send_seq_num, now_sec);
+        let hdr = self.base_datagram_header(self.send_seq_num, self.packet_time(&opt, now_sec));
         let dgram = encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
         self.outbound_datagrams.push_back(dgram);
         Ok(())
@@ -5795,94 +6110,100 @@ impl SessionConnection {
 }
 
 /// Single-socket multi-connection demultiplexer (§3.4, §6.5).
+///
+/// Each connection is held under a handle the multiplexer gives out
+/// ([`Self::create_connection`]) and keeps for the connection's life. The handle is not the
+/// connection's recipient ID: a new connection has `localRecId = 0x0000` (§3.4) and takes
+/// the ID its server's `ConnectChallengeHeader` assigns, when no other connection of this
+/// multiplexer occupies that slot (otherwise the challenge is ignored).
 #[derive(Debug, Default)]
 pub struct SessionMultiplexer {
     connections: BTreeMap<u16, SessionConnection>,
-    next_local_rec_id: u16,
-    /// Local IDs of removed connections; their traffic is refused until the ID is given
-    /// out again (engineering choice, spec silent).
+    next_handle: u16,
+    /// Recipient IDs of removed connections; their traffic is refused until another
+    /// connection takes the ID (engineering choice, spec silent).
     retired: BTreeSet<u16>,
 }
 
 impl SessionMultiplexer {
-    /// Creates an empty `SessionMultiplexer` starting `localRecId` allocation at `0x0100` (§3.4).
+    /// Creates an empty `SessionMultiplexer`.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            connections: BTreeMap::new(),
-            next_local_rec_id: MIN_LOCAL_REC_ID,
-            retired: BTreeSet::new(),
-        }
+        Self::default()
     }
 
-    /// Allocates a new `SessionConnection` to `remote_addr` with a unique `localRecId` in `0x0100..=0xFEFF` (§3.4).
+    /// Adds a new `SessionConnection` to `remote_addr` (State `0`, `localRecId = 0x0000`,
+    /// §3.4) and returns its handle.
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError::RecipientIdsExhausted`] when every `localRecId`
-    /// in the range is in use (the search is bounded, it never spins).
+    /// Returns [`SessionError::RecipientIdsExhausted`] when every handle is in use (the
+    /// search is bounded, it never spins).
     pub fn create_connection(
         &mut self,
         remote_addr: SocketAddrV4,
         now_sec: f64,
     ) -> Result<u16, SessionError> {
-        let next_of = |id: u16| {
-            if id >= MAX_LOCAL_REC_ID {
-                MIN_LOCAL_REC_ID
-            } else {
-                id + 1
-            }
-        };
-        let mut candidate = self
-            .next_local_rec_id
-            .clamp(MIN_LOCAL_REC_ID, MAX_LOCAL_REC_ID);
+        let mut candidate = self.next_handle;
         let mut probes = 0u32;
         while self.connections.contains_key(&candidate) {
             probes += 1;
-            if probes > u32::from(MAX_LOCAL_REC_ID - MIN_LOCAL_REC_ID) {
+            if probes > u32::from(u16::MAX) {
                 return Err(SessionError::RecipientIdsExhausted);
             }
-            candidate = next_of(candidate);
+            candidate = candidate.wrapping_add(1);
         }
-        self.next_local_rec_id = if candidate >= MAX_LOCAL_REC_ID {
-            MIN_LOCAL_REC_ID
-        } else {
-            candidate + 1
-        };
-        let conn = SessionConnection::new(candidate, remote_addr, now_sec);
-        self.connections.insert(candidate, conn);
-        self.retired.remove(&candidate);
+        self.next_handle = candidate.wrapping_add(1);
+        self.connections
+            .insert(candidate, SessionConnection::new(remote_addr, now_sec));
         Ok(candidate)
     }
 
-    /// Removes the connection with `local_rec_id` and returns it. Allocation moves on past
-    /// the ID, and datagrams addressed to it are refused (not routed by source address to
-    /// another connection) until the ID is allocated again.
-    pub fn remove_connection(&mut self, local_rec_id: u16) -> Option<SessionConnection> {
-        let conn = self.connections.remove(&local_rec_id)?;
-        self.retired.insert(local_rec_id);
+    /// Removes the connection with `handle` and returns it. Datagrams addressed to its
+    /// recipient ID are refused (not routed by source address to another connection) until
+    /// another connection takes the ID.
+    pub fn remove_connection(&mut self, handle: u16) -> Option<SessionConnection> {
+        let conn = self.connections.remove(&handle)?;
+        if conn.local_rec_id() != 0 {
+            self.retired.insert(conn.local_rec_id());
+        }
         Some(conn)
     }
 
-    /// Returns a shared reference to the connection with `local_rec_id`.
+    /// Returns a shared reference to the connection with `handle`.
     #[must_use]
-    pub fn connection(&self, local_rec_id: u16) -> Option<&SessionConnection> {
-        self.connections.get(&local_rec_id)
+    pub fn connection(&self, handle: u16) -> Option<&SessionConnection> {
+        self.connections.get(&handle)
     }
 
-    /// Returns a mutable reference to the connection with `local_rec_id`.
-    pub fn connection_mut(&mut self, local_rec_id: u16) -> Option<&mut SessionConnection> {
-        self.connections.get_mut(&local_rec_id)
+    /// Returns a mutable reference to the connection with `handle`.
+    pub fn connection_mut(&mut self, handle: u16) -> Option<&mut SessionConnection> {
+        self.connections.get_mut(&handle)
     }
 
-    /// Routes an incoming UDP datagram from `source_addr` per §3.4:
-    /// - If `recId` (the non-zero `wirePrefix`, or `DatagramHeader.recId` behind a zero prefix)
-    ///   lies in `0x0100..=0xFEFF` and names a connection, that connection takes the packet
-    ///   and enforces source-address binding (§10.1 rule 4).
-    /// - Otherwise (`recId < 0x0100`, `recId > 0xFEFF`, or a lookup miss, e.g. the
-    ///   `ConnectChallengeHeader` that assigns a new ID) the first connection whose remote
-    ///   `(IPv4, port)` equals `source_addr` takes it.
+    /// The handle of the connection whose `localRecId` is `rec_id` (non-zero), if any.
+    #[must_use]
+    pub fn handle_of(&self, rec_id: u16) -> Option<u16> {
+        if rec_id == 0 {
+            return None;
+        }
+        self.connections
+            .iter()
+            .find(|(_, c)| c.local_rec_id() == rec_id)
+            .map(|(&h, _)| h)
+    }
+
+    /// Routes an incoming UDP datagram from `source_addr` per §3.4 and §10.1 rule 4:
+    /// - If `recId` (the non-zero `wirePrefix`, or `DatagramHeader.recId` behind a zero
+    ///   prefix) lies in `0x0100..=0xFEFF` and a connection holds that slot with
+    ///   `source_addr` as its peer, that connection takes the packet.
+    /// - Otherwise (`recId < 0x0100`, an empty slot, or a slot whose peer is another
+    ///   address) the connection whose remote `(IPv4, port)` equals `source_addr` takes it;
+    ///   if that connection is past State `1` (its `localRecId` is non-zero) and the packet's
+    ///   `recId` is neither `0x0000` nor that `localRecId`, the packet is rejected.
     /// - With no match the datagram is rejected.
+    ///
+    /// Returns the handle of the connection that took it.
     ///
     /// # Errors
     ///
@@ -5905,24 +6226,33 @@ impl SessionMultiplexer {
         } else {
             wire_prefix
         };
+        let unknown = SessionError::UnknownRecipient {
+            rec_id: header_rec_id,
+        };
 
         if self.retired.contains(&header_rec_id) {
             tracing::debug!(
                 rec_id = header_rec_id,
                 "datagram for a removed connection refused"
             );
-            return Err(SessionError::UnknownRecipient {
-                rec_id: header_rec_id,
-            });
+            return Err(unknown);
         }
+        // Step 2: the slot `recId`, from its own peer's address.
         let by_id = (MIN_LOCAL_REC_ID..=MAX_LOCAL_REC_ID)
             .contains(&header_rec_id)
-            .then_some(header_rec_id)
-            .filter(|id| self.connections.contains_key(id));
-        // Address fallback (§3.4 step 3): a closing or never-started connection takes
-        // nothing; a connection in the handshake (States 1, 2) is preferred over the others
-        // with the same peer (engineering choice, spec silent: §3.4 says "one whose remote
-        // address matches").
+            .then(|| {
+                self.connections
+                    .iter()
+                    .find(|(_, c)| {
+                        c.local_rec_id() == header_rec_id && c.remote_addr() == source_addr
+                    })
+                    .map(|(&h, _)| h)
+            })
+            .flatten();
+        // Step 3: by source address. A closing or never-started connection takes nothing; a
+        // connection in the handshake (States 1, 2) is preferred over the others with the
+        // same peer (engineering choice, spec silent: §3.4 says "one whose remote address
+        // matches").
         let target_key = by_id.or_else(|| {
             let candidates = || {
                 self.connections.iter().filter(|(_, c)| {
@@ -5930,46 +6260,40 @@ impl SessionMultiplexer {
                         && !matches!(c.state(), ConnectionState::Closing | ConnectionState::Idle)
                 })
             };
-            candidates()
+            let found = candidates()
                 .find(|(_, c)| {
                     matches!(
                         c.state(),
                         ConnectionState::SessionAuthSent | ConnectionState::ChallengeAcceptSent
                     )
                 })
-                .or_else(|| candidates().next())
+                .or_else(|| candidates().next());
+            found
+                .filter(|(_, c)| {
+                    let local = c.local_rec_id();
+                    local == 0 || header_rec_id == 0 || header_rec_id == local
+                })
                 .map(|(&k, _)| k)
         });
 
         let Some(key) = target_key else {
-            return Err(SessionError::UnknownRecipient {
-                rec_id: header_rec_id,
-            });
+            return Err(unknown);
         };
 
-        // Take the connection out so the collision check can see every other
-        // connection; it goes back under its (possibly new) key either way.
-        let mut conn = self
-            .connections
-            .remove(&key)
-            .ok_or(SessionError::UnknownRecipient {
-                rec_id: header_rec_id,
-            })?;
+        // Take the connection out so the slot check can see every other connection; it
+        // goes back under its handle either way.
+        let mut conn = self.connections.remove(&key).ok_or(unknown)?;
         let result = {
             let others = &self.connections;
             conn.receive_datagram_guarded(datagram, source_addr, now_sec, codecs, &|id| {
-                others.contains_key(&id)
+                others.values().any(|c| c.local_rec_id() == id)
             })
         };
-        // The guard refused any ID in use, so the new key is always free.
-        let updated_id = if self.connections.contains_key(&conn.local_rec_id()) {
-            key
-        } else {
-            conn.local_rec_id()
-        };
-        self.connections.insert(updated_id, conn);
-        self.retired.remove(&updated_id);
-        result.map(|pkt| (updated_id, pkt))
+        if conn.local_rec_id() != 0 {
+            self.retired.remove(&conn.local_rec_id());
+        }
+        self.connections.insert(key, conn);
+        result.map(|pkt| (key, pkt))
     }
 
     /// Runs [`SessionConnection::tick`] on every connection and then removes (as
@@ -6511,6 +6835,36 @@ impl VersionStatusMessage {
     }
 }
 
+/// `logonResult` of a `LoginQueueStatusMessage`: logon accepted (`S_OK`, §9.3).
+pub const LOGON_RESULT_ACCEPTED: u32 = 0x0000_0000;
+
+/// `logonResult` of a `LoginQueueStatusMessage`: the account waits in the UDP login queue;
+/// only then do `queuePosition` and `queueTotal` follow `detailText` (§9.3).
+pub const LOGON_RESULT_QUEUED: u32 = 0x8004_1464;
+
+/// The place in the UDP login queue a `LoginQueueStatusMessage` reports (§9.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoginQueuePosition {
+    /// `queuePosition` (`u32` LE).
+    pub position: u32,
+    /// `queueTotal` (`u32` LE).
+    pub total: u32,
+}
+
+/// What a `LoginQueueStatusMessage`'s `logonResult` means (§9.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogonOutcome {
+    /// `0x00000000`: logon accepted.
+    Accepted,
+    /// `0x80041464`: waiting in the UDP login queue.
+    Queued(LoginQueuePosition),
+    /// Any other negative value (bit 31 set): logon rejected; the client ends the session.
+    Refused(u32),
+    /// A positive value other than `0`: §9.3 names none; Tessera acts on nothing
+    /// (engineering choice, spec silent).
+    Unknown(u32),
+}
+
 /// `LoginQueueStatusMessage` (`0x00000130`, Server -> Client) post-handshake message,
 /// optional and omitted when no login queue is active (§9.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6519,55 +6873,83 @@ pub struct LoginQueueStatusMessage {
     pub login_result: u32,
     /// `detailText` (4-tier `VariableU32` UTF-16 code-unit count + UTF-16LE).
     pub detail_text: String,
-    /// `queuePosition` (`u32` LE).
-    pub queue_position: u32,
-    /// `queueTotal` (`u32` LE).
-    pub queue_total: u32,
+    /// `queuePosition` and `queueTotal` (`u32` LE each), present only when `login_result`
+    /// is [`LOGON_RESULT_QUEUED`].
+    pub queue: Option<LoginQueuePosition>,
 }
 
 impl LoginQueueStatusMessage {
-    /// Serializes `LoginQueueStatusMessage` (`0x00000130`) inner payload starting at Offset `0x00` (§9.3).
+    /// What `logonResult` means (§9.3). A queued result without its position (which
+    /// [`Self::decode`] never gives) counts as position and total `0`.
+    #[must_use]
+    pub fn outcome(&self) -> LogonOutcome {
+        match self.login_result {
+            LOGON_RESULT_ACCEPTED => LogonOutcome::Accepted,
+            LOGON_RESULT_QUEUED => LogonOutcome::Queued(self.queue.unwrap_or(LoginQueuePosition {
+                position: 0,
+                total: 0,
+            })),
+            code if code & 0x8000_0000 != 0 => LogonOutcome::Refused(code),
+            code => LogonOutcome::Unknown(code),
+        }
+    }
+
+    /// Serializes `LoginQueueStatusMessage` (`0x00000130`) inner payload starting at Offset
+    /// `0x00` (§9.3): `logonResult`, `detailText`, then `queuePosition` and `queueTotal` only
+    /// when `queue` is set and `logonResult` is [`LOGON_RESULT_QUEUED`].
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&self.login_result.to_le_bytes());
         encode_wstring(&self.detail_text, &mut out);
-        out.extend_from_slice(&self.queue_position.to_le_bytes());
-        out.extend_from_slice(&self.queue_total.to_le_bytes());
+        if let Some(q) = self
+            .queue
+            .filter(|_| self.login_result == LOGON_RESULT_QUEUED)
+        {
+            out.extend_from_slice(&q.position.to_le_bytes());
+            out.extend_from_slice(&q.total.to_le_bytes());
+        }
         out
     }
 
-    /// Decodes `LoginQueueStatusMessage` (`0x00000130`) from inner payload bytes starting at Offset `0x00` (§9.3).
+    /// Decodes `LoginQueueStatusMessage` (`0x00000130`) from inner payload bytes starting at
+    /// Offset `0x00` (§9.3). `queuePosition` and `queueTotal` are read only when
+    /// `logonResult` is [`LOGON_RESULT_QUEUED`]; bytes after the last field are not read
+    /// (engineering choice, spec silent).
     ///
     /// # Errors
     ///
     /// Returns [`SessionError::InvalidControlMessage`] if `body` is truncated or `detail_text` is invalid UTF-16LE.
     pub fn decode(body: &[u8]) -> Result<Self, SessionError> {
-        if body.len() < 4 {
-            return Err(SessionError::InvalidControlMessage {
-                opcode: OPCODE_LOGIN_QUEUE_STATUS,
-            });
-        }
-        let login_result = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
+        let bad = || SessionError::InvalidControlMessage {
+            opcode: OPCODE_LOGIN_QUEUE_STATUS,
+        };
+        let result: [u8; 4] = body
+            .get(0..4)
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(bad)?;
+        let login_result = u32::from_le_bytes(result);
         let (detail_text, ws_len) =
-            decode_wstring(&body[4..]).map_err(|_| SessionError::InvalidControlMessage {
-                opcode: OPCODE_LOGIN_QUEUE_STATUS,
-            })?;
+            decode_wstring(body.get(4..).unwrap_or_default()).map_err(|_| bad())?;
         let pos = 4 + ws_len;
-        if body.len() < pos + 8 {
-            return Err(SessionError::InvalidControlMessage {
-                opcode: OPCODE_LOGIN_QUEUE_STATUS,
-            });
-        }
-        let queue_position =
-            u32::from_le_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]]);
-        let queue_total =
-            u32::from_le_bytes([body[pos + 4], body[pos + 5], body[pos + 6], body[pos + 7]]);
+        let queue = if login_result == LOGON_RESULT_QUEUED {
+            let word = |at: usize| {
+                body.get(at..at + 4)
+                    .and_then(|b| <[u8; 4]>::try_from(b).ok())
+                    .map(u32::from_le_bytes)
+                    .ok_or_else(bad)
+            };
+            Some(LoginQueuePosition {
+                position: word(pos)?,
+                total: word(pos + 4)?,
+            })
+        } else {
+            None
+        };
         Ok(Self {
             login_result,
             detail_text,
-            queue_position,
-            queue_total,
+            queue,
         })
     }
 }
@@ -6873,8 +7255,7 @@ fn dispatch_message_inner(
             let (sub_opcode, sub_slice) = read_container_record(bytes, &mut cursor)?;
             dispatch_message_inner(ctx, sub_opcode, sub_slice, depth + 1, wrapper_context)?;
         }
-        // Bytes after the last record are not described by §9.4.2; they are ignored
-        // (engineering choice, spec silent).
+        // The reader stops after the `M` records and ignores any trailing bytes (§9.4.2).
     } else if opcode == OPCODE_SINGLE_WRAPPER {
         let bytes = &env.body;
         let mut cursor = 0usize;
@@ -6893,15 +7274,7 @@ fn dispatch_message_inner(
                 opcode: OPCODE_SINGLE_WRAPPER,
             });
         };
-        // §9.4.2 lists the five fields only and says nothing of bytes after `resultCode`;
-        // refusing them is an engineering choice (spec silent), the conservative reading.
-        let trailing = bytes.len().saturating_sub(cursor.saturating_add(12));
-        if trailing != 0 {
-            return Err(SessionError::TrailingMessageBytes {
-                opcode: OPCODE_SINGLE_WRAPPER,
-                remaining: trailing,
-            });
-        }
+        // The reader stops after `resultCode` and ignores any trailing bytes (§9.4.2).
         let context = EnvelopeContext {
             context_id: u64::from_le_bytes(id_bytes),
             result_code: u32::from_le_bytes(code_bytes),

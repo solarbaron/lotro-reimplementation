@@ -83,12 +83,10 @@ use super::net::https_form;
 pub const WORLD_LIST_STATUS_TIMEOUT_SEC: u64 = 10;
 
 /// Shortest wait between two `TakeANumber` polls (§3.5 item 4, §5.2).
-pub const MIN_QUEUE_POLL: Duration = Duration::from_secs(5);
+pub const MIN_QUEUE_POLL: Duration = Duration::from_secs(crate::login::MIN_QUEUE_POLL_INTERVAL_SEC);
 
-/// Longest wait between two polls: the configuration's `WorldQueue.PollTimer` is used up to
-/// this. Engineering choice, spec silent beyond "between 5 seconds and `PollTimer`"
-/// (question with the spec writers).
-pub const MAX_QUEUE_POLL: Duration = Duration::from_secs(120);
+/// Longest wait between two polls (§3.5 item 4, §5.2: the clean-room clamp `[5 s, 120 s]`).
+pub const MAX_QUEUE_POLL: Duration = Duration::from_secs(crate::login::MAX_QUEUE_POLL_INTERVAL_SEC);
 
 /// Tessera's category for a login failure (`official-entry.md` §8.6), from the classes of
 /// `official-login.md` §5.3. Engineering choice, spec silent (question with the spec
@@ -734,12 +732,10 @@ pub fn leave_queue(
     }
 }
 
-/// The wait between two `TakeANumber` polls: the configuration's `WorldQueue.PollTimer`,
-/// at least [`MIN_QUEUE_POLL`] and at most [`MAX_QUEUE_POLL`] (§3.5 item 4, §5.2).
+/// The wait between two `TakeANumber` polls: `WorldQueue.LoginQueue.RefreshSeconds` (20 s
+/// when absent), at least [`MIN_QUEUE_POLL`] and at most [`MAX_QUEUE_POLL`] (§3.5 item 4,
+/// §5.2; [`RemoteLauncherConfig::queue_poll_interval_sec`]).
 #[must_use]
 pub fn queue_poll_interval(remote: &RemoteLauncherConfig) -> Duration {
-    remote
-        .poll_timer_sec
-        .map_or(MIN_QUEUE_POLL, Duration::from_secs)
-        .clamp(MIN_QUEUE_POLL, MAX_QUEUE_POLL)
+    Duration::from_secs(remote.queue_poll_interval_sec())
 }

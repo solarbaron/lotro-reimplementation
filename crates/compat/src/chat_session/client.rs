@@ -42,9 +42,9 @@ use crate::play::PlayError;
 use crate::play::chat::{MAX_ARGUMENT_UNITS, MAX_CHAT_UNITS};
 use crate::play::{check_units, clean_display_name};
 use crate::session::{
-    BitTreeCodec, ConnectionState, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, MAX_DATAGRAM_BUF,
-    SendChecksumRule, SessionAuthHeader, SessionConnection, SessionEvent, SessionMultiplexer,
-    UdpDatagramTransport, WireCodecs,
+    BindPlan, BitTreeCodec, CHAT_MAX_RECV_RATE, ConnectionState,
+    DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, MAX_DATAGRAM_BUF, SendChecksumRule, SessionAuthHeader,
+    SessionConnection, SessionEvent, SessionMultiplexer, UdpDatagramTransport, WireCodecs,
 };
 use crate::world::{PropertySchemaLookup, decode_event_envelope, encode_event_envelope};
 
@@ -57,8 +57,8 @@ pub const MAX_PENDING: usize = 256;
 /// Most datagrams read per [`ChatClient::poll`] and socket. Engineering choice, spec
 /// silent.
 pub const MAX_DATAGRAMS_PER_POLL: usize = 256;
-/// Delivery queue of outgoing chat-server blobs. Engineering choice, spec silent (it does
-/// not say which queue the chat server uses): queue 2 (`ReliableOrdered`).
+/// Delivery queue of outgoing chat-server blobs: queue 2 (`ReliableOrdered`,
+/// `official-session.md` §5.6.2; `official-messages-play.md` §6.6.3).
 pub const CHAT_QUEUE_ID: u8 = 2;
 /// Most old connections kept to finish their disconnect flush. Engineering choice, spec
 /// silent.
@@ -108,6 +108,10 @@ pub struct ChatConfig {
     /// (`official-session.md` §4.4.2; `crate::connector::diag` "The send checksum switch");
     /// the default is the spec's sender rule.
     pub send_checksum: SendChecksumRule,
+    /// The first local IPv4 address, the Case B seed of the sockets [`ChatClient::open`]
+    /// binds (`official-session.md` §3.2: the chat transport uses the defaults); `None`
+    /// binds Case C.
+    pub first_local: Option<Ipv4Addr>,
 }
 
 impl Drop for ChatConfig {
@@ -129,6 +133,7 @@ impl std::fmt::Debug for ChatConfig {
             .field("ticket", &self.ticket_base64.as_ref().map(|_| "<redacted>"))
             .field("client_timestamp", &self.client_timestamp)
             .field("send_checksum", &self.send_checksum)
+            .field("first_local", &self.first_local.map(|_| "<set>"))
             .finish()
     }
 }
@@ -149,7 +154,16 @@ impl ChatConfig {
             ticket_base64,
             client_timestamp,
             send_checksum: SendChecksumRule::default(),
+            first_local: None,
         }
+    }
+
+    /// This configuration with `first_local` as the Case B seed of [`ChatClient::open`]'s
+    /// sockets (`official-session.md` §3.2).
+    #[must_use]
+    pub fn with_first_local(mut self, first_local: Option<Ipv4Addr>) -> Self {
+        self.first_local = first_local;
+        self
     }
 
     /// This configuration with the send checksum `rule` for every datagram of the chat
@@ -165,12 +179,11 @@ impl ChatConfig {
     ///
     /// # Errors
     ///
-    /// [`PlayError::InvalidTicket`] or [`PlayError::TicketTooLong`] when the ticket is not
-    /// strict Base64 ([`crate::chat_session::decode_base64`]); the old ticket is kept.
+    /// [`PlayError::InvalidTicket`] when the ticket fails
+    /// [`crate::chat_session::check_ticket`]; the old ticket is kept.
     pub fn set_ticket(&mut self, ticket_base64: Option<String>) -> Result<(), PlayError> {
         if let Some(t) = ticket_base64.as_deref().filter(|t| !t.is_empty()) {
-            let mut checked = crate::chat_session::decode_base64(t)?;
-            crate::login::zeroize_vec(&mut checked);
+            crate::chat_session::check_ticket(t)?;
         }
         if let Some(old) = self.ticket_base64.as_mut() {
             crate::login::zeroize_string(old);
@@ -303,18 +316,17 @@ impl ChatClient<StdUdpTransport> {
     ///
     /// # Errors
     ///
-    /// [`PlayError`] when the ticket is not valid Base64 or binding fails.
+    /// [`PlayError`] when the ticket is not a printable ASCII string or binding fails.
     pub fn open(
         access: Arc<NetworkAccess>,
         config: ChatConfig,
         codecs: ChatCodecs,
         now: f64,
     ) -> Result<Self, PlayError> {
-        let binder: TransportBinder<StdUdpTransport> = Box::new(move || {
-            access
-                .bind_udp(Ipv4Addr::UNSPECIFIED, 0, false)
-                .map_err(PlayError::from)
-        });
+        // The chat transport reads no `[Net]` key (`official-session.md` §3.2 item 1).
+        let plan = BindPlan::chat_defaults(config.first_local);
+        let binder: TransportBinder<StdUdpTransport> =
+            Box::new(move || access.bind_udp(plan).map_err(PlayError::from));
         Self::with_binder(binder, config, codecs, now)
     }
 }
@@ -325,7 +337,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
     ///
     /// # Errors
     ///
-    /// [`PlayError`] when the ticket is not valid Base64.
+    /// [`PlayError`] when the ticket is not a printable ASCII string.
     pub fn with_transport(
         transport: T,
         config: ChatConfig,
@@ -358,7 +370,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
     ///
     /// # Errors
     ///
-    /// [`PlayError`] when the ticket is not valid Base64 or the first bind fails.
+    /// [`PlayError`] when the ticket is not a printable ASCII string or the first bind fails.
     pub fn with_binder(
         mut binder: TransportBinder<T>,
         config: ChatConfig,
@@ -522,6 +534,8 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         match self.mux.connection_mut(id) {
             Some(conn) => {
                 conn.set_send_checksum_rule(self.config.send_checksum);
+                // `maxRecvRate` of the chat connection (`official-session.md` §6.4).
+                conn.set_max_recv_rate(CHAT_MAX_RECV_RATE);
                 conn.start_login(auth, now)?;
             }
             None => return Err(PlayError::ChatNotReady),

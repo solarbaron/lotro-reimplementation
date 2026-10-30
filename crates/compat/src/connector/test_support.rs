@@ -42,7 +42,7 @@ use crate::play::chat::{
     UiPropertyEvent,
 };
 use crate::session::{
-    BitTreeTable, ConnectChallengeHeader, DatagramHeader, IsaacCipher, OptionalHeaders,
+    BindPlan, BitTreeTable, ConnectChallengeHeader, DatagramHeader, IsaacCipher, OptionalHeaders,
     SessionError, UdpDatagramTransport, VersionStatusMessage, decode_datagram, encode_datagram,
     split_blob,
 };
@@ -548,12 +548,7 @@ impl ConnectorNet for SyntheticNet {
         self.0.live().then_some(*LOCAL.ip())
     }
 
-    fn bind_udp(
-        &mut self,
-        _local_ip: Ipv4Addr,
-        _explicit_base_port: u16,
-        _compute_unique: bool,
-    ) -> Result<SyntheticUdp, SessionError> {
+    fn bind_udp(&mut self, _plan: BindPlan) -> Result<SyntheticUdp, SessionError> {
         if !self.0.live() {
             return Err(revoked());
         }
@@ -563,6 +558,7 @@ impl ConnectorNet for SyntheticNet {
 
     fn chat_binder(
         &self,
+        _first_local: Option<Ipv4Addr>,
     ) -> Option<Box<dyn FnMut() -> Result<SyntheticUdp, crate::play::PlayError> + Send>> {
         None
     }

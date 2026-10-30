@@ -1596,10 +1596,11 @@ fn real_data_discover_launcher_config_and_language() {
     }
 }
 
-/// §4.2 / `official-session.md` §6.2.1: the hand-off builds the `SessionAuthHeader` with
-/// authType `0x40000002`, authFlags `0x04` and an extra blob of the decoded ticket length.
+/// `official-login.md` §4.2.1, `official-session.md` §6.2–§6.2.1: the hand-off builds the
+/// primary connection's `SessionAuthHeader`: `netVersion` `"180804_"` + the version stamp,
+/// authType `0x00000001`, authFlags `0x04`, and the ticket's ASCII text undecoded.
 #[test]
-fn handoff_session_auth_header_uses_decoded_ticket_length() {
+fn handoff_session_auth_header_carries_the_ticket_text() {
     let version = VersionInfo::new("1234", "01020304-0506-0708-090A-0B0C0D0E0F10", 1100).unwrap();
     let handoff = |ticket: &str| {
         SessionHandoff::new(
@@ -1615,21 +1616,88 @@ fn handoff_session_auth_header_uses_decoded_ticket_length() {
         )
         .unwrap()
     };
-    // "U1lOVEhUSUNLRVQ=" is Base64 of the 11 bytes "SYNTHTICKET".
-    let ok = handoff("U1lOVEhUSUNLRVQ=");
+    // The Vector 6 synthetic ticket: 21 characters, sent as they are.
+    let ok = handoff("SYNTH+TICKET/ABC123==");
     assert_eq!(ok.login_host().unwrap().port, Some(19001));
     let header = ok.session_auth_header(7).unwrap();
-    assert_eq!(header.auth_type, 0x4000_0002);
+    assert_eq!(
+        header.net_version,
+        "180804_netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10"
+    );
+    assert_eq!(header.auth_type, 0x0000_0001);
     assert_eq!(header.auth_flags, 0x04);
     assert_eq!(
-        header.credentials.extra_blob.as_deref(),
-        Some(&b"SYNTHTICKET"[..])
+        header.credentials.ticket.as_deref(),
+        Some("SYNTH+TICKET/ABC123==")
     );
+    assert_eq!(header.credentials.second_string, None);
     assert_eq!(
         header.credentials.account_or_ticket,
         "LOTROSUB00000000000000002"
     );
-    // The V4/V6 synthetic ticket text is not well-formed Base64 (21 characters).
-    let bad = handoff("SYNTH+TICKET/ABC123==");
+    // A ticket with a space or a control character cannot be sent as text.
+    let bad = handoff("not a ticket");
     assert!(bad.session_auth_header(7).is_err());
+}
+
+/// `official-login.md` §3.5 item 4 and §5.2: the queue polls every
+/// `WorldQueue.LoginQueue.RefreshSeconds` (20 s when absent), clamped to 5–120 s; the
+/// legacy `WorldQueue.PollTimer` does not set it.
+#[test]
+fn the_queue_poll_follows_refresh_seconds_with_the_clamp() {
+    let with = |extra: &str| {
+        let xml = SYNTHETIC_REMOTE_LAUNCHER_CONFIG_XML.replace(
+            "  </appSettings>",
+            &format!("    {extra}\n  </appSettings>"),
+        );
+        RemoteLauncherConfig::parse(xml.as_bytes()).unwrap()
+    };
+    // Absent (the fixture has only PollTimer = 120): the 20 s default.
+    let base =
+        RemoteLauncherConfig::parse(SYNTHETIC_REMOTE_LAUNCHER_CONFIG_XML.as_bytes()).unwrap();
+    assert_eq!(base.poll_timer_sec, Some(120));
+    assert_eq!(base.login_queue_refresh_sec, None);
+    assert_eq!(base.queue_poll_interval_sec(), 20);
+    let key =
+        |v: &str| format!(r#"<add key="WorldQueue.LoginQueue.RefreshSeconds" value="{v}" />"#);
+    assert_eq!(with(&key("30")).queue_poll_interval_sec(), 30);
+    assert_eq!(with(&key("1")).queue_poll_interval_sec(), 5);
+    assert_eq!(with(&key("0")).queue_poll_interval_sec(), 5);
+    assert_eq!(with(&key("600")).queue_poll_interval_sec(), 120);
+    assert_eq!(with(&key("soon")).queue_poll_interval_sec(), 20);
+}
+
+/// `official-session.md` §3.2 item 1: the `[Net]` keys of `UserPreferences.ini` and their
+/// defaults.
+#[test]
+fn user_preferences_read_the_net_keys_with_their_defaults() {
+    let none = UserPreferences::parse(b"[Launcher]\nLastLocale=en\n").unwrap();
+    assert_eq!(none.net.bind_interface, "");
+    assert_eq!(none.net.user_specified_port, 0);
+    assert!(none.net.compute_unique_port);
+    assert_eq!(none.net.connection_speed_kbps, 0.0);
+    assert_eq!(none.net.bind_address(), None);
+
+    let ini = b"[Net]\nBindInterface=192.0.2.44\nUserSpecifiedPort=4100\n\
+                ComputeUniquePort=0\nConnectionSpeed=1000.00\n[General]\nLastWorld=Alpha\n";
+    let prefs = UserPreferences::parse(ini).unwrap();
+    assert_eq!(prefs.last_world.as_deref(), Some("Alpha"));
+    assert_eq!(
+        prefs.net.bind_address(),
+        Some(std::net::Ipv4Addr::new(192, 0, 2, 44))
+    );
+    assert_eq!(prefs.net.user_specified_port, 4100);
+    assert!(!prefs.net.compute_unique_port);
+    assert_eq!(prefs.net.connection_speed_kbps, 1000.0);
+
+    // Values that do not parse keep the defaults; a name is not an address.
+    let odd = b"[net]\nBindInterface=eth0\nUserSpecifiedPort=70000\nComputeUniquePort=maybe\n\
+                ConnectionSpeed=-5\n";
+    let prefs = UserPreferences::parse(odd).unwrap();
+    assert_eq!(prefs.net.bind_address(), None);
+    assert_eq!(prefs.net.user_specified_port, 0);
+    assert!(prefs.net.compute_unique_port);
+    assert_eq!(prefs.net.connection_speed_kbps, 0.0);
+    let on = UserPreferences::parse(b"[Net]\nComputeUniquePort=True\n").unwrap();
+    assert!(on.net.compute_unique_port);
 }

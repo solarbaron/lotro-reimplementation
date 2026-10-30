@@ -106,7 +106,6 @@ file = "crates/compat/src/session.rs"
 entry = [
     "tessera_compat::session::decode_datagram",
     "tessera_compat::session::decode_variable_u32",
-    "tessera_compat::session::decode_ticket_base64",
     "tessera_compat::session::decode_message",
     "tessera_compat::session::SessionAuthCredentials::decode",
     "tessera_compat::session::SessionAuthHeader::decode",
@@ -327,7 +326,6 @@ crate = "tessera-compat"
 file = "crates/compat/src/chat_session/mod.rs"
 entry = [
     "tessera_compat::chat_session::parse_endpoint",
-    "tessera_compat::chat_session::decode_base64",
 ]
 input = "network"
 target = "compat_chat_message"

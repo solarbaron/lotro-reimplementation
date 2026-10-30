@@ -19,7 +19,7 @@ use tessera_compat::chat_session::wire::{
     read_u64_list,
 };
 use tessera_compat::chat_session::{
-    ChatClient, ChatCodecs, ChatConfig, chat_auth_header, decode_base64, effective_endpoint,
+    ChatClient, ChatCodecs, ChatConfig, chat_auth_header, check_ticket, effective_endpoint,
     parse_endpoint,
 };
 use tessera_compat::session::InMemoryUdpTransport;
@@ -55,7 +55,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = U64ToU32Table::decode(&mut WireReader::new(data));
 
     if let Ok(s) = std::str::from_utf8(data) {
-        let _ = decode_base64(s);
+        let _ = check_ticket(s);
         let _ = parse_endpoint(s);
         let mid = (0..=s.len() / 2)
             .rev()

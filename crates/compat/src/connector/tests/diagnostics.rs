@@ -98,7 +98,7 @@ fn a_handshake_timeout_logs_its_counts_and_no_endpoint() {
     assert_eq!(r.link.rejected.total(), 0);
     assert!(!r.challenge_seen());
     assert_eq!(r.auth, AuthMode::Ticket);
-    assert_eq!(r.local, LocalSource::Routed);
+    assert_eq!(r.local, LocalSource::Wildcard);
     assert_eq!(r.remote, RemoteForm::HostPort);
     assert_eq!(r.remote_name, RemoteName::Resolved);
     assert_eq!(r.send_checksum, SendChecksumRule::PerBuffer);
@@ -126,13 +126,13 @@ fn a_handshake_timeout_logs_its_counts_and_no_endpoint() {
         "received=0",
         "rejected_checksum=0",
         "challenge_seen=false",
-        "bind=\"Case C (ephemeral port)\"",
-        "local_address=\"routed toward the server\"",
+        "bind=\"Case B (computed unique port, seed from the routed address)\"",
+        "local_address=\"wildcard (0.0.0.0)\"",
         "remote=\"remoteHost:port (port in -h)\"",
         "remote_name=\"name resolved (first IPv4 address)\"",
         "recv_errors=0",
         "challenge_from_other_address=0",
-        "auth=\"authType 0x40000002 authFlags 0x04 (ticket in extraBlob)\"",
+        "auth=\"authType 0x00000001 authFlags 0x04 (ticket text in extraBlob)\"",
     ] {
         assert!(line.contains(field), "{field} missing: {line}");
     }
@@ -326,7 +326,7 @@ fn handshake_datagrams(rule: SendChecksumRule) -> Vec<Vec<u8>> {
     let start = session_start(0, None, Arc::default());
     let auth = start.handoff.session_auth_header(1_000).expect("auth");
     let mut out = Vec::new();
-    let mut conn = SessionConnection::new(0x0100, LOGIN_SERVER, 0.0);
+    let mut conn = SessionConnection::new(LOGIN_SERVER, 0.0);
     conn.set_send_checksum_rule(rule);
     conn.start_login(auth, 0.0).expect("login");
     while let Some(d) = conn.pop_outbound_datagram() {
@@ -338,7 +338,7 @@ fn handshake_datagrams(rule: SendChecksumRule) -> Vec<Vec<u8>> {
     while let Some(d) = conn.pop_outbound_datagram() {
         out.push(d);
     }
-    let mut world = SessionConnection::new(0x0101, WORLD_SERVER, 0.0);
+    let mut world = SessionConnection::new(WORLD_SERVER, 0.0);
     world.set_send_checksum_rule(rule);
     world
         .start_world_login(0x0102_0304_0506_0708, 0.0)
@@ -403,7 +403,13 @@ fn the_chat_connection_uses_the_send_checksum_rule() {
         d.step(1.1, true, &go);
         let (player, name) = d.wants_chat(1.2).expect("the chat session is due");
         let net = FakeNet(world.clone());
-        d.attach_chat(net.chat_binder().expect("binder"), player, &name, 1.2, &go);
+        d.attach_chat(
+            net.chat_binder(d.first_local_ipv4()).expect("binder"),
+            player,
+            &name,
+            1.2,
+            &go,
+        );
         d.step(2.3, true, &go);
         let mut chat = Server::new(0x0111, 0xBEEF_0003);
         world.deliver_chat(chat.challenge(0xBEEF_0003));
@@ -593,7 +599,7 @@ fn errors_and_links_print_no_address_in_debug() {
             "{:?}",
             SessionError::SourceAddressMismatch { rec_id: 0x100 }
         ),
-        format!("{:?}", SessionConnection::new(0x0100, LOGIN_SERVER, 0.0)),
+        format!("{:?}", SessionConnection::new(LOGIN_SERVER, 0.0)),
     ];
     for t in &texts {
         assert!(!t.contains("192.0.2."), "{t}");
@@ -625,9 +631,10 @@ fn the_two_rules_differ_only_in_the_checksum() {
     let whole =
         encode_datagram_with_rule(hdr, &opt, &[], None, None, SendChecksumRule::WholePayload)
             .expect("whole-payload");
+    // `encode_datagram` (the synthetic peers' encoder) uses the receive rule.
     assert_eq!(
-        per,
-        encode_datagram(hdr, &opt, &[], None, None).expect("default")
+        whole,
+        encode_datagram(hdr, &opt, &[], None, None).expect("peer")
     );
     assert_eq!(per.len(), whole.len());
     let differing: Vec<usize> = per
@@ -695,44 +702,32 @@ fn the_switch_reads_two_names_and_refuses_the_rest() {
 }
 
 #[test]
-fn the_bind_case_is_read_from_the_bound_port() {
+fn the_bind_case_is_the_plans_case() {
+    use crate::session::BindPorts;
     let ip = Ipv4Addr::new(192, 0, 2, 1);
-    let at = |port| SocketAddrV4::new(ip, port);
     assert_eq!(
-        BindCase::of(ip, 4000, true, at(4000)),
-        BindCase::ExplicitBase
+        BindCase::of(&BindPorts::select(4000, true, Some(ip))),
+        BindCase::ExplicitPort
     );
     assert_eq!(
-        BindCase::of(ip, 4000, true, at(4011)),
-        BindCase::ExplicitBase
-    );
-    assert_eq!(BindCase::of(ip, 4000, true, at(4012)), BindCase::Ephemeral);
-    let unique = crate::session::candidate_bind_ports(ip, 0, true);
-    let first = unique.first().copied().expect("a Case B port");
-    assert_eq!(
-        BindCase::of(ip, 0, true, at(first)),
+        BindCase::of(&BindPorts::select(0, true, Some(ip))),
         BindCase::ComputedUnique
     );
-    assert_eq!(BindCase::of(ip, 0, false, at(first)), BindCase::Ephemeral);
-    assert_eq!(BindCase::of(ip, 0, true, at(1)), BindCase::Ephemeral);
     assert_eq!(
-        BindCase::of(ip, 0, true, SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, first)),
-        BindCase::EphemeralAnyAddress
+        BindCase::of(&BindPorts::select(0, false, Some(ip))),
+        BindCase::Ephemeral
     );
-    let any = Ipv4Addr::UNSPECIFIED;
     assert_eq!(
-        BindCase::of(any, 0, true, SocketAddrV4::new(any, 40000)),
+        BindCase::of(&BindPorts::select(0, true, None)),
         BindCase::Ephemeral
     );
     for case in [
-        BindCase::ExplicitBase,
+        BindCase::ExplicitPort,
         BindCase::ComputedUnique,
         BindCase::Ephemeral,
-        BindCase::EphemeralAnyAddress,
     ] {
         assert!(case.label().starts_with("Case "));
     }
-    assert!(BindCase::Unknown.label().starts_with("unknown"));
     assert_eq!(RemoteForm::of_host(true, true), RemoteForm::LocalHostPort);
     assert_eq!(RemoteForm::of_host(false, true), RemoteForm::HostPort);
     assert_eq!(
@@ -748,13 +743,17 @@ fn the_bind_case_is_read_from_the_bound_port() {
 
 #[test]
 fn modes_and_refusals_are_grouped() {
-    use crate::session::{AUTH_TYPE_ACCOUNT, AUTH_TYPE_TICKET};
-    assert_eq!(AuthMode::of(AUTH_TYPE_TICKET, 0x04), AuthMode::Ticket);
+    use crate::session::{AUTH_TYPE_CHAT, AUTH_TYPE_PRIMARY};
+    assert_eq!(AuthMode::of(AUTH_TYPE_PRIMARY, 0x04), AuthMode::Ticket);
     assert_eq!(
-        AuthMode::of(AUTH_TYPE_ACCOUNT, 0x02),
-        AuthMode::TicketInSecondString
+        AuthMode::of(AUTH_TYPE_PRIMARY, 0x06),
+        AuthMode::TicketAndPassword
     );
-    assert_eq!(AuthMode::of(AUTH_TYPE_ACCOUNT, 0), AuthMode::AccountOnly);
+    assert_eq!(AuthMode::of(AUTH_TYPE_CHAT, 0x04), AuthMode::ChatTicket);
+    assert_eq!(AuthMode::of(AUTH_TYPE_PRIMARY, 0), AuthMode::AccountOnly);
+    assert_eq!(AuthMode::of(AUTH_TYPE_CHAT, 0), AuthMode::AccountOnly);
+    assert_eq!(AuthMode::of(AUTH_TYPE_PRIMARY, 0x02), AuthMode::Other);
+    assert_eq!(AuthMode::of(AUTH_TYPE_CHAT, 0x06), AuthMode::Other);
     assert_eq!(AuthMode::of(7, 0), AuthMode::Other);
     let kind = |e: SessionError| RejectKind::of(&e);
     assert_eq!(

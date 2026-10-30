@@ -43,6 +43,32 @@ ran beside it.
 
 ## Exposure
 
+- **Pass-9 independent reviewer (2026-10-30):** Codex / GPT-6, task `/root/pass9_review_coordinator/review_session_login`; session UUID unavailable (host does not expose it). Reviewed login and session at writer commit `b2cc48e0dcaac912c77b13d909ed8e5e9abf485a`, PASS. Fresh reviewer started with no inherited history by coordinator `/root/pass9_review_coordinator`, which wrote none of this pass. Dirty for M8; never implement M8.
+- **Pass-9 independent reviewer (2026-10-30):** Codex / GPT-6, task `/root/pass9_review_coordinator/review_world_play`; session UUID unavailable (host does not expose it). Reviewed world and play at writer commit `b2cc48e0dcaac912c77b13d909ed8e5e9abf485a`, PASS. Fresh reviewer started with no inherited history by coordinator `/root/pass9_review_coordinator`, which wrote none of this pass. Dirty for M8; never implement M8.
+- **Pass-9 independent reviewer (2026-10-30):** Codex / GPT-6, task `/root/pass9_review_coordinator/review_property`; session UUID unavailable (host does not expose it). Reviewed property-system §10 at writer commit `b2cc48e0dcaac912c77b13d909ed8e5e9abf485a`, PASS. Fresh reviewer started with no inherited history by coordinator `/root/pass9_review_coordinator`, which wrote none of this pass. Dirty for M8; never implement M8.
+- **Pass-9 review coordinator (2026-10-30):** Codex / GPT-6, task `/root/pass9_review_coordinator`; session UUID unavailable (host does not expose it). Wrote none of this pass and started the three fresh independent reviewers with no inherited history. Coordinates their results; claims no independent spec acceptance of its own. Dirty for M8; never implement M8.
+
+- **Archived pass-8 exposure (2026-10-30; authorship/exposure only):** The imported
+  Stage 1 spec text was written through Antigravity by Gemini (exact model not recorded),
+  writer/parent session `c0194bf2-43a9-4f65-a6c2-3e421509c2f7`. The archived pass-8
+  record also lists dirty-room research sessions `54cfa179-c929-4e89-b574-3a7a5e9e47a2`,
+  `3d301227-2114-4e4b-b247-9f458f8e8a76`, and `ea61b9d8-afeb-40ff-8bcc-203a513284cb`;
+  historical reviewer sessions `f9eb187f-2699-4b27-95a2-bdb310ee2dea` (login),
+  `648588d9-ee15-400c-a88e-9e7a3b646959` (session),
+  `c167ceb9-eca5-44a2-8d47-aec372ff1f9f` (world),
+  `fd299a75-1f58-4bfb-88ea-ffb3b93b2001` (play), and
+  `91c29719-a154-45b6-84ff-5c7f7129dd11` (property §10). Source: the archived
+  pass-8 decision record at `b0d3415`, Exposure. All are dirty for M8 and must never
+  implement M8. This entry records no review outcome and assigns none of them to pass 9.
+- **Pass-9 continuation writer (2026-10-30):** Same Codex / GPT-6 writer conversation
+  as `73c0571`, task `/root`; session ID **not recorded** (host does not expose it).
+  Read origin/main remediation §17 and the Stage 1 specs and neutral records; wrote the
+  §17 corrections. Remains dirty for M8; no implementation work.
+
+
+- **Pass 9 writer (2026-10-30):** Codex (GPT-6), one writer session, session ID **not recorded** (not exposed by the host), task path `/root`. Read the five Stage 1 specs, binding neutral records and dirty-room notes; dirty for M8 and never eligible to implement M8. No subagents were started by this writer. No held incident-0041 text was opened.
+
+
 - **Who read the gameplay spec:**
   - In initial audit workflow `wf_0939180e-4d4` (2026-10-22, recorded on `main` in commit
     `ec28767` under clean-room parent orchestrating session
@@ -354,3 +380,52 @@ and a conformance check against the re-accepted specifications), the staged deli
 (Stage 1 core specs first with `official-messages-gameplay.md` held for Stage 2), and the
 clean-history branch rebuild and audit gate for closing this incident record and resuming M8
 (`M8_PAUSED = false`) are settled in [decision 0042](0042-m8-remediation-decisions.md).
+
+## Pass 9 writer remediation (2026-10-30)
+
+Pass 8 was blocked by the audit in `docs/m8-remediation.md` §16. Pass 9 starts from
+`origin/main` and imports the spec content of writer diff `e26848b..2bc806a`, credited
+to Gemini through Antigravity, writer session `c0194bf2-43a9-4f65-a6c2-3e421509c2f7`.
+It does not import pre-recorded review results; the archived exposure identities are
+retained separately above, without assigning them any pass-9 role. The five specs remain **Review**.
+The accepted pass-7 text and its historical session records above describe that earlier pass.
+No pass-9 acceptance is recorded by the writer.
+
+The pass-8 decision-summary additions are not imported: they disagree with the specs.
+The origin of those unsupported values is not known to this session. The dirty-room
+reconciliation note is `research/notes/m8-pass9-reconciliation.md`; it records that limitation
+rather than asserting an observation that did not occur.
+
+The current functional answers are solely in the specs:
+
+| Topic | Authoritative spec sections |
+|---|---|
+| Bind and Case B | `official-session.md` §3.1–§3.4 |
+| Datagram layout, checksums and first packet | `official-session.md` §4.1–§4.4, §6.2–§6.4, §10.2 Vectors 5–6 |
+| Queue assignments and version exchange | `official-session.md` §5.6.2 and §9.3; `official-messages-play.md` §4.2, §4.5 and §6.6.3 |
+| Disconnect behavior and state labels | `official-session.md` §6.1 and §8.2 |
+| Login address policy and remaining launcher questions | `official-login.md` §2, §3 and §6.2 |
+| S1 world fields and movement | `official-messages-world.md` §2.6, §2.8 and §5.5; `official-messages-play.md` §4.2 and §4.5 |
+| Documented RPC layouts and unresolved generic signatures | `official-messages-play.md` §5.1, §6.3–§7.1; decision 0042 item 10 |
+| Property wire arguments | `property-system.md` §10.4 |
+
+### Pass 9 writer sessions
+
+| Tool / model | Session ID | Role | Scope | State |
+|---|---|---|---|---|
+| Codex / GPT-6 | not recorded (host does not expose it); task `/root` | spec writer | `official-login.md` | Review |
+| Codex / GPT-6 | same session, not recorded | spec writer | `official-session.md` | Review |
+| Codex / GPT-6 | same session, not recorded | spec writer | `official-messages-world.md` | Review |
+| Codex / GPT-6 | same session, not recorded | spec writer | `official-messages-play.md` | Review |
+| Codex / GPT-6 | same session, not recorded | spec writer | `property-system.md` §10 | Review |
+| Codex / GPT-6 | same session, not recorded; continuation after `73c0571` | spec writer | §17 corrections across the five Stage 1 specs and neutral records | Review |
+| Codex / GPT-6 | UUID unavailable (host does not expose it); task `/root/pass9_review_coordinator/review_session_login` | independent reviewer | `official-login.md` | 2026-10-30 — PASS at `b2cc48e0dcaac912c77b13d909ed8e5e9abf485a`; Accepted, gated by decision 0042 items 4 & 8 |
+| Codex / GPT-6 | UUID unavailable (host does not expose it); task `/root/pass9_review_coordinator/review_session_login` | independent reviewer | `official-session.md` | 2026-10-30 — PASS at `b2cc48e0dcaac912c77b13d909ed8e5e9abf485a`; Accepted, gated by decision 0042 items 4 & 8 |
+| Codex / GPT-6 | UUID unavailable (host does not expose it); task `/root/pass9_review_coordinator/review_world_play` | independent reviewer | `official-messages-world.md` | 2026-10-30 — PASS at `b2cc48e0dcaac912c77b13d909ed8e5e9abf485a`; Accepted, gated by decision 0042 items 4 & 8 |
+| Codex / GPT-6 | UUID unavailable (host does not expose it); task `/root/pass9_review_coordinator/review_world_play` | independent reviewer | `official-messages-play.md` | 2026-10-30 — PASS at `b2cc48e0dcaac912c77b13d909ed8e5e9abf485a`; Accepted, gated by decision 0042 items 4 & 8 |
+| Codex / GPT-6 | UUID unavailable (host does not expose it); task `/root/pass9_review_coordinator/review_property` | independent reviewer | `property-system.md` §10 | 2026-10-30 — PASS at `b2cc48e0dcaac912c77b13d909ed8e5e9abf485a`; Accepted, gated by decision 0042 items 4 & 8 |
+| Codex / GPT-6 | UUID unavailable (host does not expose it); task `/root/pass9_review_coordinator` | review coordinator | Started three fresh reviewers; wrote none of this pass | Results coordinated; no independent spec acceptance claimed |
+
+Independent reviewer sessions must be started by a session that wrote none of this pass.
+They append their own exposure and session rows and make only the permitted header and
+change-log edits. This writer has neither assigned reviewer identities nor recorded results.

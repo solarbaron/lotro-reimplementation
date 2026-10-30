@@ -1222,6 +1222,8 @@ fn into_world(run: &mut Run, login: &Server) -> Server {
     world.connect(run, 0xBEEF_0002, WORLD_SERVER);
     let d = world.event(0x90, &session_ready());
     run.world.deliver(d, WORLD_SERVER);
+    // The server gate of the portal exit (`official-messages-play.md` §4.5 item 4).
+    run.world.deliver(world.event(0x7C, &[0]), WORLD_SERVER);
     run.wait_event(|e| matches!(e, Event::WorldEntered { .. }));
     world
 }
@@ -2172,6 +2174,9 @@ fn the_session_reaches_the_character_list_and_the_world() {
     let d = world.event(0x43, &name);
     run.world.deliver(d, WORLD_SERVER);
     let d = world.event(0x90, &session_ready());
+    run.world.deliver(d, WORLD_SERVER);
+    // The server gate of the portal exit (`official-messages-play.md` §4.5 item 4).
+    let d = world.event(0x7C, &[0]);
     run.world.deliver(d, WORLD_SERVER);
     let entered = run.wait_event(|e| matches!(e, Event::WorldEntered { .. }));
     let Event::WorldEntered { player, name, .. } = entered else {
@@ -4016,6 +4021,8 @@ fn driver_in_world() -> (World, SessionDriver<FakeNet>, Server) {
     };
     d.command(&enter, 1.0).expect("enter");
     world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
+    // The server gate of the portal exit (`official-messages-play.md` §4.5 item 4).
+    world.deliver(login.event(0x7C, &[0]), LOGIN_SERVER);
     d.step(1.1, true, &go);
     assert!(
         d.take_events()
@@ -4271,6 +4278,7 @@ fn a_stray_loading_signal_does_not_end_the_next_portal_space() {
     )
     .expect("enter again");
     world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
+    world.deliver(login.event(0x7C, &[0]), LOGIN_SERVER);
     d.step(2.1, true, &go);
     d.step(5.0, true, &go);
     assert!(

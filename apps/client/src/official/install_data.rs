@@ -10,9 +10,10 @@
 //! - the texts of `LocalizedTokenText` values in the language the login selected
 //!   (`string-table.md` §9.0): a literal with the display cut and its escapes decoded
 //!   (step 1), a reference through the string tables. A message with value slots is shown
-//!   with its literal parts and counted ([`ArchiveData::texts_without_values`]): the wire
-//!   form of arguments is OPEN (`official-messages-world.md` §2.6), so no value can fill
-//!   them. Each text the session shows is resolved once (the entity feed renders a name at
+//!   with its literal parts and counted ([`ArchiveData::texts_without_values`]): the
+//!   arguments a wire text carries (`official-messages-world.md` §2.6) are decoded but not
+//!   yet given to the renderer as values (follow-up); a mode-2 text shows its second
+//!   authoring string like a literal (§2.6 row 1, `LocalizedTokenText::source`). Each text the session shows is resolved once (the entity feed renders a name at
 //!   the creation only), so the count is one per text shown. A reference whose table DID
 //!   lacks the `0x25` prefix is refused before anything is read (§2.6 row 2b,
 //!   `string-table.md` §9.1), and [`InstallData::text_cached`] tells the entity feed which
@@ -44,7 +45,7 @@ use tessera_compat::connector::{
 };
 use tessera_compat::world::{
     EncodedPropertyValue, LocalizedTokenText, LocalizedTokenTextContent, PortalStateSchema,
-    PropertyType,
+    PropertyType, TextSource,
 };
 use tessera_dat::{ArchiveSet, SetOptions, inflate_record};
 use tessera_formats::property::{PropertyDictionary, PropertyValue};
@@ -355,6 +356,11 @@ impl InstallData for ArchiveData {
     /// nothing is shown and the caller counts it. A message with value slots renders its
     /// literal parts ([`ArchiveData::texts_without_values`]).
     fn resolve_text(&self, text: &LocalizedTokenText) -> Option<String> {
+        // Mode 2: the second authoring string, shown like a literal; no table is read
+        // (`official-messages-world.md` §2.6 row 1).
+        if let TextSource::AuthoringSource(source) = text.source() {
+            return shown_literal(source);
+        }
         let (token, table) = match &text.content {
             LocalizedTokenTextContent::Literal(s) => return shown_literal(s),
             LocalizedTokenTextContent::Reference {
@@ -459,8 +465,12 @@ struct SchemaBuilder<'a> {
     limit: usize,
     visited: usize,
     truncated: bool,
+    /// The key being built reached a `PlayerPhysics` node (kind 47).
+    physics: bool,
     /// The keys left out at a bound, in build order.
     left_out: Vec<u32>,
+    /// The keys whose definitions reach no `PlayerPhysics` node, in build order.
+    not_physics: Vec<u32>,
 }
 
 /// A script-table closure: its tables in pre-order and their positions by DID.
@@ -487,7 +497,9 @@ impl<'a> SchemaBuilder<'a> {
             limit: 0,
             visited: 0,
             truncated: false,
+            physics: false,
             left_out: Vec::new(),
+            not_physics: Vec::new(),
         }
     }
 
@@ -644,6 +656,9 @@ impl<'a> SchemaBuilder<'a> {
             return;
         }
         self.visited += 1;
+        if node.kind == NodeKind::PLAYER_PHYSICS {
+            self.physics = true;
+        }
         match &node.data {
             NodeData::Switch(sw)
                 if node.kind == NodeKind::SWITCH || node.kind == NodeKind::WHEN =>
@@ -670,7 +685,9 @@ impl<'a> SchemaBuilder<'a> {
     }
 
     /// The schemas of `keys` over the closure `c` from the tables at `roots` (steps 2–4
-    /// for the definitions [`Self::gather`] finds). Each key visits at most
+    /// for the definitions [`Self::gather`] finds); a key is a schema only when a node it
+    /// visits, its scriptlets' included, is a `PlayerPhysics` node (kind 47, step 3). Each
+    /// key visits at most
     /// [`MAX_SCHEMA_NODES`], all keys together at most [`MAX_SCHEMA_TOTAL_NODES`]; a key
     /// that hits either bound (or [`MAX_SCHEMA_DEPTH`]) is left out, and its visits still
     /// count against the total.
@@ -684,6 +701,7 @@ impl<'a> SchemaBuilder<'a> {
         for &key in keys {
             self.visited = 0;
             self.truncated = false;
+            self.physics = false;
             self.limit = self.per_key.min(self.total_left);
             let mut schema = PortalStateSchema::default();
             let mut entered = HashSet::new();
@@ -706,6 +724,12 @@ impl<'a> SchemaBuilder<'a> {
                     "official session: a state schema hit its traversal bound and is left out"
                 );
                 self.left_out.push(key);
+                continue;
+            }
+            // §4.3.1 step 3: only a script whose node graph has a `PlayerPhysics` node
+            // (kind 47) is a player-physics schema.
+            if !self.physics {
+                self.not_physics.push(key);
                 continue;
             }
             out.insert(key, schema);
@@ -740,9 +764,10 @@ fn combination_vocabulary(set: &ArchiveSet, dict: &PropertyDictionary) -> Option
 /// reading, question in `docs/m8-remediation.md` §15 (W §4.3.1)). For each, the
 /// definitions of the key in the closure are gathered as `script-table.md` §8.2 runs them
 /// (kind lists 1, 2, 4; overriding definitions prune their tables' includes), and steps
-/// 2–4 collect the condition PIDs of their Switch (12) and When (63) nodes. A schema that
-/// hits [`MAX_SCHEMA_NODES`], [`MAX_SCHEMA_TOTAL_NODES`] or [`MAX_SCHEMA_DEPTH`] is left
-/// out. Empty when a table or the enum is missing.
+/// 2–4 collect the condition PIDs of their Switch (12) and When (63) nodes. Only a key
+/// whose definitions reach a `PlayerPhysics` node (kind 47) is a schema (step 3). A schema
+/// that hits [`MAX_SCHEMA_NODES`], [`MAX_SCHEMA_TOTAL_NODES`] or [`MAX_SCHEMA_DEPTH`] is
+/// left out. Empty when a table or the enum is missing.
 #[must_use]
 pub fn portal_state_schemas(
     set: &ArchiveSet,
@@ -758,6 +783,9 @@ pub struct SchemaBuild {
     pub schemas: BTreeMap<u32, PortalStateSchema>,
     /// The schema IDs left out at a traversal bound, in build order.
     pub left_out: Vec<u32>,
+    /// The script keys of the player-physics table whose definitions reach no
+    /// `PlayerPhysics` node (general lifecycle scripts, not schemas; §4.3.1 step 3).
+    pub not_physics: Vec<u32>,
     /// Nodes visited over all keys.
     pub visited: usize,
 }
@@ -810,6 +838,7 @@ pub fn portal_state_schema_build(set: &ArchiveSet, registry: &PropertyRegistry) 
     SchemaBuild {
         schemas,
         left_out: b.left_out,
+        not_physics: b.not_physics,
         visited,
     }
 }
@@ -926,10 +955,11 @@ mod tests {
         PropertyRegistry::parse(&out).expect("an empty dictionary")
     }
 
-    /// A leaf node of no particular kind.
+    /// A leaf node: a `PlayerPhysics` node (kind 47) without data, so that a script with
+    /// one is a schema (`official-messages-world.md` §4.3.1 step 3).
     fn leaf() -> Node {
         Node {
-            kind: NodeKind(2),
+            kind: NodeKind::PLAYER_PHYSICS,
             data: NodeData::None,
             base: tessera_formats::script_table::BaseBlock::default(),
             particle_flag: None,
@@ -1256,12 +1286,66 @@ mod tests {
                 );
             }
             let mut c = closure_of(&[9], 0);
+            // A last root that is a `PlayerPhysics` leaf makes the key a schema; it holds no
+            // PID, so the order of the PIDs found is the naive walk's.
             c.tables[0].scripts[0].roots = roots;
+            c.tables[0].scripts[0].roots.push(leaf());
             let built = b.build(&c, &[0], &[9]);
             assert_eq!(built.get(&9), Some(&expected), "case {case}");
             compared += 1;
         }
         assert!(compared > 250, "only {compared} cases compared");
+    }
+
+    #[test]
+    fn only_scripts_with_a_player_physics_node_are_schemas() {
+        // §4.3.1 step 3: a script whose node graph has no `PlayerPhysics` node (kind 47) is
+        // a lifecycle script, not a schema, whatever its conditions; one in a scriptlet the
+        // script runs counts.
+        let pids: [(u32, u32); 1] = [(0x200, 21)];
+        let registry = typed_registry(&pids);
+        let read = |_: Did| None;
+        let mut b = SchemaBuilder::new(&read, &registry, None);
+        let plain = || Node {
+            kind: NodeKind(2),
+            ..leaf()
+        };
+        b.scriptlets.insert(
+            0x0C00_0300,
+            Some(Arc::new(Scriptlet {
+                did: Did(0x0C00_0300),
+                roots: vec![leaf()],
+                dependencies: Vec::new(),
+            })),
+        );
+        let mut c = closure_of(&[1, 2, 3], 0);
+        // Key 1: a Switch only. Key 2: a Switch and a PlayerPhysics node in its port.
+        // Key 3: a Scriptlet node whose scriptlet holds the PlayerPhysics node.
+        c.tables[0].scripts[0].roots = vec![switch_node(0x200, vec![plain()])];
+        c.tables[0].scripts[1].roots = vec![switch_node(0x200, vec![leaf()])];
+        c.tables[0].scripts[2].roots =
+            vec![switch_node(0x200, vec![]), scriptlet_node(0x0C00_0300)];
+        let built = b.build(&c, &[0], &[1, 2, 3]);
+        assert_eq!(built.keys().copied().collect::<Vec<_>>(), [2, 3]);
+        assert_eq!(built[&2].bool_pids, [0x200]);
+        assert_eq!(b.not_physics, [1]);
+        assert!(b.left_out.is_empty());
+    }
+
+    #[test]
+    fn a_mode_2_text_is_its_source_string_shown_like_a_literal() {
+        let mut t = LocalizedTokenText::reference(5, 0x2500_0001);
+        if let LocalizedTokenTextContent::Reference { mode, .. } = &mut t.content {
+            *mode = 2;
+        }
+        t.authoring_strings = Some(["tok".into(), r"Gate \[b\] [n]".into(), String::new()]);
+        let TextSource::AuthoringSource(source) = t.source() else {
+            panic!("mode 2");
+        };
+        assert_eq!(shown_literal(source).as_deref(), Some("Gate [b]"));
+        t.authoring_strings = None;
+        assert_eq!(t.source(), TextSource::AuthoringSource(""));
+        assert_eq!(shown_literal(""), None);
     }
 
     #[test]

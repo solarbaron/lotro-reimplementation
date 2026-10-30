@@ -238,15 +238,17 @@ pub enum WorldError {
     /// A TSize hint byte was `23` or higher (`property-system.md` §17.2).
     #[error("invalid TSize bucket hint {0}: must be in 0..=22")]
     InvalidTSizeHint(u8),
-    /// A wire `LocalizedTokenText` had arguments: the per-argument key prefix is `OPEN` (§2.6).
-    #[error("wire LocalizedTokenText arguments are not supported (arg_key layout is OPEN)")]
-    UnsupportedWireTextArguments,
+    /// A `LocalizedTokenText` argument could not be written: its payload is missing, does
+    /// not fit its kind, or a 32-bit wire integer does not fit 32 bits (§2.6).
+    #[error("invalid LocalizedTokenText argument: {0}")]
+    InvalidTextArgument(&'static str),
     /// A wire `LocalizedTokenText` argument kind outside `1..=7` reached a value decoder (§2.6).
     #[error("invalid LocalizedTokenText argument kind {0}")]
     InvalidStringArgKind(u16),
-    /// An `EntityAppearanceDesc` had bit 0 (`base_model`) set: the bit test that gates
-    /// `model_b` is `OPEN` (§2.8), so the record cannot be framed.
-    #[error("EntityAppearanceDesc base_model is not decodable (model_b gate is OPEN)")]
+    /// No longer produced: `EntityAppearanceDesc.base_model` is one unconditional `u32`
+    /// (§2.8, pass 9), so a descriptor with bit 0 decodes. Kept so code that still counts it
+    /// compiles; it never matches.
+    #[error("EntityAppearanceDesc base_model is not decodable")]
     UnsupportedAppearanceBaseModel,
     /// An `EntityAppearanceDesc` or `PartEntry` flags word had a bit outside its defined set
     /// (`0x000007E3` / `0x0000002F`, §2.8).
@@ -1436,7 +1438,9 @@ pub enum LocalizedTokenTextContent {
 }
 
 /// Kind-specific value of a `LocalizedTokenText` argument (§2.6 kind table;
-/// `property-system.md` §17.4.1).
+/// `property-system.md` §10.4 for the wire form, §17.4.1 for the stored form). The entry's
+/// kind selects the variant: `1` [`Self::Nested`], `2` [`Self::Float`], `3`
+/// [`Self::FloatFormatted`], `4` and `6` [`Self::Int`], `5` and `7` [`Self::IntFormatted`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum LocalizedTokenTextArgPayload {
     /// Kind `1`: nested `LocalizedTokenText`.
@@ -1459,30 +1463,22 @@ pub enum LocalizedTokenTextArgPayload {
         /// Radix (`0xFFFF` = locale default).
         radix: u16,
     },
-    /// Kind `4`: fixed 8-byte signed integer (the 8-byte form of §2.6).
-    FixedInt(i64),
-    /// Kind `5`: fixed 8-byte signed integer with format options (the 11-byte form).
-    FixedIntFormatted {
-        /// Signed 64-bit integer value.
-        value: i64,
-        /// Formatting flags.
-        format_flags: u8,
-        /// Radix.
-        radix: u16,
-    },
-    /// Kind `6`: compact wire integer (`u8 is_32bit` + `u64 LE` or 4-tier `VariableU32`); a
-    /// stored kind 6 is an unconditional 8-byte integer (`is_32bit == false`).
-    CompactInt {
-        /// `true` (`0x01`): a `VariableU32` of the low 32 bits follows on the wire.
+    /// Kinds `4` and `6`: an integer. On the wire `bool8 is_32bit`, then a `u64` LE
+    /// (`is_32bit == false`) or a 4-tier `VariableU32` of the low 32 bits (`true`); stored,
+    /// an unconditional 8-byte value (`is_32bit` is `false` after a stored decode and not
+    /// written).
+    Int {
+        /// The wire selector: a `VariableU32` follows.
         is_32bit: bool,
-        /// Reconstructed 64-bit value.
+        /// The value (`i64` two's complement as `u64`; zero-extended from 32 bits when
+        /// `is_32bit`).
         value: u64,
     },
-    /// Kind `7`: compact wire integer with format options.
-    CompactIntFormatted {
-        /// `true` (`0x01`): a `VariableU32` of the low 32 bits follows on the wire.
+    /// Kinds `5` and `7`: [`Self::Int`]'s integer, then `u8 format_flags` and `u16 radix`.
+    IntFormatted {
+        /// The wire selector: a `VariableU32` follows.
         is_32bit: bool,
-        /// Reconstructed 64-bit value.
+        /// The value.
         value: u64,
         /// Formatting flags.
         format_flags: u8,
@@ -1491,13 +1487,43 @@ pub enum LocalizedTokenTextArgPayload {
     },
 }
 
+/// The writer's choice of the wire integer form (§2.6 kinds 4–7): the 32-bit form when the
+/// value is below `0x7FFFFFFF`.
+#[must_use]
+pub fn wire_int_is_32bit(value: u64) -> bool {
+    value < 0x7FFF_FFFF
+}
+
 impl LocalizedTokenTextArgPayload {
-    /// Writes the kind-specific value (after the 6-byte value header) in the wire (`wire`) or
+    /// A kind 4 / 6 integer with the writer's `is_32bit` choice ([`wire_int_is_32bit`]).
+    #[must_use]
+    pub fn int(value: u64) -> Self {
+        Self::Int {
+            is_32bit: wire_int_is_32bit(value),
+            value,
+        }
+    }
+
+    /// Whether this payload is the value of an entry of `kind` (see the type docs).
+    #[must_use]
+    pub fn fits_kind(&self, kind: u16) -> bool {
+        matches!(
+            (self, kind),
+            (Self::Nested(_), 1)
+                | (Self::Float { .. }, 2)
+                | (Self::FloatFormatted { .. }, 3)
+                | (Self::Int { .. }, 4 | 6)
+                | (Self::IntFormatted { .. }, 5 | 7)
+        )
+    }
+
+    /// Writes the kind-specific value (after the entry header) in the wire (`wire`) or
     /// stored encoding (§2.6 kinds 1–7).
     ///
     /// # Errors
     ///
-    /// Propagates nested encoding errors.
+    /// [`WorldError::InvalidTextArgument`] for a 32-bit wire integer whose value does not
+    /// fit 32 bits; nested encoding errors.
     pub fn encode(&self, writer: &mut WireWriter, wire: bool) -> Result<(), WorldError> {
         self.encode_with_depth(writer, wire, 1)
     }
@@ -1508,17 +1534,20 @@ impl LocalizedTokenTextArgPayload {
         wire: bool,
         depth: usize,
     ) -> Result<(), WorldError> {
-        let compact = |writer: &mut WireWriter, is_32bit: bool, value: u64| {
-            if wire {
-                writer.write_bool8(is_32bit);
-                if is_32bit {
-                    writer.write_vle4(value as u32);
-                } else {
-                    writer.write_u64_le(value);
-                }
+        let int = |writer: &mut WireWriter, is_32bit: bool, value: u64| -> Result<(), WorldError> {
+            if !wire {
+                writer.write_u64_le(value);
+                return Ok(());
+            }
+            writer.write_bool8(is_32bit);
+            if is_32bit {
+                let low = u32::try_from(value)
+                    .map_err(|_| WorldError::InvalidTextArgument("32-bit integer too large"))?;
+                writer.write_vle4(low);
             } else {
                 writer.write_u64_le(value);
             }
+            Ok(())
         };
         match self {
             Self::Nested(nested) => nested.encode_inner(writer, wire, depth + 1)?,
@@ -1540,24 +1569,14 @@ impl LocalizedTokenTextArgPayload {
                 writer.write_u8(*format_flags);
                 writer.write_u16_le(*radix);
             }
-            Self::FixedInt(val) => writer.write_i64_le(*val),
-            Self::FixedIntFormatted {
-                value,
-                format_flags,
-                radix,
-            } => {
-                writer.write_i64_le(*value);
-                writer.write_u8(*format_flags);
-                writer.write_u16_le(*radix);
-            }
-            Self::CompactInt { is_32bit, value } => compact(writer, *is_32bit, *value),
-            Self::CompactIntFormatted {
+            Self::Int { is_32bit, value } => int(writer, *is_32bit, *value)?,
+            Self::IntFormatted {
                 is_32bit,
                 value,
                 format_flags,
                 radix,
             } => {
-                compact(writer, *is_32bit, *value);
+                int(writer, *is_32bit, *value)?;
                 writer.write_u8(*format_flags);
                 writer.write_u16_le(*radix);
             }
@@ -1565,15 +1584,15 @@ impl LocalizedTokenTextArgPayload {
         Ok(())
     }
 
-    /// Reads the kind-specific value of `kind` (`1..=7`) after the 6-byte value header, in the
-    /// wire (`wire`) or stored encoding (§2.6). Kinds `0` and `>= 8` carry no value bytes.
+    /// Reads the kind-specific value of `kind` (`1..=7`) after the entry header, in the wire
+    /// (`wire`) or stored encoding (§2.6, `property-system.md` §10.4).
     ///
     /// # Errors
     ///
     /// Returns [`WorldError::InvalidStringArgKind`] for a kind outside `1..=7`,
     /// [`WorldError::InvalidBool8`] for an `is_32bit` byte above `1`, or a truncation error.
     pub fn decode(reader: &mut WireReader<'_>, kind: u16, wire: bool) -> Result<Self, WorldError> {
-        let compact = |reader: &mut WireReader<'_>| -> Result<(bool, u64), WorldError> {
+        let int = |reader: &mut WireReader<'_>| -> Result<(bool, u64), WorldError> {
             if wire {
                 let is_32bit = reader.read_bool8()?;
                 let value = if is_32bit {
@@ -1602,19 +1621,13 @@ impl LocalizedTokenTextArgPayload {
                 format_flags: reader.read_u8()?,
                 radix: reader.read_u16_le()?,
             },
-            4 => Self::FixedInt(reader.read_i64_le()?),
-            5 => Self::FixedIntFormatted {
-                value: reader.read_i64_le()?,
-                format_flags: reader.read_u8()?,
-                radix: reader.read_u16_le()?,
-            },
-            6 => {
-                let (is_32bit, value) = compact(reader)?;
-                Self::CompactInt { is_32bit, value }
+            4 | 6 => {
+                let (is_32bit, value) = int(reader)?;
+                Self::Int { is_32bit, value }
             }
-            7 => {
-                let (is_32bit, value) = compact(reader)?;
-                Self::CompactIntFormatted {
+            5 | 7 => {
+                let (is_32bit, value) = int(reader)?;
+                Self::IntFormatted {
                     is_32bit,
                     value,
                     format_flags: reader.read_u8()?,
@@ -1626,14 +1639,20 @@ impl LocalizedTokenTextArgPayload {
     }
 }
 
-/// One argument entry of a **stored** `LocalizedTokenText` argument table
-/// (`property-system.md` §17.4 step 4 and §17.4.1): `u32` key, `u16` kind, and for kinds
-/// `1..=7` the 6-byte value header (`u16` kind again, `u32` variable ID) and the value.
+/// One argument entry of a `LocalizedTokenText` argument table.
+///
+/// - **Stored** (`property-system.md` §17.4 step 4, §17.4.1): `u32` key, `u16` kind, and
+///   for kinds `1..=7` the 6-byte value header (`u16` kind again, `u32` variable ID) and
+///   the value.
+/// - **Wire** (§2.6 row 6, `property-system.md` §10.4): `u8 kind` (`1..=7`, others fail the
+///   stream), `u32 var_id`, the value. `var_id` is the table key: a wire decode sets
+///   `key` and `var_id` to it and `header_kind` to `kind`; a wire encode writes `kind` and
+///   `var_id` only.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalizedTokenTextArg {
-    /// Variable name-hash key (`u32 LE`).
+    /// Variable name-hash key (`u32 LE`; on the wire the same as `var_id`).
     pub key: u32,
-    /// Entry kind selector (`u16 LE`).
+    /// Entry kind selector (`u16 LE` stored, `u8` on the wire).
     pub kind: u16,
     /// Value header kind (`u16 LE`), present when `kind` is in `1..=7`.
     pub header_kind: u16,
@@ -1643,13 +1662,49 @@ pub struct LocalizedTokenTextArg {
     pub payload: Option<LocalizedTokenTextArgPayload>,
 }
 
+impl LocalizedTokenTextArg {
+    /// An argument for variable `var_id` with `payload`; the kind is `kind` (which must fit
+    /// the payload, [`LocalizedTokenTextArgPayload::fits_kind`], for the entry to encode).
+    #[must_use]
+    pub fn new(var_id: u32, kind: u16, payload: LocalizedTokenTextArgPayload) -> Self {
+        Self {
+            key: var_id,
+            kind,
+            header_kind: kind,
+            var_id,
+            payload: Some(payload),
+        }
+    }
+}
+
+/// Smallest wire size of one `LocalizedTokenText` argument entry: the 5-byte
+/// `(u8 kind, u32 var_id)` header (§2.6 row 5: `arg_count <= remaining / 5`).
+pub const MIN_WIRE_TEXT_ARG_BYTES: usize = 5;
+
+/// Which text a `LocalizedTokenText` shows (§2.6 row 1; `string-table.md` §9.0 step 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextSource<'a> {
+    /// Mode `1`: the literal, shown with the display cut and its escapes decoded.
+    Literal(&'a str),
+    /// Mode `2`: the second authoring string (`source_language_text`; empty without
+    /// authoring strings), shown like a literal; the token and table are not looked up.
+    AuthoringSource(&'a str),
+    /// Any other mode: `token_id` looked up in `table_did`, with the arguments.
+    Table {
+        /// The token.
+        token_id: u32,
+        /// The string table.
+        table_did: u32,
+    },
+}
+
 /// A tokenized text descriptor (`LocalizedTokenText`, property type 13): wire form of
-/// `official-messages-world.md` §2.6, stored form of `property-system.md` §17.4.
+/// `official-messages-world.md` §2.6 and `property-system.md` §10.4, stored form of
+/// `property-system.md` §17.4.
 ///
-/// **Arguments on the wire:** the width and meaning of the per-argument key prefix
-/// (`arg_key`) when `arg_count > 0` are `OPEN` (§2.6). The wire codec therefore handles only
-/// an empty argument table and refuses anything else
-/// ([`WorldError::UnsupportedWireTextArguments`]); the stored codec handles arguments.
+/// On the wire the argument table has no TSize hint byte, a 3-tier VLE `arg_count` of at
+/// most `remaining / 5`, and 5-byte `(u8 kind, u32 var_id)` entry headers; kinds `4`–`7`
+/// carry the compact integer ([`LocalizedTokenTextArgPayload::Int`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalizedTokenText {
     /// Literal text or `(mode, token_id, table_did)` reference.
@@ -1657,7 +1712,7 @@ pub struct LocalizedTokenText {
     /// Optional three authoring strings (`[token_name, source_text, comment]`) when
     /// `has_authoring_strings` is `1`.
     pub authoring_strings: Option<[String; 3]>,
-    /// Argument entries (empty in every wire value Tessera reads or writes).
+    /// Argument entries in stream order.
     pub arguments: Vec<LocalizedTokenTextArg>,
 }
 
@@ -1686,11 +1741,43 @@ impl LocalizedTokenText {
         }
     }
 
-    /// Encodes the wire form: no TSize hint byte before `arg_count` (§2.6).
+    /// Which text this shows (§2.6 row 1): a literal (mode 1), the second authoring
+    /// string (mode 2) or a table reference (any other mode).
+    #[must_use]
+    pub fn source(&self) -> TextSource<'_> {
+        match &self.content {
+            LocalizedTokenTextContent::Literal(s) => TextSource::Literal(s),
+            LocalizedTokenTextContent::Reference { mode: 2, .. } => TextSource::AuthoringSource(
+                self.authoring_strings
+                    .as_ref()
+                    .map_or("", |[_, source, _]| source.as_str()),
+            ),
+            LocalizedTokenTextContent::Reference {
+                token_id,
+                table_did,
+                ..
+            } => TextSource::Table {
+                token_id: *token_id,
+                table_did: *table_did,
+            },
+        }
+    }
+
+    /// The argument for template variable `var_id`: the last entry with that key, as an
+    /// insert into the argument hash table leaves it (§2.6 row 6).
+    #[must_use]
+    pub fn argument(&self, var_id: u32) -> Option<&LocalizedTokenTextArg> {
+        self.arguments.iter().rev().find(|a| a.key == var_id)
+    }
+
+    /// Encodes the wire form: no TSize hint byte before `arg_count`, 5-byte entry headers
+    /// (§2.6).
     ///
     /// # Errors
     ///
-    /// Returns [`WorldError::UnsupportedWireTextArguments`] if `arguments` is non-empty.
+    /// [`WorldError::InvalidStringArgKind`] for an argument whose kind is outside `1..=7`,
+    /// [`WorldError::InvalidTextArgument`] for one whose payload is missing, does not fit
+    /// its kind or does not fit its integer form, or another encoding error.
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
         self.encode_inner(writer, true, 1)
     }
@@ -1699,7 +1786,8 @@ impl LocalizedTokenText {
     ///
     /// # Errors
     ///
-    /// Returns [`WorldError::UnsupportedWireTextArguments`] for `arg_count > 0`, or a
+    /// [`WorldError::InvalidStringArgKind`] for an argument kind `0` or `8..=255`,
+    /// [`WorldError::CountExceedsRemaining`] for an `arg_count` above `remaining / 5`, or a
     /// framing error.
     pub fn decode(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
         Self::decode_inner(reader, true)
@@ -1758,9 +1846,6 @@ impl LocalizedTokenText {
                 max: MAX_RECURSION_DEPTH,
             });
         }
-        if wire && !self.arguments.is_empty() {
-            return Err(WorldError::UnsupportedWireTextArguments);
-        }
         match &self.content {
             LocalizedTokenTextContent::Literal(s) => {
                 writer.write_u8(1);
@@ -1795,6 +1880,23 @@ impl LocalizedTokenText {
             })?;
         writer.write_vle3(arg_count)?;
         for arg in &self.arguments {
+            if wire {
+                let kind = u8::try_from(arg.kind)
+                    .ok()
+                    .filter(|k| (1..=7).contains(k))
+                    .ok_or(WorldError::InvalidStringArgKind(arg.kind))?;
+                let payload = arg
+                    .payload
+                    .as_ref()
+                    .filter(|p| p.fits_kind(arg.kind))
+                    .ok_or(WorldError::InvalidTextArgument(
+                        "payload missing or of another kind",
+                    ))?;
+                writer.write_u8(kind);
+                writer.write_u32_le(arg.var_id);
+                payload.encode_with_depth(writer, wire, depth)?;
+                continue;
+            }
             writer.write_u32_le(arg.key);
             writer.write_u16_le(arg.kind);
             if (1..=7).contains(&arg.kind) {
@@ -1837,12 +1939,23 @@ impl LocalizedTokenText {
             }
         }
         let arg_count = reader.read_vle3()? as usize;
-        if wire && arg_count > 0 {
-            tracing::debug!(
-                arg_count,
-                "wire LocalizedTokenText with arguments refused (OPEN)"
-            );
-            return Err(WorldError::UnsupportedWireTextArguments);
+        if wire {
+            reader.ensure_count(arg_count, MIN_WIRE_TEXT_ARG_BYTES)?;
+            let mut arguments = Vec::with_capacity(arg_count.min(MAX_PREALLOC_ENTRIES));
+            for _ in 0..arg_count {
+                let kind = u16::from(reader.read_u8()?);
+                if !(1..=7).contains(&kind) {
+                    return Err(WorldError::InvalidStringArgKind(kind));
+                }
+                let var_id = reader.read_u32_le()?;
+                let payload = LocalizedTokenTextArgPayload::decode(reader, kind, true)?;
+                arguments.push(LocalizedTokenTextArg::new(var_id, kind, payload));
+            }
+            return Ok(Self {
+                content,
+                authoring_strings,
+                arguments,
+            });
         }
         reader.ensure_count(arg_count, 6)?;
         let mut arguments = Vec::with_capacity(arg_count.min(MAX_PREALLOC_ENTRIES));
@@ -2482,11 +2595,12 @@ impl EncodedPropertyTable {
 pub struct EventEnvelope {
     /// Numeric event ID (`blobHeaderWord`, Field 8a of the fragment header).
     pub event_id: u32,
-    /// Target entity `InstanceID`: the fragment's `recipientId` (Field 7; `2` with
+    /// Target entity `InstanceID` ([`active_target`]): the routing header's `routingField0`
+    /// when present, else the fragment's `recipientId` (Field 7; `2` with
     /// `DefaultRecipient`, `official-session.md` §5.6.3).
     pub target_entity_id: u64,
-    /// The optional routing header (`envelopeFlags` bit 1). The spec does not say how its
-    /// fields relate to the target, so the target stays `recipientId`.
+    /// The optional routing header (`envelopeFlags` bit 1). Its `routingField0`, when
+    /// present, is the target ([`active_target`]).
     pub routing_header: Option<MessageRoutingHeader>,
     /// Inner event payload, starting at offset 0 with `u8 base_flags = 0x00` (§1.3).
     pub inner_payload: Vec<u8>,
@@ -2520,10 +2634,22 @@ pub fn decode_event_envelope(
     }
     Ok(EventEnvelope {
         event_id,
-        target_entity_id: recipient_id,
+        target_entity_id: active_target(recipient_id, env.routing_header.as_ref()),
         routing_header: env.routing_header,
         inner_payload: env.body,
     })
+}
+
+/// The active target entity `InstanceID` of an event (§1.1.2 item 2): the routing header's
+/// `routingField0` when the envelope has a routing header with `routingFlags` bit 0 set,
+/// else the fragment's `recipientId`. `routingField0` is a `u32` on the wire
+/// (`official-session.md` §9.1) and is taken zero-extended to 64 bits (Tessera's reading;
+/// see the spec's implementer notes).
+#[must_use]
+pub fn active_target(recipient_id: u64, routing: Option<&MessageRoutingHeader>) -> u64 {
+    routing
+        .and_then(|r| r.field0)
+        .map_or(recipient_id, u64::from)
 }
 
 /// Wraps an inner event payload (already starting with `base_flags = 0x00`) into an
@@ -2723,14 +2849,13 @@ impl PartEntry {
 /// [`CharacterSummaryEntry`] and `0x89`). Each `Option` field is present exactly when its
 /// `flags` bit is set; the encoder derives `flags` from the fields.
 ///
-/// Bit 0 (`base_model`) cannot be decoded: which high-byte value of `model_a` makes
-/// `model_b` follow is `OPEN` (§2.8), so a descriptor with bit 0 is refused with
-/// [`WorldError::UnsupportedAppearanceBaseModel`]. The encoder writes the given words as
-/// they are (synthetic tests only).
+/// Bit 0 (`base_model`) is one unconditional 4-byte `u32` (`model_a`, no second word;
+/// §2.8). The rendering meaning of `secondary_did`, the tints, `param_a` and `param_b` is
+/// `OPEN`; they are decoded and kept.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct EntityAppearanceDesc {
-    /// Bit 0 (`0x0001`): `model_a` and, when present, `model_b`.
-    pub base_model: Option<(u32, Option<u32>)>,
+    /// Bit 0 (`0x0001`): the base model Data ID (`model_a`).
+    pub base_model: Option<u32>,
     /// Bit 1 (`0x0002`): `secondary_did`.
     pub secondary_did: Option<u32>,
     /// Bit 5 (`0x0020`): `scale` (`sx, sy, sz`; `(1, 1, 1)` when absent).
@@ -2787,11 +2912,8 @@ impl EntityAppearanceDesc {
     /// Returns [`WorldError`] if a count cannot be represented.
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
         writer.write_u32_le(self.flags());
-        if let Some((a, b)) = self.base_model {
-            writer.write_u32_le(a);
-            if let Some(b) = b {
-                writer.write_u32_le(b);
-            }
+        if let Some(model) = self.base_model {
+            writer.write_u32_le(model);
         }
         if let Some(did) = self.secondary_did {
             writer.write_u32_le(did);
@@ -2837,17 +2959,16 @@ impl EntityAppearanceDesc {
     ///
     /// # Errors
     ///
-    /// Returns [`WorldError::InvalidAppearanceFlags`] for bits outside `0x000007E3`,
-    /// [`WorldError::UnsupportedAppearanceBaseModel`] for bit 0, or a framing error.
+    /// Returns [`WorldError::InvalidAppearanceFlags`] for bits outside `0x000007E3`, or a
+    /// framing error.
     pub fn decode(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
         let flags = reader.read_u32_le()?;
         if flags & !APPEARANCE_FLAGS_VALID != 0 {
             return Err(WorldError::InvalidAppearanceFlags(flags));
         }
-        if flags & 0x0001 != 0 {
-            tracing::debug!("EntityAppearanceDesc with base_model refused (model_b gate OPEN)");
-            return Err(WorldError::UnsupportedAppearanceBaseModel);
-        }
+        let base_model = (flags & 0x0001 != 0)
+            .then(|| reader.read_u32_le())
+            .transpose()?;
         let secondary_did = (flags & 0x0002 != 0)
             .then(|| reader.read_u32_le())
             .transpose()?;
@@ -2903,7 +3024,7 @@ impl EntityAppearanceDesc {
             .then(|| reader.read_f32_le())
             .transpose()?;
         Ok(Self {
-            base_model: None,
+            base_model,
             secondary_did,
             scale,
             param_a,
@@ -3755,10 +3876,14 @@ impl<S: std::hash::BuildHasher> PortalStateSchemaLookup for HashMap<u32, PortalS
 /// state (§4.3.1, Vector 8).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PortalPositionSync {
-    /// `sync_flags` bit 0 (`sync_bit_0`; its effect is `OPEN`). Bits 1–6 follow from the
-    /// velocity fields and bit 7 from `state_schema_id`.
+    /// `sync_flags` bit 0 (`is_forced_sync`): set, a forced position or portal placement
+    /// whose `sequence_or_reason` is a teleport reason code (enum `0x2300038B`, §4.3.2);
+    /// clear, a movement step acknowledgement whose `sequence_or_reason` is `ack_step_seq`
+    /// (`official-messages-play.md` §4.3.2 item 1). Bits 1–6 follow from the velocity
+    /// fields and bit 7 from `state_schema_id`.
     pub sync_bit_0: bool,
-    /// `sequence_or_reason` (`u32` LE).
+    /// `sequence_or_reason` (`u32` LE): the teleport reason when [`Self::sync_bit_0`] is
+    /// set, else the acknowledged step.
     pub sequence_or_reason: u32,
     /// Base wire `Position` (no quaternion).
     pub position: WirePosition,
@@ -3799,6 +3924,26 @@ impl PortalPositionSync {
     pub fn enum_state_for_pid(&self, schema: &PortalStateSchema, pid: u32) -> Option<u32> {
         let idx = schema.enum_pids.iter().position(|&p| p == pid)?;
         self.enum_states.get(idx).copied()
+    }
+
+    /// Whether this is a forced position / portal placement sync (`sync_flags` bit 0).
+    #[must_use]
+    pub fn is_forced(&self) -> bool {
+        self.sync_bit_0
+    }
+
+    /// The acknowledged step (`ack_step_seq`) of a step acknowledgement; `None` for a forced
+    /// sync.
+    #[must_use]
+    pub fn ack_step_seq(&self) -> Option<u32> {
+        (!self.sync_bit_0).then_some(self.sequence_or_reason)
+    }
+
+    /// The teleport reason code (enum `0x2300038B`) of a forced sync; `None` for a step
+    /// acknowledgement.
+    #[must_use]
+    pub fn teleport_reason(&self) -> Option<u32> {
+        self.sync_bit_0.then_some(self.sequence_or_reason)
     }
 
     fn sync_flags(&self) -> u8 {
@@ -3985,8 +4130,58 @@ impl PortalPositionSync {
     }
 }
 
+/// Event `0x5E` (`enter_portal_space`, S→C, 6 bytes, §4.3.1): starts the portal-space
+/// wait with the expected teleport stamp and the scene to load
+/// (`official-messages-play.md` §4.5 item 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnterPortalSpace {
+    /// `stamp` (`expected_teleport_stamp`).
+    pub stamp: u8,
+    /// `scene_id` (`u32` LE).
+    pub scene_id: u32,
+}
+
+impl EnterPortalSpace {
+    /// Numeric event ID (`0x0000005E`).
+    pub const EVENT_ID: u32 = 0x0000_005E;
+
+    /// Writes the inner payload.
+    ///
+    /// # Errors
+    ///
+    /// Never fails.
+    pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
+        writer.write_base_flags();
+        writer.write_u8(self.stamp);
+        writer.write_u32_le(self.scene_id);
+        Ok(())
+    }
+
+    /// Reads the inner payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldError`] on framing errors.
+    pub fn decode(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
+        reader.read_base_flags()?;
+        Ok(Self {
+            stamp: reader.read_u8()?,
+            scene_id: reader.read_u32_le()?,
+        })
+    }
+}
+plain_codec!(EnterPortalSpace);
+
 empty_event!(
-    /// Event `0xC7` (`portal_transition_complete`, S→C, §4.3.1).
+    /// Event `0x7C` (`login_finished`, S→C, §4.3.1): the server gate (`game_ready`) of the
+    /// portal exit on the initial world entry (`official-messages-play.md` §4.5 item 4).
+    LoginFinished,
+    0x0000_007C
+);
+empty_event!(
+    /// Event `0xC7` (`portal_transition_complete`, S→C, §4.3.1): the server gate
+    /// (`game_ready`) of an in-world portal transition (`official-messages-play.md` §4.5
+    /// item 4).
     PortalTransitionComplete,
     0x0000_00C7
 );
@@ -3996,8 +4191,8 @@ empty_event!(
     0x0000_0153
 );
 empty_event!(
-    /// Event `0xF4` (`portal_ready_ack`, C→S, §4.3.1, Vector 7): sent once the destination
-    /// landblock or cell has loaded.
+    /// Event `0xF4` (`portal_ready_ack`, C→S, §4.3.1, Vector 7): sent once both portal-exit
+    /// gates are set (`official-messages-play.md` §4.5 item 4).
     PortalReadyAck,
     0x0000_00F4
 );
@@ -4935,16 +5130,18 @@ pub struct ClientPhysicsSync {
     pub sequence: u32,
     /// `move_state[4]`.
     pub move_state: [u8; 4],
-    /// `slot_flags[4]` as received. Only bit 0 (`0x01`, actions) and bit 4 (`0x10`,
-    /// properties) are used; the bits under mask `0xEE` are ignored on receive, and the
-    /// encoder writes them as `0` and derives bits 0 and 4 from the slot contents.
+    /// `slot_flags[4]` as received: bit 0 (`0x01`) slot actions, bit 1 (`0x02`) jump, bit 4
+    /// (`0x10`) slot properties, bit 6 (`0x40`) walking (clear: running). The bits under
+    /// [`Self::SLOT_FLAGS_OPEN_MASK`] are ignored on receive; the encoder writes them as `0`,
+    /// keeps bits 1 and 6 as given and derives bits 0 and 4 from the slot contents.
     pub slot_flags: [u8; 4],
-    /// `axis_a[4]` (`SignedNormalizedByte`: lateral / strafe).
-    pub axis_a: [i8; 4],
-    /// `axis_b[4]` (`SignedNormalizedByte`: forward / backward).
-    pub axis_b: [i8; 4],
-    /// `axis_c[4]` (`SignedNormalizedByte`: yaw / turn).
-    pub axis_c: [i8; 4],
+    /// `axis_a[4]`: the entity's quantized heading (§2.5.2: `0x00` = +Y north,
+    /// counter-clockwise).
+    pub axis_a: [u8; 4],
+    /// `axis_b[4]`: the camera's quantized heading (§2.5.2).
+    pub axis_b: [u8; 4],
+    /// `axis_c[4]`: the camera's quantized pitch (§2.5.2).
+    pub axis_c: [u8; 4],
     /// Per-slot queued actions `(action_id, ActionPayload)`.
     pub slot_actions: [Vec<(CompactDid, ActionPayload)>; 4],
     /// Per-slot property tables.
@@ -4958,17 +5155,28 @@ impl ClientPhysicsSync {
     pub const EVENT_ID: u32 = 0x0000_0024;
     /// Length of the inner payload with no slot actions or properties (`38` bytes).
     pub const BASE_BYTE_LEN: usize = 38;
-    /// `slot_flags` bits whose meaning is `OPEN` (`0xEE`): cleared on send, ignored on receive.
-    pub const SLOT_FLAGS_OPEN_MASK: u8 = 0xEE;
+    /// `slot_flags` bit 0: the slot has queued actions.
+    pub const SLOT_FLAG_ACTIONS: u8 = 0x01;
+    /// `slot_flags` bit 1: jump active during the step.
+    pub const SLOT_FLAG_JUMP: u8 = 0x02;
+    /// `slot_flags` bit 4: the slot has a property table.
+    pub const SLOT_FLAG_PROPS: u8 = 0x10;
+    /// `slot_flags` bit 6: walking (`0x00000687 = 1`); clear: running (`2`).
+    pub const SLOT_FLAG_WALK: u8 = 0x40;
+    /// `slot_flags` bits whose meaning is `OPEN` (`0xAC`: bits 2, 3, 5, 7): cleared on send,
+    /// ignored on receive.
+    pub const SLOT_FLAGS_OPEN_MASK: u8 = 0xAC;
 
-    /// A message with no slot actions, no slot properties and `trailer_u32 = 0`.
+    /// A message with no slot actions, no slot properties and `trailer_u32 = 0`;
+    /// `slot_flags` keeps only the jump and walk bits.
     #[must_use]
     pub fn new_base(
         entity_id: u64,
         teleport_stamp: u8,
         sequence: u32,
         move_state: [u8; 4],
-        axes: [[i8; 4]; 3],
+        slot_flags: [u8; 4],
+        axes: [[u8; 4]; 3],
     ) -> Self {
         let [axis_a, axis_b, axis_c] = axes;
         Self {
@@ -4976,7 +5184,7 @@ impl ClientPhysicsSync {
             teleport_stamp,
             sequence,
             move_state,
-            slot_flags: [0; 4],
+            slot_flags: slot_flags.map(|f| f & (Self::SLOT_FLAG_JUMP | Self::SLOT_FLAG_WALK)),
             axis_a,
             axis_b,
             axis_c,
@@ -4997,20 +5205,38 @@ impl ClientPhysicsSync {
         ]
     }
 
-    /// The `slot_flags` the encoder writes: bit 0 for slots with actions, bit 4 for slots
-    /// with a property table, and nothing else.
+    /// The `slot_flags` the encoder writes: the jump and walk bits as given, bit 0 for slots
+    /// with actions, bit 4 for slots with a property table, and nothing else.
     #[must_use]
     pub fn encoded_slot_flags(&self) -> [u8; 4] {
-        let mut flags = [0u8; 4];
+        let mut flags = self
+            .slot_flags
+            .map(|f| f & (Self::SLOT_FLAG_JUMP | Self::SLOT_FLAG_WALK));
         for (i, f) in flags.iter_mut().enumerate() {
             if !self.slot_actions[i].is_empty() {
-                *f |= 0x01;
+                *f |= Self::SLOT_FLAG_ACTIONS;
             }
             if self.slot_props[i].is_some() {
-                *f |= 0x10;
+                *f |= Self::SLOT_FLAG_PROPS;
             }
         }
         flags
+    }
+
+    /// Whether slot `k` (`0..4`) reports a jump (bit 1).
+    #[must_use]
+    pub fn jump(&self, k: usize) -> bool {
+        self.slot_flags
+            .get(k)
+            .is_some_and(|f| f & Self::SLOT_FLAG_JUMP != 0)
+    }
+
+    /// Whether slot `k` (`0..4`) reports walking (bit 6; clear: running).
+    #[must_use]
+    pub fn walking(&self, k: usize) -> bool {
+        self.slot_flags
+            .get(k)
+            .is_some_and(|f| f & Self::SLOT_FLAG_WALK != 0)
     }
 
     /// Writes the inner payload (§5.5 field order).
@@ -5027,9 +5253,7 @@ impl ClientPhysicsSync {
         let flags = self.encoded_slot_flags();
         writer.write_bytes(&flags);
         for axis in [&self.axis_a, &self.axis_b, &self.axis_c] {
-            for &v in axis {
-                writer.write_i8(v);
-            }
+            writer.write_bytes(axis);
         }
         if flags.iter().any(|&f| f & 0x01 != 0) {
             for slot in &self.slot_actions {
@@ -5066,11 +5290,9 @@ impl ClientPhysicsSync {
         move_state.copy_from_slice(reader.read_bytes(4)?);
         let mut slot_flags = [0u8; 4];
         slot_flags.copy_from_slice(reader.read_bytes(4)?);
-        let mut axes = [[0i8; 4]; 3];
+        let mut axes = [[0u8; 4]; 3];
         for axis in &mut axes {
-            for v in axis.iter_mut() {
-                *v = reader.read_i8()?;
-            }
+            axis.copy_from_slice(reader.read_bytes(4)?);
         }
         let mut slot_actions: [Vec<(CompactDid, ActionPayload)>; 4] =
             [Vec::new(), Vec::new(), Vec::new(), Vec::new()];

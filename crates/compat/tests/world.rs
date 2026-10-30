@@ -18,20 +18,21 @@ use tessera_compat::world::{
     CharacterEnterWorldRequest, CharacterListResponse, CharacterNameCheckRequest,
     CharacterOperationError, CharacterSummaryEntry, ClientActionCommand, ClientPhysicsSync,
     CompactDid, CompactPid, DEFAULT_PORTAL_STATE_SCHEMA_ID, DisplayLocalizedText,
-    EncodedPropertyEntry, EncodedPropertyTable, EncodedPropertyValue, EntityAnimLayerState,
-    EntityAppearanceDesc, EntityCreate, EntityDespawn, EntityPlacement, EntityStringEvent,
-    LandblockPropertyEvent, LandblockPropertyOp, LocalizedTokenText, LocalizedTokenTextArg,
-    LocalizedTokenTextArgPayload, MAX_RECURSION_DEPTH, MissingEntityQuery, NetworkClock,
-    PID_AGENT_CLASS, PID_AGENT_SPECIES, PID_CURRENT_MORALE, PID_ENTITY_DISPLAY_NAME, PartEntry,
-    PlatformAccountIdReport, PlayerSessionReady, PortalPositionSync, PortalReadyAck,
-    PortalStateNotice, PortalStateSchema, PortalTransitionComplete, PositionUpdate,
-    PredictedPropertyAck, PropertyRemoval, PropertyScope, PropertyTableUpdate, PropertyType,
-    ServerShutdownText, SinglePropertyUpdate, SubEventBatch, SubEventFrame, SubPartEntry,
-    SubPartTable, TIMESTAMP_NO_TIME, VisualDescriptionUpdate, WireBitfield, WirePosition,
-    WireReader, WireWriter, WorldCalendarConfig, WorldClock, WorldError, WorldNameAnnouncement,
+    EncodedPropertyEntry, EncodedPropertyTable, EncodedPropertyValue, EnterPortalSpace,
+    EntityAnimLayerState, EntityAppearanceDesc, EntityCreate, EntityDespawn, EntityPlacement,
+    EntityStringEvent, LandblockPropertyEvent, LandblockPropertyOp, LocalizedTokenText,
+    LocalizedTokenTextArg, LocalizedTokenTextArgPayload, LocalizedTokenTextContent, LoginFinished,
+    MAX_RECURSION_DEPTH, MissingEntityQuery, NetworkClock, PID_AGENT_CLASS, PID_AGENT_SPECIES,
+    PID_CURRENT_MORALE, PID_ENTITY_DISPLAY_NAME, PartEntry, PlatformAccountIdReport,
+    PlayerSessionReady, PortalPositionSync, PortalReadyAck, PortalStateNotice, PortalStateSchema,
+    PortalTransitionComplete, PositionUpdate, PredictedPropertyAck, PropertyRemoval, PropertyScope,
+    PropertyTableUpdate, PropertyType, ServerShutdownText, SinglePropertyUpdate, SubEventBatch,
+    SubEventFrame, SubPartEntry, SubPartTable, TIMESTAMP_NO_TIME, TextSource,
+    VisualDescriptionUpdate, WireBitfield, WirePosition, WireReader, WireWriter,
+    WorldCalendarConfig, WorldClock, WorldError, WorldNameAnnouncement, active_target,
     decode_event_envelope, decode_heading_u8, decode_signed_normalized, decode_vle3, decode_vle4,
     decode_vle16, encode_event_envelope, encode_heading_u8, encode_signed_normalized, encode_vle3,
-    encode_vle4, encode_vle16,
+    encode_vle4, encode_vle16, wire_int_is_32bit,
 };
 
 /// Synthetic dictionary of `property-system.md` §14.1 (Vector 4) plus one PID per type.
@@ -216,7 +217,10 @@ fn vector_6_localized_token_text_wire_and_stored() {
         kind: 4,
         header_kind: 4,
         var_id: 0xAABB_CCDD,
-        payload: Some(LocalizedTokenTextArgPayload::FixedInt(7)),
+        payload: Some(LocalizedTokenTextArgPayload::Int {
+            is_32bit: false,
+            value: 7,
+        }),
     });
     let mut stored_arg = WireWriter::new();
     with_arg.encode_stored(&mut stored_arg).unwrap();
@@ -225,21 +229,158 @@ fn vector_6_localized_token_text_wire_and_stored() {
         LocalizedTokenText::decode_stored(&mut WireReader::new(stored_arg.as_slice())).unwrap();
     assert_eq!(back, with_arg);
 
-    // On the wire the per-argument key prefix is OPEN (§2.6): arguments are refused both ways.
+    // Case B (§7.2 Vector 6): one kind-6 argument for variable 0x9A8B7C6D holding 42, 18
+    // bytes on the wire: the 5-byte (u8 kind, u32 var_id) header, then is_32bit and a
+    // 1-byte VariableU32.
+    let mut case_b = text.clone();
+    case_b.arguments.push(LocalizedTokenTextArg::new(
+        0x9A8B_7C6D,
+        6,
+        LocalizedTokenTextArgPayload::int(42),
+    ));
+    let wire_b = case_b.to_bytes().unwrap();
     assert_eq!(
-        with_arg.to_bytes(),
-        Err(WorldError::UnsupportedWireTextArguments)
+        wire_b,
+        [
+            0x00, 0x11, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x25, 0x00, 0x01, 0x06, 0x6D, 0x7C,
+            0x8B, 0x9A, 0x01, 0x2A
+        ]
     );
-    let mut wire_args = wire.clone();
-    *wire_args.last_mut().unwrap() = 0x01;
+    let back_b = LocalizedTokenText::from_bytes(&wire_b).unwrap();
+    assert_eq!(back_b, case_b);
+    // The variable ID is the table key.
+    let arg = back_b.argument(0x9A8B_7C6D).expect("the argument");
     assert_eq!(
-        LocalizedTokenText::from_bytes(&wire_args),
-        Err(WorldError::UnsupportedWireTextArguments)
+        (arg.key, arg.kind, arg.var_id),
+        (0x9A8B_7C6D, 6, 0x9A8B_7C6D)
+    );
+    assert_eq!(
+        arg.payload,
+        Some(LocalizedTokenTextArgPayload::Int {
+            is_32bit: true,
+            value: 42
+        })
     );
 
-    // Kind 6 / 7 compact integers (wire difference #3).
+    // Kinds 0 and 8..=255 fail the stream.
+    for bad in [0u8, 8, 0xFF] {
+        let mut b = wire_b.clone();
+        b[11] = bad;
+        assert_eq!(
+            LocalizedTokenText::from_bytes(&b),
+            Err(WorldError::InvalidStringArgKind(u16::from(bad)))
+        );
+    }
+    // arg_count above remaining / 5 is refused before anything is read.
+    let mut b = wire.clone();
+    *b.last_mut().unwrap() = 0x02;
+    b.extend_from_slice(&[0x06, 0, 0, 0, 0, 0x01, 0x00]);
+    assert!(matches!(
+        LocalizedTokenText::from_bytes(&b),
+        Err(WorldError::CountExceedsRemaining { count: 2, .. })
+    ));
+    // A stored-only argument (kind outside 1..=7) or a payload of another kind cannot go
+    // on the wire.
+    assert_eq!(
+        with_arg.clone().to_bytes().map(|_| ()),
+        Ok(()),
+        "a stored kind-4 argument writes as a wire kind-4"
+    );
+    let mut odd = text.clone();
+    odd.arguments.push(LocalizedTokenTextArg {
+        key: 1,
+        kind: 9,
+        header_kind: 0,
+        var_id: 1,
+        payload: None,
+    });
+    assert_eq!(odd.to_bytes(), Err(WorldError::InvalidStringArgKind(9)));
+    let mut mismatched = text.clone();
+    mismatched.arguments.push(LocalizedTokenTextArg::new(
+        1,
+        2,
+        LocalizedTokenTextArgPayload::int(1),
+    ));
+    assert!(matches!(
+        mismatched.to_bytes(),
+        Err(WorldError::InvalidTextArgument(_))
+    ));
+
+    // Every kind round-trips on the wire; kinds 4 to 7 use the compact integer, whose
+    // 64-bit form is taken at 0x7FFFFFFF and above.
+    let payloads = [
+        (
+            1u16,
+            LocalizedTokenTextArgPayload::Nested(Box::new(LocalizedTokenText::literal("x"))),
+        ),
+        (
+            2,
+            LocalizedTokenTextArgPayload::Float {
+                value: 1.5,
+                decimal_places: 1,
+            },
+        ),
+        (
+            3,
+            LocalizedTokenTextArgPayload::FloatFormatted {
+                value: -2.0,
+                decimal_places: 0,
+                format_flags: 1,
+                radix: 0xFFFF,
+            },
+        ),
+        (4, LocalizedTokenTextArgPayload::int(0x7FFF_FFFF)),
+        (
+            5,
+            LocalizedTokenTextArgPayload::IntFormatted {
+                is_32bit: true,
+                value: 3,
+                format_flags: 2,
+                radix: 10,
+            },
+        ),
+        (6, LocalizedTokenTextArgPayload::int(u64::MAX)),
+        (
+            7,
+            LocalizedTokenTextArgPayload::IntFormatted {
+                is_32bit: false,
+                value: 1 << 40,
+                format_flags: 0,
+                radix: 16,
+            },
+        ),
+    ];
+    let mut all = LocalizedTokenText::reference(0x22, 0x2500_0002);
+    for (i, (kind, p)) in payloads.into_iter().enumerate() {
+        all.arguments
+            .push(LocalizedTokenTextArg::new(0x100 + i as u32, kind, p));
+    }
+    assert_eq!(
+        LocalizedTokenText::from_bytes(&all.to_bytes().unwrap()).unwrap(),
+        all
+    );
+    assert_eq!(
+        LocalizedTokenTextArgPayload::int(0x7FFF_FFFE),
+        LocalizedTokenTextArgPayload::Int {
+            is_32bit: true,
+            value: 0x7FFF_FFFE
+        }
+    );
+    assert!(!wire_int_is_32bit(0x7FFF_FFFF));
+    // A 32-bit form whose value does not fit 32 bits is not written.
     let mut w = WireWriter::new();
-    LocalizedTokenTextArgPayload::CompactInt {
+    assert!(matches!(
+        LocalizedTokenTextArgPayload::Int {
+            is_32bit: true,
+            value: 1 << 33
+        }
+        .encode(&mut w, true),
+        Err(WorldError::InvalidTextArgument(_))
+    ));
+
+    // The compact integer (wire difference #3).
+    let mut w = WireWriter::new();
+    LocalizedTokenTextArgPayload::Int {
         is_32bit: true,
         value: 0x4000,
     }
@@ -250,7 +391,7 @@ fn vector_6_localized_token_text_wire_and_stored() {
         LocalizedTokenTextArgPayload::decode(&mut WireReader::new(w.as_slice()), 6, true).unwrap();
     assert_eq!(
         decoded,
-        LocalizedTokenTextArgPayload::CompactInt {
+        LocalizedTokenTextArgPayload::Int {
             is_32bit: true,
             value: 0x4000
         }
@@ -259,6 +400,40 @@ fn vector_6_localized_token_text_wire_and_stored() {
         LocalizedTokenTextArgPayload::decode(&mut WireReader::new(&[0x02]), 6, true),
         Err(WorldError::InvalidBool8(2))
     );
+}
+
+#[test]
+fn localized_token_text_modes_choose_their_source() {
+    // Mode 1: the literal; mode 2: the second authoring string (empty without them), never
+    // the table; any other mode: the table reference (§2.6 row 1).
+    assert_eq!(
+        LocalizedTokenText::literal("A").source(),
+        TextSource::Literal("A")
+    );
+    let mut m2 = LocalizedTokenText::reference(5, 0x2500_0001);
+    if let LocalizedTokenTextContent::Reference { mode, .. } = &mut m2.content {
+        *mode = 2;
+    }
+    assert_eq!(m2.source(), TextSource::AuthoringSource(""));
+    m2.authoring_strings = Some(["tok".into(), "Source text".into(), "note".into()]);
+    assert_eq!(m2.source(), TextSource::AuthoringSource("Source text"));
+    // Mode 2 still carries its token and table on the wire and round-trips.
+    let bytes = m2.to_bytes().unwrap();
+    assert_eq!(bytes[0], 2);
+    assert_eq!(LocalizedTokenText::from_bytes(&bytes).unwrap(), m2);
+    for mode in [0u8, 3, 0xFF] {
+        let mut t = LocalizedTokenText::reference(5, 0x2500_0001);
+        if let LocalizedTokenTextContent::Reference { mode: m, .. } = &mut t.content {
+            *m = mode;
+        }
+        assert_eq!(
+            t.source(),
+            TextSource::Table {
+                token_id: 5,
+                table_did: 0x2500_0001
+            }
+        );
+    }
 }
 
 #[test]
@@ -432,6 +607,25 @@ fn event_envelope_zlib_routing_and_base_flags() {
     let env = decode_event_envelope(0xD0, 2, &routed, 1024).unwrap();
     assert_eq!(env.routing_header, Some(routing));
     assert_eq!(env.inner_payload, inner);
+    // routingField0 overrides recipientId as the target (§1.1.2 item 2).
+    assert_eq!(env.target_entity_id, 1);
+    assert_eq!(active_target(0x0100_0000_0000_0005, Some(&routing)), 1);
+    // Without routingField0 (or without a routing header) the target is recipientId.
+    let other = MessageRoutingHeader {
+        field2: Some(0x0100_0000_0000_0009),
+        ..MessageRoutingHeader::default()
+    };
+    assert_eq!(active_target(7, Some(&other)), 7);
+    assert_eq!(active_target(7, None), 7);
+    let routed = encode_message_with_routing(
+        ENVELOPE_FLAG_HAS_ROUTING_HEADER,
+        Some(&other),
+        &inner,
+        false,
+    )
+    .unwrap();
+    let env = decode_event_envelope(0xD0, 0x0100_0000_0000_0001, &routed, 1024).unwrap();
+    assert_eq!(env.target_entity_id, 0x0100_0000_0000_0001);
 
     assert_eq!(
         decode_event_envelope(0xD0, 2, &[0x00, 0x05], 1024),
@@ -487,17 +681,43 @@ fn entity_appearance_desc_layout_and_open_gate() {
     let back = EntityAppearanceDesc::decode(&mut WireReader::new(w.as_slice())).unwrap();
     assert_eq!(back, desc);
 
-    // Bit 0 (base_model) cannot be framed: the model_b gate is OPEN (§2.8).
-    let with_model = EntityAppearanceDesc {
-        base_model: Some((0x0100_0001, None)),
-        ..EntityAppearanceDesc::default()
+    // Bit 0 (base_model) is one unconditional u32 (§2.8), whatever its high byte.
+    for model in [0x3100_0001u32, 0x3200_0002, 0x0100_0001] {
+        let with_model = EntityAppearanceDesc {
+            base_model: Some(model),
+            scale: Some([2.0, 2.0, 2.0]),
+            ..EntityAppearanceDesc::default()
+        };
+        let mut w = WireWriter::new();
+        with_model.encode(&mut w).unwrap();
+        let mut expected = 0x0021u32.to_le_bytes().to_vec();
+        expected.extend_from_slice(&model.to_le_bytes());
+        for _ in 0..3 {
+            expected.extend_from_slice(&2.0f32.to_le_bytes());
+        }
+        assert_eq!(w.as_slice(), expected.as_slice());
+        assert_eq!(
+            EntityAppearanceDesc::decode(&mut WireReader::new(w.as_slice())).unwrap(),
+            with_model
+        );
+    }
+    // A full descriptor with a base model round-trips.
+    let full = EntityAppearanceDesc {
+        base_model: Some(0x3100_0010),
+        ..sample_appearance()
     };
+    assert_eq!(full.flags(), 0x07E3);
     let mut w = WireWriter::new();
-    with_model.encode(&mut w).unwrap();
+    full.encode(&mut w).unwrap();
     assert_eq!(
-        EntityAppearanceDesc::decode(&mut WireReader::new(w.as_slice())),
-        Err(WorldError::UnsupportedAppearanceBaseModel)
+        EntityAppearanceDesc::decode(&mut WireReader::new(w.as_slice())).unwrap(),
+        full
     );
+    // A truncated base model is a framing error, not a refusal.
+    assert!(matches!(
+        EntityAppearanceDesc::decode(&mut WireReader::new(&[0x01, 0, 0, 0, 0x31])),
+        Err(WorldError::UnexpectedEof { .. })
+    ));
     // Undefined flag bits are refused.
     assert_eq!(
         EntityAppearanceDesc::decode(&mut WireReader::new(&0x0800u32.to_le_bytes())),
@@ -659,6 +879,27 @@ fn world_entry_messages_round_trip() {
         PortalReadyAck::from_bytes(&[0x01]),
         Err(WorldError::InvalidBaseFlags(1))
     );
+
+    // `0x7C` (login_finished) is one byte; `0x5E` (enter_portal_space) six: base_flags,
+    // the expected stamp and the u32 scene_id (§4.3.1).
+    assert_eq!(LoginFinished::EVENT_ID, 0x7C);
+    assert_eq!(LoginFinished.to_bytes().unwrap(), [0x00]);
+    assert_eq!(EnterPortalSpace::EVENT_ID, 0x5E);
+    let enter = EnterPortalSpace {
+        stamp: 0xFE,
+        scene_id: 0x0A0B_0C0D,
+    };
+    let bytes = enter.to_bytes().unwrap();
+    assert_eq!(bytes, [0x00, 0xFE, 0x0D, 0x0C, 0x0B, 0x0A]);
+    assert_eq!(EnterPortalSpace::from_bytes(&bytes).unwrap(), enter);
+    assert!(matches!(
+        EnterPortalSpace::from_bytes(&bytes[..5]),
+        Err(WorldError::UnexpectedEof { .. })
+    ));
+    assert_eq!(
+        EnterPortalSpace::from_bytes(&[0x00, 1, 0, 0, 0, 0, 9]),
+        Err(WorldError::TrailingBytes(1))
+    );
 }
 
 /// The schema the run-time construction of §4.3.1 yields for `0x0C`; its PIDs are the
@@ -726,6 +967,22 @@ fn vector_8_portal_position_sync_state_section() {
     );
     let back = PortalPositionSync::from_bytes(&bytes, &schemas).unwrap();
     assert_eq!(back, sync);
+    // sync_flags bit 0 clear: sequence_or_reason is the acknowledged step.
+    assert!(!back.is_forced());
+    assert_eq!(
+        (back.ack_step_seq(), back.teleport_reason()),
+        (Some(3), None)
+    );
+    let mut forced = sync.clone();
+    forced.sync_bit_0 = true;
+    let fb = forced.to_bytes(&schemas).unwrap();
+    assert_eq!(fb[1] & 0x01, 0x01);
+    let forced = PortalPositionSync::from_bytes(&fb, &schemas).unwrap();
+    assert!(forced.is_forced());
+    assert_eq!(
+        (forced.ack_step_seq(), forced.teleport_reason()),
+        (None, Some(3))
+    );
     let default = &schemas[&DEFAULT_PORTAL_STATE_SCHEMA_ID];
     assert_eq!(back.bool_state_for_pid(default, 0x1000_0ED8), Some(true));
     assert_eq!(back.enum_state_for_pid(default, 0x1000_00FC), Some(4));
@@ -1219,26 +1476,33 @@ fn client_physics_sync_base_length_and_slot_flags() {
         7,
         0x2A,
         2,
-        [1, 1, 1, 1],
-        [[0, 0, 0, 127], [0; 4], [-127, 0, 0, 0]],
+        [0x80, 0x80, 0x87, 0x87],
+        [0, 0x02, 0x40, 0x42],
+        [[0, 0, 0, 0xC0], [0; 4], [0x10, 0, 0, 0]],
     );
     let bytes = base.to_bytes().unwrap();
     assert_eq!(bytes.len(), ClientPhysicsSync::BASE_BYTE_LEN);
     assert_eq!(bytes[9], 0x2A);
+    assert_eq!(&bytes[18..22], &[0x00, 0x02, 0x40, 0x42]);
+    assert_eq!(&bytes[22..26], &[0, 0, 0, 0xC0]);
     assert_eq!(base.slot_sequences(), [0, 0, 1, 2]);
     assert_eq!(ClientPhysicsSync::from_bytes(&bytes, &s).unwrap(), base);
+    assert!(base.jump(1) && !base.walking(1));
+    assert!(base.walking(2) && !base.jump(2));
+    assert!(base.jump(3) && base.walking(3));
+    assert!(!base.jump(4) && !base.walking(4));
 
-    // A sender writes 0 under mask 0xEE whatever the struct holds.
+    // A sender writes 0 under mask 0xAC whatever the struct holds; jump and walk stay.
     let mut noisy = base.clone();
-    noisy.slot_flags = [0xEE; 4];
+    noisy.slot_flags = [0xAC, 0xAE, 0xEC, 0xEE];
     assert_eq!(noisy.to_bytes().unwrap(), bytes);
-    // A receiver ignores bits under 0xEE: they frame nothing.
+    // A receiver ignores bits under 0xAC: they frame nothing.
     let mut received = bytes.clone();
     for f in &mut received[18..22] {
-        *f = 0xEE;
+        *f |= 0xAC;
     }
     let decoded = ClientPhysicsSync::from_bytes(&received, &s).unwrap();
-    assert_eq!(decoded.slot_flags, [0xEE; 4]);
+    assert_eq!(decoded.slot_flags, [0xAC, 0xAE, 0xEC, 0xEE]);
     assert!(decoded.slot_actions.iter().all(Vec::is_empty));
     assert!(decoded.slot_props.iter().all(Option::is_none));
 
@@ -1247,7 +1511,7 @@ fn client_physics_sync_base_length_and_slot_flags() {
     busy.slot_actions[2].push((CompactDid(0x7000_0001), ActionPayload::default()));
     busy.slot_props[3] = Some(EncodedPropertyTable::new());
     let bytes = busy.to_bytes().unwrap();
-    assert_eq!(&bytes[18..22], &[0x00, 0x00, 0x01, 0x10]);
+    assert_eq!(&bytes[18..22], &[0x00, 0x02, 0x41, 0x52]);
     busy.slot_flags = busy.encoded_slot_flags();
     assert_eq!(ClientPhysicsSync::from_bytes(&bytes, &s).unwrap(), busy);
 

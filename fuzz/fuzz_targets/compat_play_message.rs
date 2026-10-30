@@ -13,11 +13,14 @@ use tessera_compat::play::chat::{ChatCategories, LiteralTexts, UiPropertyEvent};
 use tessera_compat::play::inbound::{PLAY_OPCODES, decode_play_message};
 use tessera_compat::play::logout::WORLD_TEARDOWN_OPCODES;
 use tessera_compat::play::movement::{
-    EntitySplinePath, MotionControllerUpdate, MovementInput, ServerSetPosition, TeleportSync,
-    decode_anim_layers, decode_signed_normalized, encode_anim_layers,
+    EntitySplinePath, MotionControllerUpdate, MoveStep, MovementInput, ServerSetPosition,
+    StepInput, TeleportSync, decode_anim_layers, decode_signed_normalized, encode_anim_layers,
+    move_state_axes, move_state_of,
 };
 use tessera_compat::play::rpc::{ArgKind, PlayRpc, ScriptRpcMessage, decode_args};
-use tessera_compat::world::{DEFAULT_PORTAL_STATE_SCHEMA_ID, PortalStateSchema, PropertyType};
+use tessera_compat::world::{
+    DEFAULT_PORTAL_STATE_SCHEMA_ID, EnterPortalSpace, PortalStateSchema, PropertyType,
+};
 
 fn fuzz_schema() -> BTreeMap<u32, PropertyType> {
     let mut map = BTreeMap::new();
@@ -123,7 +126,7 @@ fuzz_target!(|data: &[u8]| {
     let mut now = 0.0f64;
     for chunk in data.chunks(4) {
         let b = |i: usize| chunk.get(i).copied().unwrap_or(0);
-        match b(0) % 6 {
+        match b(0) % 9 {
             0 => sync.begin_portal_space(b(1)),
             1 => {
                 let _ = sync.on_local_position(b(1));
@@ -134,6 +137,33 @@ fuzz_target!(|data: &[u8]| {
             3 => adapter.begin_portal_space(b(1)),
             4 => {
                 let _ = adapter.portal_loading(b(1) & 1 != 0, b(1) & 2 != 0);
+            }
+            5 => {
+                sync.on_server_ready();
+                sync.on_enter_portal_space(&EnterPortalSpace {
+                    stamp: b(1),
+                    scene_id: u32::from(b(2)),
+                });
+            }
+            6 => {
+                // The grid byte and its axes round-trip on every cell.
+                let (f, st) = move_state_axes(b(1));
+                let back = move_state_of(f, st);
+                assert!(back == b(1) || (b(1) == 0 && back == 0x80));
+            }
+            7 => {
+                now += f64::from(b(1)) / 100.0;
+                let step = MoveStep {
+                    forward: decode_signed_normalized(b(1) as i8),
+                    strafe: decode_signed_normalized(b(2) as i8),
+                    heading: f32::from(b(3)) / 10.0,
+                    camera_heading: (b(3) & 1 != 0).then_some(1.0),
+                    camera_pitch: b(2),
+                    jump: b(1) & 1 != 0,
+                    walk: b(1) & 2 != 0,
+                };
+                let _ = StepInput::from_step(step);
+                let _ = adapter.move_step(step, now, None);
             }
             _ => {
                 now += f64::from(b(1)) / 100.0;

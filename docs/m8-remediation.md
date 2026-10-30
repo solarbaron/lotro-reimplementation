@@ -1108,3 +1108,30 @@ undecoded Base64 ticket, exact auth-block length, seqNum 1, time 0), the Connect
 bind and Case B rules, the receive flag mask, the delivery queues, and the S1 answers; play §4.5
 takes stamps only from 0x5E and 0xCE (0xCC gives none); OPEN-SESSION-8 leaves the `time` value on
 post-handshake packets without a timing header open; heading encoding stays rounding.
+
+## 19. Spec questions from the pass-9 conformance build (C7, 2026-10-30)
+
+From `m8-c7-handshake` (session S, login L, play P):
+
+- **S §3.2:** the value format of `Net.BindInterface` ("address and mask"); what "host-resolution
+  order" means for the first local IPv4 address (the code uses the address routed toward the server).
+- **S §4.4.2:** in the per-buffer send sum, is a fragment's 28-byte attachment part of the header
+  buffer or its own; which rule the server uses on its own sends, and whether the client must also
+  accept the per-buffer sum on receive.
+- **S §5.6.2:** whether `orderNum` counts per queue or per (queue, seqGroup) on queue 3, and its
+  first value; which queue client opcodes outside the table use (the code: 4, group 0).
+- **P §4.2:** what exactly counts as a "discrete movement action or state change" for 0x24.
+- **S §9.3:** what a positive non-zero `logonResult` means, and whether the refusal's text is shown.
+- **S §6.2.1:** the character set of the ticket text (the code: printable ASCII, 1-4095).
+
+From `m8-c7-world` (world W, play P):
+
+- **W §1.1.2:** `routingField0` is a u32 but called an instance ID: how it widens to 64 bits.
+- **P §4.3.2 item 3 vs §4.1 item 1:** an ack older than the retained steps sets the newest step to
+  the ack, against the monotonic counter.
+- **P §4.3.2 item 2:** whether the heading difference is circular.
+- **P §8 row 0x24:** what sets the walk bit, and whether forward/strafe carry speed or direction only.
+- **P §6.7 / §8:** the neutral channel for Kinship, Officer, Raid, RP and World.
+- **W §5.2.3:** the kind for category codes the section does not list, and for none at all.
+- **P §4.5:** whether the client is in portal space between 0x90 and the first 0x5E.
+- **W §2.6:** a duplicate `var_id` in one argument table: does the last one win.

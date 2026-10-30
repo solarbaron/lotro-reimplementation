@@ -14,15 +14,16 @@ use tessera_compat::world::{
     CharacterCreateRequest, CharacterDeleteRequest, CharacterDeleteStatus,
     CharacterEnterWorldRequest, CharacterListResponse, CharacterNameCheckRequest,
     CharacterOperationError, ClientActionCommand, ClientPhysicsSync, CompactDid, CompactPid,
-    DEFAULT_PORTAL_STATE_SCHEMA_ID, DisplayLocalizedText, EncodedPropertyTable,
+    DEFAULT_PORTAL_STATE_SCHEMA_ID, DisplayLocalizedText, EncodedPropertyTable, EnterPortalSpace,
     EntityAnimLayerState, EntityAppearanceDesc, EntityCreate, EntityDespawn, EntityStringEvent,
-    LandblockPropertyEvent, LocalizedTokenText, LocalizedTokenTextArgPayload, MissingEntityQuery,
-    PID_AGENT_SPECIES, PID_ENTITY_DISPLAY_NAME, PlatformAccountIdReport, PlayerSessionReady,
-    PortalPositionSync, PortalReadyAck, PortalStateNotice, PortalStateSchema,
+    LandblockPropertyEvent, LocalizedTokenText, LocalizedTokenTextArgPayload, LoginFinished,
+    MissingEntityQuery, PID_AGENT_SPECIES, PID_ENTITY_DISPLAY_NAME, PlatformAccountIdReport,
+    PlayerSessionReady, PortalPositionSync, PortalReadyAck, PortalStateNotice, PortalStateSchema,
     PortalTransitionComplete, PositionUpdate, PredictedPropertyAck, PropertyRemoval,
     PropertyTableUpdate, PropertyType, ServerShutdownText, SinglePropertyUpdate, SubEventBatch,
-    VisualDescriptionUpdate, WireBitfield, WirePosition, WireReader, WorldCalendarConfig,
-    WorldNameAnnouncement, decode_event_envelope, decode_vle3, decode_vle4, decode_vle16,
+    VisualDescriptionUpdate, WireBitfield, WirePosition, WireReader, WireWriter,
+    WorldCalendarConfig, WorldNameAnnouncement, active_target, decode_event_envelope, decode_vle3,
+    decode_vle4, decode_vle16,
 };
 
 fn fuzz_schema() -> BTreeMap<u32, PropertyType> {
@@ -62,7 +63,14 @@ fuzz_target!(|data: &[u8]| {
     let _ = CompactPid::from_bytes(data);
     let _ = WirePosition::decode_wire(&mut reader());
     let _ = WirePosition::decode_stored(&mut reader());
-    let _ = LocalizedTokenText::from_bytes(data);
+    // A wire text that decodes (arguments included) can be written again and read back,
+    // and its source and argument lookups are total.
+    if let Ok(t) = LocalizedTokenText::from_bytes(data) {
+        let _ = t.source();
+        let _ = t.arguments.first().map(|a| t.argument(a.var_id));
+        let bytes = t.to_bytes().expect("a decoded text encodes");
+        assert!(LocalizedTokenText::from_bytes(&bytes).is_ok());
+    }
     let _ = LocalizedTokenText::decode_stored(&mut reader());
     for kind in 0u16..=8 {
         let _ = LocalizedTokenTextArgPayload::decode(&mut reader(), kind, true);
@@ -70,10 +78,17 @@ fuzz_target!(|data: &[u8]| {
     }
     let _ = EncodedPropertyTable::from_bytes(data, &schema);
     let _ = WireBitfield::decode(&mut reader());
-    let _ = EntityAppearanceDesc::decode(&mut reader());
+    if let Ok(desc) = EntityAppearanceDesc::decode(&mut reader()) {
+        let _ = desc.encode(&mut WireWriter::new());
+    }
     let _ = ActionPayload::decode(&mut reader(), &schema);
-    if let Some((&id, rest)) = data.split_first() {
-        let _ = decode_event_envelope(u32::from(id), 2, rest, 65_536);
+    if let Some((&id, rest)) = data.split_first()
+        && let Ok(env) = decode_event_envelope(u32::from(id), 2, rest, 65_536)
+    {
+        assert_eq!(
+            env.target_entity_id,
+            active_target(2, env.routing_header.as_ref())
+        );
     }
 
     // §3 character screen
@@ -97,6 +112,8 @@ fuzz_target!(|data: &[u8]| {
     let _ = PlayerSessionReady::from_bytes(data, &schema);
     let _ = PortalPositionSync::from_bytes(data, &portal);
     let _ = PortalTransitionComplete::from_bytes(data);
+    let _ = LoginFinished::from_bytes(data);
+    let _ = EnterPortalSpace::from_bytes(data);
     let _ = PortalStateNotice::from_bytes(data);
     let _ = PortalReadyAck::from_bytes(data);
     let _ = WorldCalendarConfig::from_bytes(data, 0x3500_0000);

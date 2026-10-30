@@ -66,22 +66,17 @@ fn the_state_schemas_from_the_install_match_the_verification_tables() {
         let s = data.portal_state_schema(id).expect("a mounted schema");
         assert!(s.bool_pids.is_empty() && s.enum_pids.is_empty(), "{id:#x}");
     }
-    // The reference install gives five: the three of the verification table and two more
-    // script keys of `0x07000029` that are keys of the script-key enum. §4.3.1 lists only
-    // three, so the others are not named here; whether every such key is a
-    // `state_schema_id` is the W §4.3.1 question in `docs/m8-remediation.md` §15. A change
-    // in this count means that question needs a new look. (Until 2026-10-27 one of the two
-    // was left out at the per-key traversal bound, because a scriptlet was walked once per
-    // path that named it; it is entered once per schema now, and the count went from four
-    // to five.)
-    assert_eq!(schemas.len(), 5);
-    let unlisted: Vec<(usize, usize)> = schemas
-        .iter()
-        .filter(|(k, _)| ![DEFAULT_PORTAL_STATE_SCHEMA_ID, 0x1000_0E50, 0x1000_0E51].contains(k))
-        .map(|(_, s)| (s.bool_pids.len(), s.enum_pids.len()))
+    // §4.3.1 step 3: only the scripts whose node graph has a `PlayerPhysics` node (kind 47)
+    // are schemas, the three of the verification table. (Until pass 9 every script key of
+    // `0x07000029` that is a key of the script-key enum was one, five on the reference
+    // install.)
+    assert_eq!(schemas.len(), 3);
+    let unlisted: Vec<u32> = schemas
+        .keys()
+        .copied()
+        .filter(|k| ![DEFAULT_PORTAL_STATE_SCHEMA_ID, 0x1000_0E50, 0x1000_0E51].contains(k))
         .collect();
-    eprintln!("schemas outside the verification table (booleans, enums): {unlisted:?}");
-    assert_eq!(unlisted.len(), 2);
+    assert!(unlisted.is_empty(), "{unlisted:x?}");
 }
 
 #[test]
@@ -109,6 +104,15 @@ fn no_state_schema_is_left_out_at_a_traversal_bound() {
     );
     // Each scriptlet is entered once per schema: every key stays far below its bound.
     assert!(build.left_out.is_empty(), "{:x?}", build.left_out);
+    // `Startup` (`0x05`) and `ActiveMovement` (`0x0D`) reach no `PlayerPhysics` node
+    // (§4.3.1 step 3): lifecycle scripts, not schemas.
+    eprintln!(
+        "script keys without a PlayerPhysics node: {}",
+        build.not_physics.len()
+    );
+    for key in [0x0000_0005u32, 0x0000_000D] {
+        assert!(build.not_physics.contains(&key), "{key:#x}");
+    }
     assert!(build.visited < MAX_SCHEMA_NODES, "{}", build.visited);
 }
 
@@ -122,7 +126,10 @@ fn chat_categories_texts_and_templates_read_from_the_install() {
     let data = install_data_at(&root, &lang).expect("the install opens");
     let keys = data.chat_category_keys().expect("the chat category enum");
     eprintln!("chat category keys: {}", keys.len());
-    for k in [5u32, 6, 0x1C, 0x1D, 0x1E, 0x1F, 0x27, 0x28, 0x29, 0x2A] {
+    // Every number `official-messages-play.md` §6.7 names.
+    for k in [
+        5u32, 6, 7, 11, 12, 13, 19, 23, 27, 38, 0x1C, 0x1D, 0x1E, 0x1F, 0x27, 0x28, 0x29, 0x2A,
+    ] {
         assert!(keys.contains(&k), "category {k:#x}");
     }
 

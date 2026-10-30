@@ -20,9 +20,9 @@ use crate::play::chat::{self, ChatCategories, TextResolver, ref_text};
 use crate::play::inbound::PlayMessage;
 use crate::play::logout::{LogoutChange, LogoutState};
 use crate::play::movement::{
-    EntityAnimLayerState, MotionControllerUpdate, MovementInput, MovementSender, PredictedState,
-    ReconcileTolerance, Reconciliation, StepInput, TeleportSync, quaternion_heading, wire_heading,
-    wire_location,
+    EntityAnimLayerState, MotionControllerUpdate, MoveStep, MovementInput, MovementSender,
+    PredictedState, ReconcileTolerance, Reconciliation, StepInput, TeleportSync,
+    quaternion_heading, wire_heading, wire_location,
 };
 use crate::play::rpc::{OPCODE_SCRIPT_RPC, PlayRpc};
 use crate::play::{OutgoingEvent, PlayError, clean_display_name};
@@ -56,6 +56,10 @@ pub struct PlayCounters {
     pub outside_history_acks: u64,
     /// Outgoing messages that failed to encode (logged and dropped).
     pub encode_failures: u64,
+    /// `0x59` paths of an undefined `path_type` (§4.6.1 defines `1..=3`), dropped.
+    pub unknown_path_types: u64,
+    /// `0xCC` forced syncs (`sync_flags` bit 0, §4.3.2 item 1) adopted.
+    pub forced_syncs: u64,
     /// Incoming tells refused by the client's ignore list (`0x84EC004D` sent).
     pub rejected_tells: u64,
 }
@@ -73,14 +77,25 @@ pub enum PlaySignal {
     /// The result of reconciling a `0xCC` (§4.3.2); on a correction the client re-applies
     /// the listed steps.
     Reconciled(Reconciliation),
-    /// A remote entity path (§4.6.1). Interpolation along it is left to the connector.
+    /// A remote entity path (§4.6.1) of a defined `path_type` (`1` linear, `2` spline,
+    /// `3` looping; other types are counted and dropped). Interpolation along it is left
+    /// to the connector.
     Path {
         /// The entity.
         entity: u64,
-        /// Speed or timing scalar, when present.
+        /// `path_type` (`1..=3`).
+        path_type: u32,
+        /// Speed along the path in metres per second, when present.
         speed_param: Option<f32>,
         /// Valid waypoint locations, in order.
         waypoints: Vec<tessera_net::Location>,
+    },
+    /// A portal space began (`0x5E`, §4.5 item 2): the scene to load.
+    PortalSpace {
+        /// The expected teleport stamp.
+        expected_stamp: u8,
+        /// `scene_id`.
+        scene_id: u32,
     },
     /// A motion controller update (§4.6.2): no controller, or the controller cleared.
     /// Typed controllers are dropped (their type IDs are OPEN) and only counted.
@@ -209,9 +224,10 @@ impl PlayAdapter {
         self.own_name = own_name.as_deref().and_then(clean_name);
         self.movement = Some(MovementSender::new(player));
         // World entry is a portal-space transition (`official-messages-world.md` §4.3.3):
-        // `0xF4` follows once loading completes ([`Self::portal_loading`]).
+        // `0x5E` sets the expected stamp, `0x7C` the server gate, and `0xF4` follows once
+        // both gates are set ([`Self::portal_loading`]).
         self.teleport = TeleportSync::default();
-        self.teleport.begin_portal_space(self.teleport.stamp());
+        self.teleport.enter_world();
         self.logout = LogoutState::default();
         self.move_cancel_sent = false;
     }
@@ -260,13 +276,15 @@ impl PlayAdapter {
             .collect();
     }
 
-    /// Starts a portal-space transition expecting `expected_stamp` (§4.5 item 2).
+    /// Starts a portal-space transition expecting `expected_stamp` (§4.5 item 2; the
+    /// adapter calls it itself for a decoded `0x5E`).
     pub fn begin_portal_space(&mut self, expected_stamp: u8) {
         self.teleport.begin_portal_space(expected_stamp);
     }
 
     /// Reports the loading state while in portal space; returns `0xF4` (`portal_ready_ack`)
-    /// once portal space ends (§4.5 item 4).
+    /// once portal space ends: the server gate (`0x7C` / `0xC7`) is set, the stamp has
+    /// reached the expected one and loading completed or timed out (§4.5 item 4).
     pub fn portal_loading(&mut self, loading_done: bool, timed_out: bool) -> Option<OutgoingEvent> {
         if !self.teleport.try_exit_portal_space(loading_done, timed_out) {
             return None;
@@ -293,13 +311,25 @@ impl PlayAdapter {
         }
     }
 
-    /// Feeds this frame's movement input and returns what to send (§4.1–§4.2): the `0x24`
-    /// of a new step, if one was made, and, when the player moves while a logout
-    /// countdown is active, one `0x851E0006` (cancel) before it (§7.2 item 2). Nothing is
-    /// sent outside the world or in portal space (§4.5 item 2).
+    /// [`Self::move_step`] for the connector's input: its axes, facing the predicted
+    /// heading (`0` without a prediction), no jump, running.
     pub fn movement_step(
         &mut self,
         input: MovementInput,
+        now: f64,
+        predicted: Option<PredictedState>,
+    ) -> Vec<OutgoingEvent> {
+        let heading = predicted.map_or(0.0, |p| p.heading);
+        self.move_step(MoveStep::from_input(input, heading), now, predicted)
+    }
+
+    /// Feeds this frame's movement step and returns what to send (§4.1–§4.2, §8 row
+    /// `0x24`): the `0x24` of a new step, if one was made, and, when the player moves while
+    /// a logout countdown is active, one `0x851E0006` (cancel) before it (§7.2 item 2).
+    /// Nothing is sent outside the world or in portal space (§4.5 item 2).
+    pub fn move_step(
+        &mut self,
+        step: MoveStep,
         now: f64,
         predicted: Option<PredictedState>,
     ) -> Vec<OutgoingEvent> {
@@ -311,11 +341,11 @@ impl PlayAdapter {
         let Some(cmd) = self
             .movement
             .as_mut()
-            .and_then(|m| m.update(input, now, stamp, predicted))
+            .and_then(|m| m.step(step, now, stamp, predicted))
         else {
             return out;
         };
-        if StepInput::from_input(input).is_moving()
+        if StepInput::from_step(step).is_moving()
             && !self.move_cancel_sent
             && let Some(cancel) = self.logout.cancel()
         {
@@ -383,9 +413,18 @@ impl PlayAdapter {
                             .ok_or(PlayError::UnmappedChannel("yell"))?;
                         chat::say(text, c)?
                     }
+                    ChatChannel::Fellowship => {
+                        // §8 row `0x84EC001B`: Fellowship on the world server (category
+                        // 11); the connector may route it to the chat server instead.
+                        let c = self
+                            .categories
+                            .category_for(&ChatChannel::Fellowship)
+                            .ok_or(PlayError::UnmappedChannel("fellowship"))?;
+                        chat::say(text, c)?
+                    }
                     ChatChannel::Emote => chat::emote_text(text)?,
                     ChatChannel::Tell { peer } => chat::tell(peer, text)?,
-                    ChatChannel::Fellowship | ChatChannel::Named { .. } => {
+                    ChatChannel::Named { .. } => {
                         return Err(PlayError::UnsupportedCommand("chat-server channel"));
                     }
                     _ => return Err(PlayError::UnsupportedCommand("chat channel")),
@@ -449,17 +488,12 @@ impl PlayAdapter {
                 }
                 match movement.reconcile(p, self.tolerance) {
                     Ok(r) => {
-                        if let Reconciliation::Corrected {
-                            ack,
-                            location,
-                            anchor,
-                            heading,
-                            velocity,
-                            outside_history,
-                            ..
-                        } = &r
-                        {
-                            if *outside_history {
+                        match &r {
+                            Reconciliation::Corrected {
+                                ack,
+                                outside_history: true,
+                                ..
+                            } => {
                                 self.counters.outside_history_acks += 1;
                                 tracing::debug!(
                                     ack,
@@ -467,13 +501,21 @@ impl PlayAdapter {
                                     "0xCC outside the step history: reset"
                                 );
                             }
-                            out.events
-                                .push(Self::moved(player, location, *heading, *velocity));
+                            Reconciliation::Forced { .. } => self.counters.forced_syncs += 1,
+                            _ => {}
+                        }
+                        if let Some(state) = r.state() {
+                            out.events.push(Self::moved(
+                                player,
+                                &state.location,
+                                state.heading,
+                                state.velocity,
+                            ));
                             out.events.push(Event::LocationReport {
                                 id: EntityId(player),
-                                location: *location,
-                                heading: *heading,
-                                anchor: *anchor,
+                                location: state.location,
+                                heading: state.heading,
+                                anchor: state.anchor,
                                 cause: LocationCause::Corrected,
                             });
                         }
@@ -497,13 +539,35 @@ impl PlayAdapter {
                     None => self.counters.ignored_positions += 1,
                 }
             }
-            PlayMessage::SplinePath(p) => out.signals.push(PlaySignal::Path {
-                entity: p.entity_id,
-                speed_param: p.speed_param,
-                waypoints: p.waypoint_locations(),
-            }),
+            PlayMessage::SplinePath(p) => {
+                if !p.has_defined_type() {
+                    self.counters.unknown_path_types += 1;
+                    return out;
+                }
+                out.signals.push(PlaySignal::Path {
+                    entity: p.entity_id,
+                    path_type: p.path_type,
+                    speed_param: p.speed_param,
+                    waypoints: p.waypoint_locations(),
+                });
+            }
+            PlayMessage::EnterPortalSpace(m) => {
+                if self.player.is_some() {
+                    self.teleport.on_enter_portal_space(m);
+                    out.signals.push(PlaySignal::PortalSpace {
+                        expected_stamp: m.stamp,
+                        scene_id: m.scene_id,
+                    });
+                }
+            }
+            PlayMessage::ServerReady { .. } => {
+                if self.player.is_some() {
+                    self.teleport.on_server_ready();
+                }
+            }
             PlayMessage::MotionController { entity, update } => {
-                // §4.6.2 receiver rule: a typed controller is skipped and ignored.
+                // §4.6.2 receiver rule: a typed controller is skipped and ignored; no
+                // `EntityMoved` comes of `0xED` (§8).
                 if matches!(update, MotionControllerUpdate::Typed { .. }) {
                     self.counters.ignored_controllers += 1;
                     return out;
@@ -514,6 +578,7 @@ impl PlayAdapter {
                 });
             }
             PlayMessage::AnimLayers { entity, state } => {
+                // No `EntityMoved` comes of `0xBD` (§8).
                 out.signals.push(PlaySignal::AnimLayers {
                     entity: *entity,
                     state: state.clone(),

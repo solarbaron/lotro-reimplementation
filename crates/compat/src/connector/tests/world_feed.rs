@@ -628,18 +628,22 @@ fn appearance_updates_take_a_uniform_scale_and_count_the_rest() {
     );
     assert!(events.is_empty(), "{events:?}");
     assert_eq!(counters(&d).appearance_fields_skipped, 2);
-    // A base model cannot be decoded (§2.8 OPEN): refused and counted.
-    let mut base_model = vec![0u8];
-    base_model.extend_from_slice(&1u32.to_le_bytes());
-    base_model.extend_from_slice(&0x0400_0001u32.to_le_bytes());
+    // A base model is one u32 (§2.8): decoded, not shown, counted as a skipped field.
+    let base_model = visual(EntityAppearanceDesc {
+        base_model: Some(0x3100_0001),
+        scale: Some([1.5; 3]),
+        ..EntityAppearanceDesc::default()
+    });
     let before = d.counters();
+    let skipped = counters(&d).appearance_fields_skipped;
     let events = deliver(&world, &mut d, login.event_to(0x89, NPC, &base_model), 2.3);
     assert!(events.is_empty());
     assert_eq!(
         d.counters().appearance_base_model,
-        before.appearance_base_model + 1
+        before.appearance_base_model
     );
-    assert_eq!(d.counters().decode_errors, before.decode_errors + 1);
+    assert_eq!(d.counters().decode_errors, before.decode_errors);
+    assert_eq!(counters(&d).appearance_fields_skipped, skipped + 1);
 }
 
 #[test]
@@ -777,7 +781,7 @@ fn leaving_the_world_forgets_its_entities() {
 }
 
 #[test]
-fn only_the_0x52_after_a_0x98_in_an_area_batch_takes_the_created_entity() {
+fn the_0x52_after_a_0x98_in_a_batch_takes_the_created_entity() {
     let (world, mut d, mut login) = in_world();
     let visual = VisualDescriptionUpdate {
         visual_desc: EntityAppearanceDesc {
@@ -815,31 +819,17 @@ fn only_the_0x52_after_a_0x98_in_an_area_batch_takes_the_created_entity() {
         "a default-recipient 0x40 never despawns the new entity"
     );
     assert_eq!(counters(&d).no_target, 2);
-    // A `0x52` that does not directly follow the `0x98`, or one in a `0x4C`, has no entity.
-    for (op, frames) in [
-        (
-            SubEventBatch::EVENT_ID_AOI_ENTER,
-            vec![
-                frame(0x98, create(OTHER, NPC_TEMPLATE)),
-                SubEventFrame::Null {
-                    field_a: 0,
-                    field_b: 0,
-                },
-                frame(0x52, props_payload(&entity_properties("Late", true))),
-            ],
-        ),
-        (
-            SubEventBatch::EVENT_ID_SUB_EVENT,
-            vec![
-                frame(0x98, create(OTHER, NPC_TEMPLATE)),
-                frame(0x52, props_payload(&entity_properties("Late", true))),
-            ],
-        ),
-    ] {
-        let before = counters(&d).no_target;
-        deliver(&world, &mut d, login.event(op, &batch(op, frames)), 2.1);
-        assert_eq!(counters(&d).no_target, before + 1, "{op:#x}");
-    }
+    // A `0x4C` pairs its `0x98` and `0x52` the same way (§5.1 item 2). (A `0x52` further
+    // after its `0x98` pairs by `pair_initial_properties`, which this driver does not use
+    // yet: it sees only the frame before.)
+    let op = SubEventBatch::EVENT_ID_SUB_EVENT;
+    let frames = vec![
+        frame(0x98, create(OTHER, NPC_TEMPLATE)),
+        frame(0x52, props_payload(&entity_properties("Late", true))),
+    ];
+    let before = counters(&d).no_target;
+    deliver(&world, &mut d, login.event(op, &batch(op, frames)), 2.1);
+    assert_eq!(counters(&d).no_target, before, "{op:#x}");
     let events = deliver(
         &world,
         &mut d,
@@ -847,7 +837,7 @@ fn only_the_0x52_after_a_0x98_in_an_area_batch_takes_the_created_entity() {
         2.2,
     );
     assert!(
-        matches!(created(&events).as_slice(), [Event::EntityCreated { name, .. }] if name.is_empty()),
+        matches!(created(&events).as_slice(), [Event::EntityCreated { name, .. }] if name == "Late"),
         "{events:?}"
     );
 }

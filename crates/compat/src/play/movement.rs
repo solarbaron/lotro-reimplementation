@@ -2,10 +2,13 @@
 //! Player movement and remote entity motion (`docs/specs/official-messages-play.md` §4).
 //!
 //! - [`MovementSender`]: the monotonic step counter, the 4-step rolling window of `0x24`
-//!   (§4.1–§4.2, a ring of the last four steps) and, apart from it, the step history that
-//!   `0xCC` acknowledgements reconcile against (§4.3.2). An acknowledgement prunes and a
-//!   teleport clears only the history, never the window.
-//! - [`TeleportSync`]: the modulo-256 teleport stamp state machine (§4.5).
+//!   (§4.1–§4.2, a ring of the last four steps) with the planar movement grid
+//!   ([`move_state_of`]), the jump and walk bits and the quantized angles, and, apart from
+//!   it, the history of the 30 most recent steps that `0xCC` reconciles against (§4.3.2,
+//!   0.15 m and one heading unit). An acknowledgement prunes and a teleport clears only
+//!   the history; an ack ahead of the newest step also restarts the window there.
+//! - [`TeleportSync`]: the modulo-256 teleport stamp state machine and the two-gate portal
+//!   exit (§4.5).
 //! - [`ServerSetPosition`] (`0xBF`, §4.4.2), [`EntitySplinePath`] (`0x59`, §4.6.1) and
 //!   [`MotionControllerUpdate`] (`0xED`, §4.6.2); the play-layer bounds of `0xBD` (§4.6.3)
 //!   around [`EntityAnimLayerState`].
@@ -23,9 +26,17 @@ use crate::play::PlayError;
 pub use crate::world::{
     ActionLayerEntry, EntityAnimLayerState, decode_signed_normalized, encode_signed_normalized,
 };
+
+/// Event ID of the portal-space start (`enter_portal_space`, §4.5 item 2).
+pub const OPCODE_ENTER_PORTAL_SPACE: u32 = EnterPortalSpace::EVENT_ID;
+/// Event ID of the initial-entry server gate (`login_finished`, §4.5 item 4).
+pub const OPCODE_LOGIN_FINISHED: u32 = crate::world::LoginFinished::EVENT_ID;
+/// Event ID of the in-world portal server gate (`portal_transition_complete`, §4.5 item 4).
+pub const OPCODE_PORTAL_TRANSITION_COMPLETE: u32 = crate::world::PortalTransitionComplete::EVENT_ID;
 use crate::world::{
-    ClientPhysicsSync, PortalPositionSync, PropertySchemaLookup, WirePosition, WireReader,
-    WireWriter, decode_heading_u8, require_finite, require_world_coordinate,
+    ClientPhysicsSync, EnterPortalSpace, PortalPositionSync, PropertySchemaLookup, WirePosition,
+    WireReader, WireWriter, decode_heading_u8, encode_heading_u8, require_finite,
+    require_world_coordinate,
 };
 
 /// Event ID of the client movement step event (`client_physics_sync`, §4.2).
@@ -46,9 +57,19 @@ pub const STEP_INTERVAL_SEC: f64 = 0.05;
 pub const STEP_TIME_EPSILON_SEC: f64 = 1e-6;
 /// Steps in the rolling window of `0x24` (§4.1 item 2).
 pub const WINDOW_STEPS: usize = 4;
-/// Steps of history kept for reconciliation. The spec gives no capacity; engineering
-/// choice.
-pub const STEP_HISTORY_CAP: usize = 256;
+/// Steps of history kept for reconciliation: the 30 most recent (§4.3.2).
+pub const STEP_HISTORY_CAP: usize = 30;
+/// Position tolerance of an acknowledgement: 0.15 m (§4.3.2 item 2).
+pub const RECONCILE_DISTANCE_M: f64 = 0.15;
+/// Heading tolerance of an acknowledgement: one quantized heading unit (§4.3.2 item 2).
+pub const RECONCILE_HEADING_UNITS: u8 = 1;
+/// The stationary `move_state` byte the encoder writes (§4.1 item 4: `0x00` and `0x80`
+/// both mean stationary; `0x80` is the grid's centre).
+pub const MOVE_STATE_STATIONARY: u8 = 0x80;
+/// Columns of the planar movement grid (`forward_axis`, §4.1 item 4).
+pub const GRID_COLUMNS: u8 = 15;
+/// Rows of the planar movement grid (`strafe_axis`, §4.1 item 4).
+pub const GRID_ROWS: u8 = 17;
 /// Most waypoints accepted in one `0x59` path. Engineering choice, spec silent (it bounds
 /// the count only by the remaining bytes).
 pub const MAX_WAYPOINTS: usize = 1024;
@@ -86,16 +107,29 @@ pub fn wire_location(pos: &WirePosition) -> Option<(Location, Option<Anchor>)> {
 }
 
 /// Tessera's heading (radians, 0 = +X, counter-clockwise, `(-π, π]`) of a quantized wire
-/// heading (`official-messages-world.md` §2.5.2).
-///
-/// The play and world specs give the wire angle in radians but not its zero direction or
-/// sense. This reads it as the yaw ψ of `coordinates.md` §11.3 (0 = facing north, +Y,
-/// counter-clockwise seen from above), so Tessera's heading is the wire angle plus π/2.
-/// An engineering reading, spec silent, pending a spec answer; only this function and
-/// its use in the reconciliation tolerance depend on it.
+/// heading. The wire angle is measured counter-clockwise from +Y (north) around +Z
+/// (`official-messages-world.md` §2.5.2, play §3.1: `0x40` faces west), so Tessera's
+/// heading is the wire angle plus π/2.
 #[must_use]
 pub fn wire_heading(raw: u8) -> f32 {
     wrap_pi(decode_heading_u8(raw) + std::f32::consts::FRAC_PI_2)
+}
+
+/// The quantized wire heading of Tessera's `heading` (the inverse of [`wire_heading`],
+/// rounding as `official-messages-world.md` §2.5.2 encodes); `0` for a non-finite heading.
+#[must_use]
+pub fn heading_to_wire(heading: f32) -> u8 {
+    if !heading.is_finite() {
+        return 0;
+    }
+    encode_heading_u8(heading - std::f32::consts::FRAC_PI_2)
+}
+
+/// The circular difference of two quantized headings in heading units (`0..=128`).
+#[must_use]
+pub fn heading_units_apart(a: u8, b: u8) -> u8 {
+    let d = a.wrapping_sub(b);
+    d.min(d.wrapping_neg())
 }
 
 /// Tessera's heading of a wire quaternion `(w, x, y, z)`, `None` when degenerate.
@@ -114,10 +148,6 @@ fn wrap_pi(a: f32) -> f32 {
     }
 }
 
-fn angle_diff(a: f32, b: f32) -> f32 {
-    wrap_pi(a - b).abs()
-}
-
 /// The finiteness check of §9.1 rule 4 ([`crate::world`]'s), as a play error.
 fn check_finite(field: &'static str, v: f32) -> Result<(), PlayError> {
     require_finite(field, v)?;
@@ -128,47 +158,198 @@ fn check_finite(field: &'static str, v: f32) -> Result<(), PlayError> {
 // §4.1–§4.2 Movement steps and 0x24
 // ---------------------------------------------------------------------------
 
-/// The local player's movement input for one step: the movement state byte and the three
-/// input axes of `0x24` (`official-messages-world.md` §5.5), each in `[-1, 1]`.
+/// The `move_state` byte of the body-local planar movement `(forward, strafe)`, each in
+/// `[-1, 1]` (§4.1 item 4): `0x80` when both are zero, else `1 + 15 · r + c` with
+/// `c = clamp(floor((forward + 1) · 0.5 · 15), 0, 14)` and
+/// `r = clamp(floor((strafe + 1) · 0.5 · 17), 0, 16)`. A non-finite axis counts as `0`.
+#[must_use]
+pub fn move_state_of(forward: f32, strafe: f32) -> u8 {
+    let clean = |v: f32| {
+        if v.is_finite() {
+            v.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        }
+    };
+    let (f, s) = (clean(forward), clean(strafe));
+    if f == 0.0 && s == 0.0 {
+        return MOVE_STATE_STATIONARY;
+    }
+    let cell = |v: f32, n: u8| {
+        let q = ((v + 1.0) * 0.5 * f32::from(n)).floor();
+        // Clamped to `0..n - 1` (at most 16), so the cast is exact.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let q = q.clamp(0.0, f32::from(n - 1)) as u8;
+        q
+    };
+    let c = cell(f, GRID_COLUMNS);
+    let r = cell(s, GRID_ROWS);
+    1 + GRID_COLUMNS * r + c
+}
+
+/// The body-local planar movement `(forward, strafe)` of a `move_state` byte (§4.1 item 4):
+/// `0x00` and `0x80` are stationary; any other byte is the centre of its grid cell, with
+/// the centre column and row read as exactly `0`.
+#[must_use]
+pub fn move_state_axes(move_state: u8) -> (f32, f32) {
+    if move_state == 0 || move_state == MOVE_STATE_STATIONARY {
+        return (0.0, 0.0);
+    }
+    let m = move_state - 1;
+    let (c, r) = (m % GRID_COLUMNS, m / GRID_COLUMNS);
+    let axis = |i: u8, n: u8| {
+        if i == n / 2 {
+            0.0
+        } else {
+            (f32::from(i) + 0.5) / f32::from(n) * 2.0 - 1.0
+        }
+    };
+    (axis(c, GRID_COLUMNS), axis(r, GRID_ROWS))
+}
+
+/// The local player's movement input for one frame, in the shape the connector builds
+/// (`official-messages-play.md` §8). Only `forward` and `strafe` are read: the movement
+/// state byte is derived from them ([`move_state_of`]) and the spec has no turn axis, so
+/// `move_state` and `turn` are not sent. The heading comes with the prediction
+/// ([`crate::play::adapter::PlayAdapter::movement_step`]); [`MoveStep`] carries every field
+/// of a step.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct MovementInput {
-    /// The movement state byte (`move_mode` / stance code; values from the server data).
+    /// Not sent (derived from the axes, §4.1 item 4).
     pub move_state: u8,
-    /// Lateral / strafe axis (`axis_a`).
+    /// Body-local strafe axis (right minus left), `[-1, 1]`.
     pub strafe: f32,
-    /// Forward / backward axis (`axis_b`).
+    /// Body-local forward axis, `[-1, 1]`.
     pub forward: f32,
-    /// Yaw / turn axis (`axis_c`).
+    /// Not sent (no turn axis in §4.1).
     pub turn: f32,
 }
 
-/// One quantized step as it goes on the wire.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// Everything one movement step reports (§4.1 items 4–6, §8 row `0x24`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MoveStep {
+    /// Body-local forward axis, `[-1, 1]`.
+    pub forward: f32,
+    /// Body-local strafe axis (right minus left), `[-1, 1]`.
+    pub strafe: f32,
+    /// The entity's heading (Tessera's convention), `axis_a`.
+    pub heading: f32,
+    /// The camera's heading (Tessera's convention), `axis_b`; `None`: the entity's heading
+    /// (§8 row `0x24` quantizes the heading into both).
+    pub camera_heading: Option<f32>,
+    /// The camera pitch byte `axis_c` (§8 row `0x24`: `0x00`).
+    pub camera_pitch: u8,
+    /// Jump active during the step (`slot_flags` bit 1).
+    pub jump: bool,
+    /// Walking rather than running (`slot_flags` bit 6).
+    pub walk: bool,
+}
+
+impl MoveStep {
+    /// The step of a neutral move (`official-messages-play.md` §8 row `0x24`): the
+    /// velocity's horizontal direction relative to `heading` as unit body-local axes (no
+    /// planar movement below 1 mm/s), the heading as both entity and camera heading, pitch
+    /// `0x00`, jump while not on the ground, running. The axes are a direction, not a speed
+    /// (Tessera's reading; the walk bit has no neutral source and stays clear).
+    #[must_use]
+    pub fn from_move(heading: f32, velocity: [f32; 3], on_ground: bool) -> Self {
+        let [vx, vy, _] = velocity;
+        let speed = (vx * vx + vy * vy).sqrt();
+        let mut step = Self {
+            heading,
+            jump: !on_ground,
+            ..Self::default()
+        };
+        if speed.is_finite() && speed >= 1e-3 && heading.is_finite() {
+            // `tessera_net::model`: heading θ faces (cos θ, sin θ); +X east, +Y north, +Z
+            // up. The strafe axis is positive to the right of the facing.
+            let (s, c) = heading.sin_cos();
+            step.forward = ((vx * c + vy * s) / speed).clamp(-1.0, 1.0);
+            step.strafe = ((vx * s - vy * c) / speed).clamp(-1.0, 1.0);
+        }
+        step
+    }
+
+    /// The step of the connector's [`MovementInput`] facing `heading`: its axes, no jump,
+    /// running.
+    #[must_use]
+    pub fn from_input(input: MovementInput, heading: f32) -> Self {
+        Self {
+            forward: input.forward,
+            strafe: input.strafe,
+            heading,
+            ..Self::default()
+        }
+    }
+}
+
+/// One quantized step as it goes on the wire (§4.1 items 4–6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StepInput {
-    /// The movement state byte.
+    /// The planar movement grid byte.
     pub move_state: u8,
-    /// `axis_a`, `axis_b`, `axis_c` as `SignedNormalizedByte`s.
-    pub axes: [i8; 3],
+    /// `slot_flags` jump (`0x02`) and walk (`0x40`) bits.
+    pub slot_flags: u8,
+    /// `axis_a` (entity heading), `axis_b` (camera heading), `axis_c` (camera pitch).
+    pub axes: [u8; 3],
+}
+
+impl Default for StepInput {
+    /// Stationary, no flags, all angles `0x00`.
+    fn default() -> Self {
+        Self {
+            move_state: MOVE_STATE_STATIONARY,
+            slot_flags: 0,
+            axes: [0; 3],
+        }
+    }
 }
 
 impl StepInput {
-    /// Quantizes `input`.
+    /// Quantizes `step`.
     #[must_use]
-    pub fn from_input(input: MovementInput) -> Self {
+    pub fn from_step(step: MoveStep) -> Self {
+        let mut flags = 0u8;
+        if step.jump {
+            flags |= ClientPhysicsSync::SLOT_FLAG_JUMP;
+        }
+        if step.walk {
+            flags |= ClientPhysicsSync::SLOT_FLAG_WALK;
+        }
+        let heading = heading_to_wire(step.heading);
         Self {
-            move_state: input.move_state,
+            move_state: move_state_of(step.forward, step.strafe),
+            slot_flags: flags,
             axes: [
-                encode_signed_normalized(input.strafe),
-                encode_signed_normalized(input.forward),
-                encode_signed_normalized(input.turn),
+                heading,
+                step.camera_heading.map_or(heading, heading_to_wire),
+                step.camera_pitch,
             ],
         }
     }
 
-    /// Whether any axis is non-zero (this layer's test for "moving", §4.2 item 1).
+    /// The entity heading byte (`axis_a`).
+    #[must_use]
+    pub fn heading(&self) -> u8 {
+        self.axes[0]
+    }
+
+    /// Planar movement or a jump: the steps that repeat at 20 Hz (§4.2 item 1; a heading
+    /// change and queued actions are input changes, sent at once).
     #[must_use]
     pub fn is_moving(&self) -> bool {
-        self.axes.iter().any(|a| *a != 0)
+        (self.move_state != 0 && self.move_state != MOVE_STATE_STATIONARY)
+            || self.slot_flags & ClientPhysicsSync::SLOT_FLAG_JUMP != 0
+    }
+
+    /// Whether `self` differs from `other` in what makes a step at once (§4.2 item 1):
+    /// `move_state`, the jump or walk bit, or the entity heading. Camera angles alone do
+    /// not.
+    #[must_use]
+    pub fn changed_from(&self, other: &Self) -> bool {
+        self.move_state != other.move_state
+            || self.slot_flags != other.slot_flags
+            || self.heading() != other.heading()
     }
 }
 
@@ -188,27 +369,50 @@ struct StepRecord {
     predicted: Option<PredictedState>,
 }
 
-/// Spatial tolerance of an acknowledgement (§4.3.2 item 2). The spec gives no values;
-/// [`Self::default`] is an engineering choice, spec silent.
+/// The tolerance of an acknowledgement (§4.3.2 item 2); [`Self::default`] is the spec's.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReconcileTolerance {
-    /// Largest accepted distance, metres.
+    /// Largest accepted distance, metres (spec: 0.15).
     pub distance_m: f64,
-    /// Largest accepted heading difference, radians.
-    pub heading_rad: f32,
+    /// Largest accepted difference of the quantized headings, in heading units (spec: 1).
+    pub heading_units: u8,
 }
 
 impl Default for ReconcileTolerance {
-    /// 0.5 m and two heading quanta (2 · 2π / 256); engineering choice, spec silent.
+    /// 0.15 m and one quantized heading unit (§4.3.2 item 2).
     fn default() -> Self {
         Self {
-            distance_m: 0.5,
-            heading_rad: 2.0 * std::f32::consts::TAU / 256.0,
+            distance_m: RECONCILE_DISTANCE_M,
+            heading_units: RECONCILE_HEADING_UNITS,
         }
     }
 }
 
-/// The outcome of reconciling a `0xCC` acknowledgement (§4.3.2).
+/// The authoritative state of a `0xCC` (§4.3.1), as a reconciliation applies it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AuthoritativeState {
+    /// The authoritative location.
+    pub location: Location,
+    /// Its anchor, for an interior cell.
+    pub anchor: Option<Anchor>,
+    /// The authoritative heading (Tessera's convention).
+    pub heading: f32,
+    /// The linear velocity components of the event (zero when absent).
+    pub velocity: [f32; 3],
+    /// The angular velocity components of the event (zero when absent).
+    pub angular_velocity: [f32; 3],
+    /// The movement mode byte.
+    pub movement_mode: u8,
+    /// The state schema of the boolean and enum values (`official-messages-world.md`
+    /// §4.3.1).
+    pub state_schema_id: u32,
+    /// The boolean state values to apply, in schema order.
+    pub bool_states: Vec<bool>,
+    /// The enum state values to apply, in schema order.
+    pub enum_states: Vec<u32>,
+}
+
+/// The outcome of reconciling a `0xCC` (§4.3.2).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reconciliation {
     /// The prediction at the acknowledged step was within tolerance (item 2).
@@ -220,31 +424,34 @@ pub enum Reconciliation {
     Corrected {
         /// The acknowledged step.
         ack: u32,
-        /// The authoritative location.
-        location: Location,
-        /// Its anchor, for an interior cell.
-        anchor: Option<Anchor>,
-        /// The authoritative heading (Tessera's convention).
-        heading: f32,
-        /// The linear velocity components of the event (zero when absent).
-        velocity: [f32; 3],
-        /// The angular velocity components of the event (zero when absent).
-        angular_velocity: [f32; 3],
-        /// The movement mode byte.
-        movement_mode: u8,
-        /// The state schema of the boolean and enum values (`official-messages-world.md`
-        /// §4.3.1).
-        state_schema_id: u32,
-        /// The boolean state values to apply, in schema order.
-        bool_states: Vec<bool>,
-        /// The enum state values to apply, in schema order.
-        enum_states: Vec<u32>,
+        /// The authoritative state.
+        state: AuthoritativeState,
         /// The unacknowledged steps to re-apply, oldest first.
         replay: Vec<StepInput>,
         /// The ack was outside the retained step history (ahead of the newest step, or
-        /// no longer retained): item 3's reset to the authoritative state.
+        /// older than the retained steps): the history was cleared and nothing is replayed
+        /// (item 3).
         outside_history: bool,
     },
+    /// A forced position or portal placement sync (`sync_flags` bit 0, item 1): the
+    /// history was cleared and the state is adopted at once.
+    Forced {
+        /// The teleport reason code (enum `0x2300038B`).
+        reason: u32,
+        /// The authoritative state.
+        state: AuthoritativeState,
+    },
+}
+
+impl Reconciliation {
+    /// The state to adopt, unless the prediction was accepted.
+    #[must_use]
+    pub fn state(&self) -> Option<&AuthoritativeState> {
+        match self {
+            Self::Accepted { .. } => None,
+            Self::Corrected { state, .. } | Self::Forced { state, .. } => Some(state),
+        }
+    }
 }
 
 /// Whether step `a` comes after step `b` under 32-bit serial-number arithmetic
@@ -261,7 +468,7 @@ pub struct MovementSender {
     seq: u32,
     /// The last [`WINDOW_STEPS`] steps `(seq, input)`, oldest first: the `0x24` window.
     ring: VecDeque<(u32, StepInput)>,
-    /// The unacknowledged steps with their predictions, for reconciliation.
+    /// The last [`STEP_HISTORY_CAP`] steps with their predictions, for reconciliation.
     history: VecDeque<StepRecord>,
     last_sent: Option<StepInput>,
     last_step_time: f64,
@@ -275,7 +482,7 @@ impl MovementSender {
             entity_id,
             seq: 0,
             ring: VecDeque::with_capacity(WINDOW_STEPS),
-            history: VecDeque::new(),
+            history: VecDeque::with_capacity(STEP_HISTORY_CAP),
             last_sent: None,
             last_step_time: f64::NEG_INFINITY,
         }
@@ -287,20 +494,13 @@ impl MovementSender {
         self.seq
     }
 
-    /// Steps kept for reconciliation.
+    /// Steps kept for reconciliation (at most [`STEP_HISTORY_CAP`]).
     #[must_use]
     pub fn history_len(&self) -> usize {
         self.history.len()
     }
 
-    /// Feeds the input of this frame. A new step is made, and its `0x24` returned, when the
-    /// input changed or, while moving, when the next 20 Hz tick is due (§4.1 item 1, §4.2
-    /// item 1). Periodic steps keep an exact 50 ms grid: the tick time advances by
-    /// [`STEP_INTERVAL_SEC`] and is reset to `now` only when the caller fell more than one
-    /// interval behind (no burst of catch-up steps); an input change starts a new grid at
-    /// `now`. `stamp` is the current teleport stamp echoed in `header_byte` (§4.2 item 3);
-    /// `predicted` is the client's predicted state after the step, kept for
-    /// reconciliation.
+    /// Feeds the connector's input of this frame facing `heading` ([`MoveStep::from_input`]).
     pub fn update(
         &mut self,
         input: MovementInput,
@@ -308,8 +508,29 @@ impl MovementSender {
         stamp: u8,
         predicted: Option<PredictedState>,
     ) -> Option<ClientPhysicsSync> {
-        let step = StepInput::from_input(input);
-        let changed = self.last_sent != Some(step);
+        let heading = predicted.map_or(0.0, |p| p.heading);
+        self.step(MoveStep::from_input(input, heading), now, stamp, predicted)
+    }
+
+    /// Feeds the step of this frame. A new step is made, and its `0x24` returned, when the
+    /// step changed (`move_state`, jump or walk, entity heading: [`StepInput::changed_from`])
+    /// or, while moving ([`StepInput::is_moving`]), when the next 20 Hz tick is due (§4.1
+    /// item 1, §4.2 item 1); the stop of a movement is such a change, so it goes at once.
+    /// Periodic steps keep an exact 50 ms grid: the tick time advances by
+    /// [`STEP_INTERVAL_SEC`] and is reset to `now` only when the caller fell more than one
+    /// interval behind (no burst of catch-up steps); a change starts a new grid at `now`.
+    /// `stamp` is the current teleport stamp echoed in `header_byte` (§4.2 item 3);
+    /// `predicted` is the client's predicted state after the step, kept for
+    /// reconciliation.
+    pub fn step(
+        &mut self,
+        step: MoveStep,
+        now: f64,
+        stamp: u8,
+        predicted: Option<PredictedState>,
+    ) -> Option<ClientPhysicsSync> {
+        let step = StepInput::from_step(step);
+        let changed = self.last_sent.is_none_or(|last| step.changed_from(&last));
         let due = step.is_moving()
             && now - self.last_step_time >= STEP_INTERVAL_SEC - STEP_TIME_EPSILON_SEC;
         if !changed && !due {
@@ -343,12 +564,13 @@ impl MovementSender {
     /// The `0x24` of the current window (§4.1 item 2, §4.2 item 2): slot `k` carries step
     /// `max(seq − 3 + k, 0)` from the ring of the last four steps. A slot for step `0`
     /// (before the first step) or for a step not in the ring is [`StepInput::default`].
-    /// `slot_flags` bits under mask `0xEE` and `trailer_u32` are sent as `0`
-    /// (`official-messages-world.md` §5.5).
+    /// `slot_flags` carry only the jump and walk bits; the `OPEN` bits and `trailer_u32`
+    /// are sent as `0` (`official-messages-world.md` §5.5).
     #[must_use]
     pub fn window(&self, stamp: u8) -> ClientPhysicsSync {
-        let mut move_state = [0u8; 4];
-        let mut axes = [[0i8; 4]; 3];
+        let mut move_state = [MOVE_STATE_STATIONARY; 4];
+        let mut slot_flags = [0u8; 4];
+        let mut axes = [[0u8; 4]; 3];
         for k in 0..4u32 {
             let seq = self.seq.saturating_sub(3 - k);
             let step = if seq == 0 {
@@ -363,13 +585,23 @@ impl MovementSender {
             if let Some(m) = move_state.get_mut(i) {
                 *m = step.move_state;
             }
+            if let Some(f) = slot_flags.get_mut(i) {
+                *f = step.slot_flags;
+            }
             for (axis, value) in axes.iter_mut().zip(step.axes) {
                 if let Some(slot) = axis.get_mut(i) {
                     *slot = value;
                 }
             }
         }
-        ClientPhysicsSync::new_base(self.entity_id, stamp, self.seq, move_state, axes)
+        ClientPhysicsSync::new_base(
+            self.entity_id,
+            stamp,
+            self.seq,
+            move_state,
+            slot_flags,
+            axes,
+        )
     }
 
     /// Drops every unacknowledged step after a teleport was accepted (§4.5 item 3). The
@@ -378,16 +610,20 @@ impl MovementSender {
         self.history.clear();
     }
 
-    /// Reconciles a `0xCC` acknowledgement of `ack_step_seq` (§4.3.2). Step numbers are
-    /// compared as serial numbers ([`step_after`]), so the wrap of the counter is handled.
+    /// Reconciles a `0xCC` (§4.3.2). Step numbers are compared as serial numbers
+    /// ([`step_after`]), so the wrap of the counter is handled.
     ///
-    /// An ack outside the retained step history is a reset to the authoritative state
-    /// (§4.3.2 item 3): [`Reconciliation::Corrected`] with `outside_history` set. This is
-    /// the `0xCC` that places the player at world entry (`official-messages-world.md`
-    /// §4.3.3 step 3) and after a return from character selection, whose ack is ahead of
-    /// the newest step made: every step is then acknowledged, the history is cleared and
-    /// nothing is replayed. An ack behind the history re-applies every retained step
-    /// after it. The step counter is not moved (engineering choice, spec silent).
+    /// - `sync_flags` bit 0 set (item 1): a forced sync; the history is cleared and the
+    ///   state adopted ([`Reconciliation::Forced`]).
+    /// - The ack is in the history (item 2): steps up to it are acknowledged; within
+    ///   0.15 m (same region) and one heading unit of the prediction it is accepted, else
+    ///   corrected with the later steps to replay (item 3).
+    /// - The ack is ahead of the newest step (item 3): the history and window are cleared,
+    ///   the newest step becomes the ack, and the state is adopted (the `0xCC` that places
+    ///   the player at world entry, `official-messages-world.md` §4.3.3).
+    /// - The ack is behind the retained steps (item 3): the history is cleared and the
+    ///   state adopted; the step counter is not moved back (§4.1 item 1 keeps it
+    ///   monotonic; question in the spec's implementer notes).
     ///
     /// # Errors
     ///
@@ -398,24 +634,48 @@ impl MovementSender {
         placement: &PortalPositionSync,
         tolerance: ReconcileTolerance,
     ) -> Result<Reconciliation, PlayError> {
-        let ack = placement.sequence_or_reason;
         let (location, anchor) = wire_location(&placement.position)
             .ok_or(PlayError::BadCoordinate("authoritative position"))?;
-        let heading = wire_heading(placement.heading_raw);
-        let record = self.history.iter().find(|r| r.seq == ack);
-        let outside_history = record.is_none();
-        let within = record.and_then(|r| r.predicted).is_some_and(|p| {
+        let state = AuthoritativeState {
+            location,
+            anchor,
+            heading: wire_heading(placement.heading_raw),
+            velocity: placement.linear_velocity.map(|v| v.unwrap_or(0.0)),
+            angular_velocity: placement.angular_velocity.map(|v| v.unwrap_or(0.0)),
+            movement_mode: placement.movement_mode,
+            state_schema_id: placement.state_schema_id,
+            bool_states: placement.bool_states.clone(),
+            enum_states: placement.enum_states.clone(),
+        };
+        let Some(ack) = placement.ack_step_seq() else {
+            self.history.clear();
+            return Ok(Reconciliation::Forced {
+                reason: placement.sequence_or_reason,
+                state,
+            });
+        };
+        let record = self.history.iter().find(|r| r.seq == ack).copied();
+        let Some(record) = record else {
+            if step_after(ack, self.seq) {
+                self.seq = ack;
+                self.ring.clear();
+            }
+            self.history.clear();
+            return Ok(Reconciliation::Corrected {
+                ack,
+                state,
+                replay: Vec::new(),
+                outside_history: true,
+            });
+        };
+        let within = record.predicted.is_some_and(|p| {
             p.location.region == location.region
                 && distance(&p.location, &location) <= tolerance.distance_m
-                && angle_diff(p.heading, heading) <= tolerance.heading_rad
+                && heading_units_apart(heading_to_wire(p.heading), placement.heading_raw)
+                    <= tolerance.heading_units
         });
-        // Steps up to and including `ack` are acknowledged (item 1). An ack ahead of the
-        // newest step acknowledges all of them, so the history is cleared.
-        if step_after(ack, self.seq) {
-            self.history.clear();
-        } else {
-            self.history.retain(|r| step_after(r.seq, ack));
-        }
+        // Steps up to and including `ack` are acknowledged (item 1).
+        self.history.retain(|r| step_after(r.seq, ack));
         if within {
             return Ok(Reconciliation::Accepted { ack });
         }
@@ -426,17 +686,9 @@ impl MovementSender {
         }
         Ok(Reconciliation::Corrected {
             ack,
-            location,
-            anchor,
-            heading,
-            velocity: placement.linear_velocity.map(|v| v.unwrap_or(0.0)),
-            angular_velocity: placement.angular_velocity.map(|v| v.unwrap_or(0.0)),
-            movement_mode: placement.movement_mode,
-            state_schema_id: placement.state_schema_id,
-            bool_states: placement.bool_states.clone(),
-            enum_states: placement.enum_states.clone(),
+            state,
             replay,
-            outside_history,
+            outside_history: false,
         })
     }
 }
@@ -456,17 +708,30 @@ pub struct StampOutcome {
     /// The stamp was newer or equal: adopt it, snap the player to the event's position and
     /// discard the unacknowledged step history.
     pub snap: bool,
-    /// The portal-space wait ended with this event.
+    /// The placement wait ended with this event.
     pub wait_cleared: bool,
 }
 
-/// The teleport stamp synchronization of §4.5.
+/// The teleport stamp synchronization and two-gate portal exit of §4.5.
+///
+/// Stamps come only from `0x5E` (the expected stamp, [`Self::begin_portal_space`]) and from
+/// local-player `0xCE` with `header_flags` bit 3 ([`Self::on_local_position`]); a `0xCC`
+/// carries none (§4.5 item 2). Portal space ends once both gates are set: `game_ready`
+/// (`0x7C` or `0xC7`, [`Self::on_server_ready`]) and `client_ready` (the stamp has reached
+/// the expected one and loading completed or timed out, [`Self::try_exit_portal_space`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TeleportSync {
     entity_stamp: u8,
     waiting: bool,
     expected: u8,
     in_portal_space: bool,
+    game_ready: bool,
+    /// The client gate was seen set (stamp reached, loading done or timed out) while the
+    /// server gate was still clear.
+    client_ready: bool,
+    /// A `0x5E` started the current portal space.
+    announced: bool,
+    scene_id: Option<u32>,
 }
 
 impl TeleportSync {
@@ -475,6 +740,7 @@ impl TeleportSync {
     pub fn new(stamp: u8) -> Self {
         Self {
             entity_stamp: stamp,
+            expected: stamp,
             ..Self::default()
         }
     }
@@ -485,10 +751,35 @@ impl TeleportSync {
         self.entity_stamp
     }
 
-    /// Whether the client waits for the authoritative `0xCE` of a teleport.
+    /// The expected stamp of the current or last portal space.
+    #[must_use]
+    pub fn expected_stamp(&self) -> u8 {
+        self.expected
+    }
+
+    /// The `scene_id` of the last `0x5E`, while its portal space lasts.
+    #[must_use]
+    pub fn scene_id(&self) -> Option<u32> {
+        self.scene_id
+    }
+
+    /// Whether the client waits for the placement carrying the expected stamp.
     #[must_use]
     pub fn waiting(&self) -> bool {
         self.waiting
+    }
+
+    /// Whether the server gate (`game_ready`) is set.
+    #[must_use]
+    pub fn game_ready(&self) -> bool {
+        self.game_ready
+    }
+
+    /// Whether the client gate (`client_ready`) was set in this portal space: the exit
+    /// then waits only for the server gate (no loading time-out is pending).
+    #[must_use]
+    pub fn client_ready(&self) -> bool {
+        self.client_ready
     }
 
     /// Whether the client is in portal space (local steps suspended, §4.5 item 2).
@@ -497,39 +788,77 @@ impl TeleportSync {
         self.in_portal_space
     }
 
-    /// Item 2: a portal-space transition begins with `expected_stamp`. The client waits
-    /// when its stamp has not yet reached the expected one (difference non-zero and below
-    /// 128). The spec names no event that starts the transition apart from the `0xCE`
-    /// that also ends it (item 3); the connector calls this when its trigger fires.
+    /// The client enters portal space at world entry, before any `0x5E` (the session's
+    /// first placement): both gates clear, no expected stamp yet. Engineering choice: no
+    /// `0x24` goes out before the first portal exit (§11 item 1).
+    pub fn enter_world(&mut self) {
+        *self = Self {
+            in_portal_space: true,
+            ..Self::new(self.entity_stamp)
+        };
+    }
+
+    /// `0x5E` (`enter_portal_space`, item 2): a portal-space wait begins with
+    /// `expected_stamp`; both gates are cleared. The client waits when its stamp has not
+    /// yet reached the expected one (difference non-zero and below 128).
     pub fn begin_portal_space(&mut self, expected_stamp: u8) {
         self.in_portal_space = true;
+        self.game_ready = false;
+        self.client_ready = false;
+        self.announced = true;
+        self.expected = expected_stamp;
         let d = expected_stamp.wrapping_sub(self.entity_stamp);
-        if d != 0 && d < 0x80 {
-            self.waiting = true;
-            self.expected = expected_stamp;
-        }
+        self.waiting = d != 0 && d < 0x80;
+    }
+
+    /// [`Self::begin_portal_space`] for a decoded `0x5E`, keeping its `scene_id`.
+    pub fn on_enter_portal_space(&mut self, msg: &EnterPortalSpace) {
+        self.begin_portal_space(msg.stamp);
+        self.scene_id = Some(msg.scene_id);
+    }
+
+    /// Item 4: `0x7C` (`login_finished`) or `0xC7` (`portal_transition_complete`) sets the
+    /// server gate.
+    pub fn on_server_ready(&mut self) {
+        self.game_ready = true;
     }
 
     /// Item 3: a `0xCE` for the local player with `header_flags` bit 3 set, carrying
-    /// `stamp` in `seq_byte`.
+    /// `stamp` in `seq_byte`. A newer or equal stamp becomes the current stamp; before any
+    /// `0x5E` of the current portal space it becomes the expected stamp too (item 2). The
+    /// wait ends once the current stamp reaches or passes the expected one.
     pub fn on_local_position(&mut self, stamp: u8) -> StampOutcome {
         let snap = stamp_newer_or_equal(stamp, self.entity_stamp);
         if snap {
             self.entity_stamp = stamp;
+            if !self.announced {
+                self.expected = stamp;
+            }
         }
-        let wait_cleared = self.waiting && stamp_newer_or_equal(stamp, self.expected);
+        let wait_cleared = self.waiting && stamp_newer_or_equal(self.entity_stamp, self.expected);
         if wait_cleared {
             self.waiting = false;
         }
         StampOutcome { snap, wait_cleared }
     }
 
-    /// Item 4: once the wait is over and loading completed (or the portal-space loading
-    /// timeout expired), portal space ends; returns `true` exactly once, when `0xF4`
-    /// (`portal_ready_ack`) must be sent and `0x24` resumes.
+    /// Item 4: the client gate is set once the stamp has reached the expected one and the
+    /// loading completed (`loading_done`) or the 30 s loading timeout expired
+    /// (`timed_out`); once the server gate is set too, portal space ends. Returns `true`
+    /// exactly once, when `0xF4` (`portal_ready_ack`) must be sent and `0x24` resumes.
+    /// Once set, the client gate stays set for this portal space ([`Self::client_ready`]).
     pub fn try_exit_portal_space(&mut self, loading_done: bool, timed_out: bool) -> bool {
-        if self.in_portal_space && !self.waiting && (loading_done || timed_out) {
+        if !self.in_portal_space {
+            return false;
+        }
+        if !self.waiting && (loading_done || timed_out) {
+            self.client_ready = true;
+        }
+        if self.game_ready && self.client_ready {
             self.in_portal_space = false;
+            self.client_ready = false;
+            self.announced = false;
+            self.scene_id = None;
             return true;
         }
         false
@@ -653,17 +982,25 @@ fn check_position(pos: &WirePosition) -> Result<(), PlayError> {
 // §4.6.1 0x59
 // ---------------------------------------------------------------------------
 
+/// `0x59` `path_type` `1`: a linear polyline path (§4.6.1).
+pub const PATH_TYPE_LINEAR: u32 = 1;
+/// `0x59` `path_type` `2`: a smooth spline path (§4.6.1).
+pub const PATH_TYPE_SPLINE: u32 = 2;
+/// `0x59` `path_type` `3`: a looping (patrol) path (§4.6.1).
+pub const PATH_TYPE_LOOP: u32 = 3;
+
 /// Event `0x59` (`entity_spline_path`, §4.6.1): move an entity along waypoints.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EntitySplinePath {
-    /// Interpolation mode / path controller type ID.
+    /// Interpolation mode: [`PATH_TYPE_LINEAR`], [`PATH_TYPE_SPLINE`] or
+    /// [`PATH_TYPE_LOOP`]; other values decode but have no defined meaning.
     pub path_type: u32,
     /// The moving entity.
     pub entity_id: u64,
     /// `path_flags`; bits 0 and 1 follow the presence of `waypoints` and `speed_param`
     /// when encoding, other bits are kept as given.
     pub path_flags: u16,
-    /// Movement speed or timing scalar (bit 1).
+    /// Movement speed along the path in metres per second (bit 1).
     pub speed_param: Option<f32>,
     /// Waypoints (bit 0), full wire positions.
     pub waypoints: Option<Vec<WirePosition>>,
@@ -775,6 +1112,12 @@ impl EntitySplinePath {
         let mut w = WireWriter::new();
         self.encode(&mut w)?;
         Ok(w.into_vec())
+    }
+
+    /// Whether `path_type` is one §4.6.1 defines (`1..=3`).
+    #[must_use]
+    pub fn has_defined_type(&self) -> bool {
+        (PATH_TYPE_LINEAR..=PATH_TYPE_LOOP).contains(&self.path_type)
     }
 
     /// The locations of the waypoints that are valid positions, in order.

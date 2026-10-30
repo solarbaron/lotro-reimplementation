@@ -9,6 +9,7 @@ use tessera_net::model::RegionId;
 
 use super::*;
 use crate::connector::data::InstallData;
+use crate::play::movement::PATH_TYPE_SPLINE;
 use crate::world::PropertyType;
 
 const PLAYER: u64 = 0x0100_0000_0000_0007;
@@ -39,9 +40,13 @@ impl InstallData for Stub {
         self.resolves.fetch_add(1, Ordering::Relaxed);
         match &text.content {
             LocalizedTokenTextContent::Literal(s) => Some(s.clone()),
-            LocalizedTokenTextContent::Reference { token_id, .. } => {
-                (*token_id != 0).then(|| format!("Ref {token_id}"))
-            }
+            LocalizedTokenTextContent::Reference { token_id, .. } => (*token_id != 0).then(|| {
+                if text.arguments.is_empty() {
+                    format!("Ref {token_id}")
+                } else {
+                    format!("Ref {token_id} with {}", text.arguments.len())
+                }
+            }),
         }
     }
 
@@ -121,21 +126,23 @@ fn count(events: &[Event], pred: impl Fn(&Event) -> bool) -> usize {
 }
 
 #[test]
-fn the_0x52_after_a_0x98_in_an_area_batch_takes_the_created_entity() {
+fn the_0x52_after_a_0x98_in_a_batch_takes_the_created_entity() {
     let created = Some(CreateOutcome::Tracked(NPC));
     let d = DEFAULT_RECIPIENT;
-    // The rule: a `0x52` right after the `0x98` of a `0x0D` to the default recipient.
-    assert_eq!(sub_event_target(true, 0x52, d, created), SubTarget::To(NPC));
-    // A batch to an entity keeps its target (§1.1.3).
-    assert_eq!(sub_event_target(true, 0x52, 77, created), SubTarget::To(77));
-    // Not a `0x0D`, not a `0x52`, or not right after a `0x98`: the batch's target.
-    assert_eq!(sub_event_target(false, 0x52, d, created), SubTarget::To(d));
+    // §5.1 item 2: the `0x52` after a `0x98` is its initial property set, in a `0x0D` or a
+    // `0x4C`, whatever the batch's target.
+    for aoi in [true, false] {
+        assert_eq!(sub_event_target(aoi, 0x52, d, created), SubTarget::To(NPC));
+        assert_eq!(sub_event_target(aoi, 0x52, 77, created), SubTarget::To(NPC));
+    }
+    // Every other sub-event, or a `0x52` after no `0x98`: the batch's target.
     for op in [0x40, 0x88, 0x89, 0xCC, 0xCE, 0x0E] {
         assert_eq!(
             sub_event_target(true, op, d, created),
             SubTarget::To(d),
             "{op:#x}"
         );
+        assert_eq!(sub_event_target(false, op, 77, created), SubTarget::To(77));
     }
     assert_eq!(sub_event_target(true, 0x52, d, None), SubTarget::To(d));
     // After the player's own `0x98` the properties are the player's (dropped by the feed).
@@ -143,7 +150,7 @@ fn the_0x52_after_a_0x98_in_an_area_batch_takes_the_created_entity() {
         sub_event_target(true, 0x52, d, Some(CreateOutcome::Player(PLAYER))),
         SubTarget::To(PLAYER)
     );
-    // After a refused `0x98`, nowhere; after one for the default recipient, no entity.
+    // After a refused `0x98`, nowhere; after one for the default recipient, the batch's.
     assert_eq!(
         sub_event_target(true, 0x52, d, Some(CreateOutcome::Refused)),
         SubTarget::Skip
@@ -152,6 +159,50 @@ fn the_0x52_after_a_0x98_in_an_area_batch_takes_the_created_entity() {
         sub_event_target(true, 0x52, d, Some(CreateOutcome::NoTarget)),
         SubTarget::To(d)
     );
+    assert_eq!(paired_target(None, 77), SubTarget::To(77));
+}
+
+fn ev(id: u32) -> SubEventFrame {
+    SubEventFrame::Event {
+        sub_event_id: id,
+        payload: vec![0],
+    }
+}
+
+const NULL: SubEventFrame = SubEventFrame::Null {
+    field_a: 0,
+    field_b: 0,
+};
+
+#[test]
+fn each_0x98_takes_the_first_free_0x52_after_it() {
+    // §5.1 item 2: null frames and other sub-events between them are skipped.
+    let frames = [ev(0x98), NULL, ev(0xCE), ev(0x52), ev(0x52)];
+    assert_eq!(
+        pair_initial_properties(&frames),
+        vec![None, None, None, Some(0), None]
+    );
+    // Two creations take the next two `0x52`s, in order; a `0x52` before any `0x98` is
+    // no creation's.
+    let frames = [
+        ev(0x52),
+        ev(0x98),
+        ev(0x98),
+        NULL,
+        ev(0x52),
+        ev(0x89),
+        ev(0x52),
+    ];
+    assert_eq!(
+        pair_initial_properties(&frames),
+        vec![None, None, None, None, Some(1), None, Some(2)]
+    );
+    // A `0x98` with no `0x52` after it pairs with nothing.
+    assert_eq!(
+        pair_initial_properties(&[ev(0x98), ev(0xCE)]),
+        vec![None, None]
+    );
+    assert!(pair_initial_properties(&[]).is_empty());
 }
 
 #[test]
@@ -557,6 +608,161 @@ fn a_path_moves_towards_its_destination_and_one_waypoint_keeps_the_heading() {
     assert!(transform.heading.abs() < 1e-6, "along the last step");
     let speed = velocity.x.hypot(velocity.y);
     assert!((f64::from(speed) - MAX_PATH_SPEED).abs() < 1e-4, "{speed}");
+}
+
+#[test]
+fn a_path_moves_at_its_speed_and_undefined_types_are_dropped() {
+    let (d, _) = data(Stub::default());
+    let mut f = feed();
+    shown(&mut f, &d, NPC);
+    // `speed_param` is metres per second (§4.6.1): 2 m/s towards a point 5 m away.
+    let mut out = FeedOutput::default();
+    f.path_along(
+        NPC,
+        PATH_TYPE_SPLINE,
+        Some(2.0),
+        &[at(13.0, 24.0)],
+        &mut out,
+    );
+    f.flush(&d, &mut out);
+    let [Event::EntityMoved { velocity, .. }] = out.events.as_slice() else {
+        panic!("{:?}", out.events);
+    };
+    assert!((velocity.x - 1.2).abs() < 1e-4 && (velocity.y - 1.6).abs() < 1e-4);
+    // A huge speed is cut; a non-positive one falls back to the nominal speed.
+    let mut out = FeedOutput::default();
+    f.path_along(
+        NPC,
+        PATH_TYPE_LOOP,
+        Some(1.0e9),
+        &[at(13.0, 124.0)],
+        &mut out,
+    );
+    f.flush(&d, &mut out);
+    let [Event::EntityMoved { velocity, .. }] = out.events.as_slice() else {
+        panic!("{:?}", out.events);
+    };
+    assert!((f64::from(velocity.x.hypot(velocity.y)) - MAX_SPEED_PARAM).abs() < 1e-2);
+    // Types outside 1..=3 are dropped and counted.
+    let mut out = FeedOutput::default();
+    for t in [0u32, 4, u32::MAX] {
+        f.path_along(NPC, t, Some(1.0), &[at(1.0, 2.0)], &mut out);
+    }
+    f.flush(&d, &mut out);
+    assert!(out.events.is_empty());
+    assert_eq!(f.counters().unknown_path_types, 3);
+}
+
+fn category_entry(code: u32) -> EncodedPropertyEntry {
+    EncodedPropertyEntry::new(PID_OBJECT_CATEGORY_CODE, EncodedPropertyValue::Enum(code))
+}
+
+#[test]
+fn entities_are_classified_by_their_category_code() {
+    // §5.2.3: the inanimate flag first, then the category code, then the NPC flag for an
+    // agent.
+    let cases: [(Vec<EncodedPropertyEntry>, EntityKind, u64); 9] = [
+        (vec![category_entry(0x1F)], EntityKind::Player, 0),
+        (vec![category_entry(0x0002_004F)], EntityKind::NonPlayer, 0),
+        (
+            vec![category_entry(0x0001_004F), npc_entry(true)],
+            EntityKind::NonPlayer,
+            0,
+        ),
+        (
+            vec![category_entry(0x0001_004F), npc_entry(false)],
+            EntityKind::Creature,
+            0,
+        ),
+        (vec![category_entry(0x0001_004F)], EntityKind::Creature, 0),
+        (vec![category_entry(0x0003_0003)], EntityKind::Object, 0),
+        (
+            vec![
+                category_entry(0x1F),
+                EncodedPropertyEntry::new(
+                    PID_IS_INANIMATE_PROP,
+                    EncodedPropertyValue::Boolean(true),
+                ),
+            ],
+            EntityKind::Object,
+            0,
+        ),
+        // A code with low nibble 0xF the spec names no rule for, or none: the flags, counted.
+        (
+            vec![category_entry(0x0005_004F), npc_entry(true)],
+            EntityKind::NonPlayer,
+            1,
+        ),
+        (vec![], EntityKind::NonPlayer, 1),
+    ];
+    for (i, (entries, kind, unclassified)) in cases.into_iter().enumerate() {
+        let (d, _) = data(Stub::default());
+        let mut f = feed();
+        let mut out = FeedOutput::default();
+        let id = NPC + i as u64;
+        create(&mut f, id, TEMPLATE, &mut out);
+        f.properties(id, &entries, &d, &mut out);
+        f.place(id, Some((at(1.0, 2.0), 0.0)), [0.0; 3], &mut out);
+        f.flush(&d, &mut out);
+        let [Event::EntityCreated { kind: k, .. }] = out.events.as_slice() else {
+            panic!("case {i}: {:?}", out.events);
+        };
+        assert_eq!(*k, kind, "case {i}");
+        assert_eq!(f.counters().unclassified, unclassified, "case {i}");
+    }
+}
+
+#[test]
+fn names_render_by_mode_with_their_arguments() {
+    use crate::world::{LocalizedTokenTextArgPayload, TextSource};
+    let (d, _) = data(Stub::default());
+    let name_of = |text: LocalizedTokenText| {
+        let mut f = feed();
+        let mut out = FeedOutput::default();
+        create(&mut f, NPC, TEMPLATE, &mut out);
+        f.properties(NPC, &[name_entry(text), npc_entry(true)], &d, &mut out);
+        f.place(NPC, Some((at(1.0, 2.0), 0.0)), [0.0; 3], &mut out);
+        f.flush(&d, &mut out);
+        let [Event::EntityCreated { name, .. }] = out.events.as_slice() else {
+            panic!("{:?}", out.events);
+        };
+        (name.clone(), f.counters().name_arguments_dropped)
+    };
+    // A reference keeps its arguments for the resolver.
+    let mut with_args = LocalizedTokenText::reference(7, 0x2500_0001);
+    with_args.arguments.push(LocalizedTokenTextArg::new(
+        0x11,
+        6,
+        LocalizedTokenTextArgPayload::int(3),
+    ));
+    assert_eq!(name_of(with_args.clone()), ("Ref 7 with 1".to_owned(), 0));
+    // Mode 2: the second authoring string shown like a literal, never the table.
+    let mut m2 = with_args.clone();
+    if let LocalizedTokenTextContent::Reference { mode, .. } = &mut m2.content {
+        *mode = 2;
+    }
+    m2.authoring_strings = Some(["tok".into(), "Watcher".into(), "note".into()]);
+    assert_eq!(m2.source(), TextSource::AuthoringSource("Watcher"));
+    assert_eq!(name_of(m2), ("Watcher".to_owned(), 0));
+    // An argument table over the bound is dropped and counted; the name still renders.
+    let mut big = LocalizedTokenText::reference(8, 0x2500_0001);
+    for i in 0..200u32 {
+        big.arguments.push(LocalizedTokenTextArg::new(
+            i,
+            2,
+            LocalizedTokenTextArgPayload::Float {
+                value: 1.0,
+                decimal_places: 0,
+            },
+        ));
+    }
+    assert_eq!(name_of(big), ("Ref 8".to_owned(), 1));
+    // The kept bytes stay within the bound.
+    let mut f = feed();
+    let mut out = FeedOutput::default();
+    create(&mut f, NPC, TEMPLATE, &mut out);
+    f.properties(NPC, &[name_entry(with_args)], &d, &mut out);
+    assert_eq!(f.name_bytes(NPC), Some(5 + 2));
 }
 
 #[test]

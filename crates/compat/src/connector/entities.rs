@@ -39,43 +39,53 @@
 //!   [`FeedCounters::text_loads_deferred`]); put-off creations are retried only by
 //!   [`EntityFeed::retry_deferred`], once per pass, so each is counted at most once per
 //!   pass. Engineering choice.
-//! - **Kind.** The inanimate-object flag (`0x10000F53`) set: [`EntityKind::Object`]; else
-//!   the NPC flag (`0x100014EA`): set [`EntityKind::NonPlayer`] (the flag covers NPCs and
-//!   monsters alike), clear [`EntityKind::Player`]. Neither known: `NonPlayer`, counted
-//!   ([`FeedCounters::unclassified`]). The classification enums `0x23000174` and
-//!   `0x23000091` of §5.2.3 are not tied to any field of `0x98` by the spec, so they are not
-//!   used.
+//! - **Kind** (`official-messages-world.md` §5.2.3, over the merged template and wire
+//!   properties). The inanimate-object flag (`0x10000F53`) set: [`EntityKind::Object`].
+//!   Else the object category code (`0x00000126`): a low nibble other than `0xF` is an
+//!   `Object`, `0x1F` a `Player`, `0x2004F` a `NonPlayer`, and `0x1004F` a `NonPlayer` with
+//!   the NPC flag (`0x100014EA`) set or a [`EntityKind::Creature`] without it. No category
+//!   or another code with low nibble `0xF` (no rule in the spec): the NPC flag alone (set
+//!   `NonPlayer`, clear `Player`), else `NonPlayer`; each such entity is counted
+//!   ([`FeedCounters::unclassified`]).
 //! - **Name.** The display name is rendered once, at the creation. The neutral model has no
 //!   event for a later name or kind change: those are counted
 //!   ([`FeedCounters::name_changes_unshown`], [`FeedCounters::kind_changes_unshown`]). Per
-//!   entity only what the name needs is kept: the token and table of a reference, or a
-//!   literal already shown as text (`string-table.md` §9.0 step 1 through the install's
-//!   resolver) and cut to [`MAX_NAME_LEN`]; authoring strings and arguments are dropped. A
-//!   reference whose table DID lacks the `0x25` prefix resolves to no name without any
-//!   lookup (`official-messages-world.md` §2.6 row 2b, `string-table.md` §9.1).
+//!   entity only what the name needs is kept (`official-messages-world.md` §2.6 row 1): for
+//!   a literal (mode 1) and for mode 2 (the second authoring string, shown like a
+//!   literal) the text already shown (`string-table.md` §9.0 step 1 through the install's
+//!   resolver) and cut to [`MAX_NAME_LEN`]; for a reference the token, the table and its
+//!   arguments (at most [`MAX_NAME_ARGUMENT_BYTES`] of them in wire bytes; larger argument
+//!   tables are dropped and counted, [`FeedCounters::name_arguments_dropped`]), rendered
+//!   with them through the install's resolver. A reference whose table DID lacks the `0x25`
+//!   prefix resolves to no name without any lookup (§2.6 row 2b, `string-table.md` §9.1).
 //! - **Body.** A player with both species (`0x100000FC`) and sex (`0x10000A50`) has the
 //!   playable body of those keys (`appearance.md` §2.2: the species keys of enum
 //!   `0x2300000B`, the same mapper as the property); every other entity has its template
 //!   game object as the body (`appearance.md` §7.2: server NPCs are game objects).
-//! - **Appearance updates (`0x89`).** Only the scale (bit 5) has a defined meaning; a
-//!   uniform scale becomes the appearance's scale. The fields whose rendering meaning is
-//!   OPEN (`secondary_did`, tints, `param_a`, `param_b`) and the parts are decoded and
-//!   counted ([`FeedCounters::appearance_fields_skipped`]); a descriptor with a base model
-//!   (bit 0) cannot be decoded at all (§2.8 OPEN) and is counted by the driver. An
-//!   appearance is recomputed only when a property the feed reads changed.
-//! - **Batch target.** The sub-events of a batch take its target (§1.1.3). The one
-//!   exception is the `0x52` directly after a `0x98` in a `0x0D` whose target is the
-//!   default recipient (`2`, `official-session.md` §5.6.3): it applies to the entity that
-//!   `0x98` created (§5.2.2, [`sub_event_target`]). Every other sub-event for the default
-//!   recipient has no entity and is counted ([`FeedCounters::no_target`]).
+//! - **Appearance updates (`0x89`).** Only the scale (bit 5) has a defined meaning for the
+//!   neutral appearance; a uniform scale becomes the appearance's scale. The base model
+//!   (bit 0, one `u32`, §2.8), the fields whose rendering meaning is OPEN
+//!   (`secondary_did`, tints, `param_a`, `param_b`) and the parts are decoded and counted
+//!   ([`FeedCounters::appearance_fields_skipped`]). An appearance is recomputed only when
+//!   a property the feed reads changed.
+//! - **Batch target** (`official-messages-world.md` §5.1 items 1–3). The sub-events of a
+//!   batch take its target (§1.1.3), except the initial properties of a creation: each
+//!   `0x98` of a `0x0D` or `0x4C` takes the first `0x52` after it that no earlier `0x98`
+//!   took, whatever frames lie between, and that `0x52` applies to the created entity
+//!   ([`pair_initial_properties`], [`paired_target`]). [`sub_event_target`] is the same
+//!   rule for a driver that knows only the frame before (a `0x52` directly after its
+//!   `0x98`). A sub-event for the default recipient (`2`, `official-session.md` §5.6.3)
+//!   with no entity is counted ([`FeedCounters::no_target`]).
 //! - **Unknown entities.** A position or property update for an entity the session does
 //!   not know sends `0xD0` once per entity (§5.3), and nothing reaches the client.
-//! - **Paths (`0x59`).** A path is a move to its destination, facing along its last step
-//!   (one waypoint: the last heading the entity had), with a velocity towards the
-//!   destination from the entity's last place, so the walker animates and smooths it. The
-//!   spec gives `speed_param` no unit (`official-messages-play.md` §4.6.1), so the speed is
-//!   the distance over [`PATH_NOMINAL_SECS`], at most [`MAX_PATH_SPEED`]. Engineering
-//!   choice; interpolation along the path is a question in `docs/m8-remediation.md` §15.
+//! - **Paths (`0x59`).** A path of a defined type (`official-messages-play.md` §4.6.1:
+//!   linear, spline, looping) is a move to its destination (the last waypoint), facing
+//!   along its last step (one waypoint: the last heading the entity had), with a velocity
+//!   towards the destination from the entity's last place, so the walker animates and
+//!   smooths it. The speed is `speed_param` in metres per second when it is given and
+//!   positive (at most [`MAX_SPEED_PARAM`]), else the distance over [`PATH_NOMINAL_SECS`]
+//!   (at most [`MAX_PATH_SPEED`]). Following each segment in time (and a loop's wrap) is
+//!   not done: the feed has no clock (engineering choice).
 //! - **The local player** is drawn by the walker: a `0x98` for it creates nothing, a `0x40`
 //!   for it removes nothing and its property events are dropped (each counted).
 
@@ -88,11 +98,13 @@ use tessera_net::{
 
 use super::data::{SchemaView, is_string_table_did};
 use crate::play::chat::TextResolver;
+use crate::play::movement::{PATH_TYPE_LINEAR, PATH_TYPE_LOOP};
 use crate::play::{OutgoingEvent, clean_display_name};
 use crate::world::{
     EncodedPropertyEntry, EncodedPropertyValue, EntityAppearanceDesc, EntityCreate,
-    LocalizedTokenText, LocalizedTokenTextContent, MissingEntityQuery, PID_AGENT_SPECIES,
-    PID_ENTITY_DISPLAY_NAME, PID_SEX, PropertyTableUpdate,
+    LocalizedTokenText, LocalizedTokenTextArg, LocalizedTokenTextContent, MissingEntityQuery,
+    PID_AGENT_SPECIES, PID_ENTITY_DISPLAY_NAME, PID_OBJECT_CATEGORY_CODE, PID_SEX,
+    PropertyTableUpdate, SubEventFrame, TextSource, WireWriter,
 };
 
 #[cfg(test)]
@@ -104,13 +116,25 @@ pub const PID_IS_NPC_AGENT: u32 = 0x1000_14EA;
 pub const PID_IS_INANIMATE_PROP: u32 = 0x1000_0F53;
 
 /// The properties the feed reads, from the wire and from a template's baseline.
-pub const FEED_PIDS: [u32; 5] = [
+pub const FEED_PIDS: [u32; 6] = [
     PID_ENTITY_DISPLAY_NAME,
     PID_IS_NPC_AGENT,
     PID_IS_INANIMATE_PROP,
+    PID_OBJECT_CATEGORY_CODE,
     PID_AGENT_SPECIES,
     PID_SEX,
 ];
+
+/// `object_category_code` of a player avatar (§5.2.3).
+pub const CATEGORY_PLAYER: u32 = 0x0000_001F;
+/// `object_category_code` of a non-combat interactive NPC (§5.2.3).
+pub const CATEGORY_NPC: u32 = 0x0002_004F;
+/// `object_category_code` of a creature or NPC agent, told apart by the NPC flag (§5.2.3).
+pub const CATEGORY_AGENT: u32 = 0x0001_004F;
+
+/// Most wire bytes of arguments kept with a display name (module docs "Name").
+/// Engineering choice.
+pub const MAX_NAME_ARGUMENT_BYTES: usize = 512;
 
 /// The default session recipient of a blob without `recipientId` (`official-session.md`
 /// §5.6.3, `official-messages-world.md` §1.1.1).
@@ -140,8 +164,13 @@ pub const MAX_TEXT_LOADS_PER_PASS: usize = 32;
 /// "Paths"). Engineering choice: `speed_param` has no unit in the spec.
 pub const PATH_NOMINAL_SECS: f64 = 1.0;
 
-/// Highest speed given to a `0x59` path's move, in metres per second. Engineering choice.
+/// Highest speed given to a `0x59` path's move without a `speed_param`, in metres per
+/// second. Engineering choice.
 pub const MAX_PATH_SPEED: f64 = 7.0;
+
+/// Highest `speed_param` taken from a `0x59` path, in metres per second; a larger one is
+/// cut to it. Engineering choice (hostile-input bound).
+pub const MAX_SPEED_PARAM: f64 = 100.0;
 
 /// What the feed did, ignored or could not map, for diagnostics and tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -168,8 +197,11 @@ pub struct FeedCounters {
     /// Entities dropped while waiting for a position (over [`MAX_PENDING`], or to make room
     /// below [`MAX_ENTITIES`]).
     pub pending_dropped: u64,
-    /// Entities created without a known NPC or object flag (shown as non-players).
+    /// Entities created without a category code §5.2.3 classifies (the flags decided).
     pub unclassified: u64,
+    /// Display names whose argument table was over [`MAX_NAME_ARGUMENT_BYTES`] (rendered
+    /// without its values).
+    pub name_arguments_dropped: u64,
     /// Display names that could not be resolved (the entity is created without a name).
     pub unresolved_names: u64,
     /// Display-name changes of shown entities (no neutral event carries a new name).
@@ -199,6 +231,8 @@ pub struct FeedCounters {
     pub paths: u64,
     /// `0x59` paths without a usable waypoint.
     pub empty_paths: u64,
+    /// `0x59` paths of an undefined `path_type`, dropped.
+    pub unknown_path_types: u64,
     /// Placements of an entity without a usable location (attachments, invalid positions).
     pub unplaced: u64,
     /// Creations put off to a later pass because their template was not read yet
@@ -236,27 +270,58 @@ pub enum SubTarget {
     Skip,
 }
 
-/// The target of sub-event `sub_event_id` of a batch whose target is `inherited`, after a
-/// sub-event that (if it was a `0x98`) had the outcome `previous` (module docs "Batch
-/// target"): the batch's target (§1.1.3), except for a `0x52` directly after a `0x98` in an
-/// `aoi_batch` (`0x0D`) sent to the default recipient, which applies to the entity that
-/// `0x98` created (§5.2.2). A `0x52` after a refused `0x98` goes nowhere. Tessera's reading
-/// of §5.2.2 "bundled immediately after `0x98`"; when the batch names an entity, §1.1.3's
-/// inherited target is kept.
+/// The target of sub-event `sub_event_id` of a `0x0D` or `0x4C` batch whose target is
+/// `inherited`, after a sub-event that (if it was a `0x98`) had the outcome `previous`
+/// (module docs "Batch target"): a `0x52` directly after a `0x98` is that creation's
+/// initial property set (§5.1 item 2) and goes to the created entity
+/// ([`paired_target`]); every other sub-event takes the batch's target (§5.1 items 1 and
+/// 3). The rule is the same for both batch kinds (`_aoi_batch` is kept for the callers).
+/// For a `0x52` further after its `0x98`, use [`pair_initial_properties`].
 #[must_use]
 pub fn sub_event_target(
-    aoi_batch: bool,
+    _aoi_batch: bool,
     sub_event_id: u32,
     inherited: u64,
     previous: Option<CreateOutcome>,
 ) -> SubTarget {
-    if !aoi_batch
-        || sub_event_id != PropertyTableUpdate::EVENT_ID_ENTITY
-        || inherited != DEFAULT_RECIPIENT
-    {
+    if sub_event_id != PropertyTableUpdate::EVENT_ID_ENTITY {
         return SubTarget::To(inherited);
     }
-    match previous {
+    paired_target(previous, inherited)
+}
+
+/// For each frame of a batch, the index of the `0x98` whose initial property set it is
+/// (§5.1 item 2): each `0x98`, in order, takes the first non-null `0x52` after it that an
+/// earlier `0x98` did not take, skipping null frames and other sub-events between them.
+/// `None` for every other frame.
+#[must_use]
+pub fn pair_initial_properties(frames: &[SubEventFrame]) -> Vec<Option<usize>> {
+    let mut pairs = vec![None; frames.len()];
+    let mut waiting = VecDeque::new();
+    for (i, frame) in frames.iter().enumerate() {
+        let SubEventFrame::Event { sub_event_id, .. } = frame else {
+            continue;
+        };
+        match *sub_event_id {
+            EntityCreate::EVENT_ID => waiting.push_back(i),
+            PropertyTableUpdate::EVENT_ID_ENTITY => {
+                if let (Some(create), Some(slot)) = (waiting.pop_front(), pairs.get_mut(i)) {
+                    *slot = Some(create);
+                }
+            }
+            _ => {}
+        }
+    }
+    pairs
+}
+
+/// The target of a `0x52` that is the initial property set of a `0x98` with the outcome
+/// `create` (§5.1 item 2; `None`: it is no creation's, and takes the batch's target
+/// `inherited`): the created entity, nowhere for a refused creation, and the batch's
+/// target when the `0x98` named the default recipient.
+#[must_use]
+pub fn paired_target(create: Option<CreateOutcome>, inherited: u64) -> SubTarget {
+    match create {
         Some(CreateOutcome::Tracked(id) | CreateOutcome::Player(id)) => SubTarget::To(id),
         Some(CreateOutcome::Refused) => SubTarget::Skip,
         Some(CreateOutcome::NoTarget) | None => SubTarget::To(inherited),
@@ -264,33 +329,73 @@ pub fn sub_event_target(
 }
 
 /// What the feed keeps of a display name (module docs "Name").
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 enum NameSource {
-    /// A string-table reference.
-    Reference { mode: u8, token: u32, table: u32 },
-    /// A literal, already rendered for display and cut to [`MAX_NAME_LEN`].
+    /// A string-table reference with its arguments (`dropped`: they were over
+    /// [`MAX_NAME_ARGUMENT_BYTES`] and are not kept).
+    Reference {
+        mode: u8,
+        token: u32,
+        table: u32,
+        args: Vec<LocalizedTokenTextArg>,
+        dropped: bool,
+    },
+    /// A literal (or a mode-2 source text), already rendered for display and cut to
+    /// [`MAX_NAME_LEN`].
     Literal(String),
+}
+
+/// The wire bytes of `args` (5-byte headers and payloads), `None` once over `max`.
+fn wire_args_len(args: &[LocalizedTokenTextArg], max: usize) -> Option<usize> {
+    let mut total = 0usize;
+    for a in args {
+        let mut w = WireWriter::new();
+        if let Some(p) = &a.payload {
+            p.encode(&mut w, true).ok()?;
+        }
+        total = total.checked_add(5 + w.len())?;
+        if total > max {
+            return None;
+        }
+    }
+    Some(total)
 }
 
 impl NameSource {
     fn of(text: &LocalizedTokenText, data: &SchemaView) -> Self {
-        match &text.content {
-            LocalizedTokenTextContent::Reference {
-                mode,
-                token_id,
-                table_did,
-            } => Self::Reference {
-                mode: *mode,
-                token: *token_id,
-                table: *table_did,
-            },
-            // The install's resolver shows a literal (`string-table.md` §9.0 step 1); only
-            // the cut result is kept.
-            LocalizedTokenTextContent::Literal(_) => Self::Literal(
-                data.resolve(text)
+        // The install's resolver shows a literal (`string-table.md` §9.0 step 1); only the
+        // cut result is kept. Mode 2 shows its source text the same way (§2.6 row 1).
+        let shown = |t: &LocalizedTokenText| {
+            Self::Literal(
+                data.resolve(t)
                     .map(|s| clean_display_name(&s, MAX_NAME_LEN))
                     .unwrap_or_default(),
-            ),
+            )
+        };
+        match text.source() {
+            TextSource::Literal(_) => shown(text),
+            TextSource::AuthoringSource(source) => shown(&LocalizedTokenText::literal(source)),
+            TextSource::Table {
+                token_id,
+                table_did,
+            } => {
+                let mode = match &text.content {
+                    LocalizedTokenTextContent::Reference { mode, .. } => *mode,
+                    LocalizedTokenTextContent::Literal(_) => 0,
+                };
+                let fits = wire_args_len(&text.arguments, MAX_NAME_ARGUMENT_BYTES).is_some();
+                Self::Reference {
+                    mode,
+                    token: token_id,
+                    table: table_did,
+                    args: if fits {
+                        text.arguments.clone()
+                    } else {
+                        Vec::new()
+                    },
+                    dropped: !fits,
+                }
+            }
         }
     }
 
@@ -300,7 +405,13 @@ impl NameSource {
         match self {
             Self::Literal(s) => Some(s.clone()),
             Self::Reference { table, .. } if !is_string_table_did(*table) => None,
-            Self::Reference { mode, token, table } => {
+            Self::Reference {
+                mode,
+                token,
+                table,
+                args,
+                ..
+            } => {
                 let text = LocalizedTokenText {
                     content: LocalizedTokenTextContent::Reference {
                         mode: *mode,
@@ -308,7 +419,7 @@ impl NameSource {
                         table_did: *table,
                     },
                     authoring_strings: None,
-                    arguments: Vec::new(),
+                    arguments: args.clone(),
                 };
                 data.resolve(&text)
                     .map(|s| clean_display_name(&s, MAX_NAME_LEN))
@@ -316,11 +427,16 @@ impl NameSource {
         }
     }
 
+    /// Whether the arguments were dropped (module docs "Name").
+    fn dropped_arguments(&self) -> bool {
+        matches!(self, Self::Reference { dropped: true, .. })
+    }
+
     #[cfg(test)]
     fn kept_bytes(&self) -> usize {
         match self {
             Self::Literal(s) => s.len(),
-            Self::Reference { .. } => 0,
+            Self::Reference { args, .. } => wire_args_len(args, usize::MAX).unwrap_or(0),
         }
     }
 }
@@ -341,6 +457,7 @@ struct Facts {
     name: Option<NameSource>,
     npc: Option<bool>,
     prop: Option<bool>,
+    category: Option<u32>,
     species: Option<u32>,
     sex: Option<u32>,
 }
@@ -357,6 +474,9 @@ impl Facts {
             (PID_IS_INANIMATE_PROP, EncodedPropertyValue::Boolean(b)) => {
                 set(&mut self.prop, Some(*b))
             }
+            (PID_OBJECT_CATEGORY_CODE, EncodedPropertyValue::Enum(v)) => {
+                set(&mut self.category, Some(*v))
+            }
             (PID_AGENT_SPECIES, EncodedPropertyValue::Enum(v)) => set(&mut self.species, Some(*v)),
             (PID_SEX, EncodedPropertyValue::Enum(v)) => set(&mut self.sex, Some(*v)),
             _ => false,
@@ -369,6 +489,7 @@ impl Facts {
             PID_ENTITY_DISPLAY_NAME => set(&mut self.name, None),
             PID_IS_NPC_AGENT => set(&mut self.npc, None),
             PID_IS_INANIMATE_PROP => set(&mut self.prop, None),
+            PID_OBJECT_CATEGORY_CODE => set(&mut self.category, None),
             PID_AGENT_SPECIES => set(&mut self.species, None),
             PID_SEX => set(&mut self.sex, None),
             _ => false,
@@ -382,6 +503,7 @@ struct View<'a> {
     name: Option<&'a NameSource>,
     npc: Option<bool>,
     prop: Option<bool>,
+    category: Option<u32>,
     species: Option<u32>,
     sex: Option<u32>,
 }
@@ -392,19 +514,35 @@ impl<'a> View<'a> {
             name: wire.name.as_ref().or_else(|| base?.name.as_ref()),
             npc: wire.npc.or_else(|| base?.npc),
             prop: wire.prop.or_else(|| base?.prop),
+            category: wire.category.or_else(|| base?.category),
             species: wire.species.or_else(|| base?.species),
             sex: wire.sex.or_else(|| base?.sex),
         }
     }
 
-    /// The kind and whether neither flag was known (module docs "Kind").
+    /// The kind and whether §5.2.3's category rules did not decide it (module docs
+    /// "Kind").
     fn kind(&self) -> (EntityKind, bool) {
         if self.prop == Some(true) {
             return (EntityKind::Object, false);
         }
+        match self.category {
+            Some(c) if c & 0xF != 0xF => return (EntityKind::Object, false),
+            Some(CATEGORY_PLAYER) => return (EntityKind::Player, false),
+            Some(CATEGORY_NPC) => return (EntityKind::NonPlayer, false),
+            Some(CATEGORY_AGENT) => {
+                let kind = if self.npc == Some(true) {
+                    EntityKind::NonPlayer
+                } else {
+                    EntityKind::Creature
+                };
+                return (kind, false);
+            }
+            _ => {}
+        }
         match self.npc {
-            Some(true) => (EntityKind::NonPlayer, false),
-            Some(false) => (EntityKind::Player, false),
+            Some(true) => (EntityKind::NonPlayer, true),
+            Some(false) => (EntityKind::Player, true),
             None => (EntityKind::NonPlayer, true),
         }
     }
@@ -543,9 +681,10 @@ fn heading_between(a: &Location, b: &Location) -> Option<f32> {
     Some(dy.atan2(dx) as f32)
 }
 
-/// The velocity of a path's move from `from` to `to` (module docs "Paths"); zero across
-/// regions or for no distance.
-fn path_velocity(from: &Location, to: &Location) -> [f32; 3] {
+/// The velocity of a path's move from `from` to `to` at `speed` metres per second, or at
+/// the nominal speed without one (module docs "Paths"); zero across regions or for no
+/// distance.
+fn path_velocity(from: &Location, to: &Location, speed: Option<f64>) -> [f32; 3] {
     if from.region != to.region {
         return [0.0; 3];
     }
@@ -554,7 +693,7 @@ fn path_velocity(from: &Location, to: &Location) -> [f32; 3] {
     if !dist.is_finite() || dist < 1e-3 {
         return [0.0; 3];
     }
-    let speed = (dist / PATH_NOMINAL_SECS).min(MAX_PATH_SPEED);
+    let speed = speed.unwrap_or_else(|| (dist / PATH_NOMINAL_SECS).min(MAX_PATH_SPEED));
     #[allow(clippy::cast_possible_truncation)]
     d.map(|c| (c / dist * speed) as f32)
 }
@@ -835,7 +974,8 @@ impl EntityFeed {
 
     /// `0x89` (§5.7) for `recipient` (module docs "Appearance updates").
     pub fn visual(&mut self, recipient: u64, desc: &EntityAppearanceDesc, out: &mut FeedOutput) {
-        let skipped = u64::from(desc.secondary_did.is_some())
+        let skipped = u64::from(desc.base_model.is_some())
+            + u64::from(desc.secondary_did.is_some())
             + u64::from(desc.param_a.is_some())
             + u64::from(desc.tint_entries.is_some())
             + u64::from(desc.primary_part.is_some())
@@ -908,9 +1048,27 @@ impl EntityFeed {
         true
     }
 
-    /// A `0x59` path for `id`: a move to its destination (module docs "Paths").
+    /// A `0x59` path for `id` without its type and speed: [`Self::path_along`] as a linear
+    /// path without `speed_param`.
     pub fn path(&mut self, id: u64, waypoints: &[Location], out: &mut FeedOutput) {
+        self.path_along(id, PATH_TYPE_LINEAR, None, waypoints, out);
+    }
+
+    /// A `0x59` path for `id` of `path_type` at `speed_param` metres per second: a move to
+    /// its destination (module docs "Paths"). An undefined type is counted and dropped.
+    pub fn path_along(
+        &mut self,
+        id: u64,
+        path_type: u32,
+        speed_param: Option<f32>,
+        waypoints: &[Location],
+        out: &mut FeedOutput,
+    ) {
         if self.is_player(id) {
+            return;
+        }
+        if !(PATH_TYPE_LINEAR..=PATH_TYPE_LOOP).contains(&path_type) {
+            self.counters.unknown_path_types += 1;
             return;
         }
         let Some(dest) = waypoints.last() else {
@@ -925,7 +1083,11 @@ impl EntityFeed {
             .and_then(|a| heading_between(a, dest))
             .or(last.map(|(_, h)| h))
             .unwrap_or(0.0);
-        let velocity = last.map_or([0.0; 3], |(from, _)| path_velocity(&from, dest));
+        let speed = speed_param
+            .map(f64::from)
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .map(|s| s.min(MAX_SPEED_PARAM));
+        let velocity = last.map_or([0.0; 3], |(from, _)| path_velocity(&from, dest, speed));
         if self.place(id, Some((*dest, heading)), velocity, out) {
             self.counters.paths += 1;
         }
@@ -1031,6 +1193,9 @@ impl EntityFeed {
         };
         let view = View::of(&t.wire, t.baseline.as_ref());
         let (kind, unknown) = view.kind();
+        if view.name.is_some_and(NameSource::dropped_arguments) {
+            self.counters.name_arguments_dropped += 1;
+        }
         let name = view.name.map(|n| n.render(data));
         let appearance = view.appearance(kind, t.template, t.scale);
         let template = t.template;

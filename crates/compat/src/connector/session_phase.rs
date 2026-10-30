@@ -2589,9 +2589,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 at(since + ENTER_WORLD_TIMEOUT_SEC);
             }
             // Portal space's loading time-out (§4.5 item 4; `portal_step` notes when it
-            // began on its first pass).
+            // began on its first pass), until the client gate is set: then the exit waits
+            // for the server's `0x7C` / `0xC7` alone.
             if matches!(self.stage, Stage::InWorld { .. })
                 && self.adapter.teleport().in_portal_space()
+                && !self.adapter.teleport().client_ready()
             {
                 at(self.portal_since.unwrap_or(now) + PORTAL_LOADING_TIMEOUT_SEC);
             }

@@ -11,7 +11,7 @@
 //! |---|---|
 //! | `SessionAuthHeader` | the connect challenge, an acknowledgement and the version request `0x12F` |
 //! | `0x12C` (version) | `0x12D` (accepted) and the character list `0x6C` (one character, "Aldo") |
-//! | `0x6F` (enter world) | `0x90` (session start) and the player's placement `0xCE` (teleport stamp 0, at [`PLAYER_AT`]); no referral: the login connection carries the world |
+//! | `0x6F` (enter world) | `0x90` (session start), the player's placement `0xCE` (teleport stamp 0, at [`PLAYER_AT`]) and `0x7C` (`login_finished`); no referral: the login connection carries the world |
 //! | `0xF4` (portal exit) | nothing (counted) |
 //! | `0x30` (an RPC: the logout request of `LeaveWorld`) | a world teardown `0x3000001B` and the list `0x6C` again |
 //! | `0xD0` (a missing-entity query) | nothing (counted) |
@@ -339,6 +339,9 @@ impl SyntheticService {
                 0x6F => vec![
                     server.event(0x90, &session_ready()),
                     server.event(PositionUpdate::EVENT_ID, &placement()),
+                    // `login_finished`, the server gate of the portal exit
+                    // (`official-messages-world.md` §4.3.3).
+                    server.event(0x7C, &[0]),
                 ],
                 0x30 => vec![
                     server.event(0x3000_001B, &[0]),

@@ -30,8 +30,114 @@ pub const OPCODE_ADMIN_TEXT_NOTICE: u32 = 0x3000_0045;
 pub const CATEGORY_SAY: u32 = 5;
 /// Chat category of `/tell` (§6.7).
 pub const CATEGORY_TELL: u32 = 6;
-/// Chat categories of user chat channel slots 1..8 (§6.1.3, §6.7).
+/// Chat category of `/emote` (§6.7).
+pub const CATEGORY_EMOTE: u32 = 7;
+/// Chat category of fellowship chat (§6.7).
+pub const CATEGORY_FELLOWSHIP: u32 = 11;
+/// Chat category of kinship chat (§6.7).
+pub const CATEGORY_KINSHIP: u32 = 12;
+/// Chat category of kinship officer chat (§6.7).
+pub const CATEGORY_OFFICER: u32 = 13;
+/// Chat category of spatial yell / shout (§6.7).
+pub const CATEGORY_YELL: u32 = 19;
+/// Chat category of raid chat (§6.7).
+pub const CATEGORY_RAID: u32 = 23;
+/// Chat category of the roleplay channel (§6.7).
+pub const CATEGORY_ROLEPLAY: u32 = 27;
+/// Chat category of the world channel (§6.7).
+pub const CATEGORY_WORLD: u32 = 38;
+/// Chat categories of user chat channel slots 1..8 (§6.1.3, §6.7): slot `k` is the `k`-th
+/// user-created room joined.
 pub const CATEGORY_USER_SLOTS: [u32; 8] = [0x1C, 0x1D, 0x1E, 0x1F, 0x27, 0x28, 0x29, 0x2A];
+
+/// What a chat category number of §6.7 names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CategoryKind {
+    /// `5`.
+    Say,
+    /// `6`.
+    Tell,
+    /// `7`.
+    Emote,
+    /// `11`.
+    Fellowship,
+    /// `12`.
+    Kinship,
+    /// `13`.
+    Officer,
+    /// `19`.
+    Yell,
+    /// `23`.
+    Raid,
+    /// `27`.
+    Roleplay,
+    /// `38`.
+    World,
+    /// One of [`CATEGORY_USER_SLOTS`]: the 1-based user channel slot `1..=8`.
+    UserSlot(u8),
+}
+
+impl CategoryKind {
+    /// The kind of category number `category` (§6.7), `None` for a number the spec does not
+    /// name.
+    #[must_use]
+    pub fn of(category: u32) -> Option<Self> {
+        Some(match category {
+            CATEGORY_SAY => Self::Say,
+            CATEGORY_TELL => Self::Tell,
+            CATEGORY_EMOTE => Self::Emote,
+            CATEGORY_FELLOWSHIP => Self::Fellowship,
+            CATEGORY_KINSHIP => Self::Kinship,
+            CATEGORY_OFFICER => Self::Officer,
+            CATEGORY_YELL => Self::Yell,
+            CATEGORY_RAID => Self::Raid,
+            CATEGORY_ROLEPLAY => Self::Roleplay,
+            CATEGORY_WORLD => Self::World,
+            other => {
+                let slot = CATEGORY_USER_SLOTS.iter().position(|&c| c == other)?;
+                // At most 8 slots.
+                #[allow(clippy::cast_possible_truncation)]
+                Self::UserSlot(slot as u8 + 1)
+            }
+        })
+    }
+
+    /// The category number of this kind (§6.7).
+    #[must_use]
+    pub fn category(self) -> Option<u32> {
+        Some(match self {
+            Self::Say => CATEGORY_SAY,
+            Self::Tell => CATEGORY_TELL,
+            Self::Emote => CATEGORY_EMOTE,
+            Self::Fellowship => CATEGORY_FELLOWSHIP,
+            Self::Kinship => CATEGORY_KINSHIP,
+            Self::Officer => CATEGORY_OFFICER,
+            Self::Yell => CATEGORY_YELL,
+            Self::Raid => CATEGORY_RAID,
+            Self::Roleplay => CATEGORY_ROLEPLAY,
+            Self::World => CATEGORY_WORLD,
+            Self::UserSlot(k) => *CATEGORY_USER_SLOTS.get(usize::from(k).checked_sub(1)?)?,
+        })
+    }
+
+    /// The neutral channel of this kind, where Tessera's model has one: Say, Tell (empty
+    /// peer), Emote, Fellowship and Yell. Kinship, officer, raid, roleplay and world chat
+    /// have no neutral channel (a caller may name one with [`ChatCategories::set`]); a user
+    /// slot is the room bound to it ([`ChatCategories::set_user_rooms`]).
+    #[must_use]
+    pub fn neutral_channel(self) -> Option<ChatChannel> {
+        Some(match self {
+            Self::Say => ChatChannel::Say,
+            Self::Tell => ChatChannel::Tell {
+                peer: String::new(),
+            },
+            Self::Emote => ChatChannel::Emote,
+            Self::Fellowship => ChatChannel::Fellowship,
+            Self::Yell => ChatChannel::Yell,
+            _ => return None,
+        })
+    }
+}
 
 /// `0x1C` event code of a standard chat line (§6.5.1).
 pub const UI_EVENT_CHAT_LINE: u32 = 0x0102_000C;
@@ -52,42 +158,46 @@ pub const PID_TELL_PEER_NAME_B: u32 = 0x1000_0915;
 /// `0x1C` property: a tell is the outgoing echo.
 pub const PID_TELL_IS_OUTGOING: u32 = 0x1000_133D;
 
-/// How chat categories (enum `0x230002A8`, §6.7) map to Tessera's channels. Only the
-/// numbers the spec names are built in ([`Self::default`]); the rest come from the
-/// install's enum record at run time, through [`Self::set`].
+/// How chat categories (enum `0x230002A8`, §6.7) map to Tessera's channels: the numbers
+/// the spec names with a neutral channel ([`CategoryKind::neutral_channel`]), kept only
+/// when the install's enum has them ([`Self::from_install_keys`]), plus the user channel
+/// slots bound to the user rooms in join order ([`Self::set_user_rooms`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatCategories {
     entries: Vec<(u32, ChatChannel)>,
+    /// The user rooms bound to slots 1..8, in join order.
+    user_rooms: Vec<String>,
 }
 
+/// The categories with a neutral channel, in §6.7 order.
+const NEUTRAL_KINDS: [CategoryKind; 5] = [
+    CategoryKind::Say,
+    CategoryKind::Tell,
+    CategoryKind::Emote,
+    CategoryKind::Fellowship,
+    CategoryKind::Yell,
+];
+
 impl Default for ChatCategories {
-    /// Say = 5 and Tell = 6 (§6.7). User channel slots have no channel name here; the
-    /// chat-server rooms carry their names.
+    /// The spec's numbers with a neutral channel: Say `5`, Tell `6`, Emote `7`, Fellowship
+    /// `11`, Yell `19` (§6.7); no user room bound.
     fn default() -> Self {
-        Self {
-            entries: vec![
-                (CATEGORY_SAY, ChatChannel::Say),
-                (
-                    CATEGORY_TELL,
-                    ChatChannel::Tell {
-                        peer: String::new(),
-                    },
-                ),
-            ],
-        }
+        Self::from_install_keys(None)
     }
 }
 
-fn channel_key(channel: &ChatChannel) -> u8 {
+/// The key of a channel for [`ChatCategories::set`]: one entry per channel kind, a named
+/// channel per name.
+fn channel_key(channel: &ChatChannel) -> (u8, Option<&str>) {
     match channel {
-        ChatChannel::Say => 0,
-        ChatChannel::Yell => 1,
-        ChatChannel::Emote => 2,
-        ChatChannel::Tell { .. } => 3,
-        ChatChannel::System => 4,
-        ChatChannel::Fellowship => 5,
-        ChatChannel::Named { .. } => 6,
-        _ => 7,
+        ChatChannel::Say => (0, None),
+        ChatChannel::Yell => (1, None),
+        ChatChannel::Emote => (2, None),
+        ChatChannel::Tell { .. } => (3, None),
+        ChatChannel::System => (4, None),
+        ChatChannel::Fellowship => (5, None),
+        ChatChannel::Named { name } => (6, Some(name.as_str())),
+        _ => (7, None),
     }
 }
 
@@ -97,35 +207,70 @@ impl ChatCategories {
     pub fn empty() -> Self {
         Self {
             entries: Vec::new(),
+            user_rooms: Vec::new(),
         }
     }
 
+    /// The spec's categories with a neutral channel ([`Self::default`]), each kept only when
+    /// `keys` (the keys of the install's enum `0x230002A8` and its base chain) has it; all
+    /// of them without the install's enum (`None`).
+    #[must_use]
+    pub fn from_install_keys(keys: Option<&[u32]>) -> Self {
+        let mut c = Self::empty();
+        for kind in NEUTRAL_KINDS {
+            let (Some(category), Some(channel)) = (kind.category(), kind.neutral_channel()) else {
+                continue;
+            };
+            if keys.is_none_or(|k| k.contains(&category)) {
+                c.entries.push((category, channel));
+            }
+        }
+        c
+    }
+
     /// Maps `category` to `channel` (for a tell, the peer is ignored), replacing any
-    /// mapping of that category or of that channel kind.
+    /// mapping of that category or of that channel (a named channel by its name).
     pub fn set(&mut self, category: u32, channel: ChatChannel) {
-        let key = channel_key(&channel);
         self.entries
-            .retain(|(c, ch)| *c != category && channel_key(ch) != key);
+            .retain(|(c, ch)| *c != category && channel_key(ch) != channel_key(&channel));
         self.entries.push((category, channel));
     }
 
-    /// The channel of `category`, with an empty peer for a tell.
-    #[must_use]
-    pub fn channel_for(&self, category: u32) -> Option<ChatChannel> {
-        self.entries
-            .iter()
-            .find(|(c, _)| *c == category)
-            .map(|(_, ch)| ch.clone())
+    /// Binds the user channel slots 1..8 to `rooms` (§6.7: the user-created rooms in the
+    /// order they were joined); rooms past the eighth have no slot.
+    pub fn set_user_rooms<I: IntoIterator<Item = String>>(&mut self, rooms: I) {
+        self.user_rooms = rooms.into_iter().take(CATEGORY_USER_SLOTS.len()).collect();
     }
 
-    /// The category of `channel`'s kind.
+    /// The channel of `category`, with an empty peer for a tell; a user slot with a bound
+    /// room is that room's named channel.
+    #[must_use]
+    pub fn channel_for(&self, category: u32) -> Option<ChatChannel> {
+        if let Some((_, ch)) = self.entries.iter().find(|(c, _)| *c == category) {
+            return Some(ch.clone());
+        }
+        match CategoryKind::of(category)? {
+            CategoryKind::UserSlot(k) => self
+                .user_rooms
+                .get(usize::from(k).checked_sub(1)?)
+                .map(|name| ChatChannel::Named { name: name.clone() }),
+            _ => None,
+        }
+    }
+
+    /// The category of `channel`'s kind; for a named channel, the category it was set to or
+    /// its user slot.
     #[must_use]
     pub fn category_for(&self, channel: &ChatChannel) -> Option<u32> {
         let key = channel_key(channel);
-        self.entries
-            .iter()
-            .find(|(_, ch)| channel_key(ch) == key)
-            .map(|(c, _)| *c)
+        if let Some((c, _)) = self.entries.iter().find(|(_, ch)| channel_key(ch) == key) {
+            return Some(*c);
+        }
+        let ChatChannel::Named { name } = channel else {
+            return None;
+        };
+        let slot = self.user_rooms.iter().position(|r| r == name)?;
+        CATEGORY_USER_SLOTS.get(slot).copied()
     }
 }
 

@@ -7,11 +7,13 @@
 //! of exactly the methods the Accepted play spec documents per method (§6.3.1, §6.3.2,
 //! §6.4, §7.1). Decision 0042 item 10 (amendment of 2026-10-25) makes those documented
 //! layouts wire message layouts, like any opcode's field table, so they may be written in
-//! code with the spec as their source. Every other method is decoded only with a signature
-//! read from the install at run time (decision 0042 items 2 and 10, §5.1): the generic
-//! [`decode_args`] / [`encode_args`] take a signature as data for that, and no table of
-//! undocumented methods exists here. The admin RPC `0x84EC002C` is never encoded
-//! (decision 0042 item 2).
+//! code with the spec as their source. Any other method would need a signature read from
+//! the install at run time, and no Accepted procedure derives one from record `0x56000000`
+//! yet (§5.1 OPEN): until there is one, an undocumented RPC is kept as it came
+//! ([`crate::play::inbound::PlayMessage::UnknownRpc`], its `arg_frame` uninterpreted) and
+//! nothing is sent for it. The generic [`decode_args`] / [`encode_args`] take a signature
+//! as data (the documented layouts use them); no table of undocumented methods exists
+//! here. The admin RPC `0x84EC002C` is never encoded (decision 0042 item 2).
 
 use crate::play::PlayError;
 use crate::world::{LocalizedTokenText, WireReader, WireWriter};

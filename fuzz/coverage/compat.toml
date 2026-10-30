@@ -193,6 +193,8 @@ entry = [
     "tessera_compat::world::PlayerSessionReady::decode",
     "tessera_compat::world::PortalPositionSync::decode_with",
     "tessera_compat::world::PortalPositionSync::from_bytes",
+    "tessera_compat::world::EnterPortalSpace::decode",
+    "tessera_compat::world::LoginFinished::decode",
     "tessera_compat::world::PortalTransitionComplete::decode",
     "tessera_compat::world::PortalStateNotice::decode",
     "tessera_compat::world::PortalReadyAck::decode",

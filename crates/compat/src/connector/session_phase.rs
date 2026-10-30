@@ -61,9 +61,12 @@
 //!
 //! # Entities
 //!
-//! In the world, batches (`0x0D`, `0x4C`, `official-messages-world.md` §5.1) are unpacked
-//! in order with their target (§1.1.3; the one exception, a `0x52` directly after a `0x98`
-//! in a `0x0D` to the default recipient, is [`super::entities::sub_event_target`]), the
+//! The target of a message is the routing header's `routingField0` when it has one, else
+//! the fragment's `recipientId` (`official-messages-world.md` §1.1.2,
+//! [`crate::world::active_target`]). In the world, batches (`0x0D`, `0x4C`, §5.1) are
+//! unpacked in order with their target (§1.1.3; the one exception, the `0x52` each `0x98`
+//! takes as its initial property set, goes to the created entity:
+//! [`super::entities::pair_initial_properties`], [`super::entities::paired_target`]), the
 //! entity lifecycle and property events (`0x98`, `0x40`, `0x52`, `0x88`, `0x92`, `0x0E`,
 //! `0xE7`, `0x89`) go to the [`EntityFeed`] and the rest to the play layer. The feed turns
 //! them into `EntityCreated`, `AppearanceChanged` and `EntityDespawned` ([`super::entities`]
@@ -72,10 +75,9 @@
 //! `0xBF`, and `0x59` as a move to its destination) is `EntityMoved`. `0xED` and `0xBD`
 //! reach no neutral event and are counted ([`FeedCounters`]).
 //!
-//! A `0x0D` inside a batch is read with a 1-byte tail flag after its frames or without
-//! one, each counted: `official-messages-world.md` §5.1 covers only a top-level `0x0D`
-//! (spec silent; question in `docs/m8-remediation.md` §15 (W §5.1)). Only the feed and batch messages
-//! must start with `base_flags = 0` here; the play decoders check their own bodies.
+//! Every `0x0D`, a nested one too, ends with its 1-byte tail flag
+//! (`official-messages-world.md` §5.1 row 4). Only the feed and batch messages must start
+//! with `base_flags = 0` here; the play decoders check their own bodies.
 //!
 //! The feed's events of one top-level message are made when it has been read
 //! ([`EntityFeed::flush`]: at most one creation, one appearance change and one move per
@@ -130,7 +132,7 @@ use tessera_net::account::{AccountEvent, LoginRefusal, LoginStage};
 use tessera_net::model::{MAX_NAME_LEN, is_valid_name};
 use tessera_net::{
     CharacterEvent, CharacterSummary, ChatChannel, Command, DisconnectReason, EntityId, Event,
-    NoticeLevel, Transform, Vec3,
+    NoticeLevel, Transform,
 };
 
 use crate::chat_session::state::INITIAL_CONNECT_POLICY;
@@ -144,7 +146,7 @@ use crate::play::adapter::{
 };
 use crate::play::chat::TextResolver;
 use crate::play::inbound::{PlayMessage, decode_play_message};
-use crate::play::movement::{MovementInput, PredictedState};
+use crate::play::movement::{MoveStep, PredictedState};
 use crate::play::{OutgoingEvent, clean_display_name};
 use crate::session::{
     BindPlan, BindPorts, ClientVersionMessage, ConnectionState, ControlMessage,
@@ -158,7 +160,7 @@ use crate::world::{
     AccountEvictionNotice, CharacterEnterWorldRequest, CharacterListResponse,
     CharacterOperationError, EntityCreate, EntityDespawn, PlayerSessionReady, PropertyRemoval,
     PropertyScope, PropertyTableUpdate, SinglePropertyUpdate, SubEventBatch, SubEventFrame,
-    VisualDescriptionUpdate, WireReader, WorldError, encode_event_envelope,
+    VisualDescriptionUpdate, WireReader, WorldError, active_target, encode_event_envelope,
 };
 
 use super::data::{SchemaView, chat_categories};
@@ -167,7 +169,8 @@ use super::diag::{
     RemoteForm, RemoteName, carries_challenge,
 };
 use super::entities::{
-    CreateOutcome, EntityFeed, FeedCounters, FeedOutput, SubTarget, sub_event_target,
+    CreateOutcome, EntityFeed, FeedCounters, FeedOutput, SubTarget, pair_initial_properties,
+    paired_target,
 };
 use super::login_phase::PlainSteps;
 use super::net::{ConnectorNet, SendHttpClient};
@@ -655,9 +658,8 @@ pub struct DriverCounters {
     pub outside_world: u64,
     /// `WorldLoaded` signals outside portal space, ignored.
     pub stray_loaded: u64,
-    /// `0x89` descriptors with a base model, which cannot be decoded (the `model_b` gate
-    /// is OPEN, `official-messages-world.md` §2.8); also counted in `decode_errors`.
-    pub appearance_base_model: u64,
+    /// Portal spaces begun by the server's `0x5E` (`official-messages-play.md` §4.5 item 2).
+    pub portal_spaces: u64,
     /// Play-layer events dropped over [`MAX_MESSAGE_PLAY_EVENTS`] in one message.
     pub message_events_dropped: u64,
     /// Texts not looked up because their message had reached [`MAX_MESSAGE_PLAY_EVENTS`]
@@ -702,6 +704,9 @@ pub struct SessionDriver<N: ConnectorNet> {
     /// Play-layer events the current top-level world message made.
     message_events: usize,
     chat: Option<ChatClient<Metered<N::Udp>>>,
+    /// The chat client's user-room generation the play layer's user channel slots were
+    /// last bound to ([`Self::bind_user_rooms`]); `None`: not bound to this chat client.
+    user_rooms_bound: Option<u64>,
     chat_allowance: Arc<AtomicUsize>,
     chat_endpoint: Option<SocketAddrV4>,
     chat_retry_at: f64,
@@ -763,30 +768,6 @@ fn unix_seconds() -> u32 {
 fn character_name(name: &str) -> Option<String> {
     let n = clean_display_name(name, MAX_NAME_LEN);
     is_valid_name(&n).then_some(n)
-}
-
-/// The `0x24` input of a neutral move (`official-messages-play.md` §8; the mapping of a
-/// position and velocity onto the input axes is not in the spec). Engineering choice, spec
-/// silent (question with the spec writers): the velocity's direction relative to the
-/// heading, as forward and strafe axes in `[-1, 1]`, no turn, movement state `0`.
-#[must_use]
-pub fn movement_input(heading: f32, velocity: Vec3) -> MovementInput {
-    let (vx, vy) = (velocity.x, velocity.y);
-    let speed = (vx * vx + vy * vy).sqrt();
-    if !speed.is_finite() || speed < 1e-3 || !heading.is_finite() {
-        return MovementInput::default();
-    }
-    // `tessera_net::model`: heading θ faces (cos θ, sin θ); +X east, +Y north, +Z up. The
-    // strafe axis is positive to the right of the facing.
-    let (s, c) = heading.sin_cos();
-    let forward = (vx * c + vy * s) / speed;
-    let strafe = (vx * s - vy * c) / speed;
-    MovementInput {
-        move_state: 0,
-        strafe: strafe.clamp(-1.0, 1.0),
-        forward: forward.clamp(-1.0, 1.0),
-        turn: 0.0,
-    }
 }
 
 /// The chat server's address (`official-messages-play.md` §6.1.1: `--chatserver`, which the
@@ -930,6 +911,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             feed: EntityFeed::default(),
             message_events: 0,
             chat: None,
+            user_rooms_bound: None,
             chat_allowance: Arc::new(AtomicUsize::new(0)),
             chat_endpoint: start.chat_endpoint,
             chat_retry_at: 0.0,
@@ -1089,7 +1071,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
     fn log_world_end(&self) {
         tracing::debug!(
             feed = ?self.feed.counters(),
-            appearance_base_model = self.counters.appearance_base_model,
             message_events_dropped = self.counters.message_events_dropped,
             texts_skipped = self.counters.texts_skipped,
             "official world: entity feed counters"
@@ -1493,10 +1474,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     DEFAULT_MAX_CONTAINER_DEPTH,
                 ) {
                     Ok(envelopes) => {
-                        // Handled by `run_links` within the cap (module docs).
+                        // Handled by `run_links` within the cap (module docs). The target is
+                        // the routing header's `routingField0` when it has one, else the
+                        // fragment's `recipientId` (`official-messages-world.md` §1.1.2).
                         self.inbox.extend(envelopes.into_iter().map(|env| Inbound {
                             opcode: env.opcode,
-                            recipient: blob.recipient_id,
+                            recipient: active_target(
+                                blob.recipient_id,
+                                env.routing_header.as_ref(),
+                            ),
                             body: env.body,
                             world,
                         }));
@@ -1955,7 +1941,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// One world message at batch depth `depth` (`0`: a top-level message); the outcome of
-    /// a `0x98` (for [`sub_event_target`]).
+    /// a `0x98` (for [`paired_target`]).
     fn world_message(
         &mut self,
         opcode: u32,
@@ -2024,9 +2010,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
         };
         if let Err(e) = decoded {
             self.counters.decode_errors += 1;
-            if matches!(e, WorldError::UnsupportedAppearanceBaseModel) {
-                self.counters.appearance_base_model += 1;
-            }
             tracing::debug!(opcode, error = %e, "official world: entity message refused");
         }
         self.feed_output(out);
@@ -2034,31 +2017,18 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// A batch `0x0D` or `0x4C` (`official-messages-world.md` §5.1): its sub-events in
-    /// order, each with the target [`sub_event_target`] gives (module docs "Entities"). A
-    /// `0x0D` inside a batch is read with or without its tail flag (counted), a batch
-    /// deeper than [`MAX_BATCH_DEPTH`] is not read (counted).
+    /// order with the batch's target (§5.1 items 1 and 3), except that each `0x98` takes
+    /// the first non-null `0x52` after it that an earlier `0x98` did not take
+    /// ([`pair_initial_properties`], §5.1 item 2): that `0x52` is applied to the created
+    /// entity right after its creation ([`paired_target`]) and is not dispatched again at
+    /// its own place. Every `0x0D`, nested or not, ends with its tail flag (§5.1 row 4); a
+    /// batch deeper than [`MAX_BATCH_DEPTH`] is not read (counted).
     fn batch(&mut self, opcode: u32, recipient: u64, body: &[u8], depth: usize) {
         if depth >= MAX_BATCH_DEPTH {
             self.feed.counters_mut().deep_batches += 1;
             return;
         }
-        let aoi = opcode == SubEventBatch::EVENT_ID_AOI_ENTER;
-        let decoded = if depth > 0 && aoi {
-            // The frames as a `0x4C` would have them, then 0 or 1 byte of tail (spec silent;
-            // question in `docs/m8-remediation.md` §15 (W §5.1)).
-            let mut r = WireReader::new(body);
-            SubEventBatch::decode(&mut r, SubEventBatch::EVENT_ID_SUB_EVENT).and_then(|b| {
-                match r.remaining() {
-                    0 => self.feed.counters_mut().nested_aoi_no_tail += 1,
-                    1 => self.feed.counters_mut().nested_aoi_tail += 1,
-                    _ => return r.finish().map(|()| b),
-                }
-                Ok(b)
-            })
-        } else {
-            SubEventBatch::from_bytes(body, opcode)
-        };
-        let batch = match decoded {
+        let batch = match SubEventBatch::from_bytes(body, opcode) {
             Ok(b) => b,
             Err(e) => {
                 self.counters.decode_errors += 1;
@@ -2066,23 +2036,54 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 return;
             }
         };
-        let mut previous = None;
-        for frame in batch.frames {
-            let after = previous.take();
-            match frame {
-                SubEventFrame::Null { .. } => self.feed.counters_mut().null_sub_events += 1,
-                SubEventFrame::Event {
-                    sub_event_id,
-                    payload,
-                } => match sub_event_target(aoi, sub_event_id, recipient, after) {
-                    SubTarget::Skip => self.feed.counters_mut().overflow += 1,
-                    SubTarget::To(target) => {
-                        previous = self.world_message(sub_event_id, target, &payload, depth + 1);
-                        if !self.in_world_still() {
-                            return;
-                        }
+        // For each `0x98`, the index of its initial property set.
+        let mut partner = vec![None; batch.frames.len()];
+        for (j, create) in pair_initial_properties(&batch.frames)
+            .into_iter()
+            .enumerate()
+        {
+            if let Some(slot) = create.and_then(|c| partner.get_mut(c)) {
+                *slot = Some(j);
+            }
+        }
+        let mut consumed = vec![false; batch.frames.len()];
+        for (i, frame) in batch.frames.iter().enumerate() {
+            if consumed.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let SubEventFrame::Event {
+                sub_event_id,
+                payload,
+            } = frame
+            else {
+                self.feed.counters_mut().null_sub_events += 1;
+                continue;
+            };
+            let outcome = self.world_message(*sub_event_id, recipient, payload, depth + 1);
+            if !self.in_world_still() {
+                return;
+            }
+            let Some(j) = partner.get(i).copied().flatten() else {
+                continue;
+            };
+            if let Some(c) = consumed.get_mut(j) {
+                *c = true;
+            }
+            let Some(SubEventFrame::Event {
+                sub_event_id,
+                payload,
+            }) = batch.frames.get(j)
+            else {
+                continue;
+            };
+            match paired_target(outcome, recipient) {
+                SubTarget::Skip => self.feed.counters_mut().overflow += 1,
+                SubTarget::To(target) => {
+                    self.world_message(*sub_event_id, target, payload, depth + 1);
+                    if !self.in_world_still() {
+                        return;
                     }
-                },
+                }
             }
         }
     }
@@ -2157,11 +2158,25 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     return;
                 }
                 PlaySignal::Path {
-                    entity, waypoints, ..
+                    entity,
+                    path_type,
+                    speed_param,
+                    waypoints,
                 } => {
+                    // §4.6.1: along the path at `speed_param` metres per second.
                     let mut out = FeedOutput::default();
-                    self.feed.path(entity, &waypoints, &mut out);
+                    self.feed
+                        .path_along(entity, path_type, speed_param, &waypoints, &mut out);
                     self.feed_output(out);
+                }
+                PlaySignal::PortalSpace { scene_id, .. } => {
+                    // §4.5 item 2: a portal space begins with both gates clear; the
+                    // client's loading starts afresh, so a `WorldLoaded` of the earlier
+                    // placement never ends it (module docs). The scene comes with the
+                    // placement the client loads; no neutral event carries the scene ID.
+                    self.fresh_portal_loading();
+                    self.counters.portal_spaces += 1;
+                    tracing::debug!(scene_id, "official world: portal space began");
                 }
                 PlaySignal::MotionController { .. } => {
                     self.feed.counters_mut().motion_controllers += 1;
@@ -2310,6 +2325,27 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }
         }
         self.chat_allowance.store(0, Ordering::SeqCst);
+        self.bind_user_rooms();
+    }
+
+    /// Binds the play layer's user channel slots to the chat client's user rooms in join
+    /// order (`official-messages-play.md` §6.7) when they changed since the last binding;
+    /// without a chat client no slot is bound.
+    fn bind_user_rooms(&mut self) {
+        let Some(chat) = self.chat.as_ref() else {
+            if self.user_rooms_bound.take().is_some() {
+                self.adapter
+                    .categories_mut()
+                    .set_user_rooms(std::iter::empty());
+            }
+            return;
+        };
+        let generation = chat.user_rooms_generation();
+        if self.user_rooms_bound == Some(generation) {
+            return;
+        }
+        chat.bind_user_rooms(self.adapter.categories_mut());
+        self.user_rooms_bound = Some(generation);
     }
 
     /// Ends the refresh thread: its stop flag is set (a request not yet sent is not sent)
@@ -2529,14 +2565,17 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 location,
                 heading,
                 velocity,
-                ..
+                on_ground,
             } => {
-                let input = movement_input(*heading, *velocity);
+                // `official-messages-play.md` §8 row `0x24`: the axes, both headings and
+                // the jump bit while the controller is off the ground.
+                let step =
+                    MoveStep::from_move(*heading, [velocity.x, velocity.y, velocity.z], *on_ground);
                 let predicted = PredictedState {
                     location: *location,
                     heading: *heading,
                 };
-                let out = self.adapter.movement_step(input, now, Some(predicted));
+                let out = self.adapter.move_step(step, now, Some(predicted));
                 self.pending_out.extend(out);
                 Ok(())
             }
@@ -2552,8 +2591,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     .chat
                     .as_mut()
                     .ok_or(NetError::InvalidCommand("the chat server is not connected"))?;
-                chat.command(cmd, now)
-                    .map_err(|_| NetError::InvalidCommand("chat-server command refused"))
+                let sent = chat
+                    .command(cmd, now)
+                    .map_err(|_| NetError::InvalidCommand("chat-server command refused"));
+                self.bind_user_rooms();
+                sent
             }
             Command::Chat { .. } => {
                 let out = self
@@ -2620,6 +2662,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         self.old.clear();
         self.chat = None;
+        self.bind_user_rooms();
     }
 
     /// One pass of the shutdown: runs the connections until their `Disconnect` is out.
@@ -2683,6 +2726,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             Ok(mut chat) => {
                 chat.set_self_descriptor(player, name);
                 self.chat = Some(chat);
+                // A new chat client: its rooms are bound from scratch.
+                self.user_rooms_bound = None;
+                self.bind_user_rooms();
             }
             Err(e) => {
                 self.chat_failed(now);

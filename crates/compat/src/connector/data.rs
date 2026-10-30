@@ -20,13 +20,12 @@ use crate::login::{
     extract_didver_from_dat_file, resolve_bit_tree_table, resolve_install_language,
     root_did_map_from_superblock,
 };
-use crate::play::chat::{CATEGORY_SAY, CATEGORY_TELL, ChatCategories, LiteralTexts, TextResolver};
+use crate::play::chat::{ChatCategories, LiteralTexts, TextResolver};
 use crate::session::{BitTreeCodec, BitTreeTable};
 use crate::world::{
     EncodedPropertyValue, LocalizedTokenText, PortalStateSchema, PortalStateSchemaLookup,
     PropertySchemaLookup, PropertyType,
 };
-use tessera_net::ChatChannel;
 
 /// The archive whose superblock names the Master DID Map (`official-login.md` §2.4.3,
 /// `official-session.md` §4.1.3 item 1) and whose header carries `didver` (§2.4.1 item 2).
@@ -142,31 +141,21 @@ pub trait InstallData: Send + Sync + std::fmt::Debug {
     }
 }
 
-/// The chat categories of the session (`official-messages-play.md` §6.7): the numbers the
-/// spec names (Say `5`, Tell `6`), each kept only when the install's chat text category enum
-/// has it ([`InstallData::chat_category_keys`]). Without the install's enum the spec's numbers
-/// are used as they are. Yell and Fellowship stay unmapped (their numbers are OPEN, §6.7):
-/// lines in other categories are counted by the play layer, and the user channel slots are
-/// the chat server's rooms, which carry their names (`crate::chat_session`).
+/// The chat categories of the session (`official-messages-play.md` §6.7): every category
+/// the spec gives a neutral channel (Say `5`, Tell `6`, Emote `7`, Fellowship `11`, Yell
+/// `19`), each kept only when the install's chat text category enum has it
+/// ([`InstallData::chat_category_keys`], [`ChatCategories::from_install_keys`]). Without
+/// the install's enum the spec's numbers are used as they are. The user channel slots are
+/// bound to the chat server's user rooms in join order by the session
+/// ([`ChatCategories::set_user_rooms`]); lines in other categories are counted by the play
+/// layer.
 #[must_use]
 pub fn chat_categories(data: &dyn InstallData) -> ChatCategories {
     let Some(keys) = data.chat_category_keys() else {
         tracing::debug!("official session: no chat category enum from the install; spec numbers");
         return ChatCategories::default();
     };
-    let mut c = ChatCategories::empty();
-    if keys.contains(&CATEGORY_SAY) {
-        c.set(CATEGORY_SAY, ChatChannel::Say);
-    }
-    if keys.contains(&CATEGORY_TELL) {
-        c.set(
-            CATEGORY_TELL,
-            ChatChannel::Tell {
-                peer: String::new(),
-            },
-        );
-    }
-    c
+    ChatCategories::from_install_keys(Some(&keys))
 }
 
 /// Makes the [`InstallData`] of the install root it is given, for the `<Lang>` token the

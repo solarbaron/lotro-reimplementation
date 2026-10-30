@@ -245,11 +245,6 @@ pub enum WorldError {
     /// A wire `LocalizedTokenText` argument kind outside `1..=7` reached a value decoder (§2.6).
     #[error("invalid LocalizedTokenText argument kind {0}")]
     InvalidStringArgKind(u16),
-    /// No longer produced: `EntityAppearanceDesc.base_model` is one unconditional `u32`
-    /// (§2.8, pass 9), so a descriptor with bit 0 decodes. Kept so code that still counts it
-    /// compiles; it never matches.
-    #[error("EntityAppearanceDesc base_model is not decodable")]
-    UnsupportedAppearanceBaseModel,
     /// An `EntityAppearanceDesc` or `PartEntry` flags word had a bit outside its defined set
     /// (`0x000007E3` / `0x0000002F`, §2.8).
     #[error("undefined EntityAppearanceDesc flag bits {0:#010x}")]

@@ -22,6 +22,7 @@ use tessera_compat::chat_session::{
     check_ticket, effective_endpoint, parse_endpoint,
 };
 use tessera_compat::play::PlayError;
+use tessera_compat::play::chat::ChatCategories;
 use tessera_compat::session::{
     AUTH_FLAG_HAS_EXTRA_BLOB, ConnectChallengeHeader, DatagramHeader, InMemoryUdpTransport,
     IsaacCipher, OptionalHeaders, SessionError, UdpDatagramTransport, decode_datagram,
@@ -901,6 +902,9 @@ fn chat_client_end_to_end() {
         })]
     );
     assert_eq!(client.rooms(), &[world_room()]);
+    // A server room takes no user channel slot (`official-messages-play.md` §6.7).
+    assert!(client.user_rooms().is_empty());
+    let rooms_before_join = client.user_rooms_generation();
 
     // Sending to it: 0x16A to the chat recipient ID.
     client
@@ -998,6 +1002,24 @@ fn chat_client_end_to_end() {
             channel: "Hobby".into()
         })]
     );
+    // §6.7: the user room joined first is bound to user channel slot 1 (category 28).
+    assert_eq!(client.user_rooms(), ["Hobby"]);
+    assert_ne!(client.user_rooms_generation(), rooms_before_join);
+    let mut categories = ChatCategories::default();
+    client.bind_user_rooms(&mut categories);
+    assert_eq!(
+        categories.channel_for(0x1C),
+        Some(ChatChannel::Named {
+            name: "Hobby".into()
+        })
+    );
+    assert_eq!(categories.channel_for(0x1D), None, "slot 2 has no room");
+    assert_eq!(
+        categories.category_for(&ChatChannel::Named {
+            name: "Hobby".into()
+        }),
+        Some(0x1C)
+    );
 
     // The admin response is ignored and counted.
     let admin = server.blob(0x15F, &[0x00, 0x00]);
@@ -1021,6 +1043,38 @@ fn chat_client_end_to_end() {
             channel: "Zero".into()
         })]
     );
+    // The second user room takes slot 2 (join order); joining "Hobby" again keeps its slot.
+    assert_eq!(client.user_rooms(), ["Hobby", "Zero"]);
+    let again = server.event(&ChatEvent::AddRoom {
+        notice_flags: 0,
+        room: ChatRoomDescriptor::new(DescriptorKind::UserRoom, 77, "Hobby"),
+    });
+    client.transport_mut().push_inbound(again, SERVER);
+    client.poll(2.36, &schema).expect("poll");
+    assert_eq!(client.user_rooms(), ["Hobby", "Zero"]);
+    client.bind_user_rooms(&mut categories);
+    assert_eq!(
+        categories.channel_for(0x1D),
+        Some(ChatChannel::Named {
+            name: "Zero".into()
+        })
+    );
+    // A room that is left frees its slot; the later rooms move up.
+    let removed = server.event(&ChatEvent::RemoveRoom {
+        notice_flags: 0,
+        room: ChatRoomDescriptor::new(DescriptorKind::UserRoom, 77, "Hobby"),
+    });
+    client.transport_mut().push_inbound(removed, SERVER);
+    client.poll(2.37, &schema).expect("poll");
+    assert_eq!(client.user_rooms(), ["Zero"]);
+    client.bind_user_rooms(&mut categories);
+    assert_eq!(
+        categories.channel_for(0x1C),
+        Some(ChatChannel::Named {
+            name: "Zero".into()
+        })
+    );
+    assert_eq!(categories.channel_for(0x1D), None);
     let nameless = ChatMessagePayload::text(
         ChatRoomDescriptor::new(DescriptorKind::Entity, 9, "Bob"),
         "lost",

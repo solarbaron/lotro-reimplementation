@@ -441,12 +441,13 @@ fn created_entities_move_by_position_set_position_and_path() {
         .iter()
         .filter(|e| matches!(e, Event::EntityMoved { .. }))
         .collect();
-    // From the `0xBF` place (x 191) to x 200: 9 m, so the bounded speed (7 m/s) along +X.
+    // From the `0xBF` place (x 191) to x 200 along +X at the path's `speed_param`, 2 m/s
+    // (`official-messages-play.md` §4.6.1), not the feed's nominal speed.
     assert!(
         matches!(m.as_slice(), [Event::EntityMoved { transform, velocity, .. }]
             if (transform.position.x - 200.0).abs() < 1e-3
                 && transform.heading.abs() < 1e-5
-                && (velocity.x - 7.0).abs() < 1e-4
+                && (velocity.x - 2.0).abs() < 1e-4
                 && velocity.y.abs() < 1e-4),
         "{events:?}"
     );
@@ -638,10 +639,6 @@ fn appearance_updates_take_a_uniform_scale_and_count_the_rest() {
     let skipped = counters(&d).appearance_fields_skipped;
     let events = deliver(&world, &mut d, login.event_to(0x89, NPC, &base_model), 2.3);
     assert!(events.is_empty());
-    assert_eq!(
-        d.counters().appearance_base_model,
-        before.appearance_base_model
-    );
     assert_eq!(d.counters().decode_errors, before.decode_errors);
     assert_eq!(counters(&d).appearance_fields_skipped, skipped + 1);
 }
@@ -657,8 +654,9 @@ fn nested_batches_are_read_and_their_limits_counted() {
             frame(0xCE, position(NPC, NPC_AT, 0, [0.0; 3])),
         ],
     );
-    // A nested `0x0D` with its tail flag, and one without (spec silent; question in
-    // `docs/m8-remediation.md` §15 (W §5.1)): both are read.
+    // A nested `0x0D` ends with its tail flag like a top-level one
+    // (`official-messages-world.md` §5.1 row 4): one with it is read, one without is
+    // refused (a decode error) and the rest of the outer batch is still read.
     let nested_aoi = batch(
         SubEventBatch::EVENT_ID_AOI_ENTER,
         vec![
@@ -685,12 +683,18 @@ fn nested_batches_are_read_and_their_limits_counted() {
             frame(SubEventBatch::EVENT_ID_AOI_ENTER, untailed),
         ],
     );
+    let errors = d.counters().decode_errors;
     let events = deliver(&world, &mut d, login.event(0x0D, &outer), 2.0);
-    assert_eq!(created(&events).len(), 3, "{events:?}");
+    assert_eq!(created(&events).len(), 2, "{events:?}");
+    assert!(
+        !events.iter().any(
+            |e| matches!(e, Event::EntityCreated { id, .. } if *id == EntityId(0x0300_0000_0000_0303))
+        ),
+        "{events:?}"
+    );
+    assert_eq!(d.counters().decode_errors, errors + 1, "the untailed 0x0D");
     let c = counters(&d);
     assert_eq!(c.null_sub_events, 1);
-    assert_eq!(c.nested_aoi_tail, 1);
-    assert_eq!(c.nested_aoi_no_tail, 1);
     // A batch at depth MAX_BATCH_DEPTH - 1 is still read.
     let id = 0x0300_0000_0000_0404;
     let mut readable = batch(
@@ -819,9 +823,7 @@ fn the_0x52_after_a_0x98_in_a_batch_takes_the_created_entity() {
         "a default-recipient 0x40 never despawns the new entity"
     );
     assert_eq!(counters(&d).no_target, 2);
-    // A `0x4C` pairs its `0x98` and `0x52` the same way (§5.1 item 2). (A `0x52` further
-    // after its `0x98` pairs by `pair_initial_properties`, which this driver does not use
-    // yet: it sees only the frame before.)
+    // A `0x4C` pairs its `0x98` and `0x52` the same way (§5.1 item 2).
     let op = SubEventBatch::EVENT_ID_SUB_EVENT;
     let frames = vec![
         frame(0x98, create(OTHER, NPC_TEMPLATE)),
@@ -932,7 +934,7 @@ fn without_the_installs_enum_the_spec_numbers_map_say_and_tell() {
             text: "Hello.".to_owned(),
         }]
     );
-    // An unnamed category (a user slot, Yell or Fellowship) is counted, not shown.
+    // A user slot with no user room bound to it is counted, not shown.
     let slot = chat_line(0x1C, NPC_NAME, NPC, "Room line.");
     let events = deliver(
         &world,
@@ -1020,4 +1022,305 @@ fn event_datagrams(login: &mut Server, opcode: u32, inner: &[u8]) -> Vec<Vec<u8>
         );
     }
     out
+}
+
+#[test]
+fn each_0x98_takes_the_first_free_0x52_after_it() {
+    // §5.1 item 2: other sub-events and null frames may sit between a `0x98` and its
+    // `0x52`; each `0x98` takes the first `0x52` after it that an earlier one did not.
+    let (world, mut d, mut login) = in_world();
+    let (a, b) = (0x0300_0000_0000_0505, 0x0300_0000_0000_0606);
+    let frames = vec![
+        frame(0x98, create(a, NPC_TEMPLATE)),
+        frame(0x98, create(b, NPC_TEMPLATE)),
+        SubEventFrame::Null {
+            field_a: 0,
+            field_b: 0,
+        },
+        frame(0xCE, position(a, NPC_AT, 0, [0.0; 3])),
+        frame(0x52, props_payload(&entity_properties("First", true))),
+        frame(0xCE, position(b, NPC_AT, 0, [0.0; 3])),
+        frame(0x52, props_payload(&entity_properties("Second", true))),
+    ];
+    let before = counters(&d).no_target;
+    let op = SubEventBatch::EVENT_ID_SUB_EVENT;
+    let events = deliver(&world, &mut d, login.event(op, &batch(op, frames)), 2.0);
+    let names: Vec<(EntityId, String)> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::EntityCreated { id, name, .. } => Some((*id, name.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            (EntityId(a), "First".to_owned()),
+            (EntityId(b), "Second".to_owned())
+        ],
+        "{events:?}"
+    );
+    assert_eq!(
+        counters(&d).no_target,
+        before,
+        "no 0x52 went to the default recipient"
+    );
+}
+
+#[test]
+fn the_routing_header_names_the_target_of_a_message() {
+    // `official-messages-world.md` §1.1.2 item 2: `routingField0` overrides the
+    // fragment's `recipientId`.
+    let (world, mut d, mut login) = in_world();
+    let small: u64 = 0x0000_0000_1234_5678;
+    let b = entity_batch(
+        small,
+        NPC_TEMPLATE,
+        &entity_properties(NPC_NAME, true),
+        NPC_AT,
+    );
+    let events = deliver(&world, &mut d, login.event_to(0x0D, small, &b), 2.0);
+    assert_eq!(created(&events).len(), 1, "{events:?}");
+    let routing = crate::session::MessageRoutingHeader {
+        field0: Some(0x1234_5678),
+        ..crate::session::MessageRoutingHeader::default()
+    };
+    let envelope = crate::session::encode_message_with_routing(0, Some(&routing), &[0], false)
+        .expect("envelope");
+    // Addressed to another entity on the fragment, to `small` by the routing header.
+    let events = deliver(
+        &world,
+        &mut d,
+        login.blob_to(0x40, Some(OTHER), &envelope),
+        2.1,
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::EntityDespawned { id } if *id == EntityId(small))),
+        "{events:?}"
+    );
+    assert_eq!(counters(&d).despawned, 1);
+}
+
+/// Ends the world entry's portal space: the server gate `0x7C` and the client's loading.
+fn out_of_portal_space(world: &World, d: &mut SessionDriver<FakeNet>, login: &mut Server) {
+    world.deliver(login.event(0x7C, &[0]), LOGIN_SERVER);
+    d.command(&Command::WorldLoaded, 1.5).expect("loaded");
+    d.step(1.6, true, &go);
+    assert_eq!(
+        sent_payloads(world, 0xF4).len(),
+        1,
+        "the entry's portal exit"
+    );
+    let _ = d.take_events();
+}
+
+#[test]
+fn a_move_off_the_ground_sends_the_jump_bit() {
+    // `official-messages-play.md` §8 row `0x24`: `slot_flags` bit 1 while jumping.
+    let (world, mut d, mut login) = in_world();
+    out_of_portal_space(&world, &mut d, &mut login);
+    let step = |d: &mut SessionDriver<FakeNet>, t: f64, on_ground: bool| {
+        d.command(
+            &Command::Move {
+                location: tessera_net::Location::default(),
+                heading: 0.0,
+                velocity: Vec3::new(4.0, 0.0, 0.0),
+                on_ground,
+            },
+            t,
+        )
+        .expect("move");
+        d.step(t, true, &go);
+    };
+    let schema = std::collections::BTreeMap::<u32, PropertyType>::new();
+    let decode = |payload: &[u8]| {
+        let mut r = crate::world::WireReader::new(payload);
+        crate::world::ClientPhysicsSync::decode(&mut r, &schema).expect("0x24")
+    };
+    step(&mut d, 2.0, false);
+    let sent = sent_payloads(&world, 0x24);
+    let last = sent.last().expect("a 0x24");
+    assert!(decode(last).jump(3), "the newest slot jumps");
+    step(&mut d, 2.2, true);
+    let sent = sent_payloads(&world, 0x24);
+    let last = sent.last().expect("a 0x24");
+    assert!(!decode(last).jump(3), "on the ground: no jump");
+}
+
+#[test]
+fn a_portal_space_begun_by_the_server_waits_for_a_fresh_loading_signal() {
+    // `official-messages-play.md` §4.5 items 2 and 4: `0x5E` clears both gates, so a
+    // loading signal from before it does not end the new portal space.
+    let (world, mut d, mut login) = in_world();
+    out_of_portal_space(&world, &mut d, &mut login);
+    // A loading signal outside portal space is ignored.
+    d.command(&Command::WorldLoaded, 1.9).expect("accepted");
+    let enter = crate::world::EnterPortalSpace {
+        stamp: 0,
+        scene_id: 7,
+    }
+    .to_bytes()
+    .expect("0x5E");
+    deliver(&world, &mut d, login.event(0x5E, &enter), 2.0);
+    assert_eq!(d.counters().portal_spaces, 1);
+    // The server gate alone does not end it.
+    deliver(&world, &mut d, login.event(0xC7, &[0]), 2.1);
+    d.step(2.2, true, &go);
+    assert!(
+        sent_payloads(&world, 0xF4).is_empty(),
+        "waits for the loading"
+    );
+    d.command(&Command::WorldLoaded, 2.3).expect("loaded");
+    d.step(2.4, true, &go);
+    assert_eq!(sent_payloads(&world, 0xF4).len(), 1);
+}
+
+#[test]
+fn a_portal_space_starts_its_loading_afresh() {
+    // A `WorldLoaded` taken in the entry's portal space, before the server's gate, is
+    // forgotten when a `0x5E` begins another portal space in the same pass.
+    let (world, mut d, mut login) = in_world();
+    d.command(&Command::WorldLoaded, 1.5).expect("loaded");
+    let enter = crate::world::EnterPortalSpace {
+        stamp: 0,
+        scene_id: 9,
+    }
+    .to_bytes()
+    .expect("0x5E");
+    world.deliver(login.event(0x5E, &enter), LOGIN_SERVER);
+    d.step(1.6, true, &go);
+    deliver(&world, &mut d, login.event(0x7C, &[0]), 1.7);
+    d.step(1.8, true, &go);
+    assert!(
+        sent_payloads(&world, 0xF4).is_empty(),
+        "the earlier loading signal does not count"
+    );
+    d.command(&Command::WorldLoaded, 1.9).expect("loaded");
+    d.step(2.0, true, &go);
+    assert_eq!(sent_payloads(&world, 0xF4).len(), 1);
+}
+
+#[test]
+fn the_user_rooms_joined_take_the_user_channel_slots_of_world_chat() {
+    // `official-messages-play.md` §6.7: user channel slot 1 (category 28) is the user room
+    // joined first; a world-server line in that category is that room's line.
+    let mut start = session_start(0, Some(CHAT_SERVER), Arc::default());
+    start.schema = SchemaView(Arc::new(Typed {
+        base: records(),
+        chat_keys: None,
+    }));
+    let (world, mut d, mut login) = driver_at_characters_from(
+        Service {
+            chat_socket: true,
+            ..Service::default()
+        },
+        start,
+    );
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
+    d.step(1.1, true, &go);
+    let (player, name) = d.wants_chat(1.2).expect("the chat session is due");
+    let net = FakeNet(world.clone());
+    d.attach_chat(
+        net.chat_binder(None).expect("binder"),
+        player,
+        &name,
+        1.2,
+        &go,
+    );
+    d.step(2.3, true, &go);
+    let mut chat = Server::new(0x0111, 0xBEEF_0003);
+    world.deliver_chat(chat.challenge(0xBEEF_0003));
+    world.deliver_chat(chat.control(OptionalHeaders {
+        cumulative_ack: Some(0),
+        ..OptionalHeaders::default()
+    }));
+    d.step(2.4, true, &go);
+    let _ = d.take_events();
+    let line = || {
+        chat_line(
+            crate::play::chat::CATEGORY_USER_SLOTS[0],
+            NPC_NAME,
+            NPC,
+            "Room line.",
+        )
+    };
+    // No room yet: the line has no channel (counted).
+    let events = deliver(
+        &world,
+        &mut d,
+        login.event(OPCODE_UI_PROPERTY_EVENT, &line()),
+        2.5,
+    );
+    assert!(events.is_empty(), "{events:?}");
+    assert_eq!(d.play_counters().unmapped_category, 1);
+    let add = crate::chat_session::events::ChatEvent::AddRoom {
+        notice_flags: 0,
+        room: crate::chat_session::wire::ChatRoomDescriptor::new(
+            crate::chat_session::wire::DescriptorKind::UserRoom,
+            0,
+            "Hobby",
+        ),
+    };
+    let inner = add.encode().expect("event");
+    world.deliver_chat(chat.event(add.opcode(), &inner));
+    d.step(2.6, true, &go);
+    assert!(d.take_events().iter().any(|e| matches!(
+        e,
+        Event::Social(tessera_net::SocialEvent::ChannelJoined { .. })
+    )));
+    let events = deliver(
+        &world,
+        &mut d,
+        login.event(OPCODE_UI_PROPERTY_EVENT, &line()),
+        2.7,
+    );
+    assert_eq!(
+        events,
+        vec![Event::ChatMessage {
+            channel: ChatChannel::Named {
+                name: "Hobby".to_owned()
+            },
+            sender: Some(NPC_NAME.to_owned()),
+            text: "Room line.".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn every_category_the_spec_maps_is_kept_when_the_installs_enum_has_it() {
+    // `official-messages-play.md` §6.7: Say 5, Tell 6, Emote 7, Fellowship 11 and Yell 19
+    // have neutral channels; each is kept only when the install's enum has its key.
+    let all = Typed {
+        base: records(),
+        chat_keys: Some(vec![5, 6, 7, 11, 19]),
+    };
+    let c = crate::connector::data::chat_categories(&all);
+    assert_eq!(c.channel_for(5), Some(ChatChannel::Say));
+    assert_eq!(
+        c.channel_for(6),
+        Some(ChatChannel::Tell {
+            peer: String::new()
+        })
+    );
+    assert_eq!(c.channel_for(7), Some(ChatChannel::Emote));
+    assert_eq!(c.channel_for(11), Some(ChatChannel::Fellowship));
+    assert_eq!(c.channel_for(19), Some(ChatChannel::Yell));
+    let some = Typed {
+        base: records(),
+        chat_keys: Some(vec![7, 19]),
+    };
+    let c = crate::connector::data::chat_categories(&some);
+    assert_eq!(c.channel_for(5), None);
+    assert_eq!(c.channel_for(11), None);
+    assert_eq!(c.channel_for(7), Some(ChatChannel::Emote));
+    assert_eq!(c.channel_for(19), Some(ChatChannel::Yell));
 }

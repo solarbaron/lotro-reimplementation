@@ -210,11 +210,6 @@ pub struct FeedCounters {
     pub kind_changes_unshown: u64,
     /// Null sub-event frames of a batch (their meaning is OPEN, §5.1).
     pub null_sub_events: u64,
-    /// `0x0D` batches inside a batch read with a 1-byte tail flag after their frames.
-    pub nested_aoi_tail: u64,
-    /// `0x0D` batches inside a batch read without a tail flag (whether a nested `0x0D` has
-    /// one: spec silent; question in `docs/m8-remediation.md` §15 (W §5.1)).
-    pub nested_aoi_no_tail: u64,
     /// Batches nested deeper than the driver reads.
     pub deep_batches: u64,
     /// Entity-scoped events addressed to the default recipient with no entity to apply to.

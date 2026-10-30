@@ -28,8 +28,7 @@ use super::data::{InstallData, LocalPaths};
 use super::net::{ConnectorNet, NetFactory, SendHttpClient, carries_secret, is_https};
 // The synthetic world's builders, for the world-feed tests (`world_feed`).
 use super::session_phase::{
-    DRIVER_EVENT_CAP, PORTAL_LOADING_TIMEOUT_SEC, SessionDriver, SessionStart, movement_input,
-    refusal_cut,
+    DRIVER_EVENT_CAP, PORTAL_LOADING_TIMEOUT_SEC, SessionDriver, SessionStart, refusal_cut,
 };
 // The synthetic service's world builders, used by `world_feed`.
 use super::test_support::{
@@ -3941,18 +3940,22 @@ fn is_https_and_the_https_form_agree_on_every_form() {
 
 #[test]
 fn moves_become_input_axes() {
+    use crate::play::movement::MoveStep;
     // Facing east (heading 0) and moving east: forward.
-    let i = movement_input(0.0, Vec3::new(4.0, 0.0, 0.0));
+    let i = MoveStep::from_move(0.0, [4.0, 0.0, 0.0], true);
     assert!((i.forward - 1.0).abs() < 1e-5 && i.strafe.abs() < 1e-5);
     // Facing north, moving east: to the right.
-    let i = movement_input(std::f32::consts::FRAC_PI_2, Vec3::new(3.0, 0.0, 0.0));
+    let i = MoveStep::from_move(std::f32::consts::FRAC_PI_2, [3.0, 0.0, 0.0], true);
     assert!(i.forward.abs() < 1e-5 && (i.strafe - 1.0).abs() < 1e-5);
     // Standing, or a non-finite heading: no input.
-    assert_eq!(movement_input(0.0, Vec3::new(0.0, 0.0, 0.0)).forward, 0.0);
+    assert_eq!(MoveStep::from_move(0.0, [0.0, 0.0, 0.0], true).forward, 0.0);
     assert_eq!(
-        movement_input(f32::NAN, Vec3::new(1.0, 0.0, 0.0)).forward,
+        MoveStep::from_move(f32::NAN, [1.0, 0.0, 0.0], true).forward,
         0.0
     );
+    // Off the ground: the jump bit (`official-messages-play.md` §8 row `0x24`).
+    assert!(MoveStep::from_move(0.0, [4.0, 0.0, 0.0], false).jump);
+    assert!(!MoveStep::from_move(0.0, [4.0, 0.0, 0.0], true).jump);
 }
 
 #[test]

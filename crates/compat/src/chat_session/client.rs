@@ -39,7 +39,7 @@ use crate::chat_session::wire::{
 use crate::chat_session::{CHAT_RECIPIENT_ID, chat_auth_header};
 use crate::net_access::{NetworkAccess, StdUdpTransport};
 use crate::play::PlayError;
-use crate::play::chat::{MAX_ARGUMENT_UNITS, MAX_CHAT_UNITS};
+use crate::play::chat::{ChatCategories, MAX_ARGUMENT_UNITS, MAX_CHAT_UNITS};
 use crate::play::{check_units, clean_display_name};
 use crate::session::{
     BindPlan, BitTreeCodec, CHAT_MAX_RECV_RATE, ConnectionState,
@@ -284,6 +284,11 @@ pub struct ChatClient<T: UdpDatagramTransport> {
     next_ctx: u32,
     pending: VecDeque<(u32, Pending)>,
     rooms: Vec<ChatRoomDescriptor>,
+    /// The names of the user rooms (`desc_type = 2`) in the order they were joined
+    /// (`official-messages-play.md` §6.7: the user channel slots); at most [`MAX_ROOMS`].
+    user_rooms: Vec<String>,
+    /// Changes whenever [`Self::user_rooms`] changes.
+    user_rooms_generation: u64,
     self_desc: ChatRoomDescriptor,
     fellowship_channel_type: Option<u32>,
     counters: ChatCounters,
@@ -358,6 +363,8 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             next_ctx: 1,
             pending: VecDeque::new(),
             rooms: Vec::new(),
+            user_rooms: Vec::new(),
+            user_rooms_generation: 0,
             self_desc: ChatRoomDescriptor::Null,
             fellowship_channel_type: None,
             counters: ChatCounters::default(),
@@ -415,6 +422,26 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
     #[must_use]
     pub fn rooms(&self) -> &[ChatRoomDescriptor] {
         &self.rooms
+    }
+
+    /// The names of the user rooms joined, in join order (`official-messages-play.md`
+    /// §6.7: the first is bound to user channel slot 1).
+    #[must_use]
+    pub fn user_rooms(&self) -> &[String] {
+        &self.user_rooms
+    }
+
+    /// A number that changes whenever [`Self::user_rooms`] changes, so a caller binds the
+    /// slots again only then ([`Self::bind_user_rooms`]).
+    #[must_use]
+    pub fn user_rooms_generation(&self) -> u64 {
+        self.user_rooms_generation
+    }
+
+    /// Binds the user channel slots of `categories` to the user rooms joined, in join
+    /// order (`official-messages-play.md` §6.7, [`ChatCategories::set_user_rooms`]).
+    pub fn bind_user_rooms(&self, categories: &mut ChatCategories) {
+        categories.set_user_rooms(self.user_rooms.iter().cloned());
     }
 
     /// The counters.
@@ -969,6 +996,18 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         self.rooms.retain(|r| {
             !(r.kind() == room.kind() && r.id() == room.id() && r.name() == room.name())
         });
+        // A user room keeps the slot of its first join (§6.7: join order), under the
+        // channel name its lines and `ChannelJoined` carry.
+        if room.kind() == Some(DescriptorKind::UserRoom)
+            && let Some(name) = room.name().and_then(Self::channel_name)
+            && !self.user_rooms.contains(&name)
+        {
+            if self.user_rooms.len() >= MAX_ROOMS {
+                self.user_rooms.remove(0);
+            }
+            self.user_rooms.push(name);
+            self.user_rooms_generation += 1;
+        }
         if self.rooms.len() >= MAX_ROOMS {
             self.rooms.remove(0);
         }
@@ -977,6 +1016,13 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
 
     fn remove_room_named(&mut self, name: &str) {
         self.rooms.retain(|r| r.name() != Some(name));
+        if let Some(name) = Self::channel_name(name) {
+            let before = self.user_rooms.len();
+            self.user_rooms.retain(|r| *r != name);
+            if self.user_rooms.len() != before {
+                self.user_rooms_generation += 1;
+            }
+        }
     }
 
     /// Sanitises first (control characters become spaces), trims, then caps the length.

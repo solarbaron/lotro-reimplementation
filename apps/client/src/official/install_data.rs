@@ -9,12 +9,14 @@
 //!   ([`portal_state_schemas`]);
 //! - the texts of `LocalizedTokenText` values in the language the login selected
 //!   (`string-table.md` §9.0): a literal with the display cut and its escapes decoded
-//!   (step 1), a reference through the string tables. A message with value slots is shown
-//!   with its literal parts and counted ([`ArchiveData::texts_without_values`]): the
-//!   arguments a wire text carries (`official-messages-world.md` §2.6) are decoded but not
-//!   yet given to the renderer as values (follow-up); a mode-2 text shows its second
-//!   authoring string like a literal (§2.6 row 1, `LocalizedTokenText::source`). Each text the session shows is resolved once (the entity feed renders a name at
-//!   the creation only), so the count is one per text shown. A reference whose table DID
+//!   (step 1), a reference through the string tables with the arguments the wire text
+//!   carries (`official-messages-world.md` §2.6) as its values (`wire_values`,
+//!   `string-table.md` §9.0 steps 3–4); a message with a value slot no argument fills is
+//!   shown without that value and counted ([`ArchiveData::texts_without_values`]); a
+//!   mode-2 text shows its second authoring string like a literal (§2.6 row 1,
+//!   `LocalizedTokenText::source`). Each text the session shows is resolved once (the
+//!   entity feed renders a name at the creation only), so the count is one per text
+//!   shown. A reference whose table DID
 //!   lacks the `0x25` prefix is refused before anything is read (§2.6 row 2b,
 //!   `string-table.md` §9.1), and [`InstallData::text_cached`] tells the entity feed which
 //!   tables are decoded already, so it can bound the table reads of one pass;
@@ -44,8 +46,8 @@ use tessera_compat::connector::{
     InstallData, InstallDataLoader, InstallLocator, InstallProblem, LocatedInstall,
 };
 use tessera_compat::world::{
-    EncodedPropertyValue, LocalizedTokenText, LocalizedTokenTextContent, PortalStateSchema,
-    PropertyType, TextSource,
+    EncodedPropertyValue, LocalizedTokenText, LocalizedTokenTextArg, LocalizedTokenTextArgPayload,
+    LocalizedTokenTextContent, PortalStateSchema, PropertyType, TextSource,
 };
 use tessera_dat::{ArchiveSet, SetOptions, inflate_record};
 use tessera_formats::property::{PropertyDictionary, PropertyValue};
@@ -57,8 +59,20 @@ use tessera_formats::script_table::{Node, NodeData, NodeKind, ScriptTable, Scrip
 use tessera_formats::{Did, EnumMapper, Record as _, StringSource};
 use tessera_props::{PROPERTY_DICTIONARY_DID, PropertyRegistry};
 use tessera_text::{
-    CacheLimits, RenderOptions, Strings, TableSource, Values, decode_escapes, is_string_table_did,
+    CacheLimits, DEFAULT_MAX_DEPTH, Diagnostic, Message, Miss, MissReason, RenderOptions, Strings,
+    TableSource, Value, Values, decode_escapes, is_string_table_did, render,
 };
+
+/// Deepest nesting of kind-1 arguments (a text inside a text, `official-messages-world.md`
+/// §2.6) given to the renderer; deeper ones render as absent with a diagnostic, so the
+/// text is not shown (`string-table.md` §9.0 step 4). Engineering choice, spec silent: the
+/// renderer's own nesting limit.
+pub const MAX_ARGUMENT_DEPTH: usize = DEFAULT_MAX_DEPTH;
+
+/// Most kind-1 argument texts looked up in the string tables for one wire text; past it,
+/// the further ones render as absent (the text is not shown), so a hostile text cannot
+/// make one resolve read many tables. Engineering choice, spec silent.
+pub const MAX_ARGUMENT_LOOKUPS: usize = 8;
 
 /// The player-physics script table whose scripts define the `0xCC` state schemas
 /// (`official-messages-world.md` §4.3.1, W3): its script keys are the schema IDs.
@@ -186,6 +200,156 @@ fn lookup_key(token: u32, table: u32) -> Option<(u32, u32)> {
     (token != 0 && is_string_table_did(table)).then_some((token, table))
 }
 
+/// A wire text as the session shows it ([`resolve_wire_text`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedText {
+    /// The display text, `None` when nothing is shown.
+    text: Option<String>,
+    /// The message has a value slot none of the arguments fills.
+    unfilled: bool,
+}
+
+/// Resolves a wire `LocalizedTokenText` through `strings` (`string-table.md` §9.0): mode
+/// 2 and literals as in step 1, a reference rendered in display mode with its arguments as
+/// values ([`wire_values`]).
+fn resolve_wire_text(strings: &Strings, text: &LocalizedTokenText) -> ResolvedText {
+    let shown = |text| ResolvedText {
+        text,
+        unfilled: false,
+    };
+    // Mode 2: the second authoring string, shown like a literal; no table is read
+    // (`official-messages-world.md` §2.6 row 1).
+    if let TextSource::AuthoringSource(source) = text.source() {
+        return shown(shown_literal(source));
+    }
+    let (token, table) = match &text.content {
+        LocalizedTokenTextContent::Literal(s) => return shown(shown_literal(s)),
+        LocalizedTokenTextContent::Reference {
+            token_id,
+            table_did,
+            ..
+        } => match lookup_key(*token_id, *table_did) {
+            Some(key) => key,
+            None => return shown(None),
+        },
+    };
+    let Ok(msg) = strings.message(table, token) else {
+        return shown(None);
+    };
+    let mut lookups = MAX_ARGUMENT_LOOKUPS;
+    let values = wire_values(strings, &text.arguments, &msg, 1, &mut lookups);
+    let unfilled = msg.arg_ids().iter().any(|id| values.get(*id).is_none());
+    let rendered = render(&msg, &values, &RenderOptions::default());
+    // A miss, or an argument text that rendered as absent (too deep, over the budget):
+    // the text fails (`string-table.md` §9.0 step 4). A truncated output is still shown.
+    let failed = rendered.diagnostics.iter().any(|d| {
+        matches!(
+            d,
+            Diagnostic::Miss(_) | Diagnostic::DepthLimit { .. } | Diagnostic::WorkLimit { .. }
+        )
+    });
+    let text = if failed {
+        None
+    } else {
+        let s = rendered.plain_text();
+        (!s.trim().is_empty()).then_some(s)
+    };
+    ResolvedText { text, unfilled }
+}
+
+/// The values of a wire text's `arguments` for `msg` (`string-table.md` §9.0 steps 3–4,
+/// `official-messages-world.md` §2.6): each argument is bound by its entry's key (on the
+/// wire the `var_id`), the last argument of a key wins, and only keys `msg` uses are
+/// built. Kind 1 is the nested text rendered in raw mode ([`nested_value`], at most
+/// [`MAX_ARGUMENT_DEPTH`] deep and [`MAX_ARGUMENT_LOOKUPS`] table lookups per text); kinds
+/// 2 and 3 are the float, kinds 4 to 7 the integer (`i64` two's complement). The decimal
+/// places, format flags and radix of kinds 2, 3, 5 and 7 (§9.4.2–§9.4.3) are not applied:
+/// the renderer prints a number in its plain decimal form (as `string-table.md` §9.4 says
+/// Tessera does without the locale record). An argument without a value (an undefined
+/// kind) fills no slot (§9.0 step 4). `depth` is the level of `msg` (the outermost is 1).
+fn wire_values(
+    strings: &Strings,
+    arguments: &[LocalizedTokenTextArg],
+    msg: &Message,
+    depth: usize,
+    lookups: &mut usize,
+) -> Values {
+    let used: HashSet<u32> = msg.arg_ids().into_iter().collect();
+    let mut values = Values::new();
+    for arg in arguments.iter().rev() {
+        if !used.contains(&arg.key) || values.get(arg.key).is_some() {
+            continue;
+        }
+        let value = match &arg.payload {
+            None => continue,
+            Some(LocalizedTokenTextArgPayload::Nested(text)) => {
+                nested_value(strings, text, depth + 1, lookups)
+            }
+            Some(
+                LocalizedTokenTextArgPayload::Float { value, .. }
+                | LocalizedTokenTextArgPayload::FloatFormatted { value, .. },
+            ) => Value::Float(*value),
+            Some(
+                LocalizedTokenTextArgPayload::Int { value, .. }
+                | LocalizedTokenTextArgPayload::IntFormatted { value, .. },
+            ) => Value::Integer(i64::from_ne_bytes(value.to_ne_bytes())),
+        };
+        values.insert(arg.key, value);
+    }
+    values
+}
+
+/// A kind-1 argument's value (`string-table.md` §9.0 step 4): the nested text in raw mode
+/// (a literal or mode-2 source as it is, tag group kept and escapes not decoded; a
+/// reference as a message with its own argument values). A nested text that fails, is too
+/// deep or over the lookup budget is an absent value with its diagnostic, which makes the
+/// outer text fail (step 4).
+fn nested_value(
+    strings: &Strings,
+    text: &LocalizedTokenText,
+    depth: usize,
+    lookups: &mut usize,
+) -> Value {
+    if depth > MAX_ARGUMENT_DEPTH {
+        return Value::Unresolved(Diagnostic::DepthLimit {
+            limit: MAX_ARGUMENT_DEPTH,
+        });
+    }
+    let (token, table) = match text.source() {
+        TextSource::Literal(s) | TextSource::AuthoringSource(s) => {
+            return Value::Text(s.to_owned());
+        }
+        TextSource::Table {
+            token_id,
+            table_did,
+        } => (token_id, table_did),
+    };
+    // `property-system.md` §4.8: a (table 0, token 0) text is "no text".
+    if token == 0 && table == 0 {
+        return Value::Text(String::new());
+    }
+    if !is_string_table_did(table) {
+        return Value::Unresolved(Diagnostic::Miss(Miss {
+            table,
+            token,
+            reason: MissReason::NotStringTable,
+        }));
+    }
+    let Some(left) = lookups.checked_sub(1) else {
+        return Value::Unresolved(Diagnostic::WorkLimit {
+            limit: MAX_ARGUMENT_LOOKUPS,
+        });
+    };
+    *lookups = left;
+    match strings.message(table, token) {
+        Ok(msg) => {
+            let values = wire_values(strings, &text.arguments, &msg, depth, lookups);
+            Value::message(msg, values)
+        }
+        Err(miss) => Value::Unresolved(Diagnostic::Miss(miss)),
+    }
+}
+
 /// The string tables of the set (its language member serves the `0x25` records).
 struct SetTables {
     set: Arc<ArchiveSet>,
@@ -274,8 +438,8 @@ impl ArchiveData {
         &self.schemas
     }
 
-    /// Texts shown with only their literal parts: messages with value slots, which no
-    /// wire argument can fill yet (`official-messages-world.md` §2.6 OPEN).
+    /// Texts whose message has a value slot that none of the wire text's arguments fills
+    /// (`official-messages-world.md` §2.6): the slot renders as absent.
     #[must_use]
     pub fn texts_without_values(&self) -> u64 {
         self.texts_without_values.load(Ordering::Relaxed)
@@ -349,42 +513,20 @@ impl InstallData for ArchiveData {
 
     /// `string-table.md` §9: a literal is its text in display mode (§9.0 step 1: the
     /// display cut of §7.6, then the escapes of §7.7 decoded); a reference is looked up in
-    /// the selected language's tables and rendered (display mode). A miss, a reference
-    /// whose table DID lacks the `0x25` prefix (refused before any read:
-    /// `official-messages-world.md` §2.6 row 2b, `string-table.md` §9.1), or a text that
-    /// shows nothing (the emptiness test of §9.0 step 2, literals included) is `None`:
-    /// nothing is shown and the caller counts it. A message with value slots renders its
-    /// literal parts ([`ArchiveData::texts_without_values`]).
+    /// the selected language's tables and rendered (display mode) with the wire text's
+    /// arguments as its values (`wire_values`). A miss, a reference whose table DID lacks
+    /// the `0x25` prefix (refused before any read: `official-messages-world.md` §2.6 row
+    /// 2b, `string-table.md` §9.1), an argument text that fails (§9.0 step 4), or a text
+    /// that shows nothing (the emptiness test of §9.0 step 2, literals included) is
+    /// `None`: nothing is shown and the caller counts it. A value slot no argument fills
+    /// renders as absent ([`ArchiveData::texts_without_values`]).
     fn resolve_text(&self, text: &LocalizedTokenText) -> Option<String> {
-        // Mode 2: the second authoring string, shown like a literal; no table is read
-        // (`official-messages-world.md` §2.6 row 1).
-        if let TextSource::AuthoringSource(source) = text.source() {
-            return shown_literal(source);
-        }
-        let (token, table) = match &text.content {
-            LocalizedTokenTextContent::Literal(s) => return shown_literal(s),
-            LocalizedTokenTextContent::Reference {
-                token_id,
-                table_did,
-                ..
-            } => lookup_key(*token_id, *table_did)?,
-        };
-        let msg = self.strings.message(table, token).ok()?;
-        if !msg.slots().is_empty() {
+        let resolved = resolve_wire_text(&self.strings, text);
+        if resolved.unfilled {
             self.texts_without_values.fetch_add(1, Ordering::Relaxed);
-            tracing::debug!(
-                table = format_args!("{table:#010x}"),
-                "official text with value slots shown without its values"
-            );
+            tracing::debug!("official text with a value slot no argument fills");
         }
-        let rendered =
-            self.strings
-                .render_entry(table, token, &Values::new(), &RenderOptions::default());
-        if rendered.miss().is_some() {
-            return None;
-        }
-        let s = rendered.plain_text();
-        (!s.trim().is_empty()).then_some(s)
+        resolved.text
     }
 
     fn template_value(&self, template_did: u32, pid: u32) -> Option<EncodedPropertyValue> {
@@ -1399,5 +1541,208 @@ mod tests {
         c.insert(9_999, None);
         assert_eq!(c.sets.len(), MAX_CACHED_TEMPLATES);
         assert!(c.sets.contains_key(&2));
+    }
+
+    fn vle(out: &mut Vec<u8>, v: u32) {
+        tessera_formats::reader::write_vle(out, v);
+    }
+
+    /// A string table (records.md §3) with one entry per (token, pieces, argument IDs).
+    fn string_table(did: u32, entries: &[(u32, &[&str], &[u32])]) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&did.to_le_bytes());
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.push(0);
+        vle(&mut b, entries.len() as u32);
+        for (token, pieces, args) in entries {
+            b.extend_from_slice(&token.to_le_bytes());
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.extend_from_slice(&(pieces.len() as u32).to_le_bytes());
+            for p in *pieces {
+                let units: Vec<u16> = p.encode_utf16().collect();
+                vle(&mut b, units.len() as u32);
+                for u in units {
+                    b.extend_from_slice(&u.to_le_bytes());
+                }
+            }
+            b.extend_from_slice(&(args.len() as u32).to_le_bytes());
+            for a in *args {
+                b.extend_from_slice(&a.to_le_bytes());
+            }
+            b.push(0);
+        }
+        b
+    }
+
+    const TABLE: u32 = 0x2500_0042;
+    const NAME: u32 = 0x0000_1111;
+    const COUNT: u32 = 0x0000_2222;
+
+    /// Synthetic tables: token 1 "Hail, <NAME>!", token 2 "<COUNT> wolves", token 3
+    /// "the <NAME>", token 4 "Bree".
+    fn strings() -> Strings {
+        let mut source = tessera_text::MemorySource::new();
+        source.insert(
+            TABLE,
+            string_table(
+                TABLE,
+                &[
+                    (1, &["Hail, ", "!"], &[NAME]),
+                    (2, &["", " wolves"], &[COUNT]),
+                    (3, &["the ", ""], &[NAME]),
+                    (4, &["Bree"], &[]),
+                ],
+            ),
+        );
+        Strings::new(source)
+    }
+
+    fn with_args(token: u32, args: Vec<LocalizedTokenTextArg>) -> LocalizedTokenText {
+        let mut t = LocalizedTokenText::reference(token, TABLE);
+        t.arguments = args;
+        t
+    }
+
+    #[test]
+    fn wire_arguments_fill_the_message_as_values() {
+        // `string-table.md` §9.0 steps 3-4, `official-messages-world.md` §2.6: the
+        // arguments of a wire text are its message's values, bound by `var_id`.
+        let strings = strings();
+        let int = LocalizedTokenTextArg::new(COUNT, 4, LocalizedTokenTextArgPayload::int(12));
+        let r = resolve_wire_text(&strings, &with_args(2, vec![int]));
+        assert_eq!(r.text.as_deref(), Some("12 wolves"));
+        assert!(!r.unfilled);
+        // A negative `i64` (two's complement on the wire), kind 7 with format options.
+        let negative = LocalizedTokenTextArg::new(
+            COUNT,
+            7,
+            LocalizedTokenTextArgPayload::IntFormatted {
+                is_32bit: false,
+                value: (-3i64).cast_unsigned(),
+                format_flags: 1,
+                radix: 0xFFFF,
+            },
+        );
+        let r = resolve_wire_text(&strings, &with_args(2, vec![negative]));
+        assert_eq!(r.text.as_deref(), Some("-3 wolves"));
+        // A float (kind 2).
+        let float = LocalizedTokenTextArg::new(
+            COUNT,
+            2,
+            LocalizedTokenTextArgPayload::Float {
+                value: 2.5,
+                decimal_places: 1,
+            },
+        );
+        let r = resolve_wire_text(&strings, &with_args(2, vec![float]));
+        assert_eq!(r.text.as_deref(), Some("2.5 wolves"));
+        // A nested reference (kind 1), itself with an argument.
+        let inner = with_args(
+            3,
+            vec![LocalizedTokenTextArg::new(
+                NAME,
+                1,
+                LocalizedTokenTextArgPayload::Nested(Box::new(LocalizedTokenText::reference(
+                    4, TABLE,
+                ))),
+            )],
+        );
+        let nested = LocalizedTokenTextArg::new(
+            NAME,
+            1,
+            LocalizedTokenTextArgPayload::Nested(Box::new(inner)),
+        );
+        let r = resolve_wire_text(&strings, &with_args(1, vec![nested]));
+        assert_eq!(r.text.as_deref(), Some("Hail, the Bree!"));
+        // A nested literal is kept raw (its tag group too); the display cut of the outer
+        // text then applies.
+        let literal = LocalizedTokenTextArg::new(
+            NAME,
+            1,
+            LocalizedTokenTextArgPayload::Nested(Box::new(LocalizedTokenText::literal("Aldo"))),
+        );
+        let r = resolve_wire_text(&strings, &with_args(1, vec![literal]));
+        assert_eq!(r.text.as_deref(), Some("Hail, Aldo!"));
+        // The last argument of a key wins; arguments the message does not use are ignored.
+        let first = LocalizedTokenTextArg::new(COUNT, 4, LocalizedTokenTextArgPayload::int(1));
+        let last = LocalizedTokenTextArg::new(COUNT, 4, LocalizedTokenTextArgPayload::int(2));
+        let other = LocalizedTokenTextArg::new(0x9999, 4, LocalizedTokenTextArgPayload::int(3));
+        let r = resolve_wire_text(&strings, &with_args(2, vec![first, last, other]));
+        assert_eq!(r.text.as_deref(), Some("2 wolves"));
+    }
+
+    #[test]
+    fn a_slot_without_an_argument_is_counted_and_a_failed_argument_fails_the_text() {
+        let strings = strings();
+        let r = resolve_wire_text(&strings, &with_args(2, Vec::new()));
+        assert!(r.unfilled, "no argument for the slot");
+        assert_eq!(r.text.as_deref(), Some("wolves"));
+        // A nested reference that misses fails the outer text (§9.0 step 4).
+        let missing = LocalizedTokenTextArg::new(
+            NAME,
+            1,
+            LocalizedTokenTextArgPayload::Nested(Box::new(LocalizedTokenText::reference(
+                99, TABLE,
+            ))),
+        );
+        let r = resolve_wire_text(&strings, &with_args(1, vec![missing]));
+        assert_eq!(r.text, None);
+        // So does one whose table DID is no string table (refused unread).
+        let foreign = LocalizedTokenTextArg::new(
+            NAME,
+            1,
+            LocalizedTokenTextArgPayload::Nested(Box::new(LocalizedTokenText::reference(
+                4,
+                0x0700_0029,
+            ))),
+        );
+        assert_eq!(
+            resolve_wire_text(&strings, &with_args(1, vec![foreign])).text,
+            None
+        );
+        // Nesting past the budgets fails the text instead of recursing on.
+        let mut text = LocalizedTokenText::reference(4, TABLE);
+        for _ in 0..=MAX_ARGUMENT_DEPTH {
+            text = with_args(
+                3,
+                vec![LocalizedTokenTextArg::new(
+                    NAME,
+                    1,
+                    LocalizedTokenTextArgPayload::Nested(Box::new(text)),
+                )],
+            );
+        }
+        assert_eq!(resolve_wire_text(&strings, &text).text, None);
+    }
+
+    #[test]
+    fn nested_lookups_per_text_are_bounded() {
+        // A chain of kind-1 references deeper than the lookup budget but within the depth
+        // limit: the lookups past MAX_ARGUMENT_LOOKUPS are absent and fail the text.
+        let strings = strings();
+        let chain = |n: usize| {
+            let mut text = LocalizedTokenText::reference(4, TABLE);
+            for _ in 0..n {
+                text = with_args(
+                    3,
+                    vec![LocalizedTokenTextArg::new(
+                        NAME,
+                        1,
+                        LocalizedTokenTextArgPayload::Nested(Box::new(text)),
+                    )],
+                );
+            }
+            text
+        };
+        const { assert!(MAX_ARGUMENT_LOOKUPS < MAX_ARGUMENT_DEPTH) };
+        assert!(
+            resolve_wire_text(&strings, &chain(MAX_ARGUMENT_LOOKUPS))
+                .text
+                .is_some()
+        );
+        assert_eq!(
+            resolve_wire_text(&strings, &chain(MAX_ARGUMENT_LOOKUPS + 1)).text,
+            None
+        );
     }
 }

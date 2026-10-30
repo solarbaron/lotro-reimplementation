@@ -1307,6 +1307,7 @@ fn oe_t7d_no_plugin_host_before_the_hand_over() {
             // Available: the account form; Back returns to the start screen.
             assert_eq!(flow.screen(), Screen::Form);
             assert_eq!(flow.plugin_host().starts(), 0);
+            dismiss_not_stored(&mut flow, t);
             flow.device_input(&press(Key::Escape, t), &|_, _| None);
             assert_eq!(flow.constructions(), 0);
         } else {
@@ -1813,6 +1814,7 @@ fn official_release_path_shows_the_warning_and_makes_no_network_operation() {
     assert_eq!(flow.constructions(), 0);
     assert_eq!(tessera_compat::net_access::created_count(), before);
     // Back: the start screen, without a backend or a network right.
+    dismiss_not_stored(&mut flow, t);
     flow.device_input(&press(Key::Escape, t), &|_, _| None);
     assert_eq!(flow.screen(), Screen::Start);
     assert_eq!(flow.constructions(), 0);
@@ -4337,4 +4339,17 @@ fn the_official_world_feeds_the_walker_and_the_chat() {
     drop(world);
     f.flow.characters_ended(HandOverEnd::Left);
     assert_eq!(f.flow.screen(), Screen::Form);
+}
+
+/// Windows stores no acceptance record (§5.5): after Accept the `not_stored` notice shows over
+/// the form, and the first Escape closes it. Elsewhere no notice shows.
+fn dismiss_not_stored(flow: &mut Flow, t: Instant) {
+    if cfg!(windows) {
+        assert!(
+            flow.notice().is_some(),
+            "the not-stored notice shows on Windows"
+        );
+        flow.device_input(&press(Key::Escape, t), &|_, _| None);
+    }
+    assert!(flow.notice().is_none());
 }

@@ -171,8 +171,11 @@ impl WorldMaps {
             return self.settle(req, outcome);
         };
         if let Some(f) = self.in_flight.get(&req) {
-            let taken = f.slot.lock().ok().and_then(|mut s| s.take());
+            // The status first: the task writes its slot before it finishes, so a finished
+            // status means the slot is already filled (reading the slot first could miss an
+            // outcome written between the two reads and count a done lookup as failed).
             let status = f.task.status();
+            let taken = f.slot.lock().ok().and_then(|mut s| s.take());
             return match (taken, status) {
                 (Some(outcome), _) => {
                     self.in_flight.remove(&req);

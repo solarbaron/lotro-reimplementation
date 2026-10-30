@@ -20,7 +20,7 @@ use crate::consent::ConsentProof;
 use crate::login::{
     HttpClient, HttpMethod, HttpRequest, HttpResponse, LoginError, MAX_XML_INPUT_BYTES, NotSentKind,
 };
-use crate::session::{MAX_DATAGRAM_BUF, SessionError, UdpDatagramTransport, candidate_bind_ports};
+use crate::session::{BindPlan, BindPorts, MAX_DATAGRAM_BUF, SessionError, UdpDatagramTransport};
 
 /// Network-access values made in this process (tests: OE-T8 (a), OE-T9).
 static CREATED: AtomicU64 = AtomicU64::new(0);
@@ -162,25 +162,19 @@ impl NetworkAccess {
         Revocation(Arc::clone(&self.right.revoked))
     }
 
-    /// Binds a non-blocking IPv4 UDP socket following the port-selection rules of the
-    /// session module ([`candidate_bind_ports`]).
+    /// Binds a non-blocking IPv4 UDP socket at `plan` (`official-session.md` §3.2): its
+    /// address, and the ports of its case ([`BindPorts::candidates`]). Cases A and C try one
+    /// bind; Case B moves to the next candidate only on an address-in-use failure and stops
+    /// after [`crate::session::MAX_UNIQUE_PORT_ATTEMPTS`]. Nothing else is tried.
     ///
     /// # Errors
     ///
-    /// [`SessionError::Io`] if binding or configuring non-blocking mode fails.
-    pub fn bind_udp(
-        &self,
-        local_ip: Ipv4Addr,
-        explicit_base_port: u16,
-        compute_unique: bool,
-    ) -> Result<StdUdpTransport, SessionError> {
+    /// [`SessionError::Io`] if a bind fails (other than address-in-use in Case B) or
+    /// configuring non-blocking mode fails, [`SessionError::LocalPortsExhausted`] when every
+    /// Case B candidate is in use.
+    pub fn bind_udp(&self, plan: BindPlan) -> Result<StdUdpTransport, SessionError> {
         self.right.check()?;
-        StdUdpTransport::bind(
-            local_ip,
-            explicit_base_port,
-            compute_unique,
-            self.right.clone(),
-        )
+        StdUdpTransport::bind(plan, self.right.clone())
     }
 
     /// The HTTP(S) client of the login exchanges (`official-login.md` §3, §4.3, §6.2). It
@@ -231,16 +225,14 @@ impl NetworkAccess {
         }
     }
 
-    /// The local IPv4 address the operating system routes towards `remote`: the first
-    /// non-loopback local address of `official-session.md` §3.2 item 1 without an
-    /// interface list. A UDP socket is bound to `0.0.0.0:0` and connected (a connected UDP
-    /// socket sends nothing); `None` when that fails or gives a loopback or unspecified
-    /// address. The session then binds to that address (Case B of §3.2 needs it); the
-    /// address the system routes towards the server stands for "the first non-loopback
-    /// local address" of §3.2, which names no order (engineering choice, spec silent
-    /// (question with the spec writers)). `Net.BindInterface` and `Net.ComputeUniquePort`
-    /// of `UserPreferences.ini` are not read (the same question): no interface mask is
-    /// applied and the computed port is always tried.
+    /// The local IPv4 address the operating system routes towards `remote`, which stands
+    /// for the first local IPv4 address of `official-session.md` §3.2 item 2 (the seed of
+    /// Case B). A UDP socket is bound to `0.0.0.0:0` and connected (a connected UDP socket
+    /// sends nothing); `None` when that fails or gives a loopback or unspecified address.
+    /// §3.2 enumerates the addresses "in host-resolution order"; the standard library has no
+    /// interface list, so the routed address is used (engineering choice). It only seeds
+    /// the port: the socket binds to the wildcard unless `Net.BindInterface` or the
+    /// `localHost` segment selects an address.
     #[must_use]
     pub fn local_ipv4_toward(&self, remote: SocketAddrV4) -> Option<Ipv4Addr> {
         if !self.right.live() {
@@ -683,28 +675,22 @@ pub struct StdUdpTransport {
 }
 
 impl StdUdpTransport {
-    fn bind(
-        local_ip: Ipv4Addr,
-        explicit_base_port: u16,
-        compute_unique: bool,
-        right: Right,
-    ) -> Result<Self, SessionError> {
-        let ports = candidate_bind_ports(local_ip, explicit_base_port, compute_unique);
+    fn bind(plan: BindPlan, right: Right) -> Result<Self, SessionError> {
+        let retry_in_use = matches!(plan.ports, BindPorts::Unique { .. });
         let mut bound_socket = None;
-        for port in ports {
-            if let Ok(sock) = UdpSocket::bind(SocketAddrV4::new(local_ip, port)) {
-                bound_socket = Some(sock);
-                break;
+        for port in plan.ports.candidates() {
+            match UdpSocket::bind(SocketAddrV4::new(plan.address, port)) {
+                Ok(sock) => {
+                    bound_socket = Some(sock);
+                    break;
+                }
+                // §3.2 Case B: an address in use moves to the next candidate.
+                Err(e) if retry_in_use && e.kind() == std::io::ErrorKind::AddrInUse => {}
+                // Any other failure (and every failure in Cases A and C) ends it.
+                Err(e) => return Err(SessionError::Io(e.to_string())),
             }
         }
-        // Fallback to an ephemeral port on `local_ip`, then INADDR_ANY (0.0.0.0:0).
-        if bound_socket.is_none() {
-            bound_socket = UdpSocket::bind(SocketAddrV4::new(local_ip, 0))
-                .or_else(|_| UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)))
-                .ok();
-        }
-        let socket = bound_socket
-            .ok_or_else(|| SessionError::Io("failed to bind IPv4 UDP socket".to_string()))?;
+        let socket = bound_socket.ok_or(SessionError::LocalPortsExhausted)?;
         socket.set_nonblocking(true)?;
         let local_addr = match socket.local_addr()? {
             SocketAddr::V4(v4) => v4,
@@ -758,6 +744,12 @@ mod tests {
 
     use super::*;
     use crate::consent::{self, UserConfirmation, WarningText};
+
+    /// Loopback, Case C (the system's port): tests never bind elsewhere.
+    const LOOPBACK_EPHEMERAL: BindPlan = BindPlan {
+        address: Ipv4Addr::LOCALHOST,
+        ports: BindPorts::Ephemeral,
+    };
 
     use super::TEST_REVOKE_LOCK as REVOKE;
 
@@ -1279,9 +1271,7 @@ mod tests {
     #[test]
     fn revocation_ends_every_right_made_from_a_value() {
         let (_f, access) = access();
-        let mut udp = access
-            .bind_udp(Ipv4Addr::LOCALHOST, 0, false)
-            .expect("bind");
+        let mut udp = access.bind_udp(LOOPBACK_EPHEMERAL).expect("bind");
         let me = udp.local_addr().expect("addr");
         let mut http = access.login_http_client();
         assert!(access.is_live());
@@ -1289,7 +1279,7 @@ mod tests {
         assert!(!access.is_live());
         assert!(udp.send_to(b"x", me).is_err());
         assert!(udp.recv_from(&mut [0u8; 8]).is_err());
-        assert!(access.bind_udp(Ipv4Addr::LOCALHOST, 0, false).is_err());
+        assert!(access.bind_udp(LOOPBACK_EPHEMERAL).is_err());
         assert!(access.resolve_ipv4("192.0.2.1", 1).is_err());
         assert!(
             access
@@ -1308,10 +1298,10 @@ mod tests {
         let (_f, access) = access();
         let revocation = access.revocation();
         let mut net = LiveNet::new(access);
-        let mut binder = net.chat_binder().expect("binder");
+        let mut binder = net.chat_binder(None).expect("binder");
         let mut background = net.background_http();
         revocation.revoke();
-        assert!(net.bind_udp(Ipv4Addr::LOCALHOST, 0, false).is_err());
+        assert!(net.bind_udp(LOOPBACK_EPHEMERAL).is_err());
         assert!(binder().is_err());
         assert!(net.resolve("192.0.2.1", 1).is_err());
         let req = request(HttpMethod::Get, "http://127.0.0.1:9/", b"");
@@ -1327,12 +1317,12 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp");
         let proof = proof_in(dir.path());
         let old = NetworkAccess::new(&proof).expect("access");
-        let mut udp = old.bind_udp(Ipv4Addr::LOCALHOST, 0, false).expect("bind");
+        let mut udp = old.bind_udp(LOOPBACK_EPHEMERAL).expect("bind");
         let me = udp.local_addr().expect("addr");
         revoke_all();
         assert!(!old.is_live());
         assert!(udp.send_to(b"x", me).is_err());
-        assert!(old.bind_udp(Ipv4Addr::LOCALHOST, 0, false).is_err());
+        assert!(old.bind_udp(LOOPBACK_EPHEMERAL).is_err());
         // A value made afterwards (a new acceptance) is live.
         let new = NetworkAccess::new(&proof).expect("access");
         assert!(new.is_live());

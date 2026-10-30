@@ -18,8 +18,8 @@ use tessera_compat::chat_session::wire::{
     MSG_TYPE_CHAT, U64ToU32Table, read_descriptor_list,
 };
 use tessera_compat::chat_session::{
-    AUTH_TYPE_ACCOUNT, AUTH_TYPE_TICKET, CHAT_RECIPIENT_ID, ChatClient, ChatCodecs, ChatConfig,
-    chat_auth_header, decode_base64, effective_endpoint, parse_endpoint,
+    AUTH_TYPE_CHAT, CHAT_RECIPIENT_ID, ChatClient, ChatCodecs, ChatConfig, chat_auth_header,
+    check_ticket, effective_endpoint, parse_endpoint,
 };
 use tessera_compat::play::PlayError;
 use tessera_compat::session::{
@@ -595,44 +595,36 @@ fn endpoint_fallback_and_parsing() {
 }
 
 #[test]
-fn base64_lengths() {
-    assert_eq!(decode_base64("").expect("empty"), Vec::<u8>::new());
-    assert_eq!(decode_base64("TWFu").expect("Man"), b"Man");
-    assert_eq!(decode_base64("TWE=").expect("Ma"), b"Ma");
-    assert_eq!(decode_base64("TWE").expect("Ma unpadded"), b"Ma");
-    assert_eq!(decode_base64("TQ==").expect("M"), b"M");
-    // "TR==" and "TWF=" carry non-zero pad bits: not canonical (RFC 4648 §3.5).
-    for bad in [
-        "T", "TQ=", "TQ===", "T=Q=", "TW u", "TWE*", "TR==", "TWF=", "TWF",
-    ] {
-        assert_eq!(decode_base64(bad), Err(PlayError::InvalidTicket), "{bad}");
+fn tickets_are_checked_as_text_not_decoded() {
+    // §6.6.2: the ticket travels as its ASCII Base64 text; any printable ASCII passes.
+    for ok in ["TWFu", "TWE", "TR==", "A", &"A".repeat(4095)] {
+        assert_eq!(check_ticket(ok), Ok(()), "{ok}");
     }
-    // A 144-character ticket decodes to 106..=108 bytes depending on padding.
-    let full = "A".repeat(144);
-    assert_eq!(decode_base64(&full).expect("144").len(), 108);
-    let one = format!("{}=", "A".repeat(143));
-    assert_eq!(decode_base64(&one).expect("143+=").len(), 107);
-    let two = format!("{}==", "A".repeat(142));
-    assert_eq!(decode_base64(&two).expect("142+==").len(), 106);
+    for bad in ["", "TW u", "T\tQ", "\u{e9}", &"A".repeat(4096)] {
+        assert_eq!(check_ticket(bad), Err(PlayError::InvalidTicket), "{bad}");
+    }
 }
 
 #[test]
 fn chat_auth_header_modes() {
     let ticket = "AAEC";
     let h = chat_auth_header("acct", Some(ticket), 1000).expect("header");
-    assert_eq!(h.auth_type, AUTH_TYPE_TICKET);
+    // §6.6.2 item 1, `official-session.md` §6.2: `netVersion` "180804", 0x40000002, 0x04.
+    assert_eq!(h.net_version, "180804");
+    assert_eq!(h.auth_type, AUTH_TYPE_CHAT);
     assert_eq!(h.auth_flags, AUTH_FLAG_HAS_EXTRA_BLOB);
     let c = &h.credentials;
     assert_eq!(c.account_or_ticket, "acct");
-    assert_eq!(c.extra_blob.as_deref(), Some(&[0u8, 1, 2][..]));
+    assert_eq!(c.ticket.as_deref(), Some("AAEC"));
     let mut wire = Vec::new();
     h.encode(&mut wire).expect("encode");
-    // blobLen is the decoded length (3), not the Base64 length (4).
-    assert!(wire.windows(7).any(|w| w == [3, 0, 0, 0, 0, 1, 2]));
+    assert_eq!(&wire[..7], &[0x06, b'1', b'8', b'0', b'8', b'0', b'4']);
+    // extraBlobLen 5 = the 1-byte length 4 and the 4 ASCII characters, undecoded.
+    assert!(wire.ends_with(&[5, 0, 0, 0, 4, b'A', b'A', b'E', b'C']));
 
     let h = chat_auth_header("acct", None, 1000).expect("header");
-    assert_eq!((h.auth_type, h.auth_flags), (AUTH_TYPE_ACCOUNT, 0));
-    assert!(chat_auth_header("acct", Some("!!!!"), 0).is_err());
+    assert_eq!((h.auth_type, h.auth_flags), (AUTH_TYPE_CHAT, 0));
+    assert!(chat_auth_header("acct", Some("!! !!"), 0).is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -858,6 +850,14 @@ fn chat_client_end_to_end() {
         .expect("SessionAuth");
     assert_eq!(auth.auth_type, 0x4000_0002);
     assert_eq!(auth.auth_flags, 0x04);
+    // `official-session.md` §6.2: `netVersion` "180804" on the chat connection, and the
+    // ticket's text undecoded.
+    assert_eq!(auth.net_version, "180804");
+    assert_eq!(
+        &auth_dgram[22..29],
+        &[0x06, b'1', b'8', b'0', b'8', b'0', b'4']
+    );
+    assert_eq!(auth.credentials.ticket.as_deref(), Some("AAEC"));
 
     // Handshake, then the login status.
     let mut server = FakeServer::new();
@@ -865,6 +865,14 @@ fn chat_client_end_to_end() {
         .transport_mut()
         .push_inbound(FakeServer::challenge(), SERVER);
     client.poll(1.1, &schema).expect("poll");
+    // §6.4: the chat connection's `ConnectAcceptHeader` carries maxRecvRate 0x00040000.
+    let (accept_dgram, _) = client.transport_mut().pop_outbound().expect("accept");
+    let accept = decode_datagram(&accept_dgram, false, None, true)
+        .expect("decode")
+        .opt_headers
+        .connect_accept
+        .expect("ConnectAcceptHeader");
+    assert_eq!(accept.max_recv_rate, 0x0004_0000);
     let _ = sent_blobs(&mut client);
     assert!(!client.is_ready());
     assert_eq!(

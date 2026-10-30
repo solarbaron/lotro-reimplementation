@@ -58,8 +58,15 @@ pub const DEFAULT_TICKET_LIFETIME_SEC: u32 = 21600;
 /// Standard HTTP request timeout in seconds for GLS and queue requests (§4.3, §5.2).
 pub const DEFAULT_HTTP_TIMEOUT_SEC: u64 = 30;
 
-/// Minimum recommended queue poll interval in seconds (§3.5, §5.2).
+/// Shortest queue poll interval in seconds: the clean-room clamp of §3.5 item 4 and §5.2.
 pub const MIN_QUEUE_POLL_INTERVAL_SEC: u64 = 5;
+
+/// Longest queue poll interval in seconds: the clean-room clamp of §3.5 item 4 and §5.2.
+pub const MAX_QUEUE_POLL_INTERVAL_SEC: u64 = 120;
+
+/// Queue poll interval in seconds when `WorldQueue.LoginQueue.RefreshSeconds` is absent
+/// (§3.2, §3.5 item 4, §5.2).
+pub const DEFAULT_QUEUE_POLL_INTERVAL_SEC: u64 = 20;
 
 /// Maximum `RefreshTicket` attempts per ticket lifetime (§4.3, §5.2).
 pub const MAX_REFRESH_ATTEMPTS: u32 = 3;
@@ -1330,10 +1337,84 @@ pub fn select_language_from_list(
     Ok(installed.first().cloned().unwrap_or_default())
 }
 
+/// The `[Net]` keys of `UserPreferences.ini` that the primary login/world transport reads
+/// (`official-session.md` §3.2 item 1), with their defaults when absent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetPreferences {
+    /// `Net.BindInterface` (default `""`): the local interface address to bind.
+    pub bind_interface: String,
+    /// `Net.UserSpecifiedPort` (default `0`): an explicit local UDP port (§3.2 Case A).
+    pub user_specified_port: u16,
+    /// `Net.ComputeUniquePort` (default `true`): compute the Case B port.
+    pub compute_unique_port: bool,
+    /// `Net.ConnectionSpeed` in kbps (default `0.00`): the primary connection's
+    /// `ConnectAcceptHeader.maxRecvRate` is `floor(value × 102.4)` when positive (§6.4).
+    pub connection_speed_kbps: f64,
+}
+
+impl Default for NetPreferences {
+    fn default() -> Self {
+        Self {
+            bind_interface: String::new(),
+            user_specified_port: 0,
+            compute_unique_port: true,
+            connection_speed_kbps: 0.0,
+        }
+    }
+}
+
+impl NetPreferences {
+    /// Applies one `[Net]` entry. A value that does not parse keeps the default
+    /// (engineering choice, spec silent): a port outside `0..=65535`, a boolean other than
+    /// `0`, `1`, `true` or `false` (any case), a speed that is not a finite number `>= 0`.
+    fn apply(&mut self, key: &str, val: &str) {
+        if key.eq_ignore_ascii_case("BindInterface") {
+            val.clone_into(&mut self.bind_interface);
+        } else if key.eq_ignore_ascii_case("UserSpecifiedPort") {
+            if let Ok(port) = val.parse::<u16>() {
+                self.user_specified_port = port;
+            }
+        } else if key.eq_ignore_ascii_case("ComputeUniquePort") {
+            if val == "1" || val.eq_ignore_ascii_case("true") {
+                self.compute_unique_port = true;
+            } else if val == "0" || val.eq_ignore_ascii_case("false") {
+                self.compute_unique_port = false;
+            }
+        } else if key.eq_ignore_ascii_case("ConnectionSpeed")
+            && let Ok(speed) = val.parse::<f64>()
+            && speed.is_finite()
+            && speed >= 0.0
+        {
+            self.connection_speed_kbps = speed;
+        }
+    }
+
+    /// The local address `Net.BindInterface` selects (§3.2 item 2), or `None` for the
+    /// wildcard. Tessera reads the value as an IPv4 address literal; an empty value is the
+    /// wildcard, and any other form (a name, an address with a mask) is not understood and
+    /// also gives the wildcard (engineering choice: §3.2 says the first local address
+    /// "matching the configured address and mask" is bound but gives no format).
+    #[must_use]
+    pub fn bind_address(&self) -> Option<std::net::Ipv4Addr> {
+        let text = self.bind_interface.trim();
+        if text.is_empty() {
+            return None;
+        }
+        match text.parse::<std::net::Ipv4Addr>() {
+            Ok(ip) if !ip.is_unspecified() => Some(ip),
+            Ok(_) => None,
+            Err(_) => {
+                tracing::debug!("Net.BindInterface is not an IPv4 address; the wildcard is bound");
+                None
+            }
+        }
+    }
+}
+
 /// Optional user preferences parsed from `UserPreferences64.ini`,
 /// `UserPreferences_x64.ini`, or `UserPreferences.ini`
 /// (`docs/specs/official-login.md` §2.3).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct UserPreferences {
     /// `GameClientType` selector under `[Launcher]` (`1` = 32-bit, `2` = 32-bit legacy, `3` = 64-bit).
     pub game_client_type: Option<u32>,
@@ -1341,6 +1422,8 @@ pub struct UserPreferences {
     pub last_locale: Option<String>,
     /// `LastWorld` display name under `[General]` (§2.3).
     pub last_world: Option<String>,
+    /// The `[Net]` keys of the transport (`official-session.md` §3.2).
+    pub net: NetPreferences,
 }
 
 impl UserPreferences {
@@ -1396,6 +1479,7 @@ impl UserPreferences {
             Other,
             Launcher,
             General,
+            Net,
         }
 
         let text = decode_utf8_strip_bom(bytes, LoginFailureClass::F02ConfigInvalid)?;
@@ -1419,6 +1503,8 @@ impl UserPreferences {
                     IniSection::Launcher
                 } else if sec_trimmed.eq_ignore_ascii_case("General") {
                     IniSection::General
+                } else if sec_trimmed.eq_ignore_ascii_case("Net") {
+                    IniSection::Net
                 } else {
                     IniSection::Other
                 };
@@ -1440,6 +1526,7 @@ impl UserPreferences {
                             prefs.last_world = Some(val.to_owned());
                         }
                     }
+                    IniSection::Net => prefs.net.apply(key, val),
                     IniSection::Other => {}
                 }
             }
@@ -1607,9 +1694,10 @@ pub fn extract_didver_from_dat_file(dat_path: &Path) -> Result<(String, u32), Lo
 // ============================================================================
 
 /// Maximum byte length of a client network version string accepted by
-/// [`is_valid_network_version`]: `1` to `24` printable ASCII characters
-/// (`official-login.md` §2.4.1 steps 1 and 2).
-pub const MAX_NETWORK_VERSION_LEN: usize = 24;
+/// [`is_valid_network_version`]: `1` to `64` printable ASCII characters, the clean-room
+/// input bound of `official-login.md` §2.4.1 steps 1 and 2 (the client itself imposes no
+/// 24-character limit).
+pub const MAX_NETWORK_VERSION_LEN: usize = 64;
 
 /// The `StringFileInfo` keys read from the version resource when the caller names none, in
 /// order: the spelling found in the client's resource (without the second `i`) and the
@@ -2886,8 +2974,12 @@ pub struct RemoteLauncherConfig {
     pub take_a_number_parameters: String,
     /// Optional format template for `LeaveQueue` POST body (`WorldQueue.LeaveQueue.Parameters`).
     pub leave_queue_parameters: Option<String>,
-    /// Optional nominal queue poll interval in seconds (`WorldQueue.PollTimer`).
+    /// Optional legacy queue poll interval in seconds (`WorldQueue.PollTimer`; kept, not used
+    /// for the poll, §3.2).
     pub poll_timer_sec: Option<u64>,
+    /// Optional queue poll interval in seconds (`WorldQueue.LoginQueue.RefreshSeconds`,
+    /// §3.2, §3.5); [`Self::queue_poll_interval_sec`] applies the default and the clamp.
+    pub login_queue_refresh_sec: Option<u64>,
     /// Optional newsfeed URL template (`URL.NewsFeed`).
     pub news_feed_url: Option<String>,
     /// Optional alerts URL template (`URL.Alerts`).
@@ -2954,6 +3046,8 @@ impl RemoteLauncherConfig {
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(DEFAULT_TICKET_LIFETIME_SEC);
         let poll_timer_sec = get_opt("WorldQueue.PollTimer").and_then(|s| s.parse::<u64>().ok());
+        let login_queue_refresh_sec =
+            get_opt("WorldQueue.LoginQueue.RefreshSeconds").and_then(|s| s.parse::<u64>().ok());
 
         Ok(Self {
             win64_filename: get_opt("GameClient.WIN64.Filename").map(|s| normalize_rel_path(&s)),
@@ -2975,10 +3069,22 @@ impl RemoteLauncherConfig {
             take_a_number_parameters,
             leave_queue_parameters: get_opt("WorldQueue.LeaveQueue.Parameters"),
             poll_timer_sec,
+            login_queue_refresh_sec,
             news_feed_url: get_opt("URL.NewsFeed"),
             alerts_url: get_opt("URL.Alerts"),
             raw_settings,
         })
+    }
+
+    /// The wait between two `TakeANumber` polls in seconds (§3.5 item 4, §5.2):
+    /// `WorldQueue.LoginQueue.RefreshSeconds`, [`DEFAULT_QUEUE_POLL_INTERVAL_SEC`] when absent
+    /// or not a number, clamped to [`MIN_QUEUE_POLL_INTERVAL_SEC`]..=
+    /// [`MAX_QUEUE_POLL_INTERVAL_SEC`]. The legacy `WorldQueue.PollTimer` is not used.
+    #[must_use]
+    pub fn queue_poll_interval_sec(&self) -> u64 {
+        self.login_queue_refresh_sec
+            .unwrap_or(DEFAULT_QUEUE_POLL_INTERVAL_SEC)
+            .clamp(MIN_QUEUE_POLL_INTERVAL_SEC, MAX_QUEUE_POLL_INTERVAL_SEC)
     }
 
     /// Resolves the effective `--authserverurl` (`GameClient.Arg.authserverurl`
@@ -4322,7 +4428,9 @@ pub struct SessionHandoff {
     /// Target UDP login server `host:port` from the first non-empty entry of
     /// `<Status>/<loginservers>` (§3.3, invariant `I3`).
     pub login_server: String,
-    /// Optional local UDP port to bind (`--outport`; `0` = OS ephemeral port).
+    /// Optional local UDP port to bind (`--outport`): non-zero overrides
+    /// `Net.UserSpecifiedPort` (`official-session.md` §3.2 Case A); `0` names none, so the
+    /// preference, the computed Case B port or the system's port is used.
     pub local_bind_port: u16,
     /// Selected `GameSubscription/Name` string (`-a` / `--account`, invariant `I5`).
     subscription_name: String,
@@ -4414,26 +4522,39 @@ impl SessionHandoff {
         LoginHost::parse(&self.login_server)
     }
 
-    /// Builds the `SessionAuthHeader` (`0x00010000`) of the login connection by the
-    /// `authType` selection rule (§4.2.1; `official-session.md` §6.2.1): the ticket is present,
-    /// so `authType = 0x40000002` and `extraBlob` holds the Base64-decoded ticket, whose
-    /// decoded byte count is `blobLen`.
+    /// Builds the `SessionAuthHeader` (`0x00010000`) of the primary login/world connection
+    /// by the selection rule (§4.2.1; `official-session.md` §6.2–§6.2.1): `netVersion` is
+    /// `"180804_"` followed by [`VersionInfo::version_string`], `authType = 0x00000001`, and,
+    /// the ticket being present, `authFlags = 0x04` with the ticket's raw ASCII Base64 text
+    /// (never decoded) in `extraBlob`. The hand-off carries no password, so `secondStr` is
+    /// never sent.
     ///
     /// # Errors
     ///
     /// Returns [`LoginError::TicketInaccessible`] (`F09_TICKET_INACCESSIBLE`) if the ticket is
-    /// not valid Base64.
+    /// not a printable ASCII string ([`crate::session::check_ticket_text`]), or
+    /// [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if the version string does not fit
+    /// `netVersion`.
     pub fn session_auth_header(
         &self,
         client_timestamp: u32,
     ) -> Result<crate::session::SessionAuthHeader, LoginError> {
-        crate::session::SessionAuthHeader::for_login(
+        use crate::session::{AuthConnection, SessionAuthHeader, SessionError};
+        SessionAuthHeader::for_connection(
+            AuthConnection::Primary,
+            &self.version_info.version_string(),
             &self.subscription_name,
             Some(&self.gls_ticket),
+            None,
             client_timestamp,
         )
-        .map_err(|_| LoginError::TicketInaccessible {
-            reason: "the GLS ticket is not valid Base64".to_owned(),
+        .map_err(|e| match e {
+            SessionError::InvalidSessionAuthVersion => LoginError::ConfigInvalid {
+                reason: "the client version string does not fit SessionAuthHeader".to_owned(),
+            },
+            _ => LoginError::TicketInaccessible {
+                reason: "the GLS ticket is not a printable ASCII string".to_owned(),
+            },
         })
     }
 

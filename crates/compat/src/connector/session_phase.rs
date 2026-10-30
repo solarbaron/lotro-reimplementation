@@ -136,8 +136,8 @@ use tessera_net::{
 use crate::chat_session::state::INITIAL_CONNECT_POLICY;
 use crate::chat_session::{ChatClient, ChatCodecs, ChatConfig};
 use crate::login::{
-    HttpResponse, LoginError, RefreshOutcome, SessionHandoff, TicketRefresher, VersionInfo,
-    zeroize_vec,
+    HttpResponse, LoginError, NetPreferences, RefreshOutcome, SessionHandoff, TicketRefresher,
+    VersionInfo, zeroize_vec,
 };
 use crate::play::adapter::{
     PlayAdapter, PlayCounters, PlaySignal, placement_location, position_location, velocity_or_zero,
@@ -147,11 +147,12 @@ use crate::play::inbound::{PlayMessage, decode_play_message};
 use crate::play::movement::{MovementInput, PredictedState};
 use crate::play::{OutgoingEvent, clean_display_name};
 use crate::session::{
-    ClientVersionMessage, ConnectionState, ControlMessage, DEFAULT_MAX_CONTAINER_DEPTH,
-    DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, DisconnectReason as LinkEnd, MAX_DATAGRAM_BUF,
-    MAX_LOCAL_REC_ID, MIN_DATAGRAM_BYTES, MIN_LOCAL_REC_ID, OPCODE_CLIENT_VERSION,
-    OPCODE_LOGIN_QUEUE_STATUS, SendChecksumRule, SessionError, SessionEvent, SessionMultiplexer,
-    UdpDatagramTransport, dispatch_message,
+    BindPlan, BindPorts, ClientVersionMessage, ConnectionState, ControlMessage,
+    DEFAULT_MAX_CONTAINER_DEPTH, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
+    DisconnectReason as LinkEnd, LogonOutcome, MAX_DATAGRAM_BUF, MAX_LOCAL_REC_ID,
+    MIN_DATAGRAM_BYTES, MIN_LOCAL_REC_ID, OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS,
+    SendChecksumRule, SessionError, SessionEvent, SessionMultiplexer, UdpDatagramTransport,
+    dispatch_message, max_recv_rate_for_speed,
 };
 use crate::world::{
     AccountEvictionNotice, CharacterEnterWorldRequest, CharacterListResponse,
@@ -171,11 +172,74 @@ use super::entities::{
 use super::login_phase::PlainSteps;
 use super::net::{ConnectorNet, SendHttpClient};
 
-/// Delivery queue of every message the client sends on the login and world connections.
-/// Engineering choice, spec silent (question with the spec writers; `official-session.md`
-/// §5.6.2 names the queues, not which message uses which): queue 2 (`ReliableOrdered`), as
-/// the chat client does.
-pub const SEND_QUEUE: u8 = 2;
+/// `0x0000019E` (`ClientPlatformIdMessage`, `official-session.md` §5.6.2).
+pub const OPCODE_CLIENT_PLATFORM_ID: u32 = 0x0000_019E;
+/// `0x0000006F` (`CharacterSelectMessage`, §5.6.2).
+pub const OPCODE_CHARACTER_SELECT: u32 = 0x0000_006F;
+/// `0x00000024` (`LocalMovementStep`, §5.6.2; `official-messages-play.md` §4.2).
+pub const OPCODE_MOVEMENT_STEP: u32 = 0x0000_0024;
+/// `0x000000F4` (`portal_ready_ack`, §5.6.2; `official-messages-play.md` §4.5).
+pub const OPCODE_PORTAL_READY_ACK: u32 = 0x0000_00F4;
+/// `0x00000030` (`entity_method_call`, §5.6.2).
+pub const OPCODE_ENTITY_METHOD_CALL: u32 = 0x0000_0030;
+
+/// Queue `1`, `Unreliable` (`official-session.md` §5.6.2).
+pub const QUEUE_UNRELIABLE: u8 = 1;
+/// Queue `3`, `Sequenced` (§5.6.2).
+pub const QUEUE_SEQUENCED: u8 = 3;
+/// Queue `4`, `ReliableUnordered` (§5.6.2).
+pub const QUEUE_RELIABLE_UNORDERED: u8 = 4;
+
+/// The delivery queue and sequence group of a message the client sends on the login or
+/// world connection, by the client outbound table of `official-session.md` §5.6.2:
+///
+/// | Opcode | Queue | `seqGroup` |
+/// |---|---|---|
+/// | `0x12C` | 4 | — |
+/// | `0x19E`, `0x6F` | 3 | `0x13` |
+/// | `0x24` | 1, or 3 when discrete ([`movement_is_discrete`]) | `0x05` on queue 3 |
+/// | `0xF4` | 3 | `0x05` |
+/// | `0x30` | 3 | `0x0A` |
+/// | `0x28` | 3 | `0x04` |
+/// | `0x5F` | 3 | `0x08` |
+/// | `0xC9` | 3 | `0x0E` |
+///
+/// `payload` is the inner payload (`base_flags` at offset `0`), read only for `0x24`. An
+/// opcode the table does not list goes on queue 4 with group `0` (engineering choice, spec
+/// silent: reliable, with no sequence-group semantics; the spec lists no other client
+/// opcode).
+#[must_use]
+pub fn outbound_queue(opcode: u32, payload: &[u8]) -> (u8, u16) {
+    match opcode {
+        OPCODE_CLIENT_VERSION => (QUEUE_RELIABLE_UNORDERED, 0),
+        OPCODE_CLIENT_PLATFORM_ID | OPCODE_CHARACTER_SELECT => (QUEUE_SEQUENCED, 0x13),
+        OPCODE_MOVEMENT_STEP if !movement_is_discrete(payload) => (QUEUE_UNRELIABLE, 0),
+        OPCODE_MOVEMENT_STEP | OPCODE_PORTAL_READY_ACK => (QUEUE_SEQUENCED, 0x05),
+        OPCODE_ENTITY_METHOD_CALL => (QUEUE_SEQUENCED, 0x0A),
+        0x0000_0028 => (QUEUE_SEQUENCED, 0x04),
+        0x0000_005F => (QUEUE_SEQUENCED, 0x08),
+        0x0000_00C9 => (QUEUE_SEQUENCED, 0x0E),
+        _ => (QUEUE_RELIABLE_UNORDERED, 0),
+    }
+}
+
+/// Whether a `0x24` inner payload carries a discrete movement action or state change, which
+/// goes on queue 3 (`official-messages-play.md` §4.2; `official-session.md` §5.6.2), rather
+/// than continuous movement alone (queue 1). Tessera's reading (engineering choice: the
+/// spec does not define "discrete"): a slot with queued actions or properties
+/// (`slot_flags` bits `0x01`, `0x10` at `+0x12..+0x15`), or a newest step whose
+/// `move_state` (`+0x11`) or jump and walk flags (`0x02`, `0x40`) differ from the step
+/// before it (`+0x10`, `+0x14`). A payload too short to read counts as discrete.
+#[must_use]
+pub fn movement_is_discrete(payload: &[u8]) -> bool {
+    let (Some(states), Some(flags)) = (payload.get(0x0E..0x12), payload.get(0x12..0x16)) else {
+        return true;
+    };
+    let queued = flags.iter().any(|f| f & 0x11 != 0);
+    let changed = states.get(2) != states.get(3)
+        || flags.get(2).map(|f| f & 0x42) != flags.get(3).map(|f| f & 0x42);
+    queued || changed
+}
 
 /// Most datagrams read per step.
 pub const MAX_DATAGRAMS_PER_STEP: usize = 512;
@@ -332,11 +396,13 @@ impl std::fmt::Debug for Link {
 
 impl Link {
     /// A connection to `peer` (of the address form `remote`) whose datagrams use the send
-    /// checksum `rule`.
+    /// checksum `rule` and whose `ConnectAcceptHeader` carries `max_recv_rate`
+    /// (`official-session.md` §6.4).
     fn new(
         peer: SocketAddrV4,
         uuids: &[[u8; 16]],
         rule: SendChecksumRule,
+        max_recv_rate: u32,
         auth: AuthMode,
         remote: (RemoteForm, RemoteName),
         now: f64,
@@ -348,6 +414,7 @@ impl Link {
                 c.register_codec_uuid(*u);
             }
             c.set_send_checksum_rule(rule);
+            c.set_max_recv_rate(max_recv_rate);
         }
         Ok(Self {
             mux,
@@ -376,6 +443,14 @@ impl Link {
 
     fn state(&self) -> Option<ConnectionState> {
         self.mux.connection(self.conn).map(|c| c.state())
+    }
+
+    /// The connection's recipient ID, once its server's challenge assigned one (§3.4).
+    fn rec_id(&self) -> Option<u16> {
+        self.mux
+            .connection(self.conn)
+            .map(|c| c.local_rec_id())
+            .filter(|&id| id != 0)
     }
 
     fn live(&self) -> bool {
@@ -527,6 +602,10 @@ pub struct SessionStart {
     /// §4.4.2; [`super::diag`] "The send checksum switch"); the default is the spec's
     /// sender rule.
     pub send_checksum: SendChecksumRule,
+    /// The `[Net]` keys of `UserPreferences.ini` (`official-session.md` §3.2 item 1): the
+    /// bind address, the port case and the `maxRecvRate` of the login and world
+    /// connections.
+    pub net: NetPreferences,
 }
 
 /// Why the session could not start (before any datagram was sent).
@@ -649,6 +728,10 @@ pub struct SessionDriver<N: ConnectorNet> {
     send_checksum: SendChecksumRule,
     bind: BindCase,
     local_source: LocalSource,
+    /// The first local IPv4 address (the Case B seed, §3.2), for the chat transport too.
+    first_local: Option<std::net::Ipv4Addr>,
+    /// The `maxRecvRate` of the login and world connections (§6.4).
+    max_recv_rate: u32,
 }
 
 impl<N: ConnectorNet> std::fmt::Debug for SessionDriver<N> {
@@ -774,28 +857,36 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if stop() {
             return Err(StartFailure::Cancelled);
         }
-        // The local address: the two-colon `-h` form's `localHost`, else the address the
-        // system routes towards the server (`NetworkAccess::local_ipv4_toward` says why),
-        // else `0.0.0.0`.
-        let from_host: Option<std::net::Ipv4Addr> =
-            host.local_host.as_deref().and_then(|h| h.parse().ok());
-        let (local_ip, local_source) = match from_host {
-            Some(ip) => (ip, LocalSource::HostSegment),
-            None => match net.local_ipv4_toward(peer) {
-                Some(ip) => (ip, LocalSource::Routed),
-                None => (std::net::Ipv4Addr::UNSPECIFIED, LocalSource::Unspecified),
-            },
+        // §3.2 item 2: the wildcard address unless the two-colon `-h` form's `localHost`
+        // (which overrides) or `Net.BindInterface` selects one. A `localHost` that is not
+        // an IPv4 literal selects nothing (engineering choice).
+        let from_host: Option<std::net::Ipv4Addr> = host
+            .local_host
+            .as_deref()
+            .and_then(|h| h.parse().ok())
+            .filter(|ip: &std::net::Ipv4Addr| !ip.is_unspecified());
+        let (address, local_source) = match (from_host, start.net.bind_address()) {
+            (Some(ip), _) => (ip, LocalSource::HostSegment),
+            (None, Some(ip)) => (ip, LocalSource::BindInterface),
+            (None, None) => (std::net::Ipv4Addr::UNSPECIFIED, LocalSource::Wildcard),
         };
+        // The first local IPv4 address seeds Case B (`NetworkAccess::local_ipv4_toward`
+        // says which address stands for it).
+        let first_local = net.local_ipv4_toward(peer);
         if stop() {
             return Err(StartFailure::Cancelled);
         }
-        let base_port = start.handoff.local_bind_port;
+        // §3.2 item 3: a non-zero `--outport` overrides `Net.UserSpecifiedPort`.
+        let explicit_port = match start.handoff.local_bind_port {
+            0 => start.net.user_specified_port,
+            port => port,
+        };
+        let ports = BindPorts::select(explicit_port, start.net.compute_unique_port, first_local);
         let transport = net
-            .bind_udp(local_ip, base_port, true)
+            .bind_udp(BindPlan { address, ports })
             .map_err(|_| StartFailure::Bind)?;
-        let bind = transport.local_addr().map_or(BindCase::Unknown, |b| {
-            BindCase::of(local_ip, base_port, true, b)
-        });
+        let bind = BindCase::of(&ports);
+        let max_recv_rate = max_recv_rate_for_speed(start.net.connection_speed_kbps);
         let remote = (
             RemoteForm::of_host(host.local_host.is_some(), host.port.is_some()),
             RemoteName::of_host(&host.remote_host),
@@ -810,6 +901,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             peer,
             &start.codec_uuids,
             start.send_checksum,
+            max_recv_rate,
             mode,
             remote,
             now,
@@ -864,6 +956,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             send_checksum: start.send_checksum,
             bind,
             local_source,
+            first_local,
+            max_recv_rate,
         };
         if stop() {
             return Err(StartFailure::Cancelled);
@@ -947,10 +1041,21 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.refreshing.is_some()
     }
 
-    /// The local recipient IDs of the login and world connections (tests).
+    /// The local recipient IDs of the login and world connections, `0` before a challenge
+    /// assigned one (tests).
     #[must_use]
     pub fn connection_ids(&self) -> (u16, Option<u16>) {
-        (self.login.conn, self.world.as_ref().map(|w| w.conn))
+        (
+            self.login.rec_id().unwrap_or(0),
+            self.world.as_ref().map(|w| w.rec_id().unwrap_or(0)),
+        )
+    }
+
+    /// The first local IPv4 address (`official-session.md` §3.2 item 2), the Case B seed of
+    /// the chat transport's socket too ([`ConnectorNet::chat_binder`]).
+    #[must_use]
+    pub fn first_local_ipv4(&self) -> Option<std::net::Ipv4Addr> {
+        self.first_local
     }
 
     /// The states of the login and world connections (tests).
@@ -1139,10 +1244,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let in_range = rec_id.filter(|id| (MIN_LOCAL_REC_ID..=MAX_LOCAL_REC_ID).contains(id));
         if let Some(id) = in_range {
             // Step 2: the connection with that ID, from its own server's address.
-            if let Some((i, _)) = candidates().find(|(_, l)| l.conn == id && l.peer == src) {
+            if let Some((i, _)) =
+                candidates().find(|(_, l)| l.rec_id() == Some(id) && l.peer == src)
+            {
                 return Route::Link(i);
             }
-            let named = candidates().any(|(_, l)| l.conn == id);
+            let named = candidates().any(|(_, l)| l.rec_id() == Some(id));
             let unassigned = candidates().any(|(_, l)| l.peer == src && l.awaiting_challenge());
             if named && !unassigned {
                 return Route::AddressMismatch;
@@ -1482,6 +1589,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             addr,
             &self.codec_uuids,
             self.send_checksum,
+            self.max_recv_rate,
             AuthMode::Referral,
             (form, RemoteName::FromReferral),
             now,
@@ -1557,19 +1665,42 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     self.refuse(LoginRefusal::ClientNotAccepted);
                 }
             }
-            ControlMessage::LoginQueueStatus(q) => {
-                if self.stage == Stage::Login {
-                    // `logonResult`'s values are not in the spec; the position and total
-                    // are shown when non-zero. Engineering choice, spec silent (question
-                    // with the spec writers).
+            ControlMessage::LoginQueueStatus(q) => match q.outcome() {
+                // §9.3: queued; the position and total are shown when non-zero.
+                LogonOutcome::Queued(at) if self.stage == Stage::Login => {
                     self.events
                         .push_back(Event::Account(AccountEvent::LoginQueueChanged {
-                            position: (q.queue_position > 0).then_some(q.queue_position),
-                            length: (q.queue_total > 0).then_some(q.queue_total),
+                            position: (at.position > 0).then_some(at.position),
+                            length: (at.total > 0).then_some(at.total),
                             wait_seconds: None,
                         }));
                 }
-            }
+                // §9.3: accepted; the character list follows. The progress screen leaves
+                // the queue (engineering choice).
+                LogonOutcome::Accepted if self.stage == Stage::Login => {
+                    self.events
+                        .push_back(Event::Account(AccountEvent::LoginProgress {
+                            stage: LoginStage::JoiningWorld,
+                        }));
+                }
+                // §9.3: any other negative `logonResult` refuses the logon and ends the
+                // session.
+                LogonOutcome::Refused(code) => {
+                    tracing::info!(
+                        logon_result = format_args!("{code:#010x}"),
+                        "official session: the service refused the logon"
+                    );
+                    self.refuse(LoginRefusal::AccountNotAllowed);
+                }
+                LogonOutcome::Unknown(code) => {
+                    self.counters.unhandled += 1;
+                    tracing::debug!(
+                        logon_result = format_args!("{code:#010x}"),
+                        "official session: logon result with no meaning in the spec ignored"
+                    );
+                }
+                LogonOutcome::Queued(_) | LogonOutcome::Accepted => {}
+            },
             ControlMessage::SystemNotification(n) => {
                 self.events.push_back(Event::ServerNotice {
                     level: NoticeLevel::Info,
@@ -2041,11 +2172,21 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    fn send_on(link: &mut Link, codecs: &ChatCodecs, opcode: u32, env: &[u8], now: f64) -> bool {
+    /// Queues the envelope `env` of `opcode` (inner payload `payload`) on `link`, on the
+    /// queue and sequence group of [`outbound_queue`].
+    fn send_on(
+        link: &mut Link,
+        codecs: &ChatCodecs,
+        opcode: u32,
+        payload: &[u8],
+        env: &[u8],
+        now: f64,
+    ) -> bool {
         let Some(c) = link.mux.connection_mut(link.conn) else {
             return false;
         };
-        match c.send_blob(SEND_QUEUE, 0, opcode, env, now, codecs.outgoing.as_deref()) {
+        let (queue, group) = outbound_queue(opcode, payload);
+        match c.send_blob(queue, group, opcode, env, now, codecs.outgoing.as_deref()) {
             Ok(_) => true,
             Err(e) => {
                 tracing::debug!(opcode, error = %e, "official session: message not queued");
@@ -2063,7 +2204,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let opcode = CharacterEnterWorldRequest::EVENT_ID;
         match self.world.as_mut() {
             Some(w) if self.list_on_world => {
-                let ok = Self::send_on(w, &self.codecs, opcode, env, now);
+                let ok = Self::send_on(w, &self.codecs, opcode, &[], env, now);
                 if !ok {
                     self.counters.send_failures += 1;
                 }
@@ -2074,7 +2215,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     fn send_on_login(&mut self, opcode: u32, env: &[u8], now: f64) -> bool {
-        let ok = Self::send_on(&mut self.login, &self.codecs, opcode, env, now);
+        // Only `0x24`'s queue depends on its payload (`outbound_queue`); this path never
+        // carries one.
+        let ok = Self::send_on(&mut self.login, &self.codecs, opcode, &[], env, now);
         if !ok {
             self.counters.send_failures += 1;
         }
@@ -2086,8 +2229,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             let (opcode, payload) = ev.into_parts();
             let env = encode_event_envelope(&payload);
             let ok = match &mut self.world {
-                Some(w) => Self::send_on(w, &self.codecs, opcode, &env, now),
-                None => Self::send_on(&mut self.login, &self.codecs, opcode, &env, now),
+                Some(w) => Self::send_on(w, &self.codecs, opcode, &payload, &env, now),
+                None => Self::send_on(&mut self.login, &self.codecs, opcode, &payload, &env, now),
             };
             if !ok {
                 self.counters.send_failures += 1;
@@ -2525,7 +2668,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             Some(self.handoff.gls_ticket().to_owned()),
             self.client_timestamp,
         )
-        .with_send_checksum(self.send_checksum);
+        .with_send_checksum(self.send_checksum)
+        .with_first_local(self.first_local);
         let mut binder = binder;
         let allowance = Arc::clone(&self.chat_allowance);
         let metered: crate::chat_session::client::TransportBinder<Metered<N::Udp>> =

@@ -8,11 +8,24 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use tessera_compat::connector::worker::{LOOP_WAIT_MAX, LOOP_WAIT_MIN, loop_wait};
 use tessera_compat::session::{
-    BLOB_REASSEMBLY_EXPIRY_SEC, BlobFragment, CLOSING_CLEANUP_SEC, ConnectChallengeHeader,
-    ConnectionState, DISCONNECT_FLUSH_LIMIT_SEC, DISCONNECT_SENT_LIMIT_SEC, DatagramHeader,
-    EXTENDED_SILENCE_TIMEOUT_SEC, IsaacCipher, OptionalHeaders, SessionAuthHeader, SessionEvent,
-    SessionMultiplexer, WireCodecs, encode_datagram, split_blob,
+    AuthConnection, BLOB_REASSEMBLY_EXPIRY_SEC, BlobFragment, CLOSING_CLEANUP_SEC,
+    ConnectChallengeHeader, ConnectionState, DISCONNECT_FLUSH_LIMIT_SEC, DISCONNECT_SENT_LIMIT_SEC,
+    DatagramHeader, EXTENDED_SILENCE_TIMEOUT_SEC, IsaacCipher, OptionalHeaders, SessionAuthHeader,
+    SessionError, SessionEvent, SessionMultiplexer, WireCodecs, encode_datagram, split_blob,
 };
+
+/// An account-only `SessionAuthHeader` of the primary connection (`official-session.md`
+/// §6.2.1 rule 3), with a synthetic version stamp.
+fn account_auth(account: &str, timestamp: u32) -> Result<SessionAuthHeader, SessionError> {
+    SessionAuthHeader::for_connection(
+        AuthConnection::Primary,
+        "netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10",
+        account,
+        None,
+        None,
+        timestamp,
+    )
+}
 
 const SERVER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 40), 9000);
 const OTHER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 41), 9000);
@@ -30,7 +43,7 @@ fn at_login(t: f64) -> (SessionMultiplexer, u16) {
     let mut mux = SessionMultiplexer::new();
     let id = mux.create_connection(SERVER, t).expect("id");
     let conn = mux.connection_mut(id).expect("conn");
-    conn.start_login(SessionAuthHeader::for_login("A", None, 0).expect("auth"), t)
+    conn.start_login(account_auth("A", 0).expect("auth"), t)
         .expect("login");
     drain(&mut mux, id);
     (mux, id)
@@ -175,8 +188,9 @@ fn the_session_auth_retransmit_and_handshake_timeout_are_deadlines() {
 fn the_connect_accept_retransmit_is_a_deadline() {
     let (mut mux, id) = at_login(0.0);
     let id2 = receive(&mut mux, &challenge(), 1.0);
-    assert_eq!(id2, ASSIGNED);
-    assert_ne!(id, id2);
+    // The handle stays; the connection takes the assigned recipient ID (§3.4).
+    assert_eq!(id2, id);
+    assert_eq!(mux.connection(id2).expect("conn").local_rec_id(), ASSIGNED);
     drain(&mut mux, id2);
     assert!(near(mux.next_deadline(1.0), 1.6));
     fires_at(&mut mux, id2, 1.6);
@@ -509,17 +523,11 @@ fn the_multiplexer_takes_the_earliest_of_its_connections() {
     let b = mux.create_connection(OTHER, 0.0).expect("b");
     mux.connection_mut(a)
         .expect("a")
-        .start_login(
-            SessionAuthHeader::for_login("A", None, 0).expect("auth"),
-            0.0,
-        )
+        .start_login(account_auth("A", 0).expect("auth"), 0.0)
         .expect("login");
     mux.connection_mut(b)
         .expect("b")
-        .start_login(
-            SessionAuthHeader::for_login("B", None, 0).expect("auth"),
-            0.7,
-        )
+        .start_login(account_auth("B", 0).expect("auth"), 0.7)
         .expect("login");
     assert!(near(mux.next_deadline(0.7), 2.0));
     mux.tick(2.0).expect("tick");

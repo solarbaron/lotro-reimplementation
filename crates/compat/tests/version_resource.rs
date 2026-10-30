@@ -335,7 +335,7 @@ fn invalid_user_value_asks_the_user_and_skips_the_resource() {
     let exe = write_exe(dir.path());
     for bad in [
         "has space",
-        "x".repeat(25).as_str(),
+        "x".repeat(65).as_str(),
         "tab\there",
         "non-ascii-é",
     ] {
@@ -488,11 +488,13 @@ fn every_gap_asks_the_user() {
 #[test]
 fn network_version_validation_and_resource_lookup() {
     assert!(is_valid_network_version("1.2.3.4"));
-    // official-login.md §2.4.1: 1 to 24 printable ASCII characters.
-    assert_eq!(MAX_NETWORK_VERSION_LEN, 24);
+    // official-login.md §2.4.1: 1 to 64 printable ASCII characters (the client itself has
+    // no 24-character limit).
+    assert_eq!(MAX_NETWORK_VERSION_LEN, 64);
     assert!(is_valid_network_version("1234"));
-    assert!(is_valid_network_version(&"9".repeat(24)));
-    assert!(!is_valid_network_version(&"9".repeat(25)));
+    assert!(is_valid_network_version(&"9".repeat(25)));
+    assert!(is_valid_network_version(&"9".repeat(64)));
+    assert!(!is_valid_network_version(&"9".repeat(65)));
     assert!(!is_valid_network_version(""));
     assert!(!is_valid_network_version("a;b c"));
 
@@ -579,7 +581,7 @@ fn default_keys_and_executable_paths_follow_section_2_4_1() {
     // The first key present decides: an invalid value asks the user.
     std::fs::write(
         root.join("x64").join("lotroclient64.exe"),
-        image_with(&[("CompatibiltyVersion", &"9".repeat(25))]),
+        image_with(&[("CompatibiltyVersion", &"9".repeat(65))]),
     )
     .unwrap();
     assert_eq!(

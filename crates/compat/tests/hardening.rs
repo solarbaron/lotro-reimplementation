@@ -6,13 +6,27 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use tessera_compat::login::{LauncherConfig, LoginError, MAX_XML_INPUT_BYTES, UserPreferences};
 use tessera_compat::session::{
-    BitTreeCodec, BitTreeNode, BitTreeTable, BlobFragmentHeader, ConnectChallengeHeader,
-    ConnectionState, DatagramHeader, InMemoryUdpTransport, MAX_CONTAINER_DEPTH, MAX_NAK_ENTRIES,
-    MAX_PENDING_OUT_OF_ORDER_ACKS, MAX_UNPACKED_MESSAGES, OPCODE_BATCH_CONTAINER,
-    OPCODE_SINGLE_WRAPPER, OptionalHeaders, SessionAuthHeader, SessionConnection, SessionError,
-    SessionMultiplexer, WireCodecs, dispatch_message, encode_batch_container, encode_datagram,
-    encode_message, encode_single_wrapper, encode_variable_u32,
+    AuthConnection, BitTreeCodec, BitTreeNode, BitTreeTable, BlobFragmentHeader,
+    ConnectChallengeHeader, ConnectionState, DatagramHeader, InMemoryUdpTransport,
+    MAX_CONTAINER_DEPTH, MAX_NAK_ENTRIES, MAX_PENDING_OUT_OF_ORDER_ACKS, MAX_UNPACKED_MESSAGES,
+    OPCODE_BATCH_CONTAINER, OPCODE_SINGLE_WRAPPER, OptionalHeaders, SessionAuthHeader,
+    SessionConnection, SessionError, SessionMultiplexer, WireCodecs, dispatch_message,
+    encode_batch_container, encode_datagram, encode_message, encode_single_wrapper,
+    encode_variable_u32,
 };
+
+/// An account-only `SessionAuthHeader` of the primary connection (`official-session.md`
+/// §6.2.1 rule 3), with a synthetic version stamp.
+fn account_auth(account: &str, timestamp: u32) -> Result<SessionAuthHeader, SessionError> {
+    SessionAuthHeader::for_connection(
+        AuthConnection::Primary,
+        "netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10",
+        account,
+        None,
+        None,
+        timestamp,
+    )
+}
 
 fn peer(last: u8) -> SocketAddrV4 {
     SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, last), 9000)
@@ -107,7 +121,7 @@ fn oversized_sequence_group_is_rejected() {
 #[test]
 fn out_of_order_ack_queue_is_capped_and_counted() {
     let server = peer(1);
-    let mut conn = SessionConnection::new(0x0100, server, 0.0);
+    let mut conn = SessionConnection::new(server, 0.0);
     let per_packet = u32::try_from(MAX_NAK_ENTRIES).unwrap();
     let packets = u32::try_from(MAX_PENDING_OUT_OF_ORDER_ACKS / MAX_NAK_ENTRIES + 2).unwrap();
     for p in 0..packets {
@@ -134,7 +148,7 @@ fn out_of_order_ack_queue_is_capped_and_counted() {
 fn start(mux: &mut SessionMultiplexer, id: u16) {
     mux.connection_mut(id)
         .unwrap()
-        .start_login(SessionAuthHeader::for_login("A", None, 0).unwrap(), 0.0)
+        .start_login(account_auth("A", 0).unwrap(), 0.0)
         .unwrap();
 }
 
@@ -150,7 +164,8 @@ fn challenge(assigned: u16) -> Vec<u8> {
 }
 
 /// A peer that assigned a recipient ID held by another connection used to
-/// replace (drop) that connection.
+/// replace (drop) that connection; now the challenge is ignored (`official-session.md`
+/// §3.4, §6.4 step 1).
 #[test]
 fn recipient_id_collision_never_replaces_another_connection() {
     let mut mux = SessionMultiplexer::new();
@@ -161,17 +176,23 @@ fn recipient_id_collision_never_replaces_another_connection() {
     start(&mut mux, b);
     let mut transport = InMemoryUdpTransport::new(peer(9));
     mux.flush_outbound(&mut transport).unwrap();
+    // `b`'s server assigns it 0x0200.
+    let (id, _) = mux
+        .receive_from_peer(&challenge(0x0200), peer(2), 0.05, WireCodecs::NONE)
+        .expect("b takes its challenge");
+    assert_eq!(id, b);
+    assert_eq!(mux.connection(b).unwrap().local_rec_id(), 0x0200);
+    mux.flush_outbound(&mut transport).unwrap();
 
+    // `a`'s server assigns the same slot: refused before anything changed.
     let err = mux
-        .receive_from_peer(&challenge(b), peer(1), 0.1, WireCodecs::NONE)
+        .receive_from_peer(&challenge(0x0200), peer(1), 0.1, WireCodecs::NONE)
         .unwrap_err();
-    assert_eq!(err, SessionError::RecipientIdCollision { rec_id: b });
+    assert_eq!(err, SessionError::RecipientIdCollision { rec_id: 0x0200 });
     assert_eq!(mux.connection(b).unwrap().remote_addr(), peer(2));
-
-    // Connection `a` was refused before anything changed.
     let conn_a = mux.connection(a).unwrap();
     assert_eq!(conn_a.remote_addr(), peer(1));
-    assert_eq!(conn_a.local_rec_id(), a);
+    assert_eq!(conn_a.local_rec_id(), 0);
     assert_eq!(conn_a.server_rec_id(), 0);
     assert_eq!(conn_a.state(), ConnectionState::SessionAuthSent);
     assert_eq!(
@@ -187,7 +208,7 @@ fn recipient_id_collision_never_replaces_another_connection() {
     assert_eq!(id, b);
 }
 
-/// Assigned recipient IDs above the local range are ignored.
+/// Assigned recipient IDs above the local range are ignored: the local ID stays `0`.
 #[test]
 fn out_of_range_assigned_recipient_id_is_ignored() {
     let mut mux = SessionMultiplexer::new();
@@ -197,17 +218,16 @@ fn out_of_range_assigned_recipient_id_is_ignored() {
         .receive_from_peer(&challenge(0xFFF0), peer(1), 0.1, WireCodecs::NONE)
         .expect("challenge accepted");
     assert_eq!(id, a);
-    assert_eq!(mux.connection(a).unwrap().local_rec_id(), a);
+    assert_eq!(mux.connection(a).unwrap().local_rec_id(), 0);
 }
 
-/// A full recipient-ID range used to make allocation spin forever.
+/// A full handle space used to make allocation spin forever.
 #[test]
 fn recipient_id_allocation_is_bounded() {
     let mut mux = SessionMultiplexer::new();
-    let range = usize::from(0xFEFFu16 - 0x0100) + 1;
+    let range = usize::from(u16::MAX) + 1;
     for _ in 0..range {
-        mux.create_connection(peer(1), 0.0)
-            .expect("free recipient ID");
+        mux.create_connection(peer(1), 0.0).expect("free handle");
     }
     assert_eq!(
         mux.create_connection(peer(1), 0.0),

@@ -18,8 +18,15 @@ use tessera_compat::login::{
 
 fuzz_target!(|data: &[u8]| {
     let _ = LauncherConfig::parse(data);
-    let _ = RemoteLauncherConfig::parse(data);
-    let _ = UserPreferences::parse(data);
+    if let Ok(remote) = RemoteLauncherConfig::parse(data) {
+        // official-login.md §3.5 item 4, §5.2: the poll interval stays within 5..=120 s.
+        assert!((5..=120).contains(&remote.queue_poll_interval_sec()));
+    }
+    if let Ok(prefs) = UserPreferences::parse(data) {
+        // official-session.md §3.2: the [Net] keys reach the bind and the accept rate.
+        let _ = prefs.net.bind_address();
+        let _ = tessera_compat::session::max_recv_rate_for_speed(prefs.net.connection_speed_kbps);
+    }
     let _ = parse_get_datacenters_response(data, "LOTRO");
     if let Ok(status) = WorldStatus::parse(data) {
         let _ = status.login_server();

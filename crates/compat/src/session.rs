@@ -722,8 +722,9 @@ pub fn unique_port_candidates(ip: Ipv4Addr) -> Vec<u16> {
         .collect()
 }
 
-/// How the local UDP port is chosen (§3.2 item 3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How the local UDP port is chosen (§3.2 item 3). Its `Debug` names the case, not the
+/// port or the seed address (decision 0044 item 3).
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BindPorts {
     /// Case A: the explicit port (`--outport` or `Net.UserSpecifiedPort`), tried once.
     Explicit(u16),
@@ -735,6 +736,16 @@ pub enum BindPorts {
     },
     /// Case C: port `0` (the system's choice), tried once.
     Ephemeral,
+}
+
+impl std::fmt::Debug for BindPorts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Explicit(_) => f.write_str("Explicit(<port>)"),
+            Self::Unique { .. } => f.write_str("Unique { seed_ip: <set> }"),
+            Self::Ephemeral => f.write_str("Ephemeral"),
+        }
+    }
 }
 
 impl BindPorts {
@@ -766,13 +777,28 @@ impl BindPorts {
 
 /// Where and how the session's UDP socket binds (§3.2 items 2 and 3): the local address
 /// (`0.0.0.0` unless `Net.BindInterface` or the `localHost` segment of `-h` selects one)
-/// and the port case.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// and the port case. Its `Debug` says whether the address is the wildcard, not which
+/// address (decision 0044 item 3).
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct BindPlan {
     /// The local IPv4 address bound.
     pub address: Ipv4Addr,
     /// The port case.
     pub ports: BindPorts,
+}
+
+impl std::fmt::Debug for BindPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let address = if self.address.is_unspecified() {
+            "<wildcard>"
+        } else {
+            "<selected>"
+        };
+        f.debug_struct("BindPlan")
+            .field("address", &address)
+            .field("ports", &self.ports)
+            .finish()
+    }
 }
 
 impl BindPlan {
@@ -2511,18 +2537,21 @@ impl SessionAuthCredentials {
     /// Returns [`SessionError`] if any string is truncated or `extraBlob` is not one
     /// printable ASCII ticket string filling `extraBlobLen` exactly.
     pub fn decode(bytes: &[u8], auth_flags: u32) -> Result<(Self, usize), SessionError> {
-        let mut cursor = 0usize;
-        let (account_or_ticket, n1) = decode_wstring(bytes)?;
-        cursor += n1;
-        let second_string = if (auth_flags & AUTH_FLAG_HAS_SECOND_STRING) != 0 {
+        let (account_or_ticket, mut cursor) = decode_wstring(bytes)?;
+        // Built before the rest is checked: its `Drop` wipes what was read on every error
+        // path (`official-login.md` §6.3).
+        let mut creds = Self {
+            account_or_ticket,
+            second_string: None,
+            ticket: None,
+        };
+        if (auth_flags & AUTH_FLAG_HAS_SECOND_STRING) != 0 {
             let rest = bytes.get(cursor..).ok_or(SessionError::InvalidAuthBlock)?;
             let (s2, n2) = decode_wstring(rest)?;
             cursor += n2;
-            Some(s2)
-        } else {
-            None
-        };
-        let ticket = if (auth_flags & AUTH_FLAG_HAS_EXTRA_BLOB) != 0 {
+            creds.second_string = Some(s2);
+        }
+        if (auth_flags & AUTH_FLAG_HAS_EXTRA_BLOB) != 0 {
             let len_bytes: [u8; 4] = bytes
                 .get(cursor..cursor.saturating_add(4))
                 .and_then(|b| b.try_into().ok())
@@ -2541,18 +2570,9 @@ impl SessionAuthCredentials {
             let text = std::str::from_utf8(text).map_err(|_| SessionError::InvalidAuthBlock)?;
             check_ticket_text(text)?;
             cursor += blob_len;
-            Some(text.to_owned())
-        } else {
-            None
-        };
-        Ok((
-            Self {
-                account_or_ticket,
-                second_string,
-                ticket,
-            },
-            cursor,
-        ))
+            creds.ticket = Some(text.to_owned());
+        }
+        Ok((creds, cursor))
     }
 }
 

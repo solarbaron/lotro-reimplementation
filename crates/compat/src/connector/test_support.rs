@@ -11,7 +11,7 @@
 //! |---|---|
 //! | `SessionAuthHeader` | the connect challenge, an acknowledgement and the version request `0x12F` |
 //! | `0x12C` (version) | `0x12D` (accepted) and the character list `0x6C` (one character, "Aldo") |
-//! | `0x6F` (enter world) | `0x90` (session start), the player's placement `0xCE` (teleport stamp 0, at [`PLAYER_AT`]) and `0x7C` (`login_finished`); no referral: the login connection carries the world |
+//! | `0x6F` (enter world) | `0x90` (session start), `0x5E` (portal space, stamp 0, scene [`ENTRY_SCENE_ID`]), the player's placement `0xCE` (teleport stamp 0, at [`PLAYER_AT`]) and `0x7C` (`login_finished`), in the order of `official-messages-world.md` §4.3.3; no referral: the login connection carries the world |
 //! | `0xF4` (portal exit) | nothing (counted) |
 //! | `0x30` (an RPC: the logout request of `LeaveWorld`) | a world teardown `0x3000001B` and the list `0x6C` again |
 //! | `0xD0` (a missing-entity query) | nothing (counted) |
@@ -48,10 +48,25 @@ use crate::session::{
 };
 use crate::world::{
     CharacterListResponse, CharacterSummaryEntry, EncodedPropertyTable, EncodedPropertyValue,
-    EntityAppearanceDesc, EntityCreate, EntityPlacement, LocalizedTokenText, PID_AGENT_SPECIES,
-    PID_ENTITY_DISPLAY_NAME, PID_SEX, PlayerSessionReady, PositionUpdate, PropertyTableUpdate,
-    PropertyType, SubEventBatch, SubEventFrame, WirePosition, encode_event_envelope,
+    EnterPortalSpace, EntityAppearanceDesc, EntityCreate, EntityPlacement, LocalizedTokenText,
+    PID_AGENT_SPECIES, PID_ENTITY_DISPLAY_NAME, PID_SEX, PlayerSessionReady, PositionUpdate,
+    PropertyTableUpdate, PropertyType, SubEventBatch, SubEventFrame, WirePosition,
+    encode_event_envelope,
 };
+
+/// The `scene_id` of the synthetic world entry's `0x5E`.
+pub const ENTRY_SCENE_ID: u32 = 0x0000_0E01;
+
+/// The inner payload of the world entry's `0x5E` (stamp 0, [`ENTRY_SCENE_ID`]).
+fn entry_portal_space() -> Vec<u8> {
+    let mut w = crate::world::WireWriter::new();
+    let _ = EnterPortalSpace {
+        stamp: 0,
+        scene_id: ENTRY_SCENE_ID,
+    }
+    .encode(&mut w);
+    w.into_vec()
+}
 
 /// The client's address on the synthetic network.
 const LOCAL: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 5000);
@@ -338,6 +353,8 @@ impl SyntheticService {
                 }
                 0x6F => vec![
                     server.event(0x90, &session_ready()),
+                    // §4.3.3 step 2: portal space before the placement.
+                    server.event(EnterPortalSpace::EVENT_ID, &entry_portal_space()),
                     server.event(PositionUpdate::EVENT_ID, &placement()),
                     // `login_finished`, the server gate of the portal exit
                     // (`official-messages-world.md` §4.3.3).

@@ -2574,6 +2574,89 @@ fn a_world_that_never_answers_the_entry_returns_to_the_character_list() {
 }
 
 #[test]
+fn the_referral_disconnects_the_login_connection_gracefully() {
+    // `official-session.md` §6.5 step 2: the client opens the world connection and starts
+    // the graceful disconnect (State 6, then 7) of the login connection. Its close does not
+    // end the session; after a failed entry with no connection left for a later `0x6F`, the
+    // session ends.
+    let (world, mut d, login) = driver_at_characters(Service::default(), 0);
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    d.step(1.0, true, &go);
+    world.deliver(
+        login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+        LOGIN_SERVER,
+    );
+    d.step(1.1, true, &go);
+    assert!(
+        matches!(
+            d.connection_states().0,
+            Some(ConnectionState::DisconnectingFlush | ConnectionState::DisconnectSent)
+        ),
+        "{:?}",
+        d.connection_states()
+    );
+    let ws = Server::new(0x0111, 0xBEEF_0002);
+    ws.connect_to(&world, 0xBEEF_0002, WORLD_SERVER);
+    d.step(1.2, true, &go);
+    assert_eq!(
+        d.connection_states().1,
+        Some(ConnectionState::Connected),
+        "the world connection is up"
+    );
+    // The login connection says Disconnect and closes; the world keeps the session.
+    let mut said_disconnect = false;
+    for t in [5.0, 20.0, 30.0, 45.0, 55.0] {
+        world.deliver(
+            ws.control(OptionalHeaders {
+                cumulative_ack: Some(0),
+                ..OptionalHeaders::default()
+            }),
+            WORLD_SERVER,
+        );
+        d.step(t, true, &go);
+        said_disconnect |= world.take_sent().iter().any(|(dg, dst)| {
+            *dst == LOGIN_SERVER
+                && decode_datagram(dg, false, None, false).is_ok_and(|p| p.opt_headers.disconnect)
+        });
+        assert!(
+            !d.take_events()
+                .iter()
+                .any(|e| matches!(e, Event::Disconnected { .. })),
+            "the login connection's close ended the session at {t}"
+        );
+    }
+    assert!(said_disconnect, "the login connection said Disconnect");
+    assert!(!matches!(
+        d.connection_states().0,
+        Some(ConnectionState::Connected)
+    ));
+    // The world never answers the entry: no connection is left for a later `0x6F`.
+    d.step(61.5, true, &go);
+    let events = d.take_events();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::EnterWorldFailed { .. })),
+        "{events:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::Disconnected {
+                reason: DisconnectReason::TimedOut
+            }
+        )),
+        "{events:?}"
+    );
+}
+
+#[test]
 fn no_ticket_refresh_runs_after_the_shutdown_began() {
     let gate = Arc::new(Gate::default());
     let (world, mut d, _login) = driver_at_characters(
@@ -3953,9 +4036,12 @@ fn moves_become_input_axes() {
         MoveStep::from_move(f32::NAN, [1.0, 0.0, 0.0], true).forward,
         0.0
     );
-    // Off the ground: the jump bit (`official-messages-play.md` §8 row `0x24`).
-    assert!(MoveStep::from_move(0.0, [4.0, 0.0, 0.0], false).jump);
-    assert!(!MoveStep::from_move(0.0, [4.0, 0.0, 0.0], true).jump);
+    // Off the ground and rising: the jump bit (`official-messages-play.md` §8 row `0x24`;
+    // the source is Tessera's reading). Off the ground and level or falling: none.
+    assert!(MoveStep::from_move(0.0, [4.0, 0.0, 2.0], false).jump);
+    assert!(!MoveStep::from_move(0.0, [4.0, 0.0, 0.0], false).jump);
+    assert!(!MoveStep::from_move(0.0, [4.0, 0.0, -2.0], false).jump);
+    assert!(!MoveStep::from_move(0.0, [4.0, 0.0, 2.0], true).jump);
 }
 
 #[test]

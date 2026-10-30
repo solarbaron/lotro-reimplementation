@@ -1624,3 +1624,45 @@ fn visual_and_property_events_round_trip() {
         ack
     );
 }
+
+/// `official-messages-world.md` §2.6, §7.1 item 2: a text with exactly
+/// `MAX_RECURSION_DEPTH` nested argument texts decodes and encodes; one level more fails
+/// both ways (the encoder counts the depth as the decoder does).
+#[test]
+fn nested_text_depth_is_the_same_both_ways() {
+    fn nest(levels: usize) -> LocalizedTokenText {
+        let mut t = LocalizedTokenText::reference(0x10, 0x2500_0001);
+        for _ in 0..levels {
+            let mut outer = LocalizedTokenText::reference(0x11, 0x2500_0002);
+            outer.arguments.push(LocalizedTokenTextArg::new(
+                0x99,
+                1,
+                LocalizedTokenTextArgPayload::Nested(Box::new(t)),
+            ));
+            t = outer;
+        }
+        t
+    }
+    let max = nest(MAX_RECURSION_DEPTH);
+    let bytes = max.to_bytes().expect("the deepest decodable text encodes");
+    assert_eq!(
+        LocalizedTokenText::from_bytes(&bytes).expect("decodes"),
+        max
+    );
+    assert!(matches!(
+        nest(MAX_RECURSION_DEPTH + 1).to_bytes(),
+        Err(WorldError::MaxRecursionDepthExceeded { .. })
+    ));
+    // One more level in front of the deepest encodable text: mode 0, token, table, no
+    // authoring strings, one argument of kind 1 for variable 0x99.
+    let mut deeper = vec![0x00];
+    deeper.extend(0x11u32.to_le_bytes());
+    deeper.extend(0x2500_0002u32.to_le_bytes());
+    deeper.extend([0x00, 0x01, 0x01]);
+    deeper.extend(0x99u32.to_le_bytes());
+    deeper.extend(&bytes);
+    assert!(matches!(
+        LocalizedTokenText::from_bytes(&deeper),
+        Err(WorldError::MaxRecursionDepthExceeded { .. })
+    ));
+}

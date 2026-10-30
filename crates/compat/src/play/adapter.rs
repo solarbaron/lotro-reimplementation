@@ -504,18 +504,16 @@ impl PlayAdapter {
                             Reconciliation::Forced { .. } => self.counters.forced_syncs += 1,
                             _ => {}
                         }
-                        if let Some(state) = r.state() {
-                            out.events.push(Self::moved(
-                                player,
-                                &state.location,
-                                state.heading,
-                                state.velocity,
-                            ));
+                        // A correction places the player where the replay of the later
+                        // steps ends (§4.3.2 item 3, `Reconciliation::placement`).
+                        if let Some((location, anchor, heading, velocity)) = r.placement() {
+                            out.events
+                                .push(Self::moved(player, &location, heading, velocity));
                             out.events.push(Event::LocationReport {
                                 id: EntityId(player),
-                                location: state.location,
-                                heading: state.heading,
-                                anchor: state.anchor,
+                                location,
+                                heading,
+                                anchor,
                                 cause: LocationCause::Corrected,
                             });
                         }

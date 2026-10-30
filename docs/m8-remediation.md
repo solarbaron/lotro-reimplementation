@@ -924,6 +924,57 @@ From the owner's live run L2 (2026-10-29, handshake diagnostics):
   when `<queueurls>` is empty, and the local port rules (`Net.ComputeUniquePort`, `Net.BindInterface`,
   SO_SNDBUF of §3.1, which the code does not set).
 
+From the C7 fix round (2026-10-30, branch `fu/m8-c7`; session S, play P, world W). The
+code follows the reading given in each item and says so where it acts:
+
+- **S §6.5 step 2 and P §7.2:** the login connection is now disconnected gracefully when the
+  first referral arrives. If the world then does not answer the entry, no connection is left
+  for a later `0x6F`; Tessera ends the session after `EnterWorldFailed`. Is that the official
+  client's behaviour, or does it reconnect to the login server?
+- **S §3.4 bullet 2 and §6.4 step 1 vs §3.4 step 3:** the first two ignore a challenge that
+  assigns an ID another active connection holds; step 3's example has a world server assign the
+  ID the disconnecting login connection still holds. Which holds across the login and world
+  connections? Tessera keeps one multiplexer per connection, so such a challenge is accepted.
+- **S §3.2 item 2:** the Case B seed is "the first enumerated local IPv4 address in
+  host-resolution order"; Tessera uses the source address the system picks toward the login
+  server. Which address does the client take on a host with several addresses?
+- **S §3.2 item 2:** a `localHost` segment of `-h` that is not an IPv4 literal: Tessera binds
+  the wildcard (it still overrides `Net.BindInterface`) and does no name lookup. Does the
+  client resolve it?
+- **S §3.1:** the `SO_SNDBUF` target (131,072 bytes) is still not applied to the session or
+  chat sockets (item (7) of the L2 note above).
+- **S §6.2.1:** the chat connection's `clientTimestamp` is now taken when the chat session is
+  opened, and its reconnects keep it. Does each chat reconnect take a new one?
+- **S §9.3:** a `VersionStatus` other than 0 or 1 is logged and ignored; 0 closes the login
+  connection locally and refuses. What does the client do with other values?
+- **P §4.5:** the entity stamp has no initial value at world entry. Tessera treats it as
+  unknown: the first `0x5E` gives the expected stamp with a wait, the first stamped local
+  `0xCE` is taken without the modulo-256 test. What is the client's initial stamp?
+- **P §4.5 items 2 and 4:** item 2 lets the stamped `0xCE` come before `0x5E`. Tessera keeps
+  the client's loading signal with the stamp of the placement it answers, so a signal sent
+  before a `0x5E` with that stamp counts, and one of an earlier placement does not. Is the
+  client gate tied to the placement like this?
+- **P §4.3.2 item 3:** for an ack older than the retained steps the spec sets
+  `newest_step_seq = ack_step_seq`, while §4.1 item 1 keeps the counter monotonic and a
+  reordered `0xCC` would move it back. Tessera keeps the counter. Which is right?
+- **P §4.3.2 item 3:** the replay of the unacknowledged steps after a correction. Tessera has
+  no server physics to re-simulate with: it moves the kept predictions by the correction's
+  offset, places the player where the newest one ends, and accepts the acks of steps whose
+  predictions could not be moved. Is a translation replay acceptable, and what does the client
+  compare a later ack against?
+- **P §4.1 item 5 and §8 row 0x24:** where the jump bit comes from. Tessera sets it while the
+  controller is off the ground and rising, so a fall is not a jump (a fall would otherwise
+  cancel a logout countdown under §7.1).
+- **W §1.1.2:** `routingField0` is a `u32` (S §9.1), while world InstanceIDs are 64-bit. How
+  does it map to an InstanceID? Until answered, the driver keeps `recipientId` for a routed
+  envelope, counts it and sends no `0xD0` for it.
+- **P §4.6.1:** the kind of the type-2 spline (Tessera: uniform Catmull-Rom through the
+  waypoints), a path with one waypoint (Tessera: from the entity's last place), and a path
+  without a positive speed (Tessera: a move to the last waypoint with zero velocity).
+- **P §6.1.3:** Fellowship is dual. Tessera sends on the chat server's fellowship room when it
+  has one, else on the world server (`0x84EC001B`, category 11). Is that the client's choice
+  of route?
+
 ## 16. Audit of spec pass 8 (2026-10-30, 2bc806a + b0d3415): BLOCK, fixable
 
 No decompiler-style names, addresses, registers or vtable slots in the five specs or the commit

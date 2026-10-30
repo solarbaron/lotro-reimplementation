@@ -3241,3 +3241,65 @@ fn the_time_field_is_set_only_with_a_timing_header() {
     assert_eq!(blob.header.time, 0);
     assert_eq!(blob.header.seq_num, 2);
 }
+
+/// §4.4.2 step 2 with the client's own fragment layouts (§5.6.2–§5.6.3), hand-built: a
+/// queue-4 `0x12C` fragment and a queue-3, sequence-group-0x13 `0x6F` fragment. The header
+/// bytes are written out from the §5.6.3 table, and the expected sums were worked out from
+/// §4.4.1 by hand, not with the crate's functions.
+#[test]
+fn send_checksum_vectors_for_the_version_and_entry_fragments() {
+    // `0x12C`: queue 4, default recipient, orderNum 1, blobId 1, header word 0x12C
+    // (VariableU32 `81 2C`), 7 payload bytes, one pad byte: a 10-byte header (2 mod 4).
+    let version_payload: Vec<u8> = (0..7u8).collect();
+    let frags = split_blob(4, 1, 1, 0, None, 0x0000_012C, &version_payload).unwrap();
+    let [version] = frags.as_slice() else {
+        panic!("{frags:?}");
+    };
+    let mut bytes = Vec::new();
+    version.encode(&mut bytes).unwrap();
+    assert_eq!(
+        &bytes[..10],
+        &[0x04, 0x40, 0x01, 0x00, 0x01, 0x00, 0x81, 0x2C, 0x07, 0x00]
+    );
+    assert_eq!(&bytes[10..], version_payload.as_slice());
+    let sum = send_payload_checksum(&OptionalHeaders::default(), frags.as_slice()).unwrap();
+    assert_eq!(sum, 0x3A9A_4705, "per buffer");
+    assert_eq!(
+        compute_datagram_checksum(&bytes),
+        0x3897_430E,
+        "whole payload"
+    );
+
+    // `0x6F`: queue 3, sequence group 0x13, orderNum 5, no blobId (unfragmented), header
+    // word 0x6F, 9 payload bytes; 7 header bytes and one pad byte (0 mod 4). The sums still
+    // differ from the whole-payload one: the payload's tail carries its own length term.
+    let entry_payload = [0x00, 0x42, 0, 0, 0, 0, 0, 0, 0x02];
+    let frags = split_blob(3, 5, 0, 0x13, None, 0x0000_006F, &entry_payload).unwrap();
+    let mut bytes = Vec::new();
+    frags[0].encode(&mut bytes).unwrap();
+    assert_eq!(
+        &bytes[..8],
+        &[0x03, 0x40, 0x13, 0x05, 0x00, 0x6F, 0x09, 0x00]
+    );
+    assert_eq!(
+        send_payload_checksum(&OptionalHeaders::default(), frags.as_slice()).unwrap(),
+        0x0725_F103
+    );
+    assert_eq!(
+        compute_datagram_checksum(&bytes),
+        0x072D_F103,
+        "whole payload"
+    );
+    // With the 6-byte `FlowControlHeader` in front, three buffers.
+    let opt = OptionalHeaders {
+        flow_control: Some(FlowControlHeader {
+            bytes_received_delta: 0x0102_0304,
+            interval_ms: 0x0506,
+        }),
+        ..OptionalHeaders::default()
+    };
+    assert_eq!(
+        send_payload_checksum(&opt, frags.as_slice()).unwrap(),
+        0x0E32_F407
+    );
+}

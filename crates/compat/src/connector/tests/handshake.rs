@@ -103,6 +103,36 @@ fn the_net_preferences_and_the_launch_values_choose_the_bind() {
         }]
     );
 
+    // A `localHost` segment that is a name, not an IPv4 literal, still overrides
+    // `Net.BindInterface`: the wildcard.
+    let mut start = session_start(0, None, Arc::default());
+    let version = start.handoff.version_info.clone();
+    start.handoff = SessionHandoff::new(
+        "client.example.invalid:login.example.invalid:9001",
+        0,
+        "SUB0000000000000000000000",
+        TICKET,
+        version,
+        "English",
+        "",
+        "https://auth.example.invalid/login",
+        0,
+    )
+    .expect("handoff");
+    start.net = NetPreferences {
+        bind_interface: "192.0.2.77".to_owned(),
+        user_specified_port: 4100,
+        ..NetPreferences::default()
+    };
+    let (world, _d) = started(start);
+    assert_eq!(
+        plans(&world),
+        vec![BindPlan {
+            address: Ipv4Addr::UNSPECIFIED,
+            ports: BindPorts::Explicit(4100),
+        }]
+    );
+
     // `Net.ComputeUniquePort = 0`: Case C.
     let mut start = session_start(0, None, Arc::default());
     start.net = NetPreferences {
@@ -276,4 +306,81 @@ fn a_negative_logon_result_ends_the_session_and_zero_is_accepted() {
     )));
     assert!(events.iter().any(is_disconnected));
     assert!(d.ended());
+}
+
+#[test]
+fn a_version_status_of_0_refuses_and_another_value_is_ignored() {
+    // `official-session.md` §9.3: 1 accepts, 0 rejects and closes the connection locally;
+    // the spec defines no other value (ignored and counted).
+    let status = |status: u32| {
+        let m = crate::session::VersionStatusMessage {
+            status,
+            server_version_info: "v".to_owned(),
+        }
+        .encode();
+        encode_event_envelope(&m)
+    };
+    let (world, mut d) = started(session_start(0, None, Arc::default()));
+    let mut login = Server::new(0x0111, 0xBEEF_0001);
+    world.deliver(login.challenge(0xBEEF_0001), LOGIN_SERVER);
+    d.step(0.0, true, &go);
+    world.deliver(login.blob(0x12D, &status(7)), LOGIN_SERVER);
+    d.step(0.1, true, &go);
+    assert_eq!(d.counters().unknown_version_status, 1);
+    assert!(
+        !d.take_events()
+            .iter()
+            .any(|e| matches!(e, Event::Disconnected { .. }))
+    );
+    world.deliver(login.blob(0x12D, &status(0)), LOGIN_SERVER);
+    d.step(0.2, true, &go);
+    let events = d.take_events();
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::Account(AccountEvent::LoginRefused {
+                reason: LoginRefusal::ClientNotAccepted,
+                ..
+            })
+        )),
+        "{events:?}"
+    );
+    assert_eq!(d.connection_states().0, None, "closed locally");
+}
+
+#[test]
+fn no_debug_form_names_an_address_or_a_port() {
+    // Decision 0044 item 3: a `{:?}` of the start values, the `[Net]` keys or a bind plan
+    // never puts a host, an address or a port into a log line.
+    let mut start = session_start(0, Some(CHAT_SERVER), Arc::default());
+    start.net = NetPreferences {
+        bind_interface: "192.0.2.77".to_owned(),
+        user_specified_port: 4100,
+        ..NetPreferences::default()
+    };
+    let plan = BindPlan {
+        address: Ipv4Addr::new(192, 0, 2, 5),
+        ports: BindPorts::Unique {
+            seed_ip: Ipv4Addr::new(192, 0, 2, 10),
+        },
+    };
+    let explicit = BindPorts::Explicit(4100);
+    for text in [
+        format!("{start:?}"),
+        format!("{:?}", start.handoff),
+        format!("{:?}", start.net),
+        format!("{plan:?}"),
+        format!("{explicit:?}"),
+    ] {
+        for needle in [
+            "192.0.2",
+            "198.51.100",
+            "example.invalid",
+            "4100",
+            "9001",
+            "9200",
+        ] {
+            assert!(!text.contains(needle), "{needle} in {text}");
+        }
+    }
 }

@@ -695,6 +695,11 @@ impl FakeServer {
     }
 
     fn challenge() -> Vec<u8> {
+        Self::challenge_naming([0u8; 16])
+    }
+
+    /// A challenge whose `codecUuid` is `codec_uuid`.
+    fn challenge_naming(codec_uuid: [u8; 16]) -> Vec<u8> {
         let opt = OptionalHeaders {
             connect_challenge: Some(ConnectChallengeHeader {
                 server_time: 1.0,
@@ -705,7 +710,7 @@ impl FakeServer {
                 reserved_dword_14: 0,
                 client_conn_idx: 4,
                 reserved_word_1a: 0,
-                codec_uuid: [0u8; 16],
+                codec_uuid,
             }),
             ..OptionalHeaders::default()
         };
@@ -768,6 +773,16 @@ impl FakeServer {
     }
 
     fn blob(&mut self, opcode: u32, inner: &[u8]) -> Vec<u8> {
+        self.blob_with(opcode, inner, None)
+    }
+
+    /// A blob datagram compressed with `codec` when given.
+    fn blob_with(
+        &mut self,
+        opcode: u32,
+        inner: &[u8],
+        codec: Option<&dyn tessera_compat::session::BitTreeCodec>,
+    ) -> Vec<u8> {
         self.seq += 1;
         let frags = split_blob(
             2,
@@ -789,7 +804,7 @@ impl FakeServer {
             &OptionalHeaders::default(),
             &frags,
             Some(mask),
-            None,
+            codec,
         )
         .expect("datagram")
     }
@@ -930,11 +945,15 @@ fn chat_client_end_to_end() {
         msg_type,
         data,
         sender,
+        delivery_flag,
         ..
     } = ChatRequest::decode(*opcode, inner).expect("request")
     else {
         panic!("not a room message");
     };
+    // §6.6.4: the trailing `delivery_flag` byte is 0x01.
+    assert!(delivery_flag);
+    assert_eq!(inner.last(), Some(&0x01));
     assert_eq!(room, world_room());
     assert_eq!(msg_type, MSG_TYPE_CHAT);
     assert_eq!(sender.name(), Some("Me"));
@@ -1423,4 +1442,74 @@ fn set_ticket_validates() {
     );
     assert_eq!(config.set_ticket(Some("AAEF".into())), Ok(()));
     assert_eq!(config.set_ticket(None), Ok(()));
+}
+
+/// `official-session.md` §6.4 step 3, §7.3: a chat challenge that names a loaded dictionary
+/// is accepted, and a datagram compressed with it then decodes.
+#[test]
+fn chat_challenge_naming_a_loaded_dictionary() {
+    use tessera_compat::session::{BitTreeCodec, BitTreeTable};
+    const UUID: [u8; 16] = [7; 16];
+    let incoming: Arc<dyn BitTreeCodec> = Arc::new(BitTreeTable::synthetic_dictionary(UUID));
+    let codecs = ChatCodecs {
+        incoming: Some(Arc::clone(&incoming)),
+        outgoing: None,
+    };
+    let config =
+        ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 1000).with_codec_uuids(vec![UUID]);
+    assert!(format!("{config:?}").contains("codec_uuids: 1"));
+    let mut client =
+        ChatClient::with_transport(InMemoryUdpTransport::new(CLIENT), config, codecs, 0.0)
+            .expect("client");
+    client.set_self_descriptor(5, "Me");
+    let schema = no_schema();
+    client.poll(1.0, &schema).expect("poll");
+    let _ = client.transport_mut().pop_outbound().expect("SessionAuth");
+    client
+        .transport_mut()
+        .push_inbound(FakeServer::challenge_naming(UUID), SERVER);
+    client.poll(1.1, &schema).expect("poll");
+    let (accept_dgram, _) = client
+        .transport_mut()
+        .pop_outbound()
+        .expect("ConnectAccept sent for a registered codecUuid");
+    let accept = decode_datagram(&accept_dgram, false, None, true).expect("decode");
+    assert!(accept.opt_headers.connect_accept.is_some());
+    let mut server = FakeServer::new();
+    let inner = ChatEvent::LoginStatus { status: 0 }
+        .encode()
+        .expect("event");
+    let login = server.blob_with(0x165, &inner, Some(incoming.as_ref()));
+    // The synthetic dictionary shrinks a zero-rich payload, so this datagram is compressed.
+    let plain = FakeServer::new().blob(0x165, &inner);
+    assert_ne!(login, plain);
+    client.transport_mut().push_inbound(login, SERVER);
+    client.poll(1.2, &schema).expect("poll");
+    assert!(client.is_ready(), "the compressed 0x165 opens the session");
+    assert_eq!(client.counters().transport_errors, 0);
+}
+
+/// A refused refreshed ticket leaves the old one in use (`official-login.md` §4.3, §6.3).
+#[test]
+fn a_refused_ticket_keeps_the_old_one() {
+    let mut config = ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 0);
+    assert_eq!(
+        config.set_ticket(Some("bad ticket".into())),
+        Err(PlayError::InvalidTicket)
+    );
+    let mut client = ChatClient::with_transport(
+        InMemoryUdpTransport::new(CLIENT),
+        config,
+        ChatCodecs::default(),
+        0.0,
+    )
+    .expect("client");
+    client.poll(1.0, &no_schema()).expect("poll");
+    let (dgram, _) = client.transport_mut().pop_outbound().expect("SessionAuth");
+    let auth = decode_datagram(&dgram, false, None, true)
+        .expect("decode")
+        .opt_headers
+        .session_auth
+        .expect("SessionAuth");
+    assert_eq!(auth.credentials.ticket.as_deref(), Some("AAEC"));
 }

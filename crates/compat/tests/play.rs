@@ -211,10 +211,15 @@ fn headings_and_moves_map_to_the_wire_axes() {
     assert_eq!(right.move_state, 0xF8);
     let back = StepInput::from_step(MoveStep::from_move(0.0, [-2.0, 0.0, 0.0], true));
     assert_eq!(back.move_state, 0x79);
-    // Standing still, airborne: stationary with the jump bit, which counts as moving.
+    // Standing still, airborne and rising: stationary with the jump bit, which counts as
+    // moving.
     let jump = StepInput::from_step(MoveStep::from_move(0.0, [0.0, 0.0, 4.0], false));
     assert_eq!((jump.move_state, jump.slot_flags), (0x80, 0x02));
     assert!(jump.is_moving());
+    // Falling is not a jump (Tessera's reading): no bit, no 20 Hz repeat.
+    let fall = StepInput::from_step(MoveStep::from_move(0.0, [0.0, 0.0, -4.0], false));
+    assert_eq!((fall.move_state, fall.slot_flags), (0x80, 0x00));
+    assert!(!fall.is_moving());
     let walk = StepInput::from_step(MoveStep {
         walk: true,
         camera_heading: Some(PI),
@@ -2115,5 +2120,78 @@ fn unknown_opcodes_are_not_play_messages() {
     assert_eq!(
         decode_play_message(0x6C, 2, &[0], &no_schema(), &portal_schemas()),
         Ok(None)
+    );
+}
+
+/// `official-messages-play.md` §4.3.2 item 3: a correction moves the later predictions by
+/// its offset, so the acks of the replayed steps compare against the corrected path and do
+/// not snap the player again; the player takes the replayed state.
+#[test]
+fn a_correction_rebases_the_later_steps_and_their_acks_are_accepted() {
+    let p = PortalPositionSync::from_bytes(&tv7(), &portal_schemas()).expect("0xCC");
+    let (loc, _) = wire_location(&p.position).expect("location");
+    let heading = wire_heading(p.heading_raw);
+    let at = |dx: f64| {
+        let mut l = loc;
+        l.x += dx;
+        Some(PredictedState {
+            location: l,
+            heading,
+        })
+    };
+    let steps = distinct_steps();
+    // Steps 1..=5; the client thought it was 1 m further at step 3 than the server says.
+    let predictions = [at(0.0), at(0.5), at(1.0), at(1.0), at(1.5)];
+    let mut s = MovementSender::new(PLAYER);
+    for (i, (step, pred)) in steps.iter().zip(predictions).enumerate() {
+        s.step(*step, i as f64 * 0.01, 0, pred).expect("step");
+    }
+    let mut ack = p.clone();
+    ack.sequence_or_reason = 3;
+    let r = s
+        .reconcile(&ack, ReconcileTolerance::default())
+        .expect("ack 3");
+    let Reconciliation::Corrected {
+        replay, replayed, ..
+    } = &r
+    else {
+        panic!("expected a correction: {r:?}");
+    };
+    assert_eq!(replay.len(), 2, "steps 4 and 5");
+    let replayed = replayed.expect("a replayed state");
+    assert!(
+        (replayed.location.x - (loc.x + 0.5)).abs() < 1e-9,
+        "step 5 moved back 1 m"
+    );
+    let (placed, _, _, _) = r.placement().expect("a placement");
+    assert!((placed.x - (loc.x + 0.5)).abs() < 1e-9);
+    // The server agrees with the corrected path at step 4: accepted, no second snap.
+    ack.sequence_or_reason = 4;
+    assert_eq!(
+        s.reconcile(&ack, ReconcileTolerance::default())
+            .expect("ack 4"),
+        Reconciliation::Accepted { ack: 4 }
+    );
+
+    // Without a prediction at the corrected step the later ones cannot be moved: their
+    // acks are not compared again.
+    let mut s = MovementSender::new(PLAYER);
+    let predictions = [at(0.0), at(0.5), None, at(1.0), at(1.5)];
+    for (i, (step, pred)) in steps.iter().zip(predictions).enumerate() {
+        s.step(*step, i as f64 * 0.01, 0, pred).expect("step");
+    }
+    ack.sequence_or_reason = 3;
+    match s
+        .reconcile(&ack, ReconcileTolerance::default())
+        .expect("ack 3")
+    {
+        Reconciliation::Corrected { replayed, .. } => assert!(replayed.is_none()),
+        other => panic!("expected a correction: {other:?}"),
+    }
+    ack.sequence_or_reason = 4;
+    assert_eq!(
+        s.reconcile(&ack, ReconcileTolerance::default())
+            .expect("ack 4"),
+        Reconciliation::Accepted { ack: 4 }
     );
 }

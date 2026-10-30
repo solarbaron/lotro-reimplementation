@@ -1520,7 +1520,8 @@ impl LocalizedTokenTextArgPayload {
     /// [`WorldError::InvalidTextArgument`] for a 32-bit wire integer whose value does not
     /// fit 32 bits; nested encoding errors.
     pub fn encode(&self, writer: &mut WireWriter, wire: bool) -> Result<(), WorldError> {
-        self.encode_with_depth(writer, wire, 1)
+        // Depth 0, as a standalone `decode` starts: a nested text is at depth 1.
+        self.encode_with_depth(writer, wire, 0)
     }
 
     fn encode_with_depth(
@@ -1774,7 +1775,9 @@ impl LocalizedTokenText {
     /// [`WorldError::InvalidTextArgument`] for one whose payload is missing, does not fit
     /// its kind or does not fit its integer form, or another encoding error.
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
-        self.encode_inner(writer, true, 1)
+        // The outer text is at depth 0 and each nested argument one deeper, as the decoder
+        // counts them: whatever decodes encodes, and one level more fails both ways.
+        self.encode_inner(writer, true, 0)
     }
 
     /// Decodes the wire form (§2.6).
@@ -1795,7 +1798,7 @@ impl LocalizedTokenText {
     ///
     /// Returns [`WorldError`] if a string or count cannot be represented.
     pub fn encode_stored(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
-        self.encode_inner(writer, false, 1)
+        self.encode_inner(writer, false, 0)
     }
 
     /// Decodes the stored `.dat` form (`property-system.md` §17.4).
@@ -2638,8 +2641,9 @@ pub fn decode_event_envelope(
 /// The active target entity `InstanceID` of an event (§1.1.2 item 2): the routing header's
 /// `routingField0` when the envelope has a routing header with `routingFlags` bit 0 set,
 /// else the fragment's `recipientId`. `routingField0` is a `u32` on the wire
-/// (`official-session.md` §9.1) and is taken zero-extended to 64 bits (Tessera's reading;
-/// see the spec's implementer notes).
+/// (`official-session.md` §9.1) and is taken zero-extended to 64 bits here; how it maps to
+/// a 64-bit InstanceID is not in the spec (question in `docs/m8-remediation.md` §15), so
+/// the live session driver keeps `recipientId` for a routed envelope and counts it.
 #[must_use]
 pub fn active_target(recipient_id: u64, routing: Option<&MessageRoutingHeader>) -> u64 {
     routing

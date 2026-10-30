@@ -249,15 +249,19 @@ impl MoveStep {
     /// The step of a neutral move (`official-messages-play.md` §8 row `0x24`): the
     /// velocity's horizontal direction relative to `heading` as unit body-local axes (no
     /// planar movement below 1 mm/s), the heading as both entity and camera heading, pitch
-    /// `0x00`, jump while not on the ground, running. The axes are a direction, not a speed
-    /// (Tessera's reading; the walk bit has no neutral source and stays clear).
+    /// `0x00`, running. The axes are a direction, not a speed (Tessera's reading; the walk
+    /// bit has no neutral source and stays clear). The jump bit (§4.1 item 5: "jump active
+    /// during this step") is set while the controller is off the ground and rising
+    /// (upward velocity): Tessera's reading, the spec does not say where the bit comes from
+    /// (question in `docs/m8-remediation.md` §15). A fall is not a jump, so a fall with no
+    /// planar input repeats no step at 20 Hz.
     #[must_use]
     pub fn from_move(heading: f32, velocity: [f32; 3], on_ground: bool) -> Self {
-        let [vx, vy, _] = velocity;
+        let [vx, vy, vz] = velocity;
         let speed = (vx * vx + vy * vy).sqrt();
         let mut step = Self {
             heading,
-            jump: !on_ground,
+            jump: !on_ground && vz.is_finite() && vz > 1e-3,
             ..Self::default()
         };
         if speed.is_finite() && speed >= 1e-3 && heading.is_finite() {
@@ -367,6 +371,10 @@ struct StepRecord {
     seq: u32,
     input: StepInput,
     predicted: Option<PredictedState>,
+    /// An earlier correction replaced this step's prediction and could not re-base it (no
+    /// prediction at the corrected step, or another region): its own ack is not compared
+    /// again, so it does not correct the player a second time (§4.3.2 item 3).
+    superseded: bool,
 }
 
 /// The tolerance of an acknowledgement (§4.3.2 item 2); [`Self::default`] is the spec's.
@@ -428,6 +436,12 @@ pub enum Reconciliation {
         state: AuthoritativeState,
         /// The unacknowledged steps to re-apply, oldest first.
         replay: Vec<StepInput>,
+        /// The state after re-applying `replay` from the authoritative state: the newest
+        /// unacknowledged step's prediction moved by the correction at `ack` (Tessera's
+        /// reading of the replay of §4.3.2 item 3: the same steps from a shifted start
+        /// cover the same displacement). `None` when nothing is replayed or the steps'
+        /// predictions could not be moved; the authoritative state applies then.
+        replayed: Option<PredictedState>,
         /// The ack was outside the retained step history (ahead of the newest step, or
         /// older than the retained steps): the history was cleared and nothing is replayed
         /// (item 3).
@@ -450,6 +464,24 @@ impl Reconciliation {
         match self {
             Self::Accepted { .. } => None,
             Self::Corrected { state, .. } | Self::Forced { state, .. } => Some(state),
+        }
+    }
+
+    /// The state the player takes: the replayed state of a correction when there is one
+    /// ([`Self::Corrected`]'s `replayed`), else the authoritative state. `None` when the
+    /// prediction was accepted.
+    #[must_use]
+    pub fn placement(&self) -> Option<(Location, Option<Anchor>, f32, [f32; 3])> {
+        match self {
+            Self::Accepted { .. } => None,
+            Self::Corrected {
+                state,
+                replayed: Some(r),
+                ..
+            } => Some((r.location, state.anchor, r.heading, state.velocity)),
+            Self::Corrected { state, .. } | Self::Forced { state, .. } => {
+                Some((state.location, state.anchor, state.heading, state.velocity))
+            }
         }
     }
 }
@@ -556,6 +588,7 @@ impl MovementSender {
             seq: self.seq,
             input: step,
             predicted,
+            superseded: false,
         });
         self.last_sent = Some(step);
         Some(self.window(stamp))
@@ -617,13 +650,18 @@ impl MovementSender {
     ///   state adopted ([`Reconciliation::Forced`]).
     /// - The ack is in the history (item 2): steps up to it are acknowledged; within
     ///   0.15 m (same region) and one heading unit of the prediction it is accepted, else
-    ///   corrected with the later steps to replay (item 3).
+    ///   corrected with the later steps to replay (item 3). A correction moves the kept
+    ///   predictions by the same offset, so the acks of the replayed steps compare against
+    ///   the corrected path; a kept step whose prediction cannot be moved is not compared
+    ///   again (its ack is accepted).
     /// - The ack is ahead of the newest step (item 3): the history and window are cleared,
     ///   the newest step becomes the ack, and the state is adopted (the `0xCC` that places
     ///   the player at world entry, `official-messages-world.md` §4.3.3).
     /// - The ack is behind the retained steps (item 3): the history is cleared and the
-    ///   state adopted; the step counter is not moved back (§4.1 item 1 keeps it
-    ///   monotonic; question in the spec's implementer notes).
+    ///   state adopted; the step counter is not moved back. Item 3 says to set
+    ///   `newest_step_seq = ack_step_seq` here too, while §4.1 item 1 keeps the counter
+    ///   monotonic and a reordered `0xCC` would move it back: engineering choice, question
+    ///   in `docs/m8-remediation.md` §15.
     ///
     /// # Errors
     ///
@@ -665,6 +703,7 @@ impl MovementSender {
                 ack,
                 state,
                 replay: Vec::new(),
+                replayed: None,
                 outside_history: true,
             });
         };
@@ -676,18 +715,43 @@ impl MovementSender {
         });
         // Steps up to and including `ack` are acknowledged (item 1).
         self.history.retain(|r| step_after(r.seq, ack));
-        if within {
+        if within || record.superseded {
+            // A step an earlier correction already replaced is not compared again.
             return Ok(Reconciliation::Accepted { ack });
         }
         let replay = self.history.iter().map(|r| r.input).collect();
-        // The kept predictions start from the old state; they are no longer comparable.
+        // The kept predictions start from the old state: they move by the correction's
+        // offset (same region only), so later acks compare against the corrected path.
+        let offset = record
+            .predicted
+            .filter(|p| p.location.region == location.region)
+            .map(|p| {
+                (
+                    location.x - p.location.x,
+                    location.y - p.location.y,
+                    location.z - p.location.z,
+                )
+            })
+            .filter(|(dx, dy, dz)| dx.is_finite() && dy.is_finite() && dz.is_finite());
         for r in &mut self.history {
-            r.predicted = None;
+            match (offset, r.predicted.as_mut()) {
+                (Some((dx, dy, dz)), Some(q)) if q.location.region == location.region => {
+                    q.location.x += dx;
+                    q.location.y += dy;
+                    q.location.z += dz;
+                }
+                _ => {
+                    r.predicted = None;
+                    r.superseded = true;
+                }
+            }
         }
+        let replayed = self.history.back().and_then(|r| r.predicted);
         Ok(Reconciliation::Corrected {
             ack,
             state,
             replay,
+            replayed,
             outside_history: false,
         })
     }
@@ -719,9 +783,17 @@ pub struct StampOutcome {
 /// carries none (§4.5 item 2). Portal space ends once both gates are set: `game_ready`
 /// (`0x7C` or `0xC7`, [`Self::on_server_ready`]) and `client_ready` (the stamp has reached
 /// the expected one and loading completed or timed out, [`Self::try_exit_portal_space`]).
+///
+/// At world entry the entity stamp is unknown ([`Self::default`], [`Self::enter_world`]): the
+/// spec gives it no initial value. Until a stamp is known, the first `0x5E` supplies the
+/// expected stamp and the client waits for its placement, and the first local-player `0xCE`
+/// with a stamp is taken as current without the modulo-256 test (engineering choice,
+/// question in `docs/m8-remediation.md` §15).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TeleportSync {
     entity_stamp: u8,
+    /// `entity_stamp` came from the server (or [`Self::new`]).
+    known: bool,
     waiting: bool,
     expected: u8,
     in_portal_space: bool,
@@ -735,17 +807,25 @@ pub struct TeleportSync {
 }
 
 impl TeleportSync {
-    /// A state with `entity_stamp = stamp`, outside portal space.
+    /// A state with `entity_stamp = stamp` (known), outside portal space.
     #[must_use]
     pub fn new(stamp: u8) -> Self {
         Self {
             entity_stamp: stamp,
+            known: true,
             expected: stamp,
             ..Self::default()
         }
     }
 
-    /// The local player's current stamp (echoed in `0x24` `header_byte`).
+    /// Whether the entity stamp is known (a stamp came from the server).
+    #[must_use]
+    pub fn stamp_known(&self) -> bool {
+        self.known
+    }
+
+    /// The local player's current stamp (echoed in `0x24` `header_byte`); `0` while it is
+    /// not known (no `0x24` goes out then: the first portal space has not ended).
     #[must_use]
     pub fn stamp(&self) -> u8 {
         self.entity_stamp
@@ -794,6 +874,7 @@ impl TeleportSync {
     pub fn enter_world(&mut self) {
         *self = Self {
             in_portal_space: true,
+            known: self.known,
             ..Self::new(self.entity_stamp)
         };
     }
@@ -807,6 +888,11 @@ impl TeleportSync {
         self.client_ready = false;
         self.announced = true;
         self.expected = expected_stamp;
+        if !self.known {
+            // No stamp yet: the placement carrying this one is awaited.
+            self.waiting = true;
+            return;
+        }
         let d = expected_stamp.wrapping_sub(self.entity_stamp);
         self.waiting = d != 0 && d < 0x80;
     }
@@ -828,9 +914,11 @@ impl TeleportSync {
     /// `0x5E` of the current portal space it becomes the expected stamp too (item 2). The
     /// wait ends once the current stamp reaches or passes the expected one.
     pub fn on_local_position(&mut self, stamp: u8) -> StampOutcome {
-        let snap = stamp_newer_or_equal(stamp, self.entity_stamp);
+        // The first stamp is taken as it comes (no current stamp to compare with).
+        let snap = !self.known || stamp_newer_or_equal(stamp, self.entity_stamp);
         if snap {
             self.entity_stamp = stamp;
+            self.known = true;
             if !self.announced {
                 self.expected = stamp;
             }

@@ -9,11 +9,12 @@
 //! # One multiplexer per connection
 //!
 //! The login connection and every world connection each get a multiplexer of their own,
-//! all on the session's one socket. `official-session.md` §3.4 does not say whether a world
-//! server may assign the client the recipient ID the login connection has (or had): a
-//! shared multiplexer would refuse such a challenge (the ID is in use, or retired once
-//! removed). With one multiplexer per connection the IDs of one server never meet another's
-//! (engineering choice, spec silent (question with the spec writers); tested). A datagram
+//! all on the session's one socket. `official-session.md` §3.4 bullet 2 and §6.4 step 1 say
+//! a challenge that assigns an ID another active connection holds is ignored, while §3.4
+//! step 3's example has a world server assign the ID the disconnecting login connection
+//! still holds. Tessera follows the example: with one multiplexer per connection the IDs of
+//! one server never meet another's, so such a challenge is accepted (engineering choice
+//! where the two passages differ; question in `docs/m8-remediation.md` §15; tested). A datagram
 //! goes to the connection whose recipient ID it names and whose server address it comes
 //! from (§3.4 step 2), else to the newest connection with that server address (step 3): the
 //! world connection, then the replaced ones (newest first), then the login connection.
@@ -61,9 +62,13 @@
 //!
 //! # Entities
 //!
-//! The target of a message is the routing header's `routingField0` when it has one, else
-//! the fragment's `recipientId` (`official-messages-world.md` §1.1.2,
-//! [`crate::world::active_target`]). In the world, batches (`0x0D`, `0x4C`, §5.1) are
+//! The target of a message is the fragment's `recipientId`. `official-messages-world.md`
+//! §1.1.2 makes the routing header's `routingField0` the target when it has one
+//! ([`crate::world::active_target`]), but that field is a `u32` (`official-session.md` §9.1)
+//! while world InstanceIDs are 64-bit, and the spec does not say how one maps to the
+//! other. Until it does, a routed envelope keeps `recipientId` and is counted
+//! ([`DriverCounters::routed_envelopes`]), so no `0xD0` asks for an ID made from 32 bits
+//! (engineering choice, question in `docs/m8-remediation.md` §15). In the world, batches (`0x0D`, `0x4C`, §5.1) are
 //! unpacked in order with their target (§1.1.3; the one exception, the `0x52` each `0x98`
 //! takes as its initial property set, goes to the created entity:
 //! [`super::entities::pair_initial_properties`], [`super::entities::paired_target`]), the
@@ -72,7 +77,7 @@
 //! them into `EntityCreated`, `AppearanceChanged` and `EntityDespawned` ([`super::entities`]
 //! has the mapping); the positions of every entity but the local player go to the feed too:
 //! they place the entities it waits for, and the remote motion of created entities (`0xCE`,
-//! `0xBF`, and `0x59` as a move to its destination) is `EntityMoved`. `0xED` and `0xBD`
+//! `0xBF`, and `0x59` paths followed in time) is `EntityMoved`. `0xED` and `0xBD`
 //! reach no neutral event and are counted ([`FeedCounters`]).
 //!
 //! Every `0x0D`, a nested one too, ends with its 1-byte tail flag
@@ -94,10 +99,13 @@
 //! [`super::entities::MAX_TEXT_LOADS_PER_PASS`]), retried once at the start of each pass.
 //!
 //! Portal space ends on the client's `Command::WorldLoaded` or after
-//! [`PORTAL_LOADING_TIMEOUT_SEC`] (§4.5 item 4). Each portal space starts with a fresh
-//! loading state; the client sends one `WorldLoaded` per placement, and the driver takes
-//! only one that arrives while it is in portal space (one signal per portal space; a
-//! signal outside portal space is ignored).
+//! [`PORTAL_LOADING_TIMEOUT_SEC`] (§4.5 item 4). The client sends one `WorldLoaded` per
+//! placement; the driver keeps the latest with the entity stamp of the placement it
+//! answers, and it counts for a portal space whose expected stamp that placement reached.
+//! So a `WorldLoaded` of an earlier placement never ends a portal space, and one sent for a
+//! placement that came before its `0x5E` (item 2 allows that order) still does
+//! (engineering choice, `docs/m8-remediation.md` §15). A signal outside the world is
+//! ignored.
 //!
 //! # Ending the session
 //!
@@ -573,8 +581,7 @@ enum Stage {
     },
 }
 
-/// What the driver needs to start.
-#[derive(Debug)]
+/// What the driver needs to start. Its `Debug` names no endpoint (decision 0044 item 3).
 pub struct SessionStart {
     /// The hand-off values (`official-login.md` §4.2).
     pub handoff: SessionHandoff,
@@ -609,6 +616,21 @@ pub struct SessionStart {
     /// bind address, the port case and the `maxRecvRate` of the login and world
     /// connections.
     pub net: NetPreferences,
+}
+
+impl std::fmt::Debug for SessionStart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionStart")
+            .field("handoff", &self.handoff)
+            .field("login_peer", &"<set>")
+            .field("refresher", &self.refresher)
+            .field("chat_endpoint", &self.chat_endpoint.map(|_| "<set>"))
+            .field("version", &self.version)
+            .field("codec_uuids", &self.codec_uuids.len())
+            .field("send_checksum", &self.send_checksum)
+            .field("net", &self.net)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Why the session could not start (before any datagram was sent).
@@ -656,8 +678,16 @@ pub struct DriverCounters {
     /// Moves and chat lines that arrived outside the world (after a teardown, before the
     /// client saw the return), refused and not sent.
     pub outside_world: u64,
-    /// `WorldLoaded` signals outside portal space, ignored.
+    /// `WorldLoaded` signals outside the world, ignored.
     pub stray_loaded: u64,
+    /// `VersionStatus` values other than 0 and 1 (`official-session.md` §9.3), ignored.
+    pub unknown_version_status: u64,
+    /// Envelopes whose routing header named a `routingField0` other than the fragment's
+    /// `recipientId`; they keep `recipientId` (module docs "Entities").
+    pub routed_envelopes: u64,
+    /// Fellowship lines sent on the world server because the chat server had no
+    /// fellowship room or was not ready (`official-messages-play.md` §6.1.3).
+    pub fellowship_via_world: u64,
     /// Portal spaces begun by the server's `0x5E` (`official-messages-play.md` §4.5 item 2).
     pub portal_spaces: u64,
     /// Play-layer events dropped over [`MAX_MESSAGE_PLAY_EVENTS`] in one message.
@@ -695,8 +725,14 @@ pub struct SessionDriver<N: ConnectorNet> {
     /// The latest character list came on the world connection (after a return from the
     /// world): `0x6F` goes there then.
     list_on_world: bool,
-    /// The client's [`Command::WorldLoaded`] for the current portal space.
-    loaded: bool,
+    /// A referral arrived, so the login connection was disconnected gracefully
+    /// (`official-session.md` §6.5 step 2): its close no longer ends the session.
+    login_referred: bool,
+    /// The client's latest [`Command::WorldLoaded`] in this world: `Some(stamp)` with the
+    /// entity stamp of the placement it answers (`None` inside while no stamp is known).
+    /// It counts for a portal space whose expected stamp that placement reached
+    /// ([`Self::loading_done`]).
+    loaded: Option<Option<u8>>,
     /// When the current portal space was first seen (for [`PORTAL_LOADING_TIMEOUT_SEC`]).
     portal_since: Option<f64>,
     adapter: PlayAdapter,
@@ -717,7 +753,6 @@ pub struct SessionDriver<N: ConnectorNet> {
     refreshing: Option<Refreshing>,
     background_http: Option<SendHttpClient>,
     cancel: Arc<AtomicBool>,
-    client_timestamp: u32,
     events: VecDeque<Event>,
     ended: bool,
     shutting_down: bool,
@@ -839,17 +874,23 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return Err(StartFailure::Cancelled);
         }
         // §3.2 item 2: the wildcard address unless the two-colon `-h` form's `localHost`
-        // (which overrides) or `Net.BindInterface` selects one. A `localHost` that is not
-        // an IPv4 literal selects nothing (engineering choice).
-        let from_host: Option<std::net::Ipv4Addr> = host
+        // (which overrides) or `Net.BindInterface` selects one. A `localHost` segment that
+        // is given still overrides `Net.BindInterface` when it is not an IPv4 literal (or
+        // is `0.0.0.0`): it selects the wildcard (engineering choice, no name lookup).
+        let host_segment = host
             .local_host
             .as_deref()
+            .map(str::trim)
+            .filter(|h| !h.is_empty());
+        let from_host: Option<std::net::Ipv4Addr> = host_segment
             .and_then(|h| h.parse().ok())
             .filter(|ip: &std::net::Ipv4Addr| !ip.is_unspecified());
-        let (address, local_source) = match (from_host, start.net.bind_address()) {
-            (Some(ip), _) => (ip, LocalSource::HostSegment),
-            (None, Some(ip)) => (ip, LocalSource::BindInterface),
-            (None, None) => (std::net::Ipv4Addr::UNSPECIFIED, LocalSource::Wildcard),
+        let (address, local_source) = match (host_segment, from_host, start.net.bind_address()) {
+            (_, Some(ip), _) => (ip, LocalSource::HostSegment),
+            (Some(_), None, _) | (None, None, None) => {
+                (std::net::Ipv4Addr::UNSPECIFIED, LocalSource::Wildcard)
+            }
+            (None, None, Some(ip)) => (ip, LocalSource::BindInterface),
         };
         // The first local IPv4 address seeds Case B (`NetworkAccess::local_ipv4_toward`
         // says which address stands for it).
@@ -905,7 +946,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             stage: Stage::Login,
             characters: Vec::new(),
             list_on_world: false,
-            loaded: false,
+            login_referred: false,
+            loaded: None,
             portal_since: None,
             adapter: PlayAdapter::new(categories),
             feed: EntityFeed::default(),
@@ -922,7 +964,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
             refreshing: None,
             background_http: Some(net.background_http()),
             cancel: start.cancel,
-            client_timestamp,
             events: VecDeque::new(),
             ended: false,
             shutting_down: false,
@@ -1108,6 +1149,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let before = self.events.len();
         let read = read && !self.full();
         self.feed.begin_pass();
+        self.feed.set_clock(now);
         self.feed_deferred();
         let read_any = read && self.receive(now, stop) > 0;
         self.run_links(now, stop);
@@ -1121,6 +1163,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.run_chat(now);
         }
         self.enter_deadline(now);
+        self.advance_paths();
         self.portal_step(now);
         self.send_pending(now);
         self.tick(now);
@@ -1156,6 +1199,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
             character,
             reason: "The world did not answer.".to_owned(),
         });
+        if self.login_referred {
+            // The login connection was disconnected on the referral (§6.5 step 2) and the
+            // world connection is gone: no connection is left for a later `0x6F`, so the
+            // session ends. Engineering choice, spec silent (`docs/m8-remediation.md` §15).
+            self.end(DisconnectReason::TimedOut);
+        }
     }
 
     /// Portal space (`official-messages-play.md` §4.5 item 4): it ends, and `0xF4` goes out,
@@ -1172,21 +1221,39 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         let since = *self.portal_since.get_or_insert(now);
         let timed_out = now - since >= PORTAL_LOADING_TIMEOUT_SEC;
-        if let Some(ack) = self.adapter.portal_loading(self.loaded, timed_out) {
-            if !self.loaded {
+        let done = self.loading_done();
+        if let Some(ack) = self.adapter.portal_loading(done, timed_out) {
+            if !done {
                 tracing::info!("official session: portal space ended by its time-out");
             }
-            self.loaded = false;
             self.portal_since = None;
             self.pending_out.push_back(ack);
         }
     }
 
-    /// Starts the portal-space loading state afresh: when a portal space begins (world
-    /// entry, `official-messages-world.md` §4.3.3), so a `WorldLoaded` of an earlier
-    /// placement never ends it, and when the world is left.
+    /// Whether the client's loading is done for the placement the current portal space
+    /// waits for (§4.5 item 4): its latest `WorldLoaded` answers a placement whose stamp
+    /// reached the expected stamp, so a `WorldLoaded` sent before a `0x5E` with that stamp
+    /// (item 2 lets the placement come first) counts, and one of an earlier placement does
+    /// not. While no stamp is known (no stamped placement in this world yet) any
+    /// `WorldLoaded` of this world counts; the stamp wait itself is the adapter's.
+    /// Engineering choice: the spec ties loading to the placement, not to a message
+    /// (`docs/m8-remediation.md` §15).
+    fn loading_done(&self) -> bool {
+        let t = self.adapter.teleport();
+        match (self.loaded, t.stamp_known()) {
+            (Some(Some(s)), true) => {
+                crate::play::movement::stamp_newer_or_equal(s, t.expected_stamp())
+            }
+            (Some(None), false) => true,
+            _ => false,
+        }
+    }
+
+    /// Starts the loading state afresh: at world entry (`official-messages-world.md`
+    /// §4.3.3), so no `WorldLoaded` of another world counts, and when the world is left.
     fn fresh_portal_loading(&mut self) {
-        self.loaded = false;
+        self.loaded = None;
         self.portal_since = None;
     }
 
@@ -1475,14 +1542,27 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 ) {
                     Ok(envelopes) => {
                         // Handled by `run_links` within the cap (module docs). The target is
-                        // the routing header's `routingField0` when it has one, else the
-                        // fragment's `recipientId` (`official-messages-world.md` §1.1.2).
+                        // the fragment's `recipientId`: §1.1.2 names `routingField0` the
+                        // destination InstanceID, but it is a `u32` and InstanceIDs are 64-bit
+                        // (module docs "Entities"), so a routed envelope is counted and keeps
+                        // `recipientId`, and no `0xD0` asks for an ID made from 32 bits.
+                        let routed = envelopes
+                            .iter()
+                            .filter(|env| {
+                                active_target(blob.recipient_id, env.routing_header.as_ref())
+                                    != blob.recipient_id
+                            })
+                            .count();
+                        if routed > 0 {
+                            self.counters.routed_envelopes += routed as u64;
+                            tracing::debug!(
+                                routed,
+                                "official session: routed envelope kept on its recipient"
+                            );
+                        }
                         self.inbox.extend(envelopes.into_iter().map(|env| Inbound {
                             opcode: env.opcode,
-                            recipient: active_target(
-                                blob.recipient_id,
-                                env.routing_header.as_ref(),
-                            ),
+                            recipient: blob.recipient_id,
                             body: env.body,
                             world,
                         }));
@@ -1519,8 +1599,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if let Some(l) = self.link_of(world).filter(|l| l.closed_in_handshake()) {
             self.report(l, world, now).log_failed(&reason);
         }
-        // After the referral the login connection is not needed any more.
-        if !world && self.world.is_some() {
+        // After the referral the login connection is not needed any more: it was
+        // disconnected on the referral (`official-session.md` §6.5 step 2).
+        if !world && (self.world.is_some() || self.login_referred) {
             return;
         }
         let refused_login = matches!(
@@ -1559,7 +1640,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// is being entered or in it (`official-messages-world.md` §3.6 shows the referral only
     /// there); a replaced world connection is disconnected gracefully and kept until its
     /// disconnect is out. Both: engineering choice, spec silent (question with the spec
-    /// writers).
+    /// writers). The first referral also starts the graceful disconnect of the login
+    /// connection (§6.5 step 2).
     fn referral(&mut self, cookie: u64, addr: SocketAddrV4, now: f64) {
         if !matches!(self.stage, Stage::Entering { .. } | Stage::InWorld { .. }) {
             self.counters.stray_referrals += 1;
@@ -1592,6 +1674,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     // the session"), so it sends no more `ReferralAuthHeader`.
                     old.end_session(now);
                     self.keep_old(old);
+                }
+                // §6.5 step 2: the old login connection starts its graceful disconnect
+                // (State 6, then 7) while both connections stay on the socket.
+                if !self.login_referred {
+                    self.login_referred = true;
+                    if self.login.live() && !self.login.flushing() {
+                        self.login.end_session(now);
+                    }
                 }
                 tracing::info!("official session: referred to the world server");
                 if let Some(w) = self.world.as_ref() {
@@ -1645,12 +1735,24 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     Err(e) => tracing::warn!(error = %e, "official session: version not encoded"),
                 }
             }
-            ControlMessage::VersionStatus(s) => {
-                if s.ensure_accepted().is_err() {
+            ControlMessage::VersionStatus(s) => match s.status {
+                1 => {}
+                0 => {
+                    // §9.3: rejected; the connection closes locally.
                     tracing::info!("official session: the service did not accept this version");
+                    self.login.close_quietly();
                     self.refuse(LoginRefusal::ClientNotAccepted);
                 }
-            }
+                status => {
+                    // §9.3 defines 0 and 1 only: another value is logged and ignored
+                    // (engineering choice, `docs/m8-remediation.md` §15).
+                    self.counters.unknown_version_status += 1;
+                    tracing::debug!(
+                        status,
+                        "official session: version status not defined; ignored"
+                    );
+                }
+            },
             ControlMessage::LoginQueueStatus(q) => match q.outcome() {
                 // §9.3: queued; the position and total are shown when non-zero.
                 LogonOutcome::Queued(at) if self.stage == Stage::Login => {
@@ -1916,6 +2018,18 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.feed_output(out);
     }
 
+    /// The due moves of the `0x59` paths the feed follows (`official-messages-play.md`
+    /// §4.6.1; [`EntityFeed::advance_paths`]), below [`DRIVER_EVENT_CAP`].
+    fn advance_paths(&mut self) {
+        if !self.in_world_still() || self.full() {
+            return;
+        }
+        let mut out = FeedOutput::default();
+        self.feed.advance_paths(&mut out);
+        self.feed.flush(&self.schema, &mut out);
+        self.feed_output(out);
+    }
+
     /// Whether the driver still takes world messages.
     fn in_world_still(&self) -> bool {
         !self.ended && matches!(self.stage, Stage::InWorld { .. })
@@ -2076,7 +2190,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
             else {
                 continue;
             };
-            match paired_target(outcome, recipient) {
+            // A `0x98` that failed to decode has no outcome: its initial properties
+            // belong to an entity that was never made, not to the batch's target.
+            let Some(outcome) = outcome else {
+                self.feed.counters_mut().orphaned_initial_properties += 1;
+                continue;
+            };
+            match paired_target(Some(outcome), recipient) {
                 SubTarget::Skip => self.feed.counters_mut().overflow += 1,
                 SubTarget::To(target) => {
                     self.world_message(*sub_event_id, target, payload, depth + 1);
@@ -2170,11 +2290,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     self.feed_output(out);
                 }
                 PlaySignal::PortalSpace { scene_id, .. } => {
-                    // §4.5 item 2: a portal space begins with both gates clear; the
-                    // client's loading starts afresh, so a `WorldLoaded` of the earlier
-                    // placement never ends it (module docs). The scene comes with the
-                    // placement the client loads; no neutral event carries the scene ID.
-                    self.fresh_portal_loading();
+                    // §4.5 item 2: a portal space begins with both gates clear and its
+                    // loading time-out starts. A `WorldLoaded` counts only for the placement
+                    // it answers (`Self::loading_done`), so one of an earlier placement
+                    // never ends it, and one of a placement that came before this `0x5E`
+                    // still does (module docs). The scene comes with the placement the
+                    // client loads; no neutral event carries the scene ID.
+                    self.portal_since = None;
                     self.counters.portal_spaces += 1;
                     tracing::debug!(scene_id, "official world: portal space began");
                 }
@@ -2212,9 +2334,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     /// Sends `0x6F` on the connection that delivered the latest character list: the login
     /// connection at first, the world connection after a return from the world
-    /// (`official-messages-play.md` §7.2 item 3 keeps that connection open). Which
-    /// connection carries a `0x6F` after a return is not in the spec: engineering choice
-    /// pending a spec answer (listed in `docs/m8-remediation.md` §15).
+    /// (`official-messages-play.md` §7.2 item 3 keeps that connection open). The login
+    /// connection is disconnected once a referral arrives (`official-session.md` §6.5 step
+    /// 2), so after that only the world connection can carry one. Which connection carries
+    /// a `0x6F` after a return is not in the spec: engineering choice pending a spec answer
+    /// (listed in `docs/m8-remediation.md` §15).
     fn send_entry(&mut self, env: &[u8], now: f64) -> bool {
         let opcode = CharacterEnterWorldRequest::EVENT_ID;
         match self.world.as_mut() {
@@ -2524,15 +2648,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 Ok(())
             }
             Command::WorldLoaded => {
-                // §4.5 item 4: the client's loading for its latest placement is done. One
-                // signal per portal space: outside one it is ignored (module docs).
-                if matches!(self.stage, Stage::InWorld { .. })
-                    && self.adapter.teleport().in_portal_space()
-                {
-                    self.loaded = true;
+                // §4.5 item 4: the client's loading for its latest placement is done. It is
+                // kept with that placement's stamp, also outside portal space: a `0x5E`
+                // may follow its placement (item 2; module docs).
+                if matches!(self.stage, Stage::InWorld { .. }) {
+                    let t = self.adapter.teleport();
+                    self.loaded = Some(t.stamp_known().then(|| t.stamp()));
                 } else {
                     self.counters.stray_loaded += 1;
-                    tracing::debug!("official session: loading signal outside portal space");
+                    tracing::debug!("official session: loading signal outside the world");
                 }
                 Ok(())
             }
@@ -2567,8 +2691,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 velocity,
                 on_ground,
             } => {
-                // `official-messages-play.md` §8 row `0x24`: the axes, both headings and
-                // the jump bit while the controller is off the ground.
+                // `official-messages-play.md` §8 row `0x24`: the axes and both headings.
+                // The jump bit while the controller is off the ground and rising is
+                // Tessera's reading: the spec is silent on its source (`MoveStep::from_move`,
+                // `docs/m8-remediation.md` §15).
                 let step =
                     MoveStep::from_move(*heading, [velocity.x, velocity.y, velocity.z], *on_ground);
                 let predicted = PredictedState {
@@ -2580,7 +2706,38 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 Ok(())
             }
             Command::Chat {
-                channel: ChatChannel::Fellowship | ChatChannel::Named { .. },
+                channel: ChatChannel::Fellowship,
+                ..
+            } => {
+                // `official-messages-play.md` §6.1.3: Fellowship is dual. The chat server's
+                // fellowship room when it is there, else the world server's `0x84EC001B`
+                // with the Fellowship category (§8).
+                let via_chat = match self.chat.as_mut() {
+                    Some(chat) => match chat.command(cmd, now) {
+                        Ok(()) => Some(Ok(())),
+                        Err(
+                            crate::play::PlayError::ChatNotReady
+                            | crate::play::PlayError::UnmappedChannel(_),
+                        ) => None,
+                        Err(_) => {
+                            Some(Err(NetError::InvalidCommand("chat-server command refused")))
+                        }
+                    },
+                    None => None,
+                };
+                if let Some(r) = via_chat {
+                    return r;
+                }
+                self.counters.fellowship_via_world += 1;
+                let out = self
+                    .adapter
+                    .command(cmd)
+                    .map_err(|_| NetError::InvalidCommand("chat command refused"))?;
+                self.pending_out.extend(out);
+                Ok(())
+            }
+            Command::Chat {
+                channel: ChatChannel::Named { .. },
                 ..
             }
             | Command::Social(
@@ -2705,14 +2862,19 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if stop() || self.ended {
             return;
         }
+        // `official-session.md` §6.2.1: `clientTimestamp` is the Unix time when the
+        // session is initialised; the chat session is initialised here, not with the login
+        // connection. Its reconnects keep it (one chat session; engineering choice,
+        // `docs/m8-remediation.md` §15).
         let config = ChatConfig::new(
             endpoint,
             self.handoff.subscription_name(),
             Some(self.handoff.gls_ticket().to_owned()),
-            self.client_timestamp,
+            unix_seconds(),
         )
         .with_send_checksum(self.send_checksum)
-        .with_first_local(self.first_local);
+        .with_first_local(self.first_local)
+        .with_codec_uuids(self.codec_uuids.clone());
         let mut binder = binder;
         let allowance = Arc::clone(&self.chat_allowance);
         let metered: crate::chat_session::client::TransportBinder<Metered<N::Udp>> =
@@ -2781,17 +2943,29 @@ impl<N: ConnectorNet> SessionDriver<N> {
             // Portal space's loading time-out (§4.5 item 4; `portal_step` notes when it
             // began on its first pass), until the client gate is set: then the exit waits
             // for the server's `0x7C` / `0xC7` alone.
+            // Only while it lies ahead: past it, the exit waits for the stamp's `0xCE` or the
+            // server gate, which arrive as datagrams and wake the loop anyway.
+            let portal_timeout = self.portal_since.unwrap_or(now) + PORTAL_LOADING_TIMEOUT_SEC;
             if matches!(self.stage, Stage::InWorld { .. })
                 && self.adapter.teleport().in_portal_space()
                 && !self.adapter.teleport().client_ready()
+                && now < portal_timeout
             {
-                at(self.portal_since.unwrap_or(now) + PORTAL_LOADING_TIMEOUT_SEC);
+                at(portal_timeout);
             }
             if matches!(self.stage, Stage::InWorld { .. })
                 && self.chat.is_none()
                 && self.chat_endpoint.is_some()
             {
                 at(self.chat_retry_at);
+            }
+            // The next move of a followed `0x59` path (§4.6.1); none at the event cap, where
+            // the pass would not advance it.
+            if matches!(self.stage, Stage::InWorld { .. })
+                && !self.full()
+                && let Some(t) = self.feed.next_path_at()
+            {
+                at(t);
             }
             // The conditions under which `run_refresh` acts on a past deadline
             // (`TicketRefresher::poll_refresh_request`'s guards and no

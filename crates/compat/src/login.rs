@@ -1338,8 +1338,9 @@ pub fn select_language_from_list(
 }
 
 /// The `[Net]` keys of `UserPreferences.ini` that the primary login/world transport reads
-/// (`official-session.md` §3.2 item 1), with their defaults when absent.
-#[derive(Debug, Clone, PartialEq)]
+/// (`official-session.md` §3.2 item 1), with their defaults when absent. Its `Debug` names
+/// no address or port (decision 0044 item 3): only whether each is set.
+#[derive(Clone, PartialEq)]
 pub struct NetPreferences {
     /// `Net.BindInterface` (default `""`): the local interface address to bind.
     pub bind_interface: String,
@@ -1350,6 +1351,28 @@ pub struct NetPreferences {
     /// `Net.ConnectionSpeed` in kbps (default `0.00`): the primary connection's
     /// `ConnectAcceptHeader.maxRecvRate` is `floor(value × 102.4)` when positive (§6.4).
     pub connection_speed_kbps: f64,
+}
+
+impl fmt::Debug for NetPreferences {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NetPreferences")
+            .field(
+                "bind_interface",
+                &set_or_empty(!self.bind_interface.is_empty()),
+            )
+            .field(
+                "user_specified_port",
+                &set_or_empty(self.user_specified_port != 0),
+            )
+            .field("compute_unique_port", &self.compute_unique_port)
+            .field("connection_speed_kbps", &self.connection_speed_kbps)
+            .finish()
+    }
+}
+
+/// `"<set>"` or `"<empty>"`, for `Debug` forms that must not show an endpoint.
+pub(crate) fn set_or_empty(set: bool) -> &'static str {
+    if set { "<set>" } else { "<empty>" }
 }
 
 impl Default for NetPreferences {
@@ -4574,14 +4597,17 @@ impl Drop for SessionHandoff {
 impl fmt::Debug for SessionHandoff {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SessionHandoff")
-            .field("login_server", &self.login_server)
+            .field("login_server", &set_or_empty(!self.login_server.is_empty()))
             .field("local_bind_port", &self.local_bind_port)
             .field("subscription_name", &REDACTED_PLACEHOLDER)
             .field("gls_ticket", &REDACTED_PLACEHOLDER)
             .field("version_info", &self.version_info)
             .field("language", &self.language)
-            .field("chat_server", &self.chat_server)
-            .field("auth_server_url", &self.auth_server_url)
+            .field("chat_server", &set_or_empty(!self.chat_server.is_empty()))
+            .field(
+                "auth_server_url",
+                &set_or_empty(!self.auth_server_url.is_empty()),
+            )
             .field("ticket_lifetime_sec", &self.ticket_lifetime_sec)
             .finish()
     }
@@ -4932,7 +4958,10 @@ impl Drop for TicketRefresher {
 impl fmt::Debug for TicketRefresher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TicketRefresher")
-            .field("auth_server_url", &self.auth_server_url)
+            .field(
+                "auth_server_url",
+                &set_or_empty(!self.auth_server_url.is_empty()),
+            )
             .field("account_name", &REDACTED_PLACEHOLDER)
             .field("ticket", &REDACTED_PLACEHOLDER)
             .field("lifetime_sec", &self.lifetime_sec)

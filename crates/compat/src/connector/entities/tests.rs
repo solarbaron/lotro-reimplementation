@@ -566,8 +566,33 @@ fn the_local_players_despawn_and_properties_are_counted_apart() {
     assert!(out.events.is_empty());
 }
 
+/// The one move `out` holds: `(x, y, heading, velocity x, velocity y)`.
+fn one_move(out: &FeedOutput) -> (f32, f32, f32, f32, f32) {
+    let [
+        Event::EntityMoved {
+            transform,
+            velocity,
+            ..
+        },
+    ] = out.events.as_slice()
+    else {
+        panic!("{:?}", out.events);
+    };
+    (
+        transform.position.x,
+        transform.position.y,
+        transform.heading,
+        velocity.x,
+        velocity.y,
+    )
+}
+
+fn close(a: f32, b: f32) -> bool {
+    (a - b).abs() < 1e-3
+}
+
 #[test]
-fn a_path_moves_towards_its_destination_and_one_waypoint_keeps_the_heading() {
+fn a_path_without_a_speed_moves_to_its_destination_and_stops() {
     let (d, _) = data(Stub::default());
     let mut f = feed();
     shown(&mut f, &d, NPC);
@@ -578,71 +603,171 @@ fn a_path_moves_towards_its_destination_and_one_waypoint_keeps_the_heading() {
     let mut out = FeedOutput::default();
     f.path(NPC, &[at(13.0, 24.0)], &mut out);
     f.flush(&d, &mut out);
-    let [
-        Event::EntityMoved {
-            transform,
-            velocity,
-            ..
-        },
-    ] = out.events.as_slice()
-    else {
-        panic!("{:?}", out.events);
-    };
-    assert!((transform.heading - 1.25).abs() < 1e-6);
-    // 5 m away: 5 m/s at most 7, towards (3, 4) / 5.
-    assert!((velocity.x - 3.0).abs() < 1e-4 && (velocity.y - 4.0).abs() < 1e-4);
-    // Far: the speed is bounded.
+    let (x, y, h, vx, vy) = one_move(&out);
+    assert!(close(x, 13.0) && close(y, 24.0));
+    assert!(close(h, 1.25), "one waypoint keeps the heading");
+    assert!(vx == 0.0 && vy == 0.0, "no velocity past the destination");
     let mut out = FeedOutput::default();
     f.path(NPC, &[at(13.0, 24.0), at(113.0, 24.0)], &mut out);
     f.flush(&d, &mut out);
-    let [
-        Event::EntityMoved {
-            transform,
-            velocity,
-            ..
-        },
-    ] = out.events.as_slice()
-    else {
-        panic!("{:?}", out.events);
-    };
-    assert!(transform.heading.abs() < 1e-6, "along the last step");
-    let speed = velocity.x.hypot(velocity.y);
-    assert!((f64::from(speed) - MAX_PATH_SPEED).abs() < 1e-4, "{speed}");
+    let (x, _, h, vx, vy) = one_move(&out);
+    assert!(close(x, 113.0) && h.abs() < 1e-6, "along the last step");
+    assert!(vx == 0.0 && vy == 0.0);
+    assert_eq!(f.next_path_at(), None, "nothing is followed");
 }
 
 #[test]
-fn a_path_moves_at_its_speed_and_undefined_types_are_dropped() {
+fn a_linear_path_is_followed_segment_by_segment_at_its_speed() {
     let (d, _) = data(Stub::default());
     let mut f = feed();
     shown(&mut f, &d, NPC);
-    // `speed_param` is metres per second (§4.6.1): 2 m/s towards a point 5 m away.
+    f.set_clock(100.0);
+    // §4.6.1: 2 m/s along (10, 20) -> (14, 20) -> (14, 23).
+    let mut out = FeedOutput::default();
+    f.path_along(
+        NPC,
+        PATH_TYPE_LINEAR,
+        Some(2.0),
+        &[at(10.0, 20.0), at(14.0, 20.0), at(14.0, 23.0)],
+        &mut out,
+    );
+    f.flush(&d, &mut out);
+    let (x, y, h, vx, vy) = one_move(&out);
+    assert!(
+        close(x, 10.0) && close(y, 20.0),
+        "starts at the first waypoint"
+    );
+    assert!(close(vx, 2.0) && close(vy, 0.0) && h.abs() < 1e-6);
+    assert_eq!(f.next_path_at(), Some(100.0 + PATH_STEP_SEC));
+    // Not due yet: nothing.
+    let mut out = FeedOutput::default();
+    f.set_clock(100.1);
+    f.advance_paths(&mut out);
+    f.flush(&d, &mut out);
+    assert!(out.events.is_empty());
+    // One second in: 2 m along the first segment.
+    f.set_clock(101.0);
+    let mut out = FeedOutput::default();
+    f.advance_paths(&mut out);
+    f.flush(&d, &mut out);
+    let (x, y, _, _, _) = one_move(&out);
+    assert!(close(x, 12.0) && close(y, 20.0));
+    // 2.5 s in: 5 m, 1 m along the second segment, facing north.
+    f.set_clock(102.5);
+    let mut out = FeedOutput::default();
+    f.advance_paths(&mut out);
+    f.flush(&d, &mut out);
+    let (x, y, h, vx, vy) = one_move(&out);
+    assert!(close(x, 14.0) && close(y, 21.0));
+    assert!(close(vx, 0.0) && close(vy, 2.0));
+    assert!(close(h, std::f32::consts::FRAC_PI_2));
+    // Past the end: the last waypoint, zero velocity, and the path is done.
+    f.set_clock(110.0);
+    let mut out = FeedOutput::default();
+    f.advance_paths(&mut out);
+    f.flush(&d, &mut out);
+    let (x, y, _, vx, vy) = one_move(&out);
+    assert!(close(x, 14.0) && close(y, 23.0));
+    assert!(vx == 0.0 && vy == 0.0);
+    assert_eq!(f.next_path_at(), None);
+    assert_eq!(f.counters().paths_followed, 1);
+}
+
+#[test]
+fn a_loop_wraps_and_a_spline_passes_its_waypoints() {
+    let (d, _) = data(Stub::default());
+    let mut f = feed();
+    shown(&mut f, &d, NPC);
+    f.set_clock(0.0);
+    // A 4 m square at 1 m/s: 16 m around.
+    let square = [at(0.0, 0.0), at(4.0, 0.0), at(4.0, 4.0), at(0.0, 4.0)];
+    let mut out = FeedOutput::default();
+    f.path_along(NPC, PATH_TYPE_LOOP, Some(1.0), &square, &mut out);
+    f.flush(&d, &mut out);
+    // 14 s in: 2 m along the closing segment from (0, 4) back to (0, 0).
+    f.set_clock(14.0);
+    let mut out = FeedOutput::default();
+    f.advance_paths(&mut out);
+    f.flush(&d, &mut out);
+    let (x, y, _, vx, vy) = one_move(&out);
+    assert!(close(x, 0.0) && close(y, 2.0));
+    assert!(close(vx, 0.0) && close(vy, -1.0));
+    // 17 s in: wrapped, 1 m along the first segment again; the loop never ends.
+    f.set_clock(17.0);
+    let mut out = FeedOutput::default();
+    f.advance_paths(&mut out);
+    f.flush(&d, &mut out);
+    let (x, y, _, _, _) = one_move(&out);
+    assert!(close(x, 1.0) && close(y, 0.0));
+    assert!(f.next_path_at().is_some());
+    // A position from the server ends it.
+    let mut out = FeedOutput::default();
+    f.place(NPC, Some((at(9.0, 9.0), 0.0)), [0.0; 3], &mut out);
+    assert_eq!(f.next_path_at(), None);
+
+    // A spline through three points passes the middle one at its segment boundary.
+    f.set_clock(50.0);
     let mut out = FeedOutput::default();
     f.path_along(
         NPC,
         PATH_TYPE_SPLINE,
-        Some(2.0),
-        &[at(13.0, 24.0)],
+        Some(1.0),
+        &[at(0.0, 0.0), at(4.0, 0.0), at(4.0, 4.0)],
         &mut out,
     );
     f.flush(&d, &mut out);
-    let [Event::EntityMoved { velocity, .. }] = out.events.as_slice() else {
-        panic!("{:?}", out.events);
-    };
-    assert!((velocity.x - 1.2).abs() < 1e-4 && (velocity.y - 1.6).abs() < 1e-4);
-    // A huge speed is cut; a non-positive one falls back to the nominal speed.
+    f.set_clock(54.0);
+    let mut out = FeedOutput::default();
+    f.advance_paths(&mut out);
+    f.flush(&d, &mut out);
+    let (x, y, _, _, _) = one_move(&out);
+    assert!(close(x, 4.0) && close(y, 0.0), "({x}, {y})");
+    // Off the chord inside a segment.
+    f.set_clock(52.0);
     let mut out = FeedOutput::default();
     f.path_along(
         NPC,
-        PATH_TYPE_LOOP,
+        PATH_TYPE_SPLINE,
+        Some(1.0),
+        &[at(0.0, 0.0), at(4.0, 0.0), at(4.0, 4.0)],
+        &mut out,
+    );
+    f.set_clock(58.0);
+    let mut out = FeedOutput::default();
+    f.advance_paths(&mut out);
+    f.flush(&d, &mut out);
+    let (x, y, _, _, _) = one_move(&out);
+    assert!(x > 4.0 && y > 0.0 && y < 4.0, "({x}, {y})");
+}
+
+#[test]
+fn a_path_speed_is_bounded_and_undefined_types_are_dropped() {
+    let (d, _) = data(Stub::default());
+    let mut f = feed();
+    shown(&mut f, &d, NPC);
+    let mut out = FeedOutput::default();
+    f.place(NPC, Some((at(13.0, 24.0), 0.0)), [0.0; 3], &mut out);
+    f.flush(&d, &mut out);
+    // One waypoint with a speed is followed from the last place; a huge speed is cut.
+    let mut out = FeedOutput::default();
+    f.path_along(
+        NPC,
+        PATH_TYPE_LINEAR,
         Some(1.0e9),
-        &[at(13.0, 124.0)],
+        &[at(13.0, 1024.0)],
         &mut out,
     );
     f.flush(&d, &mut out);
-    let [Event::EntityMoved { velocity, .. }] = out.events.as_slice() else {
-        panic!("{:?}", out.events);
-    };
-    assert!((f64::from(velocity.x.hypot(velocity.y)) - MAX_SPEED_PARAM).abs() < 1e-2);
+    let (_, _, _, vx, vy) = one_move(&out);
+    assert!((f64::from(vx.hypot(vy)) - MAX_SPEED_PARAM).abs() < 1e-2);
+    // A path with too many waypoints is cut and counted.
+    let long: Vec<Location> = (0..=MAX_PATH_POINTS)
+        .map(|i| at(f64::from(u32::try_from(i).unwrap_or(0)), 0.0))
+        .collect();
+    let mut out = FeedOutput::default();
+    f.path_along(NPC, PATH_TYPE_LINEAR, Some(1.0), &long, &mut out);
+    f.flush(&d, &mut out);
+    assert_eq!(f.counters().paths_cut, 1);
     // Types outside 1..=3 are dropped and counted.
     let mut out = FeedOutput::default();
     for t in [0u32, 4, u32::MAX] {

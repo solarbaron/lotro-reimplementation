@@ -112,6 +112,10 @@ pub struct ChatConfig {
     /// binds (`official-session.md` §3.2: the chat transport uses the defaults); `None`
     /// binds Case C.
     pub first_local: Option<Ipv4Addr>,
+    /// The `codecUuid`s of the install's loaded dictionaries (`official-session.md` §4.1.2),
+    /// registered on every chat connection: a `ConnectChallengeHeader` naming one of them is
+    /// accepted (§6.4 step 3).
+    pub codec_uuids: Vec<[u8; 16]>,
 }
 
 impl Drop for ChatConfig {
@@ -134,6 +138,7 @@ impl std::fmt::Debug for ChatConfig {
             .field("client_timestamp", &self.client_timestamp)
             .field("send_checksum", &self.send_checksum)
             .field("first_local", &self.first_local.map(|_| "<set>"))
+            .field("codec_uuids", &self.codec_uuids.len())
             .finish()
     }
 }
@@ -155,7 +160,16 @@ impl ChatConfig {
             client_timestamp,
             send_checksum: SendChecksumRule::default(),
             first_local: None,
+            codec_uuids: Vec::new(),
         }
+    }
+
+    /// This configuration with `uuids`, the `codecUuid`s of the loaded dictionaries, which
+    /// every chat connection registers before its login (`official-session.md` §6.4 step 3).
+    #[must_use]
+    pub fn with_codec_uuids(mut self, uuids: Vec<[u8; 16]>) -> Self {
+        self.codec_uuids = uuids;
+        self
     }
 
     /// This configuration with `first_local` as the Case B seed of [`ChatClient::open`]'s
@@ -180,10 +194,16 @@ impl ChatConfig {
     /// # Errors
     ///
     /// [`PlayError::InvalidTicket`] when the ticket fails
-    /// [`crate::chat_session::check_ticket`]; the old ticket is kept.
-    pub fn set_ticket(&mut self, ticket_base64: Option<String>) -> Result<(), PlayError> {
-        if let Some(t) = ticket_base64.as_deref().filter(|t| !t.is_empty()) {
-            crate::chat_session::check_ticket(t)?;
+    /// [`crate::chat_session::check_ticket`]; the old ticket is kept and the refused one is
+    /// wiped before the error returns (`official-login.md` §6.3).
+    pub fn set_ticket(&mut self, mut ticket_base64: Option<String>) -> Result<(), PlayError> {
+        if let Some(t) = ticket_base64.as_deref().filter(|t| !t.is_empty())
+            && let Err(e) = crate::chat_session::check_ticket(t)
+        {
+            if let Some(s) = ticket_base64.as_mut() {
+                crate::login::zeroize_string(s);
+            }
+            return Err(e);
         }
         if let Some(old) = self.ticket_base64.as_mut() {
             crate::login::zeroize_string(old);
@@ -560,6 +580,11 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         self.transport_used = true;
         match self.mux.connection_mut(id) {
             Some(conn) => {
+                // The loaded dictionaries, so a challenge naming one is accepted
+                // (`official-session.md` §6.4 step 3, §7.3).
+                for u in &self.config.codec_uuids {
+                    conn.register_codec_uuid(*u);
+                }
                 conn.set_send_checksum_rule(self.config.send_checksum);
                 // `maxRecvRate` of the chat connection (`official-session.md` §6.4).
                 conn.set_max_recv_rate(CHAT_MAX_RECV_RATE);
@@ -692,7 +717,9 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                     room,
                     msg_type: MSG_TYPE_CHAT,
                     data,
-                    delivery_flag: false,
+                    // Outgoing room messages carry `delivery_flag = 0x01`
+                    // (`official-messages-play.md` §6.6.4, §6.6.5 row 0x16A).
+                    delivery_flag: true,
                 };
                 self.send(req, now).map(|_| ())
             }

@@ -319,6 +319,233 @@ fn the_whole_payload_rule_reaches_every_datagram_sent() {
     assert!(per_differing > 0);
 }
 
+/// An independent check of the client's sent checksums (`official-session.md` §4.4, §5.1,
+/// §5.6.3, §7.2), written from the spec and sharing no checksum code with the sender: the
+/// §4.4.1 sum, the §5.6.3 fragment header lengths from the parsed fields, the per-buffer
+/// payload sum of §4.4.2 over the raw payload split at those boundaries, and one outgoing
+/// ISAAC word per sequenced `seqNum` in order (`seqNum` 2 takes the first), a resend
+/// reusing its word.
+struct SendOracle {
+    isaac: IsaacCipher,
+    words: std::collections::BTreeMap<u32, u32>,
+    next_seq: u32,
+    checked: usize,
+    /// Masked datagrams whose `seqNum` had been seen (resends).
+    resent: usize,
+}
+
+impl SendOracle {
+    fn new(outgoing_seed: u32) -> Self {
+        Self {
+            isaac: IsaacCipher::from_seed(outgoing_seed),
+            words: std::collections::BTreeMap::new(),
+            next_seq: 2,
+            checked: 0,
+            resent: 0,
+        }
+    }
+
+    /// §4.4.1, from the spec's table.
+    fn sum(b: &[u8]) -> u32 {
+        let mut acc = 0u32;
+        let whole = b.len() / 4 * 4;
+        for w in b[..whole].as_chunks::<4>().0 {
+            acc = acc.wrapping_add(u32::from_le_bytes(*w));
+        }
+        let tail = &b[whole..];
+        if !tail.is_empty() {
+            let mut t = 0u32;
+            for (j, byte) in tail.iter().enumerate() {
+                t |= u32::from(*byte) << (24 - 8 * j);
+            }
+            let len = u32::try_from(b.len()).expect("short");
+            acc = acc.wrapping_add(t).wrapping_add(len.wrapping_mul(65_536));
+        }
+        acc
+    }
+
+    /// §5.6.1 sizes.
+    fn vlen(v: u32) -> usize {
+        match v {
+            0..=0x7F => 1,
+            0x80..=0x3FFF => 2,
+            0x4000..=0x1FFF_FFFF => 4,
+            _ => 5,
+        }
+    }
+
+    /// §5.6.3: the even-length fragment header of `h` (fields 1–9; no attachment).
+    fn header_len(h: &crate::session::BlobFragmentHeader) -> usize {
+        assert!(h.attachment.is_none(), "the client sends no attachment");
+        let q = h.queue_id;
+        let fragmented = h.blob_flags & 0x10 != 0;
+        let mut n = 2;
+        if q == 3 {
+            n += Self::vlen(u32::from(h.seq_group));
+        }
+        if (2..=4).contains(&q) {
+            n += 2;
+        }
+        if q == 2 || q == 4 || ((q == 1 || q == 3) && fragmented) {
+            n += 2;
+        }
+        if fragmented {
+            n += Self::vlen(h.frag_index) + Self::vlen(h.num_frags);
+        }
+        if h.ext_word.is_some() {
+            n += 2;
+        }
+        if h.blob_flags & 0x40 == 0 {
+            n += 8;
+        }
+        if h.blob_flags & 0x80 == 0 {
+            if h.frag_index == 0 {
+                n += Self::vlen(h.blob_header_word.expect("fragment 0 has its word"));
+            }
+            n += Self::vlen(h.frag_data_len);
+        }
+        n + n % 2
+    }
+
+    /// Checks one uncompressed datagram the client sent; returns whether it was masked.
+    fn check(&mut self, datagram: &[u8]) -> bool {
+        assert_eq!(&datagram[..2], &[0, 0], "uncompressed");
+        let pkt = decode_datagram(datagram, false, None, false).expect("decodes");
+        let payload = &pkt.raw_payload;
+        // The payload split (§4.4.2 step 2): the optional headers (every one a multiple of
+        // four bytes but the 6-byte `FlowControlHeader`, which comes last), then each
+        // fragment's header and its data.
+        let frag_bytes: usize = pkt
+            .fragments
+            .iter()
+            .map(|f| Self::header_len(&f.header) + f.payload.len())
+            .sum();
+        let opt_len = payload.len() - frag_bytes;
+        let flow = if pkt.opt_headers.flow_control.is_some() {
+            6
+        } else {
+            0
+        };
+        let mut sum = Self::sum(&payload[..opt_len - flow]);
+        if flow > 0 {
+            sum = sum.wrapping_add(Self::sum(&payload[opt_len - flow..opt_len]));
+        }
+        let mut at = opt_len;
+        for f in &pkt.fragments {
+            let h = Self::header_len(&f.header);
+            sum = sum.wrapping_add(Self::sum(&payload[at..at + h]));
+            at += h;
+            assert_eq!(&payload[at..at + f.payload.len()], f.payload.as_slice());
+            sum = sum.wrapping_add(Self::sum(&payload[at..at + f.payload.len()]));
+            at += f.payload.len();
+        }
+        assert_eq!(at, payload.len(), "the split covers the payload");
+        // §4.4.2 step 1: the header with `BA DD 70 DD` in its checksum field.
+        let mut header = datagram[2..22].to_vec();
+        let wire = u32::from_be_bytes([header[12], header[13], header[14], header[15]]);
+        header[12..16].copy_from_slice(&[0xBA, 0xDD, 0x70, 0xDD]);
+        let hdr_sum = Self::sum(&header);
+        let masked = pkt.header.flags & 0x0200_0000 != 0;
+        let payload_sum = if masked {
+            let seq = pkt.header.seq_num;
+            let word = match self.words.get(&seq) {
+                Some(w) => {
+                    self.resent += 1;
+                    *w
+                }
+                None => {
+                    assert_eq!(seq, self.next_seq, "one word per seqNum, in order");
+                    self.next_seq += 1;
+                    let w = self.isaac.next_mask();
+                    self.words.insert(seq, w);
+                    w
+                }
+            };
+            wire.wrapping_sub(hdr_sum) ^ word
+        } else {
+            wire.wrapping_sub(hdr_sum)
+        };
+        assert_eq!(payload_sum, sum, "seqNum {}", pkt.header.seq_num);
+        self.checked += 1;
+        masked
+    }
+}
+
+#[test]
+fn every_datagram_sent_fits_an_independent_checksum_oracle() {
+    // The login connection from its first datagram: the `SessionAuthHeader`, the
+    // `ConnectAcceptHeader`, the `0x12C` (queue 4) after the version request, acks with a
+    // `FlowControlHeader`, and the `0x6F` (queue 3, group 0x13), resends included.
+    let start = session_start(0, None, Arc::default());
+    let world = new_world(Service::default());
+    let mut net = FakeNet(world.clone());
+    let mut d = SessionDriver::start(&mut net, start, 0.0, &go).expect("start");
+    let mut login = Server::new(0x0111, 0xBEEF_0001);
+    world.deliver(login.challenge(0xBEEF_0001), LOGIN_SERVER);
+    d.step(0.0, true, &go);
+    world.deliver(login.event(0x12F, &[]), LOGIN_SERVER);
+    d.step(0.1, true, &go);
+    for _ in 0..30 {
+        world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
+    }
+    d.step(0.2, true, &go);
+    let _ = d.take_events();
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.2,
+    )
+    .expect("enter");
+    let mut t = 1.2;
+    while t < 8.0 {
+        d.step(t, true, &go);
+        let _ = d.take_events();
+        t += 0.5;
+    }
+    let mut sent = world.take_sent();
+    // The server asks again for the first sequenced datagram (§5.3): its resend reuses
+    // the word of its `seqNum` (§7.2).
+    world.deliver(
+        login.control(OptionalHeaders {
+            sequence_nak: Some(vec![2]),
+            ..OptionalHeaders::default()
+        }),
+        LOGIN_SERVER,
+    );
+    d.step(t, true, &go);
+    sent.extend(world.take_sent());
+    let mut oracle = SendOracle::new(0xCAFE_1234);
+    let (mut masked, mut flow_and_fragment, mut opcodes) = (0, 0, Vec::new());
+    for (dgram, to) in sent {
+        assert_eq!(to, LOGIN_SERVER);
+        if oracle.check(&dgram) {
+            masked += 1;
+        }
+        let pkt = decode_datagram(&dgram, false, None, false).expect("decodes");
+        if pkt.opt_headers.flow_control.is_some() && !pkt.fragments.is_empty() {
+            flow_and_fragment += 1;
+        }
+        opcodes.extend(pkt.fragments.iter().filter_map(|f| {
+            f.header
+                .blob_header_word
+                .map(|w| (w, f.header.queue_id, f.header.seq_group))
+        }));
+    }
+    assert!(
+        oracle.checked >= 4 && masked >= 2,
+        "{} / {masked}",
+        oracle.checked
+    );
+    assert!(
+        flow_and_fragment >= 1,
+        "a FlowControlHeader before a fragment"
+    );
+    assert!(oracle.resent >= 1, "a resend reuses its word");
+    assert!(opcodes.contains(&(0x12C, 4, 0)), "{opcodes:?}");
+    assert!(opcodes.contains(&(0x6F, 3, 0x13)), "{opcodes:?}");
+}
+
 /// The handshake datagrams of a connection on `rule`: the `SessionAuthHeader`, the
 /// `ConnectAcceptHeader` after a challenge and, on a second connection, the
 /// `ReferralAuthHeader`.

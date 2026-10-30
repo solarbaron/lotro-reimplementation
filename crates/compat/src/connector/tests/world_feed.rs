@@ -5,7 +5,9 @@
 //! from the install (§6.7).
 
 use super::*;
-use crate::connector::entities::{FeedCounters, PID_IS_INANIMATE_PROP, PID_IS_NPC_AGENT};
+use crate::connector::entities::{
+    FeedCounters, PATH_STEP_SEC, PID_IS_INANIMATE_PROP, PID_IS_NPC_AGENT,
+};
 use crate::connector::session_phase::MAX_BATCH_DEPTH;
 // The synthetic service's builders, through the parent test module (whose import of
 // `test_support` the official-entry source scan knows as test code).
@@ -424,7 +426,7 @@ fn created_entities_move_by_position_set_position_and_path() {
     .expect("0xBF");
     let events = deliver(&world, &mut d, login.event_to(0xBF, NPC, &set), 2.2);
     assert_eq!(moved(&events).len(), 1, "{events:?}");
-    // A path: a move to its destination, facing along its last step (+X: heading 0).
+    // A path with a speed is followed in time from its first waypoint (+X: heading 0).
     let wp =
         |x: f32| WirePosition::from_components(1, 1, 2, 0, 0, [x, 40.0, 6.0], [1.0, 0.0, 0.0, 0.0]);
     let path = EntitySplinePath {
@@ -441,17 +443,32 @@ fn created_entities_move_by_position_set_position_and_path() {
         .iter()
         .filter(|e| matches!(e, Event::EntityMoved { .. }))
         .collect();
-    // From the `0xBF` place (x 191) to x 200 along +X at the path's `speed_param`, 2 m/s
-    // (`official-messages-play.md` §4.6.1), not the feed's nominal speed.
+    // At the first waypoint (x 192) along +X at the path's `speed_param`, 2 m/s
+    // (`official-messages-play.md` §4.6.1).
     assert!(
         matches!(m.as_slice(), [Event::EntityMoved { transform, velocity, .. }]
-            if (transform.position.x - 200.0).abs() < 1e-3
+            if (transform.position.x - 192.0).abs() < 1e-3
                 && transform.heading.abs() < 1e-5
                 && (velocity.x - 2.0).abs() < 1e-4
                 && velocity.y.abs() < 1e-4),
         "{events:?}"
     );
     assert_eq!(counters(&d).paths, 1);
+    // The driver's clock moves it on: 2 s later, 4 m along; the deadline names the next
+    // move.
+    assert!(
+        d.next_deadline(2.3)
+            .is_some_and(|t| t <= 2.3 + PATH_STEP_SEC + 1e-9)
+    );
+    d.step(4.3, true, &go);
+    let events = d.take_events();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::EntityMoved { transform, .. }
+            if (transform.position.x - 196.0).abs() < 1e-3)),
+        "{events:?}"
+    );
     // A heading from a `0xCE` is kept by a one-waypoint path (quantized 64: a quarter turn).
     deliver(
         &world,
@@ -1068,39 +1085,62 @@ fn each_0x98_takes_the_first_free_0x52_after_it() {
 }
 
 #[test]
-fn the_routing_header_names_the_target_of_a_message() {
-    // `official-messages-world.md` §1.1.2 item 2: `routingField0` overrides the
-    // fragment's `recipientId`.
+fn a_routed_envelope_keeps_its_recipient() {
+    // `official-messages-world.md` §1.1.2 names `routingField0` the target, but it is a
+    // `u32` and InstanceIDs are 64-bit: the driver keeps the fragment's `recipientId`,
+    // counts the routed envelope and asks for no ID made from 32 bits (module docs).
     let (world, mut d, mut login) = in_world();
-    let small: u64 = 0x0000_0000_1234_5678;
     let b = entity_batch(
-        small,
+        NPC,
         NPC_TEMPLATE,
         &entity_properties(NPC_NAME, true),
         NPC_AT,
     );
-    let events = deliver(&world, &mut d, login.event_to(0x0D, small, &b), 2.0);
+    let events = deliver(&world, &mut d, login.event_to(0x0D, NPC, &b), 2.0);
     assert_eq!(created(&events).len(), 1, "{events:?}");
-    let routing = crate::session::MessageRoutingHeader {
-        field0: Some(0x1234_5678),
-        ..crate::session::MessageRoutingHeader::default()
+    world.take_sent();
+    let envelope = |field0: u32| {
+        let routing = crate::session::MessageRoutingHeader {
+            field0: Some(field0),
+            ..crate::session::MessageRoutingHeader::default()
+        };
+        crate::session::encode_message_with_routing(0, Some(&routing), &[0], false)
+            .expect("envelope")
     };
-    let envelope = crate::session::encode_message_with_routing(0, Some(&routing), &[0], false)
-        .expect("envelope");
-    // Addressed to another entity on the fragment, to `small` by the routing header.
+    // Addressed to another entity on the fragment, naming the NPC's low 32 bits in the
+    // routing header: the NPC stays.
+    #[allow(clippy::cast_possible_truncation)]
+    let low = NPC as u32;
     let events = deliver(
         &world,
         &mut d,
-        login.blob_to(0x40, Some(OTHER), &envelope),
+        login.blob_to(0x40, Some(OTHER), &envelope(low)),
         2.1,
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::EntityDespawned { .. })),
+        "{events:?}"
+    );
+    // Addressed to the NPC on the fragment: it goes, whatever the routing header says.
+    let events = deliver(
+        &world,
+        &mut d,
+        login.blob_to(0x40, Some(NPC), &envelope(0x1234_5678)),
+        2.2,
     );
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::EntityDespawned { id } if *id == EntityId(small))),
+            .any(|e| matches!(e, Event::EntityDespawned { id } if *id == EntityId(NPC))),
         "{events:?}"
     );
-    assert_eq!(counters(&d).despawned, 1);
+    assert_eq!(d.counters().routed_envelopes, 2);
+    assert!(
+        sent_payloads(&world, 0xD0).is_empty(),
+        "no query for a 32-bit ID"
+    );
 }
 
 /// Ends the world entry's portal space: the server gate `0x7C` and the client's loading.
@@ -1118,7 +1158,8 @@ fn out_of_portal_space(world: &World, d: &mut SessionDriver<FakeNet>, login: &mu
 
 #[test]
 fn a_move_off_the_ground_sends_the_jump_bit() {
-    // `official-messages-play.md` §8 row `0x24`: `slot_flags` bit 1 while jumping.
+    // `official-messages-play.md` §8 row `0x24`: `slot_flags` bit 1 while jumping (off the
+    // ground and rising: Tessera's reading, `MoveStep::from_move`).
     let (world, mut d, mut login) = in_world();
     out_of_portal_space(&world, &mut d, &mut login);
     let step = |d: &mut SessionDriver<FakeNet>, t: f64, on_ground: bool| {
@@ -1126,7 +1167,7 @@ fn a_move_off_the_ground_sends_the_jump_bit() {
             &Command::Move {
                 location: tessera_net::Location::default(),
                 heading: 0.0,
-                velocity: Vec3::new(4.0, 0.0, 0.0),
+                velocity: Vec3::new(4.0, 0.0, if on_ground { 0.0 } else { 3.0 }),
                 on_ground,
             },
             t,
@@ -1149,24 +1190,64 @@ fn a_move_off_the_ground_sends_the_jump_bit() {
     assert!(!decode(last).jump(3), "on the ground: no jump");
 }
 
-#[test]
-fn a_portal_space_begun_by_the_server_waits_for_a_fresh_loading_signal() {
-    // `official-messages-play.md` §4.5 items 2 and 4: `0x5E` clears both gates, so a
-    // loading signal from before it does not end the new portal space.
-    let (world, mut d, mut login) = in_world();
-    out_of_portal_space(&world, &mut d, &mut login);
-    // A loading signal outside portal space is ignored.
-    d.command(&Command::WorldLoaded, 1.9).expect("accepted");
-    let enter = crate::world::EnterPortalSpace {
-        stamp: 0,
-        scene_id: 7,
+/// A local-player `0xCE` with the teleport stamp `stamp` (`official-messages-play.md`
+/// §4.5 item 3).
+fn stamped_placement(stamp: u8) -> Vec<u8> {
+    PositionUpdate {
+        entity_id: PLAYER,
+        seq_byte: Some(stamp),
+        velocity: [None; 3],
+        anim_state: None,
+        placement: crate::world::EntityPlacement::WorldWithHeading {
+            position: WirePosition::from_components(
+                1,
+                1,
+                2,
+                0,
+                0,
+                [10.0, 10.0, 5.0],
+                [1.0, 0.0, 0.0, 0.0],
+            ),
+            heading_raw: 0,
+        },
+        interp_param_a: None,
+        interp_param_b: None,
     }
     .to_bytes()
-    .expect("0x5E");
-    deliver(&world, &mut d, login.event(0x5E, &enter), 2.0);
+    .expect("0xCE")
+}
+
+fn portal_space(stamp: u8, scene_id: u32) -> Vec<u8> {
+    crate::world::EnterPortalSpace { stamp, scene_id }
+        .to_bytes()
+        .expect("0x5E")
+}
+
+#[test]
+fn a_portal_space_begun_by_the_server_waits_for_a_fresh_loading_signal() {
+    // `official-messages-play.md` §4.5 items 2 and 4: `0x5E` with a newer stamp clears both
+    // gates, so a loading signal of the earlier placement does not end the new portal
+    // space; the one for the placement with the new stamp does.
+    let (world, mut d, mut login) = in_world();
+    deliver(
+        &world,
+        &mut d,
+        login.event(0xCE, &stamped_placement(0)),
+        1.2,
+    );
+    out_of_portal_space(&world, &mut d, &mut login);
+    // A loading signal outside portal space answers the stamp-0 placement.
+    d.command(&Command::WorldLoaded, 1.9).expect("accepted");
+    deliver(&world, &mut d, login.event(0x5E, &portal_space(1, 7)), 2.0);
     assert_eq!(d.counters().portal_spaces, 1);
-    // The server gate alone does not end it.
+    // The server gate alone does not end it, nor does the placement without its loading.
     deliver(&world, &mut d, login.event(0xC7, &[0]), 2.1);
+    deliver(
+        &world,
+        &mut d,
+        login.event(0xCE, &stamped_placement(1)),
+        2.15,
+    );
     d.step(2.2, true, &go);
     assert!(
         sent_payloads(&world, 0xF4).is_empty(),
@@ -1178,28 +1259,125 @@ fn a_portal_space_begun_by_the_server_waits_for_a_fresh_loading_signal() {
 }
 
 #[test]
-fn a_portal_space_starts_its_loading_afresh() {
-    // A `WorldLoaded` taken in the entry's portal space, before the server's gate, is
-    // forgotten when a `0x5E` begins another portal space in the same pass.
+fn a_placement_before_its_portal_space_keeps_its_loading_signal() {
+    // §4.5 item 2 lets the stamped `0xCE` come before `0x5E`. The client loads that
+    // placement and sends its one `WorldLoaded`; the `0x5E` with the same stamp and the
+    // server gate then end portal space at once, with no 30 s wait.
     let (world, mut d, mut login) = in_world();
-    d.command(&Command::WorldLoaded, 1.5).expect("loaded");
-    let enter = crate::world::EnterPortalSpace {
-        stamp: 0,
-        scene_id: 9,
-    }
-    .to_bytes()
-    .expect("0x5E");
-    world.deliver(login.event(0x5E, &enter), LOGIN_SERVER);
+    deliver(
+        &world,
+        &mut d,
+        login.event(0xCE, &stamped_placement(200)),
+        1.2,
+    );
+    d.command(&Command::WorldLoaded, 1.3).expect("loaded");
+    deliver(
+        &world,
+        &mut d,
+        login.event(0x5E, &portal_space(200, 9)),
+        1.4,
+    );
+    deliver(&world, &mut d, login.event(0x7C, &[0]), 1.5);
     d.step(1.6, true, &go);
-    deliver(&world, &mut d, login.event(0x7C, &[0]), 1.7);
-    d.step(1.8, true, &go);
+    assert_eq!(
+        sent_payloads(&world, 0xF4).len(),
+        1,
+        "no second signal needed"
+    );
+    // The same order in the world: placement, loading, then its portal space.
+    deliver(
+        &world,
+        &mut d,
+        login.event(0xCE, &stamped_placement(201)),
+        2.0,
+    );
+    d.command(&Command::WorldLoaded, 2.1).expect("loaded");
+    deliver(
+        &world,
+        &mut d,
+        login.event(0x5E, &portal_space(201, 10)),
+        2.2,
+    );
+    deliver(&world, &mut d, login.event(0xC7, &[0]), 2.3);
+    d.step(2.4, true, &go);
+    assert_eq!(sent_payloads(&world, 0xF4).len(), 1);
+}
+
+#[test]
+fn the_first_stamp_of_a_world_is_taken_whatever_its_value() {
+    // §4.5 gives no initial stamp: the entry's `0x5E` with a stamp of 128..=255 and its
+    // `0xCE` are not stale, and later `0x24` echo that stamp.
+    let (world, mut d, mut login) = in_world();
+    deliver(
+        &world,
+        &mut d,
+        login.event(0x5E, &portal_space(200, 3)),
+        1.2,
+    );
+    let events = deliver(
+        &world,
+        &mut d,
+        login.event(0xCE, &stamped_placement(200)),
+        1.3,
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::LocationReport {
+                cause: tessera_net::LocationCause::Teleported,
+                ..
+            }
+        )),
+        "{events:?}"
+    );
+    deliver(&world, &mut d, login.event(0x7C, &[0]), 1.4);
+    d.command(&Command::WorldLoaded, 1.5).expect("loaded");
+    d.step(1.6, true, &go);
+    assert_eq!(sent_payloads(&world, 0xF4).len(), 1);
+    d.command(
+        &Command::Move {
+            location: tessera_net::Location::default(),
+            heading: 0.0,
+            velocity: Vec3::new(4.0, 0.0, 0.0),
+            on_ground: true,
+        },
+        2.0,
+    )
+    .expect("move");
+    d.step(2.0, true, &go);
+    let schema = std::collections::BTreeMap::<u32, PropertyType>::new();
+    let sent = sent_payloads(&world, 0x24);
+    let last = sent.last().expect("a 0x24");
+    let mut r = crate::world::WireReader::new(last);
+    let sync = crate::world::ClientPhysicsSync::decode(&mut r, &schema).expect("0x24");
+    assert_eq!(sync.teleport_stamp, 200);
+}
+
+#[test]
+fn a_portal_wait_past_its_time_out_does_not_spin_the_loop() {
+    // A `0x5E` whose placement never comes: after the 30 s loading time-out the exit
+    // waits for the stamp's `0xCE`, which arrives as a datagram; the deadline is not `now`.
+    let (world, mut d, mut login) = in_world();
+    deliver(
+        &world,
+        &mut d,
+        login.event(0xCE, &stamped_placement(0)),
+        1.2,
+    );
+    out_of_portal_space(&world, &mut d, &mut login);
+    deliver(&world, &mut d, login.event(0x5E, &portal_space(5, 4)), 2.0);
+    deliver(&world, &mut d, login.event(0xC7, &[0]), 2.1);
+    d.step(33.0, true, &go);
     assert!(
         sent_payloads(&world, 0xF4).is_empty(),
-        "the earlier loading signal does not count"
+        "the stamp is still awaited"
     );
-    d.command(&Command::WorldLoaded, 1.9).expect("loaded");
-    d.step(2.0, true, &go);
-    assert_eq!(sent_payloads(&world, 0xF4).len(), 1);
+    let now = 33.5;
+    assert!(
+        d.next_deadline(now).is_none_or(|t| t > now),
+        "{:?}",
+        d.next_deadline(now)
+    );
 }
 
 #[test]
@@ -1323,4 +1501,64 @@ fn every_category_the_spec_maps_is_kept_when_the_installs_enum_has_it() {
     assert_eq!(c.channel_for(11), None);
     assert_eq!(c.channel_for(7), Some(ChatChannel::Emote));
     assert_eq!(c.channel_for(19), Some(ChatChannel::Yell));
+}
+
+#[test]
+fn fellowship_lines_go_to_the_world_server_without_a_chat_fellowship_room() {
+    // `official-messages-play.md` §6.1.3: Fellowship is dual. With no chat server the
+    // line goes out as `0x84EC001B` with the Fellowship category 11 (§8).
+    let (world, mut d, _login) = in_world();
+    world.take_sent();
+    d.command(
+        &Command::Chat {
+            channel: ChatChannel::Fellowship,
+            text: "hi".to_owned(),
+        },
+        2.0,
+    )
+    .expect("sent on the world server");
+    d.step(2.0, true, &go);
+    let expected = crate::play::chat::say("hi", 11)
+        .and_then(|rpc| rpc.to_bytes())
+        .expect("0x84EC001B");
+    assert_eq!(sent_payloads(&world, 0x30), vec![expected]);
+    assert_eq!(d.counters().fellowship_via_world, 1);
+}
+
+#[test]
+fn the_initial_properties_of_a_0x98_that_failed_to_decode_are_dropped() {
+    // §5.1 item 2: the `0x52` paired with a `0x98` belongs to the created entity; when the
+    // `0x98` fails to decode it is dropped, never merged onto the batch's target.
+    let (world, mut d, mut login) = in_world();
+    let b = entity_batch(
+        NPC,
+        NPC_TEMPLATE,
+        &entity_properties(NPC_NAME, true),
+        NPC_AT,
+    );
+    let events = deliver(&world, &mut d, login.event_to(0x0D, NPC, &b), 2.0);
+    assert_eq!(created(&events).len(), 1, "{events:?}");
+    let body = SubEventBatch {
+        event_id: SubEventBatch::EVENT_ID_SUB_EVENT,
+        frames: vec![
+            frame(EntityCreate::EVENT_ID, vec![0x00, 0x01]),
+            frame(
+                crate::world::PropertyTableUpdate::EVENT_ID_ENTITY,
+                props_payload(&entity_properties("Renamed", false)),
+            ),
+        ],
+        entry_batch_tail_flag: None,
+    }
+    .to_bytes()
+    .expect("0x4C");
+    let events = deliver(&world, &mut d, login.event_to(0x4C, NPC, &body), 2.1);
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::EntityCreated { .. } | Event::AppearanceChanged { .. }
+        )),
+        "{events:?}"
+    );
+    assert_eq!(counters(&d).orphaned_initial_properties, 1);
+    assert_eq!(counters(&d).name_changes_unshown, 0);
 }

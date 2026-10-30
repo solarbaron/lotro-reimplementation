@@ -78,14 +78,21 @@
 //!   with no entity is counted ([`FeedCounters::no_target`]).
 //! - **Unknown entities.** A position or property update for an entity the session does
 //!   not know sends `0xD0` once per entity (§5.3), and nothing reaches the client.
-//! - **Paths (`0x59`).** A path of a defined type (`official-messages-play.md` §4.6.1:
-//!   linear, spline, looping) is a move to its destination (the last waypoint), facing
-//!   along its last step (one waypoint: the last heading the entity had), with a velocity
-//!   towards the destination from the entity's last place, so the walker animates and
-//!   smooths it. The speed is `speed_param` in metres per second when it is given and
-//!   positive (at most [`MAX_SPEED_PARAM`]), else the distance over [`PATH_NOMINAL_SECS`]
-//!   (at most [`MAX_PATH_SPEED`]). Following each segment in time (and a loop's wrap) is
-//!   not done: the feed has no clock (engineering choice).
+//! - **Paths (`0x59`).** With at least two waypoints in one region and a positive
+//!   `speed_param` (metres per second, at most [`MAX_SPEED_PARAM`]), the feed follows the
+//!   path in time (`official-messages-play.md` §4.6.1) on the driver's clock
+//!   ([`EntityFeed::set_clock`], [`EntityFeed::advance_paths`]): from the first waypoint
+//!   along the consecutive segments (type 1), along a Catmull-Rom spline through the
+//!   waypoints (type 2; the spline kind is an engineering choice, the spec says "smooth
+//!   spline"), or around the closed loop back to the first waypoint without end (type 3).
+//!   A move goes out at once and then every [`PATH_STEP_SEC`] (engineering choice, shorter
+//!   than the walker's extrapolation), with the velocity along the active segment and the
+//!   heading along its tangent; types 1 and 2 end at the last waypoint with zero velocity.
+//!   One waypoint with a speed is followed from the entity's last place (engineering
+//!   choice). Without a usable speed the entity moves to the last waypoint at once with
+//!   zero velocity, facing along the last step (one waypoint: its last heading). A later
+//!   position (`0xCE`, `0xBF`) or path ends a path being followed; at most
+//!   [`MAX_PATH_POINTS`] waypoints are followed.
 //! - **The local player** is drawn by the walker: a `0x98` for it creates nothing, a `0x40`
 //!   for it removes nothing and its property events are dropped (each counted).
 
@@ -98,13 +105,13 @@ use tessera_net::{
 
 use super::data::{SchemaView, is_string_table_did};
 use crate::play::chat::TextResolver;
-use crate::play::movement::{PATH_TYPE_LINEAR, PATH_TYPE_LOOP};
+use crate::play::movement::{PATH_TYPE_LINEAR, PATH_TYPE_LOOP, PATH_TYPE_SPLINE};
 use crate::play::{OutgoingEvent, clean_display_name};
 use crate::world::{
     EncodedPropertyEntry, EncodedPropertyValue, EntityAppearanceDesc, EntityCreate,
-    LocalizedTokenText, LocalizedTokenTextArg, LocalizedTokenTextContent, MissingEntityQuery,
-    PID_AGENT_SPECIES, PID_ENTITY_DISPLAY_NAME, PID_OBJECT_CATEGORY_CODE, PID_SEX,
-    PropertyTableUpdate, SubEventFrame, TextSource, WireWriter,
+    LocalizedTokenText, LocalizedTokenTextArg, LocalizedTokenTextArgPayload,
+    LocalizedTokenTextContent, MissingEntityQuery, PID_AGENT_SPECIES, PID_ENTITY_DISPLAY_NAME,
+    PID_OBJECT_CATEGORY_CODE, PID_SEX, PropertyTableUpdate, SubEventFrame, TextSource, WireWriter,
 };
 
 #[cfg(test)]
@@ -155,18 +162,25 @@ pub const MAX_QUERIED: usize = 4096;
 /// them yet ([`super::data::InstallData::template_cached`]). Engineering choice.
 pub const MAX_TEMPLATE_LOADS_PER_PASS: usize = 32;
 
-/// Most display names rendered per driver pass from string tables the install has not
-/// decoded yet ([`super::data::InstallData::text_cached`]); a text counts as one read (a
-/// redirect it follows may read one more table). Engineering choice.
+/// Most string tables the install has not decoded yet
+/// ([`super::data::InstallData::text_cached`]) that the display names created in one driver
+/// pass may read: each distinct uncached table of a name counts, its own and those of its
+/// nested (kind 1) argument texts (a redirect a lookup follows may read one more table).
+/// Engineering choice.
 pub const MAX_TEXT_LOADS_PER_PASS: usize = 32;
 
-/// The time a `0x59` path's move is spread over for its velocity, in seconds (module docs
-/// "Paths"). Engineering choice: `speed_param` has no unit in the spec.
-pub const PATH_NOMINAL_SECS: f64 = 1.0;
+/// Most nested (kind 1) argument texts of one display name whose tables are counted
+/// against [`MAX_TEXT_LOADS_PER_PASS`]; a resolver bounds its lookups per text the same way.
+/// Engineering choice.
+pub const MAX_NAME_NESTED_LOOKUPS: usize = 8;
 
-/// Highest speed given to a `0x59` path's move without a `speed_param`, in metres per
-/// second. Engineering choice.
-pub const MAX_PATH_SPEED: f64 = 7.0;
+/// The interval of the moves of a followed `0x59` path, in seconds (module docs "Paths").
+/// Engineering choice.
+pub const PATH_STEP_SEC: f64 = 0.2;
+
+/// Most waypoints of one `0x59` path the feed follows; the rest are cut (counted).
+/// Engineering choice (hostile-input bound).
+pub const MAX_PATH_POINTS: usize = 256;
 
 /// Highest `speed_param` taken from a `0x59` path, in metres per second; a larger one is
 /// cut to it. Engineering choice (hostile-input bound).
@@ -194,6 +208,9 @@ pub struct FeedCounters {
     /// `0x98` refused because [`MAX_ENTITIES`] are tracked, and `0x52` sub-events that
     /// followed such a `0x98` (dropped).
     pub overflow: u64,
+    /// `0x52` sub-events paired with a `0x98` that failed to decode: dropped, never applied
+    /// to the batch's target.
+    pub orphaned_initial_properties: u64,
     /// Entities dropped while waiting for a position (over [`MAX_PENDING`], or to make room
     /// below [`MAX_ENTITIES`]).
     pub pending_dropped: u64,
@@ -222,8 +239,13 @@ pub struct FeedCounters {
     pub appearance_changes: u64,
     /// `0x89` fields decoded but not shown (meaning OPEN, or a scale that is not uniform).
     pub appearance_fields_skipped: u64,
-    /// `0x59` paths mapped to a move to their destination (module docs "Paths").
+    /// `0x59` paths taken (followed in time, or a move to their destination; module docs
+    /// "Paths").
     pub paths: u64,
+    /// `0x59` paths followed in time.
+    pub paths_followed: u64,
+    /// `0x59` paths cut to [`MAX_PATH_POINTS`] waypoints.
+    pub paths_cut: u64,
     /// `0x59` paths without a usable waypoint.
     pub empty_paths: u64,
     /// `0x59` paths of an undefined `path_type`, dropped.
@@ -340,8 +362,99 @@ enum NameSource {
     Literal(String),
 }
 
-/// The wire bytes of `args` (5-byte headers and payloads), `None` once over `max`.
+/// The distinct string tables a name `(token, table, args)` may read that the install has
+/// not decoded yet: its own table and those of its nested (kind 1) argument texts, at most
+/// [`MAX_NAME_NESTED_LOOKUPS`] of them, depth first (the argument texts are bounded in depth
+/// by their decoder).
+fn uncached_name_tables(
+    token: u32,
+    table: u32,
+    args: &[LocalizedTokenTextArg],
+    data: &SchemaView,
+) -> usize {
+    let mut tables: Vec<u32> = Vec::new();
+    let mut note = |table: u32| {
+        if is_string_table_did(table) && !data.0.text_cached(table) && !tables.contains(&table) {
+            tables.push(table);
+        }
+    };
+    if token != 0 {
+        note(table);
+    }
+    let mut lookups = MAX_NAME_NESTED_LOOKUPS;
+    let mut stack: Vec<&LocalizedTokenText> = args
+        .iter()
+        .rev()
+        .filter_map(|a| match &a.payload {
+            Some(LocalizedTokenTextArgPayload::Nested(t)) => Some(t.as_ref()),
+            _ => None,
+        })
+        .collect();
+    while let Some(t) = stack.pop() {
+        if lookups == 0 {
+            break;
+        }
+        if let TextSource::Table {
+            token_id,
+            table_did,
+        } = t.source()
+        {
+            lookups -= 1;
+            if token_id != 0 {
+                note(table_did);
+            }
+        }
+        stack.extend(t.arguments.iter().rev().filter_map(|a| match &a.payload {
+            Some(LocalizedTokenTextArgPayload::Nested(n)) => Some(n.as_ref()),
+            _ => None,
+        }));
+    }
+    tables.len()
+}
+
+/// A lower bound of the wire bytes of `args` (5-byte headers and payloads), walked without
+/// encoding; `None` once it passes `max`. A literal counts two bytes per UTF-16 unit and an
+/// authoring string one per character, so a large text is refused before it is copied.
+fn min_args_len(args: &[LocalizedTokenTextArg], max: usize) -> Option<usize> {
+    let mut total = 0usize;
+    let mut stack: Vec<&LocalizedTokenTextArg> = args.iter().collect();
+    while let Some(a) = stack.pop() {
+        let payload = match &a.payload {
+            None => 0,
+            Some(LocalizedTokenTextArgPayload::Nested(t)) => {
+                // Mode byte, authoring flag, `arg_count`; the content below.
+                let content = match &t.content {
+                    LocalizedTokenTextContent::Literal(s) => {
+                        1usize.saturating_add(s.encode_utf16().count().saturating_mul(2))
+                    }
+                    LocalizedTokenTextContent::Reference { .. } => 8,
+                };
+                let authoring = t.authoring_strings.as_ref().map_or(0, |a| {
+                    a.iter()
+                        .fold(3usize, |n, s| n.saturating_add(s.chars().count()))
+                });
+                stack.extend(t.arguments.iter());
+                3usize.saturating_add(content).saturating_add(authoring)
+            }
+            Some(
+                LocalizedTokenTextArgPayload::Float { .. }
+                | LocalizedTokenTextArgPayload::FloatFormatted { .. },
+            ) => 10,
+            Some(LocalizedTokenTextArgPayload::Int { .. }) => 2,
+            Some(LocalizedTokenTextArgPayload::IntFormatted { .. }) => 5,
+        };
+        total = total.saturating_add(5).saturating_add(payload);
+        if total > max {
+            return None;
+        }
+    }
+    Some(total)
+}
+
+/// The wire bytes of `args` (5-byte headers and payloads), `None` once over `max`
+/// ([`min_args_len`] refuses a large one before anything is encoded).
 fn wire_args_len(args: &[LocalizedTokenTextArg], max: usize) -> Option<usize> {
+    min_args_len(args, max)?;
     let mut total = 0usize;
     for a in args {
         let mut w = WireWriter::new();
@@ -618,6 +731,10 @@ pub struct EntityFeed {
     /// `(id, seq)` of shown entities whose appearance may have changed.
     dirty: Vec<(u64, u64)>,
     moves: Vec<Move>,
+    /// `0x59` paths being followed (module docs "Paths").
+    paths: HashMap<u64, PathRun>,
+    /// The driver's clock for this pass ([`EntityFeed::set_clock`]).
+    now: f64,
     queried: HashSet<u64>,
     loads_left: usize,
     text_loads_left: usize,
@@ -636,6 +753,8 @@ impl Default for EntityFeed {
             deferred: Vec::new(),
             dirty: Vec::new(),
             moves: Vec::new(),
+            paths: HashMap::new(),
+            now: 0.0,
             queried: HashSet::new(),
             loads_left: MAX_TEMPLATE_LOADS_PER_PASS,
             text_loads_left: MAX_TEXT_LOADS_PER_PASS,
@@ -676,21 +795,136 @@ fn heading_between(a: &Location, b: &Location) -> Option<f32> {
     Some(dy.atan2(dx) as f32)
 }
 
-/// The velocity of a path's move from `from` to `to` at `speed` metres per second, or at
-/// the nominal speed without one (module docs "Paths"); zero across regions or for no
-/// distance.
-fn path_velocity(from: &Location, to: &Location, speed: Option<f64>) -> [f32; 3] {
-    if from.region != to.region {
-        return [0.0; 3];
+/// A `0x59` path being followed (module docs "Paths").
+#[derive(Debug, Clone)]
+struct PathRun {
+    /// The entity's `seq` when the path began.
+    seq: u64,
+    path_type: u32,
+    /// The waypoints; a loop's closing segment goes from the last back to the first.
+    points: Vec<Location>,
+    /// The distance along the path at each segment's start, and the total at the end.
+    cum: Vec<f64>,
+    speed: f64,
+    start: f64,
+    next_at: f64,
+    heading: f32,
+}
+
+impl PathRun {
+    /// A run along `points` (one region, at least two) at `speed`, or `None` when the path
+    /// has no length.
+    fn new(seq: u64, path_type: u32, points: Vec<Location>, speed: f64, now: f64) -> Option<Self> {
+        let n = points.len();
+        let segments = if path_type == PATH_TYPE_LOOP {
+            n
+        } else {
+            n - 1
+        };
+        let mut cum = Vec::with_capacity(segments + 1);
+        let mut total = 0.0f64;
+        cum.push(0.0);
+        for i in 0..segments {
+            let (a, b) = (points.get(i)?, points.get((i + 1) % n)?);
+            total += dist3(a, b);
+            cum.push(total);
+        }
+        (total.is_finite() && total >= 1e-3).then_some(Self {
+            seq,
+            path_type,
+            points,
+            cum,
+            speed,
+            start: now,
+            next_at: now,
+            heading: 0.0,
+        })
     }
-    let d = [to.x - from.x, to.y - from.y, to.z - from.z];
-    let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
-    if !dist.is_finite() || dist < 1e-3 {
-        return [0.0; 3];
+
+    fn total(&self) -> f64 {
+        self.cum.last().copied().unwrap_or(0.0)
     }
-    let speed = speed.unwrap_or_else(|| (dist / PATH_NOMINAL_SECS).min(MAX_PATH_SPEED));
-    #[allow(clippy::cast_possible_truncation)]
-    d.map(|c| (c / dist * speed) as f32)
+
+    /// Waypoint `i + ahead`, or `i - 1` with `back`: wrapped on a loop, else held at the
+    /// ends.
+    fn point(&self, i: usize, ahead: usize, back: bool) -> Option<&Location> {
+        let n = self.points.len();
+        if n == 0 {
+            return None;
+        }
+        let k = if self.path_type == PATH_TYPE_LOOP {
+            if back {
+                (i + n - 1) % n
+            } else {
+                (i + ahead) % n
+            }
+        } else if back {
+            i.saturating_sub(1)
+        } else {
+            (i + ahead).min(n - 1)
+        };
+        self.points.get(k)
+    }
+
+    /// The place and the unit direction of travel at distance `s` along the path.
+    fn sample(&self, s: f64) -> Option<(Location, [f64; 3])> {
+        let segments = self.cum.len().saturating_sub(1);
+        let i = (0..segments)
+            .find(|&i| self.cum.get(i + 1).is_some_and(|&end| s < end))
+            .unwrap_or(segments.saturating_sub(1));
+        let (c0, c1) = (*self.cum.get(i)?, *self.cum.get(i + 1)?);
+        let t = if c1 - c0 > 1e-9 {
+            ((s - c0) / (c1 - c0)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let (p1, p2) = (self.point(i, 0, false)?, self.point(i, 1, false)?);
+        let (pos, dir) = if self.path_type == PATH_TYPE_SPLINE {
+            let (p0, p3) = (self.point(i, 0, true)?, self.point(i, 2, false)?);
+            catmull_rom(p0, p1, p2, p3, t)
+        } else {
+            let d = [p2.x - p1.x, p2.y - p1.y, p2.z - p1.z];
+            ([p1.x + d[0] * t, p1.y + d[1] * t, p1.z + d[2] * t], d)
+        };
+        let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+        let unit = if len.is_finite() && len > 1e-9 {
+            dir.map(|c| c / len)
+        } else {
+            [0.0; 3]
+        };
+        Some((Location::new(p1.region, pos[0], pos[1], pos[2]), unit))
+    }
+}
+
+/// The point and derivative of a uniform Catmull-Rom segment from `p1` to `p2` at `t`.
+fn catmull_rom(
+    p0: &Location,
+    p1: &Location,
+    p2: &Location,
+    p3: &Location,
+    t: f64,
+) -> ([f64; 3], [f64; 3]) {
+    let c = |a: f64, b: f64, c: f64, d: f64| {
+        let pos = 0.5
+            * (2.0 * b
+                + (-a + c) * t
+                + (2.0 * a - 5.0 * b + 4.0 * c - d) * t * t
+                + (-a + 3.0 * b - 3.0 * c + d) * t * t * t);
+        let der = 0.5
+            * ((-a + c)
+                + 2.0 * (2.0 * a - 5.0 * b + 4.0 * c - d) * t
+                + 3.0 * (-a + 3.0 * b - 3.0 * c + d) * t * t);
+        (pos, der)
+    };
+    let (x, dx) = c(p0.x, p1.x, p2.x, p3.x);
+    let (y, dy) = c(p0.y, p1.y, p2.y, p3.y);
+    let (z, dz) = c(p0.z, p1.z, p2.z, p3.z);
+    ([x, y, z], [dx, dy, dz])
+}
+
+fn dist3(a: &Location, b: &Location) -> f64 {
+    let (dx, dy, dz) = (b.x - a.x, b.y - a.y, b.z - a.z);
+    (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
 /// Whether `t` is the entity of the queued entry `seq`.
@@ -760,6 +994,68 @@ impl EntityFeed {
     #[must_use]
     pub fn has_deferred(&self) -> bool {
         !self.deferred.is_empty()
+    }
+
+    /// The driver's clock, for the paths followed in time (module docs "Paths").
+    pub fn set_clock(&mut self, now: f64) {
+        if now.is_finite() {
+            self.now = now;
+        }
+    }
+
+    /// When the next move of a followed path is due, if any path is followed.
+    #[must_use]
+    pub fn next_path_at(&self) -> Option<f64> {
+        self.paths.values().map(|r| r.next_at).reduce(f64::min)
+    }
+
+    /// The moves of the followed paths that are due at the clock (module docs "Paths"):
+    /// one per path, made by the next [`Self::flush`]. A path of type 1 or 2 ends at its
+    /// last waypoint with zero velocity; a path whose entity is gone is dropped.
+    pub fn advance_paths(&mut self, out: &mut FeedOutput) {
+        let now = self.now;
+        let mut due: Vec<u64> = self
+            .paths
+            .iter()
+            .filter(|(_, r)| r.next_at <= now)
+            .map(|(id, _)| *id)
+            .collect();
+        due.sort_unstable();
+        for id in due {
+            let Some(mut run) = self.paths.remove(&id) else {
+                continue;
+            };
+            if !self.entities.get(&id).is_some_and(|t| same(t, run.seq)) {
+                continue;
+            }
+            let total = run.total();
+            let travelled = ((now - run.start).max(0.0) * run.speed).min(f64::MAX);
+            let (s, ended) = if run.path_type == PATH_TYPE_LOOP {
+                (travelled.rem_euclid(total), false)
+            } else {
+                (travelled.min(total), travelled >= total)
+            };
+            let Some((location, dir)) = run.sample(s) else {
+                continue;
+            };
+            if dir[0].hypot(dir[1]) > 1e-6 {
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    run.heading = dir[1].atan2(dir[0]) as f32;
+                }
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            let velocity = if ended {
+                [0.0; 3]
+            } else {
+                dir.map(|c| (c * run.speed) as f32)
+            };
+            self.place_inner(id, Some((location, run.heading)), velocity, out);
+            if !ended {
+                run.next_at = now + PATH_STEP_SEC;
+                self.paths.insert(id, run);
+            }
+        }
     }
 
     /// A driver pass begins: the template and text read budgets are renewed.
@@ -1006,6 +1302,18 @@ impl EntityFeed {
         velocity: [f32; 3],
         out: &mut FeedOutput,
     ) -> bool {
+        // A position from the server ends a path being followed.
+        self.paths.remove(&id);
+        self.place_inner(id, at, velocity, out)
+    }
+
+    fn place_inner(
+        &mut self,
+        id: u64,
+        at: Option<(Location, f32)>,
+        velocity: [f32; 3],
+        out: &mut FeedOutput,
+    ) -> bool {
         let Some(t) = self.entities.get_mut(&id) else {
             self.unknown_entity(id, out);
             return false;
@@ -1049,8 +1357,10 @@ impl EntityFeed {
         self.path_along(id, PATH_TYPE_LINEAR, None, waypoints, out);
     }
 
-    /// A `0x59` path for `id` of `path_type` at `speed_param` metres per second: a move to
-    /// its destination (module docs "Paths"). An undefined type is counted and dropped.
+    /// A `0x59` path for `id` of `path_type` at `speed_param` metres per second (module
+    /// docs "Paths"): followed in time from the clock ([`Self::set_clock`]) when it has a
+    /// speed and a length, else a move to its destination with zero velocity. An undefined
+    /// type is counted and dropped.
     pub fn path_along(
         &mut self,
         id: u64,
@@ -1070,7 +1380,39 @@ impl EntityFeed {
             self.counters.empty_paths += 1;
             return;
         };
-        let last = self.entities.get(&id).and_then(|t| t.last);
+        self.paths.remove(&id);
+        let Some(t) = self.entities.get(&id) else {
+            self.unknown_entity(id, out);
+            return;
+        };
+        let (seq, last) = (t.seq, t.last);
+        let speed = speed_param
+            .map(f64::from)
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .map(|s| s.min(MAX_SPEED_PARAM));
+        if let Some(speed) = speed {
+            let mut points: Vec<Location> = match (waypoints, last) {
+                ([one], Some((from, _))) => vec![from, *one],
+                _ => waypoints.iter().take(MAX_PATH_POINTS).copied().collect(),
+            };
+            if waypoints.len() > MAX_PATH_POINTS {
+                self.counters.paths_cut += 1;
+            }
+            let region = points.first().map(|p| p.region);
+            if points.len() >= 2 && points.iter().all(|p| Some(p.region) == region) {
+                let heading = last.map_or(0.0, |(_, h)| h);
+                if let Some(mut run) =
+                    PathRun::new(seq, path_type, std::mem::take(&mut points), speed, self.now)
+                {
+                    run.heading = heading;
+                    self.counters.paths += 1;
+                    self.counters.paths_followed += 1;
+                    self.paths.insert(id, run);
+                    self.advance_paths(out);
+                    return;
+                }
+            }
+        }
         let heading = waypoints
             .len()
             .checked_sub(2)
@@ -1078,12 +1420,7 @@ impl EntityFeed {
             .and_then(|a| heading_between(a, dest))
             .or(last.map(|(_, h)| h))
             .unwrap_or(0.0);
-        let speed = speed_param
-            .map(f64::from)
-            .filter(|s| s.is_finite() && *s > 0.0)
-            .map(|s| s.min(MAX_SPEED_PARAM));
-        let velocity = last.map_or([0.0; 3], |(from, _)| path_velocity(&from, dest, speed));
-        if self.place(id, Some((*dest, heading)), velocity, out) {
+        if self.place_inner(id, Some((*dest, heading)), [0.0; 3], out) {
             self.counters.paths += 1;
         }
     }
@@ -1129,20 +1466,20 @@ impl EntityFeed {
         let Some(t) = self.entities.get(&id) else {
             return false;
         };
-        let needs_read = match View::of(&t.wire, t.baseline.as_ref()).name {
-            Some(NameSource::Reference { token, table, .. }) => {
-                *token != 0 && is_string_table_did(*table) && !data.0.text_cached(*table)
-            }
-            _ => false,
+        let reads = match View::of(&t.wire, t.baseline.as_ref()).name {
+            Some(NameSource::Reference {
+                token, table, args, ..
+            }) => uncached_name_tables(*token, *table, args, data),
+            _ => 0,
         };
-        if !needs_read {
+        if reads == 0 {
             return true;
         }
-        if self.text_loads_left == 0 {
+        if self.text_loads_left < reads {
             self.counters.text_loads_deferred += 1;
             return false;
         }
-        self.text_loads_left -= 1;
+        self.text_loads_left -= reads;
         true
     }
 

@@ -429,3 +429,7 @@ The current functional answers are solely in the specs:
 Independent reviewer sessions must be started by a session that wrote none of this pass.
 They append their own exposure and session rows and make only the permitted header and
 change-log edits. This writer has neither assigned reviewer identities nor recorded results.
+
+**Owner confirmation (2026-10-30):** the pass-9 review coordinator started as a fresh Codex
+session without the writer's conversation; the pass-9 review is accepted as independent
+(`docs/m8-remediation.md` §18).

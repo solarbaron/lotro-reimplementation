@@ -1031,3 +1031,29 @@ header and change-log lines only, plus its own rows in 0041's session table and 
 re-checks the five fixes above; trailers Signed-off-by, `Clean-Room-Role: review`,
 `Assisted-by: Codex:<model>`; it notes that the writer's session ID could not be recorded. Then a
 check of that diff.
+
+## 18. Check of spec pass 9 (2026-10-30, b2cc48e + f6f1811): PASS WITH NOTES; merged
+
+Every §17 writer fix and note is done, the second writer commit records no review, and the reviewer
+commit is header-only; the review's claimed checks hold (the auditor recomputed Vectors 1A, 1B, 5
+and 6 byte for byte, the Case B example, all 256 heading round-trips and the CompactPID examples).
+No contamination signs; OPEN counts match. Pass 9 was merged into main as one squashed commit
+(`4da2427`). The reviewers ran under a coordinator whose task path sits below the writer's; the
+owner confirmed (2026-10-30) that the coordinator started as a fresh session without the writer's
+conversation, so the review counts as independent.
+
+**Notes for the next spec pass**
+
+- Decision 0041 line 51 attributes the pass-8 sessions to "Gemini (exact model not recorded)";
+  say where the attribution comes from (the pass-8 record names no tool; §16 names Antigravity).
+- Decision 0041 line 63: the continuation writer also wrote to a research note; say it touched dirty
+  notes.
+- Formula-style text remains at session line 365 and in the `mix(...)` style at 652 and 665.
+- Decision 0041's exposure list has two blank lines inside it, and the reviewer entries were added at
+  its top instead of its end.
+
+**For the build (C7):** the first datagram (network-version string, authType per connection,
+undecoded Base64 ticket, exact auth-block length, seqNum 1, time 0), the ConnectAccept layout, the
+bind and Case B rules, the receive flag mask, the delivery queues, and the S1 answers; play §4.5
+takes stamps only from 0x5E and 0xCE (0xCC gives none); OPEN-SESSION-8 leaves the `time` value on
+post-handshake packets without a timing header open; heading encoding stays rounding.

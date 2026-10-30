@@ -923,3 +923,65 @@ From the owner's live run L2 (2026-10-29, handshake diagnostics):
   DatagramHeader `time` origin; (7) whether the UDP login needs a TakeANumber `Ready` first even
   when `<queueurls>` is empty, and the local port rules (`Net.ComputeUniquePort`, `Net.BindInterface`,
   SO_SNDBUF of §3.1, which the code does not set).
+
+## 16. Audit of spec pass 8 (2026-10-30, 2bc806a + b0d3415): BLOCK, fixable
+
+No decompiler-style names, addresses, registers or vtable slots in the five specs or the commit
+messages; no hostnames, keys or captures. Vectors 5 and 6 (challenge, accept, the full first
+datagram) recompute correctly, every new fact has a provenance row, OPEN counts match, and the
+eight S1 blockers and the L2 first-datagram questions are all answered in substance. The block is
+about process, one vector and decision 0044. Line numbers refer to the branch.
+
+**Blocking**
+
+1. **Decision 0041, lines 291 and 305-316:** the pass-8 summary of the session spec states wire
+   facts that no spec contains and that contradict it (a different checksum seed, a 12-byte
+   little-endian header with masks, a different checkValue byte range, vector names and a flush
+   time the spec does not have, the wrong set of open OPENs). Replace them with text that matches
+   the specs, and record in the dirty room where those values came from.
+2. **The writer recorded the review:** writer commit 2bc806a already fills the pass-8 reviewer IDs
+   and "Pass (Accepted)" into 0041's session table (lines 376-380) and exposure list, while the
+   specs in that commit still say Review; and the writer session is also the parent that started
+   the reviewers (0041 line 93). Leave 0041 at Review in the writer commit; a reviewer commit,
+   started by a session other than the writer, records the reviewers and the result. Two reviewer
+   rows claim checks that are not true (the Case B vector was not recomputed correctly; "no C
+   operators", but `~0x0F7FFB06`, `time(NULL)`, `sizeof`, `htons`/`ntohl` remain). Review again.
+3. **`Assisted-by:` is missing on both commits** (decision 0042 item 7): recommit with
+   `Assisted-by: Antigravity:<model>` in the final trailer paragraph.
+4. **Session line 90, Case B example:** 3,221,225,994 mod 64,007 is 9,712, not 21,960; the first
+   candidate port is 9,968, not 22,216.
+5. **Login line 697 (§6.2), and §2 and §3.3:** state decision 0044 as amended (an `http://`
+   address is tried as `https://` first and used as given only when HTTPS fails before the
+   request is sent) and answer its §15 question (does an explicit port carry over; which steps
+   the official launcher sends over plain HTTP), or add an OPEN.
+
+**Notes (fix in the same pass)**
+
+- Play line 344 still says the chat server gets the decoded ticket; session §6.2.1 now says the
+  ticket is sent undecoded.
+- Heading rounding: world line 314 rounds to nearest, world 1091 and play 75 and 116 truncate.
+- Queues: session §5.6.2 rows 409-410 cite play §4.2/§4.5 for numbers play does not state;
+  session 764 says "queue 4, or queue 2" against its own table; play 470 says "2 or 4"; row 412
+  gives a non-wire internal group number.
+- Client-internal wording is back (incident 0041): session 73, 240, 527, 564, 718; world 790,
+  1074; play 143, 186. State the observable behaviour instead. Remove the 3-character format
+  string quoted in the session reviewer row (line 1013).
+- World line 311 cites `coordinates.md` §11.1; the heading convention is §11.3-§11.4.
+- Play line 264 (RPC signatures read at run time, documented lists only verification facts) and
+  decision 0042 item 10 (documented layouts may be in code) need reconciling; say which holds.
+- Login 147, 198, 203 still name 0x28000010 as Map 3; session §4.1.3 resolves key 3 at run time.
+- `property-system.md` header says 1 OPEN, the body has 2 (226, 357).
+- Session §8.2 (718) and the state diagram name states 6 and 7 differently.
+- The writer changed the pass-7 reviewer's change-log row in the session spec: restore it
+  (change-log rows are history).
+- Provenance: the `User-Agent`/proxy facts cite BIN-Q2, whose question is about ticket refresh;
+  login names Ghidra 11.x where the other specs say 12.1.3.
+
+**For the build (after the pass is accepted):** the first datagram changes (network-version
+string from the install, `authType` 0x00000001 on the login/world connection, the Base64 ticket
+undecoded, the exact auth-block length, seqNum 1, time 0), the ConnectAccept layout, the bind and
+Case B rules, and the S1 answers. The owner's next L2 run confirms them.
+
+**Next step:** one writer commit for the five blocking points and the notes, then a header-only
+reviewer commit by new sessions, started by a session that wrote nothing in this pass, which
+records the reviewers in decision 0041; both with `Assisted-by`. Then a check of that diff.

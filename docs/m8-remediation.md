@@ -985,3 +985,49 @@ Case B rules, and the S1 answers. The owner's next L2 run confirms them.
 **Next step:** one writer commit for the five blocking points and the notes, then a header-only
 reviewer commit by new sessions, started by a session that wrote nothing in this pass, which
 records the reviewers in decision 0041; both with `Assisted-by`. Then a check of that diff.
+
+## 17. Check of spec pass 9, writer commit (2026-10-30, 73c0571): NEEDS WRITER FIXES
+
+All five §16 blocking points are fixed: decision 0041 no longer states wire facts, the writer
+records no review (specs at Review, writer rows only), `Assisted-by` is present, the Case B example
+is right (9,712; 9,968, 10,224) and decision 0044 is stated with an OPEN for the plain-HTTP steps.
+No contamination signs, no content problems; Vectors 5 and 6 recompute byte for byte, and the
+first-datagram facts agree across the specs. There is no reviewer commit yet. Line numbers refer
+to the branch.
+
+**Writer fixes**
+
+1. **World line 316 and the P9 provenance row (line 85):** the heading encoding on origin/main
+   rounds (add 0.5, then floor) with BIN provenance through E8; pass 9 changes it to truncation
+   while saying no new observation is claimed and still citing E8. Cite the observation that shows
+   truncation, or keep rounding, or OPEN it.
+2. **Play lines 190-197:** line 190 no longer sets the waiting flag, but 191, 194 and 197 still read
+   and clear it (client-internal state naming, and the rule is now incomplete). State the
+   observable condition (the stamp has not reached the expected stamp) throughout.
+3. **Session lines 399 and 402:** cite world §3.4 and play §5.2 for queue 3 and sequence groups
+   0x13, 0x0A, 0x04, 0x08, 0x0E; those sections do not state them. Cite the BIN rows only, or add
+   the numbers to those sections.
+4. **Login line 68 (BIN-Q5):** says the launcher's scheme, `User-Agent` and proxy behaviour were
+   settled, while the OPENs at lines 219 and 222 say they are not. Reword it as reported, details
+   OPEN.
+5. **Decision 0041 lines 46 and 389-399:** the pass-8 writer session (Antigravity) whose text this
+   pass imports, and the pass-8 reviewer sessions, are no longer listed. Append them as exposure
+   only (no results), and credit the imported authorship in 0041.
+
+**Notes (same commit)**
+
+- Session line 50: a blank line splits the P9-SYN and P9-BIND rows off the provenance table.
+- Function-call notation remains: play line 737; session 225 and 555; session 293; the wording at
+  session 223-224. Restate as prose.
+- Session 225: what the `time` field holds on post-handshake packets that carry neither ClockSync
+  nor FlowControl.
+- Login line 98: add decision 0044 item 2 (an answer read over plain HTTP never counts as HTTPS).
+- Play 485: the receiver alternative `HasSecondString` that session §6.2.1 dropped.
+- Property-system line 1182: the pass-9 change-log row puts the author in the sections column.
+- `docs/m8-pass9-handback.md` line 5: "Pass 8 is retained unchanged" is ambiguous.
+
+**Then the reviewer commit:** by new sessions started from a parent that wrote nothing in this pass;
+header and change-log lines only, plus its own rows in 0041's session table and exposure list; it
+re-checks the five fixes above; trailers Signed-off-by, `Clean-Room-Role: review`,
+`Assisted-by: Codex:<model>`; it notes that the writer's session ID could not be recorded. Then a
+check of that diff.

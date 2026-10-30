@@ -35,7 +35,7 @@ impl std::io::Write for Buf {
 }
 
 /// What `f` logs on this thread at every level (as `RUST_LOG=trace` would show it).
-fn logs_of<T>(f: impl FnOnce() -> T) -> (T, String) {
+pub(super) fn logs_of<T>(f: impl FnOnce() -> T) -> (T, String) {
     let buf = Buf::default();
     let out = buf.clone();
     let sub = tracing_subscriber::fmt()
@@ -53,7 +53,7 @@ fn logs_of<T>(f: impl FnOnce() -> T) -> (T, String) {
 }
 
 /// No address, port or host of the synthetic service in `logs`.
-fn assert_no_endpoint(logs: &str) {
+pub(super) fn assert_no_endpoint(logs: &str) {
     for needle in [
         "192.0.2.",
         "example.invalid",
@@ -68,7 +68,7 @@ fn assert_no_endpoint(logs: &str) {
 }
 
 /// Steps `d` every 0.5 s from `from` up to `to`.
-fn run_until(d: &mut SessionDriver<FakeNet>, from: f64, to: f64) {
+pub(super) fn run_until(d: &mut SessionDriver<FakeNet>, from: f64, to: f64) {
     let mut t = from;
     while t <= to {
         d.step(t, true, &go);
@@ -1108,7 +1108,9 @@ fn a_tls_failure_logs_the_step_and_kind_once_and_no_host() {
         "{logs}"
     );
     assert_no_endpoint(&logs);
-    assert!(!logs.contains("8080"), "{logs}");
+    // The start line carries the `netVersion`, whose stamp contains the port's digits.
+    let scrubbed = logs.replace(crate::session::NET_VERSION_STAMP, "<stamp>");
+    assert!(!scrubbed.contains("8080"), "{logs}");
     assert!(!logs.contains("GLS.DataCenterServer"), "{logs}");
 }
 
@@ -1171,6 +1173,8 @@ fn lines_with<'a>(logs: &'a str, text: &str) -> Vec<&'a str> {
 /// No address of the queue tests' status answers in `logs` (besides [`assert_no_endpoint`]).
 fn assert_no_queue_address(logs: &str) {
     assert_no_endpoint(logs);
+    // The start line carries the `netVersion`, whose stamp contains the port's digits.
+    let logs = &logs.replace(crate::session::NET_VERSION_STAMP, "<stamp>");
     for needle in [
         "10.20.30.40",
         "192.168.7.8",

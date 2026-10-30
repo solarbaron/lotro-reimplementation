@@ -129,6 +129,12 @@
 //! ([`ChatConfig::with_send_checksum`]); the receive rule never changes. A cancel or a
 //! revoked network right during a handshake logs the counts once
 //! ([`super::diag::HandshakeReport::log_ended`]).
+//!
+//! With the datagram dump on ([`SessionStart::dump`], [`super::dump`]; off by default) the
+//! session's socket is a [`Tap`]: it is armed only around the flush of a connection whose
+//! first datagram is not yet written, so that datagram is written exactly as the socket took
+//! it (credentials replaced), and the connection's counts are appended when it closes or is
+//! let go. Each chat-server socket does the same for its own connection ([`Metered`]).
 
 use std::collections::VecDeque;
 use std::net::SocketAddrV4;
@@ -173,8 +179,11 @@ use crate::world::{
 
 use super::data::{SchemaView, chat_categories};
 use super::diag::{
-    AuthMode, BindCase, HANDSHAKE_REPORT_SEC, HandshakeReport, LinkDiag, LocalSource, RejectKind,
-    RemoteForm, RemoteName, carries_challenge,
+    AuthMode, BindCase, HANDSHAKE_REPORT_SEC, HandshakeReport, LinkDiag, LocalSource,
+    LoginServerEntry, RejectKind, RemoteForm, RemoteName, carries_challenge,
+};
+use super::dump::{
+    AtClose, Caught, ConnectionDump, DumpDir, DumpKind, Endpoint, SocketDump, Tap, Target,
 };
 use super::entities::{
     CreateOutcome, EntityFeed, FeedCounters, FeedOutput, SubTarget, pair_initial_properties,
@@ -324,10 +333,23 @@ type RefreshReply = (Result<HttpResponse, LoginError>, SendHttpClient);
 /// (module docs "Bounded events"). Every socket of the chat client (the current one and the
 /// old ones finishing their disconnect) shares one allowance: a read with no allowance left
 /// finds nothing, and the datagram waits in the socket.
-#[derive(Debug)]
+///
+/// With the datagram dump on ([`super::dump`]) each socket also writes the first datagram
+/// it sends (the chat connection's `SessionAuthHeader`) and its counts when it is dropped.
 pub struct Metered<T> {
     inner: T,
     allowance: Arc<AtomicUsize>,
+    dump: Option<SocketDump>,
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for Metered<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Metered")
+            .field("inner", &self.inner)
+            .field("allowance", &self.allowance)
+            .field("dump", &self.dump)
+            .finish()
+    }
 }
 
 impl<T: UdpDatagramTransport> UdpDatagramTransport for Metered<T> {
@@ -336,7 +358,12 @@ impl<T: UdpDatagramTransport> UdpDatagramTransport for Metered<T> {
     }
 
     fn send_to(&mut self, buf: &[u8], target: SocketAddrV4) -> Result<usize, SessionError> {
-        self.inner.send_to(buf, target)
+        let sent = self.inner.send_to(buf, target);
+        if let Some(d) = self.dump.as_mut() {
+            let inner = &self.inner;
+            d.sent(buf, target, sent.is_ok(), || inner.local_addr().ok());
+        }
+        sent
     }
 
     fn recv_from(&mut self, buf: &mut [u8]) -> Result<Option<(usize, SocketAddrV4)>, SessionError> {
@@ -345,6 +372,9 @@ impl<T: UdpDatagramTransport> UdpDatagramTransport for Metered<T> {
         }
         let got = self.inner.recv_from(buf)?;
         if got.is_some() {
+            if let Some(d) = self.dump.as_mut() {
+                d.received();
+            }
             // One thread polls the chat client: a load and a store cannot race.
             let left = self.allowance.load(Ordering::SeqCst).saturating_sub(1);
             self.allowance.store(left, Ordering::SeqCst);
@@ -389,6 +419,16 @@ struct Link {
     diag: LinkDiag,
     auth: AuthMode,
     remote: (RemoteForm, RemoteName),
+    /// The datagram dump of this connection ([`super::dump`]), when it is on.
+    dump: Option<ConnectionDump>,
+}
+
+impl Drop for Link {
+    // A connection that is let go without a close event (replaced, reaped after its
+    // disconnect, the session's end) still gets its counts in its dump.
+    fn drop(&mut self) {
+        self.close_dump("the connection was let go (replaced, finished or the session ended)");
+    }
 }
 
 impl std::fmt::Debug for Link {
@@ -408,7 +448,8 @@ impl std::fmt::Debug for Link {
 impl Link {
     /// A connection to `peer` (of the address form `remote`) whose datagrams use the send
     /// checksum `rule` and whose `ConnectAcceptHeader` carries `max_recv_rate`
-    /// (`official-session.md` §6.4).
+    /// (`official-session.md` §6.4); `dump`: its datagram dump, when that is on.
+    #[allow(clippy::too_many_arguments)]
     fn new(
         peer: SocketAddrV4,
         uuids: &[[u8; 16]],
@@ -416,6 +457,7 @@ impl Link {
         max_recv_rate: u32,
         auth: AuthMode,
         remote: (RemoteForm, RemoteName),
+        dump: Option<Endpoint>,
         now: f64,
     ) -> Result<Self, SessionError> {
         let mut mux = SessionMultiplexer::new();
@@ -434,7 +476,47 @@ impl Link {
             diag: LinkDiag::new(now),
             auth,
             remote,
+            dump: dump.map(ConnectionDump::new),
         })
+    }
+
+    /// Whether the dump still waits for this connection's first datagram.
+    fn wants_first_dump(&self) -> bool {
+        self.dump.as_ref().is_some_and(ConnectionDump::wants_first)
+    }
+
+    /// Writes the dump of the first datagram `caught`, sent from `local`.
+    fn write_first_dump(&mut self, dir: &DumpDir, caught: &Caught, local: Option<SocketAddrV4>) {
+        if let Some(d) = self.dump.as_mut() {
+            d.first(dir, caught, local);
+        }
+    }
+
+    /// Appends the connection's counts to its dump (once), for an end with `reason`.
+    fn close_dump(&mut self, reason: &str) {
+        let Some(dump) = self.dump.as_mut() else {
+            return;
+        };
+        let conn = self.mux.connection(self.conn);
+        let counts = conn.map(|c| c.handshake_counts()).unwrap_or_default();
+        dump.close(&AtClose {
+            reason: reason.to_owned(),
+            state: conn.map(|c| c.closed_from().unwrap_or_else(|| c.state())),
+            sent: counts.sent,
+            send_failures: counts.send_failures,
+            auth_sent: counts
+                .session_auth
+                .saturating_add(counts.referral_auth)
+                .saturating_add(counts.auth_retransmits),
+            auth_retransmits: counts.auth_retransmits,
+            accept_sent: counts
+                .connect_accept
+                .saturating_add(counts.connect_accept_retransmits),
+            accept_retransmits: Some(counts.connect_accept_retransmits),
+            received: self.diag.received,
+            received_ok: Some(counts.received_ok),
+            challenges: Some(counts.challenges),
+        });
     }
 
     /// The `ConnectChallengeHeader`s the connection acted on so far.
@@ -503,6 +585,7 @@ impl Link {
     /// session"): it is taken out of its multiplexer, which refuses later datagrams for its
     /// ID, and its unsent datagrams (which may hold the ticket) are wiped.
     fn close_quietly(&mut self) {
+        self.close_dump("closed locally in its handshake (a cancel, the session's end)");
         if let Some(mut c) = self.mux.remove_connection(self.conn) {
             while let Some(mut d) = c.pop_outbound_datagram() {
                 zeroize_vec(&mut d);
@@ -616,6 +699,11 @@ pub struct SessionStart {
     /// bind address, the port case and the `maxRecvRate` of the login and world
     /// connections.
     pub net: NetPreferences,
+    /// Which `<loginservers>` entry [`Self::login_peer`] is (`official-login.md` §3.3;
+    /// [`super::diag`] "The login server switch"), for the datagram dump.
+    pub login_server_entry: LoginServerEntry,
+    /// The datagram dump's directory ([`super::dump`]); `None`: off (the default).
+    pub dump: Option<DumpDir>,
 }
 
 impl std::fmt::Debug for SessionStart {
@@ -629,6 +717,8 @@ impl std::fmt::Debug for SessionStart {
             .field("codec_uuids", &self.codec_uuids.len())
             .field("send_checksum", &self.send_checksum)
             .field("net", &self.net)
+            .field("login_server_entry", &self.login_server_entry)
+            .field("dump", &self.dump.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -711,7 +801,9 @@ impl TextResolver for SkippedTexts {
 
 /// The UDP session (module docs).
 pub struct SessionDriver<N: ConnectorNet> {
-    transport: N::Udp,
+    /// The session's one socket; armed around a connection's flush while its dump waits
+    /// for its first datagram ([`Self::flush`]).
+    transport: Tap<N::Udp>,
     codecs: ChatCodecs,
     codec_uuids: Vec<[u8; 16]>,
     login: Link,
@@ -772,6 +864,10 @@ pub struct SessionDriver<N: ConnectorNet> {
     first_local: Option<std::net::Ipv4Addr>,
     /// The `maxRecvRate` of the login and world connections (§6.4).
     max_recv_rate: u32,
+    /// The login connection's `netVersion` (for its start line).
+    net_version: String,
+    /// The datagram dump's directory ([`super::dump`]); `None`: off.
+    dump: Option<DumpDir>,
 }
 
 impl<N: ConnectorNet> std::fmt::Debug for SessionDriver<N> {
@@ -919,6 +1015,16 @@ impl<N: ConnectorNet> SessionDriver<N> {
             .session_auth_header(client_timestamp)
             .map_err(|_| StartFailure::Ticket)?;
         let mode = AuthMode::of(auth.auth_type, auth.auth_flags);
+        let net_version = auth.net_version.clone();
+        let dump = start.dump.as_ref().map(|_| Endpoint {
+            kind: DumpKind::Login,
+            target: Target::LoginServer(start.login_server_entry),
+            remote_form: remote.0.label(),
+            remote_name: remote.1.label(),
+            local_source: local_source.label(),
+            bind: bind.label(),
+            send_checksum: start.send_checksum.label(),
+        });
         let mut login = Link::new(
             peer,
             &start.codec_uuids,
@@ -926,6 +1032,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             max_recv_rate,
             mode,
             remote,
+            dump,
             now,
         )
         .map_err(|_| StartFailure::Bind)?;
@@ -934,7 +1041,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         let categories = chat_categories(start.schema.0.as_ref());
         let mut driver = Self {
-            transport,
+            transport: Tap::new(transport),
             codecs: start.codecs,
             codec_uuids: start.codec_uuids,
             login,
@@ -981,11 +1088,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
             local_source,
             first_local,
             max_recv_rate,
+            net_version,
+            dump: start.dump,
         };
         if stop() {
             return Err(StartFailure::Cancelled);
         }
-        driver.report(&driver.login, false, now).log_start();
+        driver
+            .report(&driver.login, false, now)
+            .log_start(Some(&driver.net_version));
         driver.flush(now);
         Ok(driver)
     }
@@ -1599,6 +1710,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if let Some(l) = self.link_of(world).filter(|l| l.closed_in_handshake()) {
             self.report(l, world, now).log_failed(&reason);
         }
+        let l = if world {
+            self.world.as_mut()
+        } else {
+            Some(&mut self.login)
+        };
+        if let Some(l) = l {
+            l.close_dump(&format!("{reason:?}"));
+        }
         // After the referral the login connection is not needed any more: it was
         // disconnected on the referral (`official-session.md` §6.5 step 2).
         if !world && (self.world.is_some() || self.login_referred) {
@@ -1653,6 +1772,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
         } else {
             RemoteForm::ReferralOwnIp
         };
+        let dump = self.dump.as_ref().map(|_| Endpoint {
+            kind: DumpKind::World,
+            target: Target::Referral,
+            remote_form: form.label(),
+            remote_name: RemoteName::FromReferral.label(),
+            local_source: self.local_source.label(),
+            bind: self.bind.label(),
+            send_checksum: self.send_checksum.label(),
+        });
         match Link::new(
             addr,
             &self.codec_uuids,
@@ -1660,6 +1788,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.max_recv_rate,
             AuthMode::Referral,
             (form, RemoteName::FromReferral),
+            dump,
             now,
         ) {
             Ok(mut link) => {
@@ -1685,7 +1814,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
                 tracing::info!("official session: referred to the world server");
                 if let Some(w) = self.world.as_ref() {
-                    self.report(w, true, now).log_start();
+                    self.report(w, true, now).log_start(None);
                 }
             }
             Err(e) => tracing::warn!(error = %e, "official session: referral refused"),
@@ -2413,8 +2542,20 @@ impl<N: ConnectorNet> SessionDriver<N> {
         links.extend(self.old.iter_mut());
         let mut failed = None;
         for l in links {
+            // The dump's tap is armed only around the flush of a connection whose first
+            // datagram is still to be written ([`super::dump`]).
+            let tap = self.dump.is_some() && l.wants_first_dump();
+            if tap {
+                self.transport.arm();
+            }
             if let Err(e) = l.mux.flush_outbound(&mut self.transport) {
                 failed = Some(e);
+            }
+            if tap
+                && let Some(caught) = self.transport.take()
+                && let Some(dir) = self.dump.as_ref()
+            {
+                l.write_first_dump(dir, &caught, self.transport.local_addr().ok());
             }
         }
         if let Some(e) = failed
@@ -2877,11 +3018,18 @@ impl<N: ConnectorNet> SessionDriver<N> {
         .with_codec_uuids(self.codec_uuids.clone());
         let mut binder = binder;
         let allowance = Arc::clone(&self.chat_allowance);
+        let dump = self
+            .dump
+            .clone()
+            .map(|dir| (dir, self.chat_dump_endpoint()));
         let metered: crate::chat_session::client::TransportBinder<Metered<N::Udp>> =
             Box::new(move || {
                 binder().map(|inner| Metered {
                     inner,
                     allowance: Arc::clone(&allowance),
+                    dump: dump
+                        .as_ref()
+                        .map(|(dir, endpoint)| SocketDump::new(dir.clone(), *endpoint)),
                 })
             });
         match ChatClient::with_binder(metered, config, self.codecs.clone(), now) {
@@ -2896,6 +3044,27 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 self.chat_failed(now);
                 tracing::debug!(error = %e, "official chat session not started");
             }
+        }
+    }
+
+    /// What the chat connections' datagram dumps say about their endpoint: the
+    /// `--chatserver` value's form, and the chat transport's defaults (§3.2 item 1: the
+    /// wildcard address and the bind case of [`BindPlan::chat_defaults`]).
+    fn chat_dump_endpoint(&self) -> Endpoint {
+        let host = crate::login::LoginHost::parse(self.handoff.chat_server.trim()).ok();
+        let plan = BindPlan::chat_defaults(self.first_local);
+        Endpoint {
+            kind: DumpKind::Chat,
+            target: Target::ChatServer,
+            remote_form: host.as_ref().map_or("not known", |h| {
+                RemoteForm::of_host(h.local_host.is_some(), h.port.is_some()).label()
+            }),
+            remote_name: host
+                .as_ref()
+                .map_or("not known", |h| RemoteName::of_host(&h.remote_host).label()),
+            local_source: LocalSource::Wildcard.label(),
+            bind: BindCase::of(&plan.ports).label(),
+            send_checksum: self.send_checksum.label(),
         }
     }
 

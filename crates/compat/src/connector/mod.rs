@@ -52,6 +52,7 @@
 mod control;
 pub mod data;
 pub mod diag;
+pub mod dump;
 pub mod entities;
 pub mod login_phase;
 pub mod net;

@@ -23,6 +23,7 @@ use crate::login::{
 
 use super::control::{Control, Msg};
 use super::data::{InstallDataLoader, LocalInputs, LocalPaths, SchemaView, discover_local};
+use super::diag::{LoginServerEntry, login_server_entry};
 use super::login_phase::{
     Authenticated, LoginStop, PlainSteps, WORLD_LIST_STATUS_TIMEOUT_SEC, authenticate,
     get_datacenters, get_remote_config, join_status, leave_queue, local_refusal,
@@ -181,6 +182,7 @@ struct Joined {
     refresher: TicketRefresher,
     peer: std::net::SocketAddrV4,
     chat_endpoint: Option<std::net::SocketAddrV4>,
+    login_server_entry: LoginServerEntry,
 }
 
 /// The end of a session whose network right was revoked (Withdraw, `official-entry.md`
@@ -220,8 +222,10 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
     let stop = || control.cancelled();
     let clock = Instant::now();
     // Read once per attempt, before any network operation (`super::diag` "The send
-    // checksum switch").
+    // checksum switch", "The login server switch"; `super::dump` "The switch").
     let send_checksum = super::diag::send_checksum_from_env();
+    let login_server = super::diag::login_server_from_env();
+    let dump_value = super::dump::dump_dir_from_env();
     out.progress(LoginStage::Authenticating);
     if let Some(locate) = locate {
         match locate() {
@@ -242,6 +246,8 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
     if stop() {
         return;
     }
+    // Checked once the install is known: never inside it (`super::dump`).
+    let dump = super::dump::DumpDir::accept(dump_value.as_deref(), &paths.install_root);
     // S1: before any network operation (invariant I1).
     let local = match discover_local(&paths, loader) {
         Ok(l) => l,
@@ -328,6 +334,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
                     auth: &auth,
                     local: &local,
                     t0: ticket_installed,
+                    login_server: login_server.as_deref(),
                 };
                 match choose(&mut net, &mut out, &ctx, desc) {
                     Choice::Joined(j) => break *j,
@@ -390,6 +397,8 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         cancel: control.cancel_flag(),
         send_checksum,
         net: local.net.clone(),
+        login_server_entry: joined.login_server_entry,
+        dump,
     };
     let now = || clock.elapsed().as_secs_f64();
     let mut driver = match SessionDriver::start(&mut net, start, now(), &stop) {
@@ -470,6 +479,8 @@ struct Ctx<'a> {
     auth: &'a Authenticated,
     local: &'a LocalInputs,
     t0: f64,
+    /// [`super::diag::LOGIN_SERVER_ENV`]'s value, read when the thread started.
+    login_server: Option<&'a std::ffi::OsStr>,
 }
 
 /// How the `TakeANumber` step of a world choice ended (§3.5), for its one line
@@ -488,9 +499,10 @@ enum QueueStep {
 }
 
 /// The chosen world's status as one `info` line (§3.3): how many login servers and queue
-/// URLs the answer lists, and whether the chosen queue URL ([`ServiceStatus::queue_url`])
+/// URLs the answer lists, which login server entry is used (`entry`, [`super::diag`] "The
+/// login server switch"), and whether the chosen queue URL ([`ServiceStatus::queue_url`])
 /// has an RFC 1918 private-range host. Counts and labels only, never an address.
-fn log_world_status(status: &ServiceStatus) {
+fn log_world_status(status: &ServiceStatus, entry: LoginServerEntry) {
     let chosen_queue_url = match status.queue_url() {
         None => "none",
         Some(u) if is_rfc1918_queue_url(u) => "private range (RFC 1918)",
@@ -498,10 +510,20 @@ fn log_world_status(status: &ServiceStatus) {
     };
     tracing::info!(
         login_servers = status.login_servers.len(),
+        login_server_entry = %entry.label(),
         queue_urls = status.queue_urls.len(),
         chosen_queue_url,
         "official login: world status read"
     );
+}
+
+/// The `<loginservers>` entry `entry` of `status` (the spec's first when `entry` is not
+/// one of its entries).
+fn chosen_login_server(status: &ServiceStatus, entry: LoginServerEntry) -> &str {
+    status
+        .login_servers
+        .get(entry.index)
+        .map_or_else(|| status.login_server(), String::as_str)
 }
 
 /// The one `info` line of the `TakeANumber` step (§3.5) after `polls` requests: the outcome
@@ -568,7 +590,8 @@ fn choose<N: ConnectorNet>(
             return Choice::Refused(world_refusal(&e));
         }
     };
-    log_world_status(&status);
+    let entry = login_server_entry(ctx.login_server, status.login_servers.len());
+    log_world_status(&status, entry);
     if let Some(queue_url) = status.queue_url() {
         let wait = queue_poll_interval(&auth.remote);
         // `TakeANumber` requests made so far (the queue step's line, [`log_queue_step`]).
@@ -662,7 +685,7 @@ fn choose<N: ConnectorNet>(
         .to_owned();
     let lifetime = auth.remote.gls_ticket_lifetime_sec;
     let handoff = match SessionHandoff::new(
-        status.login_server(),
+        chosen_login_server(&status, entry),
         0,
         auth.subscription.name(),
         auth.account.ticket(),
@@ -707,6 +730,7 @@ fn choose<N: ConnectorNet>(
         refresher,
         peer,
         chat_endpoint,
+        login_server_entry: entry,
     }))
 }
 
@@ -886,6 +910,59 @@ mod tests {
         assert!(matches!(first.last(), Some(Event::Disconnected { .. })));
         assert!(rx.try_recv().is_err(), "nothing split off");
         assert_eq!(control.pending(), MAX_BATCH + 1);
+    }
+
+    /// A status listing four login servers.
+    fn four_login_servers() -> ServiceStatus {
+        ServiceStatus::parse(
+            b"<Status><loginservers>192.0.2.11:9001;192.0.2.12:9001;;192.0.2.13:9001;\
+              192.0.2.14:9001</loginservers><queueurls></queueurls></Status>",
+        )
+        .expect("status")
+    }
+
+    #[test]
+    fn the_login_server_switch_chooses_the_entry_and_the_status_line_names_no_address() {
+        let status = four_login_servers();
+        let first = login_server_entry(None, status.login_servers.len());
+        assert_eq!(chosen_login_server(&status, first), "192.0.2.11:9001");
+        let third = login_server_entry(Some(std::ffi::OsStr::new("3")), status.login_servers.len());
+        assert_eq!(chosen_login_server(&status, third), "192.0.2.13:9001");
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let sink = std::sync::Arc::clone(&buf);
+        let sub = tracing_subscriber::fmt()
+            .with_writer(move || LogSink(std::sync::Arc::clone(&sink)))
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(sub, || {
+            log_world_status(&status, first);
+            log_world_status(&status, third);
+        });
+        let logs = String::from_utf8_lossy(&buf.lock().expect("logs")).into_owned();
+        assert!(logs.contains("login_server_entry=1 of 4 "), "{logs}");
+        assert!(
+            logs.contains("login_server_entry=3 of 4 (override)"),
+            "{logs}"
+        );
+        assert!(!logs.contains("192.0.2."), "an address was logged:\n{logs}");
+    }
+
+    /// A log sink for one test.
+    struct LogSink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogSink {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(b);
+            Ok(b.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]

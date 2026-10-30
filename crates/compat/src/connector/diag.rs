@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Diagnostics of the session handshake (`official-session.md` §3.2, §4.2–§4.4, §6) for the
 //! owner's live verification (M8 exit criterion 4): counts and labels only, never an
-//! address, a port, an account, a ticket or datagram bytes (decision 0044 item 3).
+//! address, a port, an account, a ticket or datagram bytes (decision 0044 item 3). The one,
+//! documented exception is the opt-in datagram dump of [`super::dump`] (off by default):
+//! its files hold Tessera's own first datagram of each connection, the credentials replaced,
+//! and the server's address; its log lines name neither.
 //!
 //! # What is logged
 //!
@@ -9,7 +12,9 @@
 //!   `official session: handshake started`, with the labels of [`HandshakeReport`]: the
 //!   §3.2 bind case ([`BindCase`]), where the local address came from ([`LocalSource`]),
 //!   the form of the remote address ([`RemoteForm`], [`RemoteName`]), the §6.2.1
-//!   authentication mode ([`AuthMode`]) and the send checksum rule ([`SendChecksumRule`]).
+//!   authentication mode ([`AuthMode`]), the send checksum rule ([`SendChecksumRule`]) and
+//!   the `netVersion` string in full (a version label, not a secret; `none` on a world
+//!   connection, whose `ReferralAuthHeader` carries none).
 //! - While a connection waits in its handshake (States `1` and `2`), every
 //!   [`HANDSHAKE_REPORT_SEC`] one `debug` line, `official session: handshake waiting`, with
 //!   the counts of [`HandshakeReport`].
@@ -40,7 +45,21 @@
 //! buffer each and are byte-identical under both rules, so the switch cannot change a
 //! State-`1` or State-`2` timeout; it is for a session that connects but whose later
 //! traffic goes unanswered. Engineering choices, spec silent.
+//!
+//! # The login server switch
+//!
+//! `official-login.md` §3.3 sends the session to the first entry of the world status's
+//! `<loginservers>`. [`LOGIN_SERVER_ENV`] (`TESSERA_OFFICIAL_LOGIN_SERVER`), read once when
+//! the connector's thread starts ([`login_server_from_env`]), overrides that for live
+//! verification only, as the checksum switch does: a 1-based index into the non-empty
+//! entries ([`login_server_entry`]). Unset, entry 1 is used (the spec rule, unchanged). A
+//! value that is not a decimal in `1..=count` (another form, surrounding spaces, `0`, more
+//! than the entries listed) is refused with a `warn` line that does not repeat it, and entry
+//! 1 is used. The `official login: world status read` line says which entry is used
+//! (`login_server_entry="2 of 4 (override)"` or `"1 of 4"`), never an address. Engineering
+//! choices, spec silent.
 
+use std::ffi::{OsStr, OsString};
 use std::net::Ipv4Addr;
 
 use crate::session::{
@@ -53,6 +72,90 @@ pub const SEND_CHECKSUM_ENV: &str = "TESSERA_OFFICIAL_SEND_CHECKSUM";
 
 /// Every how many seconds a connection still in its handshake logs its counts (`debug`).
 pub const HANDSHAKE_REPORT_SEC: f64 = 5.0;
+
+/// The environment variable of the login server switch (module docs).
+pub const LOGIN_SERVER_ENV: &str = "TESSERA_OFFICIAL_LOGIN_SERVER";
+
+/// Which entry of the world status's `<loginservers>` the session uses (`official-login.md`
+/// §3.3; module docs "The login server switch").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoginServerEntry {
+    /// The entry, 0-based.
+    pub index: usize,
+    /// The non-empty entries listed.
+    pub count: usize,
+    /// Chosen by [`LOGIN_SERVER_ENV`] (otherwise the spec's first entry).
+    pub overridden: bool,
+}
+
+impl Default for LoginServerEntry {
+    /// The first of one entry.
+    fn default() -> Self {
+        Self {
+            index: 0,
+            count: 1,
+            overridden: false,
+        }
+    }
+}
+
+impl LoginServerEntry {
+    /// The entry in a log line, 1-based: `"2 of 4 (override)"` or `"1 of 4"`.
+    #[must_use]
+    pub fn label(&self) -> String {
+        let n = self.index.saturating_add(1);
+        if self.overridden {
+            format!("{n} of {} (override)", self.count)
+        } else {
+            format!("{n} of {}", self.count)
+        }
+    }
+}
+
+/// The entry of `count` non-empty `<loginservers>` entries that the variable's value `value`
+/// (`None`: unset) chooses: exactly ASCII decimal digits naming `1..=count`. Any other
+/// value is refused with a `warn` line, without the value, and entry 1 is used.
+#[must_use]
+pub fn login_server_entry(value: Option<&OsStr>, count: usize) -> LoginServerEntry {
+    let first = LoginServerEntry {
+        index: 0,
+        count,
+        overridden: false,
+    };
+    let Some(raw) = value else {
+        return first;
+    };
+    let chosen = raw
+        .to_str()
+        .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| (1..=count).contains(n));
+    match chosen {
+        Some(n) => LoginServerEntry {
+            index: n - 1,
+            count,
+            overridden: true,
+        },
+        None => {
+            tracing::warn!(
+                variable = LOGIN_SERVER_ENV,
+                login_servers = count,
+                used = 1,
+                "official login: login server index refused (a decimal from 1 to the number \
+                 of login servers); the first is used"
+            );
+            first
+        }
+    }
+}
+
+/// The raw value of [`LOGIN_SERVER_ENV`] in the process environment (`None`: unset); read
+/// once, when the connector's thread starts, and judged against each world status's entries
+/// ([`login_server_entry`]).
+#[must_use]
+pub fn login_server_from_env() -> Option<OsString> {
+    std::env::var_os(LOGIN_SERVER_ENV)
+}
 
 /// The send checksum rule for the variable's value `value` (`None`: unset). An unknown
 /// value (or one that is not Unicode) is refused with a `warn` line, without the value,
@@ -453,8 +556,9 @@ impl HandshakeReport {
         self.counts.challenges > 0 || self.link.challenge_in_rejected > 0
     }
 
-    /// Logs the start line (`info`, module docs).
-    pub fn log_start(&self) {
+    /// Logs the start line (`info`, module docs) with the connection's `netVersion`
+    /// (`None`: a `ReferralAuthHeader`, which carries none).
+    pub fn log_start(&self, net_version: Option<&str>) {
         tracing::info!(
             world = self.world,
             bind = self.bind.label(),
@@ -463,6 +567,7 @@ impl HandshakeReport {
             remote_name = self.remote_name.label(),
             auth = self.auth.label(),
             send_checksum = self.send_checksum.label(),
+            net_version = net_version.unwrap_or("none"),
             "official session: handshake started"
         );
     }

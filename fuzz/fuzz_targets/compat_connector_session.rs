@@ -390,6 +390,9 @@ fn start(net: &mut Net, flags: u8) -> Option<SessionDriver<Net>> {
             connection_speed_kbps: f64::from(flags),
             ..NetPreferences::default()
         },
+        login_server_entry: Default::default(),
+        // The datagram dump writes files: never on in fuzzing.
+        dump: None,
     };
     SessionDriver::start(net, start, 0.0, &|| false).ok()
 }

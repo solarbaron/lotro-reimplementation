@@ -4,6 +4,7 @@
 //! every endpoint is an RFC 2606 `.example.invalid` placeholder or a documentation address
 //! (RFC 5737).
 
+mod datagram_dump;
 mod deadlines;
 mod diagnostics;
 mod handshake;
@@ -2473,6 +2474,8 @@ fn session_start(
         cancel,
         send_checksum: Default::default(),
         net: Default::default(),
+        login_server_entry: Default::default(),
+        dump: None,
     }
 }
 

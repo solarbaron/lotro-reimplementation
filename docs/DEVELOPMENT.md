@@ -354,6 +354,8 @@ commit message.
 | `TESSERA_SHEET_DIR` | Also copy the pictures a panel test takes to this folder, for judging them by eye |
 | `TESSERA_SEED`, `TESSERA_SAMPLE` | Reproducible sampling in real-data tests |
 | `TESSERA_OFFICIAL_SEND_CHECKSUM` | M8 live-verification aid, off by default: `per-buffer` or `whole-payload` payload checksum on every datagram the client sends to an official server, chat server included (see "Official session handshake diagnostics" below) |
+| `TESSERA_OFFICIAL_LOGIN_SERVER` | M8 live-verification aid, off by default: a 1-based index into the world status's login servers, instead of the first (see "Official session handshake diagnostics" below) |
+| `TESSERA_OFFICIAL_DUMP_DIR` | M8 live-verification aid, off by default: an existing directory outside the install that receives Tessera's own first datagram of each official connection, credentials replaced, with a description. The files hold the server's address: for the owner and the spec writer only, **never commit them** (see "Official session handshake diagnostics" below) |
 | `TESSERA_TARGET_DIR` | Used by `tools/dev-setup.sh --fix` to place the build cache |
 | `TESSERA_CLONES_DIR` | Where `tools/fetch-research-clones.sh` puts the research clones (default `${XDG_CACHE_HOME:-~/.cache}/tessera/clones`) |
 | `TESSERA_RE_DIR` | Dirty-room data root for captures, snapshots, Wine prefixes, Ghidra projects (`docs/TOOLING.md` §5; default `~/.cache/tessera/re`). It also holds `tools/rea` and `tools/ghidra-shim` (decision 0033): machine-local, not carried by git; re-create them per `docs/TOOLING.md` §5.4 on a new machine |
@@ -373,12 +375,17 @@ step's address step="…" kind="name mismatch"`).
 For the owner's live runs (M8 exit criterion 4) the session logs counts and labels of its
 handshake, never an address, port, account or ticket (`crates/compat/src/connector/diag.rs`):
 
+- `official login: world status read` (`info`): how many login servers and queue URLs the
+  chosen world's status lists, which login server entry is used (`login_server_entry=1 of 4`,
+  or `2 of 4 (override)` with `TESSERA_OFFICIAL_LOGIN_SERVER`, below) and whether the queue URL
+  is in a private range;
 - `official session: handshake started` (`info`): the bind case of `official-session.md` §3.2
   (Case A, B or C, read back from the bound port, as a label), where the local address came
   from, the form of the remote address (`remote`: `remoteHost:port`, `remoteHost` with `-p`,
   `localHost:remoteHost:port`, or for the world connection the referral address with its own
   IP or the login server's; `remote_name`: literal IPv4 or resolved name), the `authType`
-  mode of §6.2.1 and the send checksum rule;
+  mode of §6.2.1, the send checksum rule and the `netVersion` string in full (`net_version`, a
+  version label; `none` on the world connection, whose `ReferralAuthHeader` carries none);
 - `official session: handshake waiting` (`debug`, every 5 s while a connection is in its
   handshake) and `official session: handshake failed` (`info`, when a connection closes from
   its handshake, a `HandshakeTimeout` for example, or once with `reason=cancelled` or
@@ -419,6 +426,46 @@ silence timeout after `connection established`):
 ```sh
 TESSERA_OFFICIAL_SEND_CHECKSUM=whole-payload RUST_LOG=info,tessera_compat=debug \
     cargo run --release -p tessera-client -- --start-screen
+```
+
+**Login server switch (off by default).** `official-login.md` §3.3 sends the session to the
+first entry of the world status's `<loginservers>`. As a live-verification aid only,
+`TESSERA_OFFICIAL_LOGIN_SERVER=<n>` uses entry `n` instead: a 1-based index into the non-empty
+entries, plain decimal digits, from 1 to the number listed (the `world status read` line says
+how many). Any other value is refused with a warning that does not repeat it, and entry 1 is
+used. It is read once per login attempt, like the checksum switch. Use it when the first login
+server never answers (`received=0` in `handshake failed`), to see whether another one does.
+
+**Datagram dump (off by default).** `TESSERA_OFFICIAL_DUMP_DIR=<directory>` writes what Tessera
+itself sent first on each connection, so the owner can hand the spec writer local evidence
+without a packet capture (`crates/compat/src/connector/dump.rs`). The directory must exist and
+must not be inside the game install; any other value is refused with a warning (no path in it)
+and nothing is written. It is read once per login attempt. For each connection (the login
+connection, each world connection after a referral, each chat-server connection) two new files:
+
+- `<kind>-first-datagram.bin` (`<kind>`: `login`, `world` or `chat`): the first handshake
+  datagram (`SessionAuthHeader` or `ReferralAuthHeader`) exactly as sent, except that every
+  byte of the account name, the password, the ticket text and the referral cookie is replaced
+  by ASCII `X`, lengths kept. The checksum field keeps the value that was sent, so it does not
+  verify over the file.
+- `<kind>-first-datagram.txt`: every field with its offset, size and value (hex and decimal),
+  the `netVersion` in full, the credentials only as their lengths; the endpoint (which
+  `<loginservers>` entry, or the referral or chat target, the remote address and port used,
+  name or literal, the address range, the local address and port actually bound, the §3.2
+  bind case); and, appended when the connection ends, its counts (sent, retransmits,
+  received).
+
+A second connection of a kind, or a file left from an earlier run, gets a number
+(`login-2-first-datagram.bin`); an existing file is never overwritten, and files are created
+new, never through a symbolic link. Each file written logs `official session: datagram dump
+written` with the kind and the file type (`bin` or `txt`), never the path. Neither the files nor the log lines ever contain the ticket, the
+password or the account name. **The files do contain the official server's address and port
+on purpose: they are for the owner and the spec writer only. Never commit them, never put the
+directory inside a work tree, and never attach them anywhere public.**
+
+```sh
+mkdir -p ~/tessera-dump && TESSERA_OFFICIAL_DUMP_DIR=~/tessera-dump \
+    cargo run --release -p tessera-client -- --official
 ```
 
 ### Performance assertions (`TESSERA_PERF`)

@@ -8,9 +8,10 @@
 //!
 //! [`DUMP_DIR_ENV`] (`TESSERA_OFFICIAL_DUMP_DIR`) is read once when the connector's thread
 //! starts ([`dump_dir_from_env`]) and checked once the install is known
-//! ([`DumpDir::accept`]): it must name an existing directory that is not inside the game
-//! install directory. Any other value is refused with a `warn` line that names neither the
-//! value nor a path, and nothing is written.
+//! ([`DumpDir::accept`]): it must name an existing directory that is neither inside the game
+//! install directory nor inside a git work tree (a `.git` entry in it or in any directory
+//! above it), so that the files cannot be picked up by a commit. Any other value is refused
+//! with a `warn` line that names neither the value nor a path, and nothing is written.
 //!
 //! # The files
 //!
@@ -21,7 +22,9 @@
 //!   `ReferralAuthHeader`) exactly as it was handed to the socket, except that every byte of
 //!   the account name, the password, the ticket text and the referral cookie is replaced by
 //!   ASCII `X` (lengths kept). The checksum field keeps the value that was sent: it covers
-//!   the original bytes, so it does not verify over the file.
+//!   the original bytes, so it does not verify over the file, and it depends on the
+//!   credentials (with a password, `authFlags` `0x02`, it would let someone holding the file
+//!   test password guesses; the `.txt` says so, prominently when a password was sent).
 //! - `<kind>-first-datagram.txt`: every field with its offset, size and value (the
 //!   credentials only as their lengths); the endpoint (which `<loginservers>` entry, or the
 //!   referral or chat target, the remote address and port as used, name or literal, the
@@ -39,9 +42,10 @@
 //! Before anything is written, both files are searched for the credentials the datagram
 //! carried (the account name and the password in UTF-8 and UTF-16LE, the ticket text, the
 //! cookie); a needle shorter than [`MIN_GUARD_NEEDLE`] bytes is not searched, as it matches
-//! by chance. A hit writes nothing. The files hold the server's address on purpose: they are
-//! for the owner and the spec writer only and are never committed (`docs/DEVELOPMENT.md`).
-//! Engineering choices, spec silent.
+//! by chance. A hit writes nothing. The files hold the server's address and port and the
+//! local address and port used on purpose: they are for the owner and the spec writer only
+//! and are never committed (`docs/DEVELOPMENT.md`; `.gitignore` and `tools/check-content.sh`
+//! rule `dump` catch their names). Engineering choices, spec silent.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
@@ -128,10 +132,11 @@ impl std::fmt::Debug for DumpDir {
 
 impl DumpDir {
     /// The dump directory of the variable's value `value` (`None`: unset, no dump). A value
-    /// that is empty, does not name an existing directory, or names one inside
-    /// `install_root` (the install itself included) is refused with a `warn` line that
-    /// names neither the value nor a path; an `install_root` that is empty (not known)
-    /// refuses every value.
+    /// that is empty, does not name an existing directory, names one inside `install_root`
+    /// (the install itself included) or one inside a git work tree (a `.git` entry in the
+    /// directory or any directory above it) is refused with a `warn` line that names
+    /// neither the value nor a path; an `install_root` that is empty (not known) refuses
+    /// every value.
     #[must_use]
     pub fn accept(value: Option<&OsStr>, install_root: &Path) -> Option<Self> {
         let raw = value?;
@@ -152,13 +157,23 @@ impl DumpDir {
         if dir.starts_with(&install) {
             return refused("inside the game install directory");
         }
+        if in_work_tree(&dir) {
+            return refused("inside a git work tree");
+        }
         tracing::info!(
             variable = DUMP_DIR_ENV,
-            "official session: datagram dump on (the files hold the server's address; for the \
-             owner and the spec writer only, never committed)"
+            "official session: datagram dump on (the files hold the server's and the local \
+             address and port; for the owner and the spec writer only, never committed)"
         );
         Some(Self(dir))
     }
+}
+
+/// Whether `dir` (canonical) or a directory above it has a `.git` entry (a directory, or the
+/// file of a linked work tree); the entry itself is not followed.
+fn in_work_tree(dir: &Path) -> bool {
+    dir.ancestors()
+        .any(|a| std::fs::symlink_metadata(a.join(".git")).is_ok())
 }
 
 fn refused(reason: &'static str) -> Option<DumpDir> {
@@ -620,13 +635,14 @@ impl Drop for Wiped {
     }
 }
 
-/// A described first datagram: its redacted bytes, the field rows, and the credentials it
-/// carried (for the guard).
+/// A described first datagram: its redacted bytes, the field rows, the credentials it
+/// carried (for the guard), and whether one of them was a password.
 struct Described {
     bytes: Wiped,
     rows: String,
     len: usize,
     needles: Vec<Wiped>,
+    password: bool,
 }
 
 /// Whether `needle` (at least [`MIN_GUARD_NEEDLE`] bytes) is in `hay`.
@@ -686,6 +702,7 @@ fn describe(datagram: &[u8]) -> Result<Described, &'static str> {
     let mut bytes = Wiped(datagram.to_vec());
     let mut needles = Vec::new();
     let mut rows = String::new();
+    let mut password = false;
     let prefix = be16(datagram, 0).ok_or(SHORT)?;
     if prefix != 0 {
         return Err("a compressed datagram (non-zero wire prefix)");
@@ -767,7 +784,13 @@ fn describe(datagram: &[u8]) -> Result<Described, &'static str> {
         &num(header.time.into(), 4),
     );
     let end = match header.flags & OPTIONAL_HEADER_BITS {
-        FLAG_SESSION_AUTH => session_auth(datagram, &mut bytes.0, &mut needles, &mut rows)?,
+        FLAG_SESSION_AUTH => session_auth(
+            datagram,
+            &mut bytes.0,
+            &mut needles,
+            &mut rows,
+            &mut password,
+        )?,
         FLAG_REFERRAL_AUTH => referral_auth(datagram, &mut bytes.0, &mut needles, &mut rows)?,
         _ => return Err("not a SessionAuthHeader or ReferralAuthHeader datagram"),
     };
@@ -782,6 +805,7 @@ fn describe(datagram: &[u8]) -> Result<Described, &'static str> {
         rows,
         len: datagram.len(),
         needles,
+        password,
     })
 }
 
@@ -792,12 +816,13 @@ fn variable_u32(datagram: &[u8], at: usize) -> Result<(u32, usize), &'static str
 }
 
 /// The `SessionAuthHeader` at [`PAYLOAD_AT`] (§6.2, §6.2.1): its rows, its credentials
-/// replaced in `out`; returns where it ends.
+/// replaced in `out`, `password` set when it carries a `secondStr`; returns where it ends.
 fn session_auth(
     datagram: &[u8],
     out: &mut [u8],
     needles: &mut Vec<Wiped>,
     rows: &mut String,
+    password: &mut bool,
 ) -> Result<usize, &'static str> {
     const LAYOUT: &str = "the SessionAuthHeader layout check failed";
     let payload = datagram.get(PAYLOAD_AT..).ok_or(LAYOUT)?;
@@ -808,6 +833,7 @@ fn session_auth(
     needles.push(Wiped(creds.account_or_ticket.as_bytes().to_vec()));
     needles.push(utf16le(&creds.account_or_ticket));
     if let Some(p) = &creds.second_string {
+        *password = true;
         needles.push(Wiped(p.as_bytes().to_vec()));
         needles.push(utf16le(p));
     }
@@ -1047,13 +1073,23 @@ fn first_text(
         "Tessera: first datagram of the {kind} connection, as Tessera sent it\n\
          (official-session.md §4.2, §4.3, §6.2, §6.2.1, §6.5)\n\n\
          FOR THE OWNER AND THE SPEC WRITER ONLY. This file and its .bin hold the server's\n\
-         address and port. Never commit them or attach them anywhere public.\n\n\
+         address and port and the local address and port used. Never commit them or attach\n\
+         them anywhere public.\n\n\
          {base}.bin ({} bytes) is the datagram exactly as handed to the socket, except that\n\
          every byte of the account name, the password, the ticket text and the referral cookie\n\
          is replaced by ASCII 'X' (0x58), lengths kept. The checksum field keeps the value that\n\
-         was sent: it covers the original bytes, so it does not verify over the file.\n",
+         was sent: it covers the original bytes, so it does not verify over the file, and it\n\
+         depends on the credentials. With a password (authFlags 0x02) it would let someone\n\
+         holding the files test password guesses offline.\n",
         described.len
     );
+    if described.password {
+        t.push_str(
+            "\nTHIS DATAGRAM CARRIED A PASSWORD (authFlags 0x02). Keep these files on the \
+             owner's machine:\nshow the spec writer the .txt without the checksum value, \
+             never hand over the files.\n\n",
+        );
+    }
     let _ = writeln!(
         t,
         "Datagram (offsets from the first byte; the wire prefix and DatagramHeader are \

@@ -923,6 +923,11 @@ From the owner's live run L2 (2026-10-29, handshake diagnostics):
   DatagramHeader `time` origin; (7) whether the UDP login needs a TakeANumber `Ready` first even
   when `<queueurls>` is empty, and the local port rules (`Net.ComputeUniquePort`, `Net.BindInterface`,
   SO_SNDBUF of §3.1, which the code does not set).
+- **L §3.3 and I3 (live-verification switch, 2026-10-30):** the session goes to the first
+  non-empty `<loginservers>` entry. `TESSERA_OFFICIAL_LOGIN_SERVER` departs from that on purpose
+  (off by default, entries of the status answer only) so the owner can try another entry when the
+  first never answers. Does the original client ever use an entry after the first, for example
+  after a handshake timeout, in order or at random, and does it choose once per attempt?
 
 From the C7 fix round (2026-10-30, branch `fu/m8-c7`; session S, play P, world W). The
 code follows the reading given in each item and says so where it acts:

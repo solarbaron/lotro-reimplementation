@@ -9,3 +9,7 @@
 /.cargo/config.toml
 # Game-data snapshots (tessera-dattool snapshot): derived from game data, carry by hand
 *.idx
+# Official-session datagram dumps (TESSERA_OFFICIAL_DUMP_DIR): they hold a server address,
+# never commit them (docs/DEVELOPMENT.md; tools/check-content.sh rule `dump`)
+*-first-datagram.bin
+*-first-datagram.txt

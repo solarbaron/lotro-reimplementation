@@ -19,6 +19,10 @@
 #   mcp       a .mcp.json file, or a .claude/settings*.json that declares an MCP server
 #             or names rea or ghidra: a decompiler MCP registration must never reach a
 #             checkout where workflows start clean agents (docs/decisions/0033)
+#   dump      an official-session datagram dump (TESSERA_OFFICIAL_DUMP_DIR): a file named
+#             <kind>[-N]-first-datagram.bin/.txt (kind login, world or chat), or a file whose
+#             text starts with the dump's own first line; they hold a server's address
+#             and are for the owner and the spec writer only (docs/DEVELOPMENT.md)
 #
 # and, in the code under crates/ apps/ fuzz/:
 #
@@ -54,7 +58,7 @@ while [ $# -gt 0 ]; do
         --no-git) use_git=0; shift ;;
         --self-test) self_test=1; shift ;;
         -q) quiet=1; shift ;;
-        -h|--help) sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,43p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "check-content: unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -92,6 +96,21 @@ def check_png(path, ext, head):
     elif ext != ".png" or not GOLDEN_DIR.search(path):
         report("png", path, 0, f"{what} outside the committed golden directories "
                "(*/tests/golden/, decision 0031)")
+
+
+# Official-session datagram dumps (crates/compat/src/connector/dump.rs): by name, and the
+# description's first line whatever the name.
+DUMP_NAME = re.compile(r"^(?:login|world|chat)(?:-[0-9]+)?-first-datagram\.(?:bin|txt)$", re.I)
+DUMP_TEXT_START = b"Tessera: first datagram of the "
+
+
+def check_dump(path, base, head):
+    if DUMP_NAME.match(base):
+        report("dump", path, 0, "official-session datagram dump (it holds a server's address; "
+               "for the owner and the spec writer only, never committed)")
+    elif head.startswith(DUMP_TEXT_START):
+        report("dump", path, 0, "official-session datagram dump description under another "
+               "name (it holds a server's address; never committed)")
 
 
 FORBIDDEN_EXT = {
@@ -374,6 +393,7 @@ for path in files:
     if what:
         report("magic", path, 0, f"content looks like a {what}")
     check_png(path, ext, head)
+    check_dump(path, base, head)
     binary = b"\x00" in head
     if not binary and size > len(head):
         with open(full, "rb") as f:
@@ -428,6 +448,12 @@ if [ "$self_test" = 1 ]; then
     printf "$png" > "$t/crates/demo/tests/golden/goldens/local.png"
     printf "$png" > "$t/goldens/t/v/frame.png"
     printf "$png" > "$t/crates/demo/tests/golden/renamed.bin"
+    mkdir -p "$t/notes/run"
+    printf '\x00\x00\x00\x01' > "$t/notes/run/login-first-datagram.bin"
+    printf 'x\n' > "$t/notes/run/chat-12-first-datagram.txt"
+    printf 'Tessera: first datagram of the world connection, as Tessera sent it\n' \
+        > "$t/notes/run/evidence.txt"
+    printf 'about the first-datagram files\n' > "$t/notes/first-datagram-notes.txt"
     printf '{"mcpServers":{"x":{"command":"rea","args":["--mcp"]}}}\n' > "$t/.mcp.json"
     printf '{\n  "mcpServers": {"dec": {}},\n  "permissions": {"allow": ["Read(*)", "mcp__ghidra__decompile"]}\n}\n' \
         > "$t/.claude/settings.json"
@@ -469,14 +495,17 @@ RS
         "crates/demo/tests/capture.png: \[png\] PNG image outside" \
         "golden/goldens/local.png: \[png\] PNG image under a 'goldens'" \
         "goldens/t/v/frame.png: \[png\] PNG image under a 'goldens'" \
-        "golden/renamed.bin: \[png\] PNG image under another name"; do
+        "golden/renamed.bin: \[png\] PNG image under another name" \
+        "run/login-first-datagram.bin: \[dump\]" \
+        "run/chat-12-first-datagram.txt: \[dump\]" \
+        "run/evidence.txt: \[dump\] official-session datagram dump description"; do
         if ! printf '%s\n' "$out" | grep -q -- "$want"; then
             echo "self-test: expected a finding matching: $want" >&2
             fail=1
         fi
     done
     for unwanted in "lib.rs:2:" "lib.rs:6:" "lib.rs:7:" "settings.local.json" \
-        "golden/panel.png" "golden/Shot.PNG"; do
+        "golden/panel.png" "golden/Shot.PNG" "first-datagram-notes.txt"; do
         if printf '%s\n' "$out" | grep -q -- "$unwanted"; then
             echo "self-test: false positive at $unwanted" >&2
             fail=1

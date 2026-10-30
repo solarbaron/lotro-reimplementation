@@ -11,7 +11,10 @@ use std::path::Path;
 use super::diagnostics::{assert_no_endpoint, logs_of, run_until};
 use super::*;
 use crate::connector::diag::{LOGIN_SERVER_ENV, LoginServerEntry, login_server_entry};
-use crate::connector::dump::{DumpDir, MAX_DUMPS_PER_KIND, REDACTED};
+use crate::connector::dump::{
+    DUMP_DIR_ENV, DumpDir, DumpKind, Endpoint, MAX_DUMPS_PER_KIND, REDACTED, Target, write_first,
+};
+use crate::session::{AuthConnection, FLAG_SESSION_AUTH, SessionAuthHeader};
 
 /// The subscription (account) name of [`session_start`].
 const SUB: &str = "SUB0000000000000000000000";
@@ -122,6 +125,8 @@ fn the_login_datagram_is_written_as_sent_with_its_credentials_replaced() {
         "seqNum (u32 BE)",
         "checksum (u32 BE)",
         "as sent, computed over the original bytes",
+        "the server's\naddress and port and the local address and port used",
+        "depends on the credentials",
         "netVersion length (VariableU32)",
         "\"180804_netver:9999; didver:00000000-0000-0000-0000-000000000000\"",
         "authBlockLen (u32 LE)",
@@ -169,6 +174,10 @@ fn the_login_datagram_is_written_as_sent_with_its_credentials_replaced() {
         assert!(line.contains(value), "{value} missing: {line}");
     }
     assert_eq!(txt.matches("At close").count(), 1, "{txt}");
+    assert!(
+        !txt.contains("CARRIED A PASSWORD"),
+        "no password was sent:\n{txt}"
+    );
     // One line per file, with the kind and no path; the start line has the netVersion.
     let written: Vec<&str> = logs
         .lines()
@@ -192,16 +201,53 @@ fn the_login_datagram_is_written_as_sent_with_its_credentials_replaced() {
     assert_no_credentials(logs.as_bytes());
 }
 
+/// The names of the dump files below `dir`, at any depth.
+fn dump_files_below(dir: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d)
+            .expect("dir")
+            .map(|e| e.expect("entry"))
+        {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if e.file_type().expect("type").is_dir() {
+                stack.push(e.path());
+            } else if name.contains("first-datagram") {
+                found.push(name);
+            }
+        }
+    }
+    found
+}
+
 #[test]
 fn nothing_is_written_without_the_switch() {
-    let dir = tempfile::tempdir().expect("dir");
-    let install = tempfile::tempdir().expect("install");
-    assert!(DumpDir::accept(None, install.path()).is_none());
-    let ((), logs) = logs_of(|| {
-        let (_world, mut d) = start_driver(session_start(0, None, Arc::default()));
-        run_until(&mut d, 0.0, 21.0);
+    assert!(DumpDir::accept(None, Path::new("/")).is_none());
+    if std::env::var_os(DUMP_DIR_ENV).is_some() {
+        // The environment of this test run turns the dump on, so the default cannot be
+        // checked here.
+        return;
+    }
+    // The whole connector thread (`worker::run` reads the variable itself), through the
+    // login connection's handshake, the point at which a dump would be written.
+    let (cwd_before, logs) = logs_of(|| {
+        let cwd_before = dump_files_below(Path::new("."));
+        let mut run = start(Service::default(), true);
+        let _login = to_character_list(&mut run);
+        let _ = run.session.send(Instant::now(), Command::Disconnect);
+        run.wait_exit(true);
+        assert!(
+            dump_files_below(run._dir.path()).is_empty(),
+            "a dump was written"
+        );
+        cwd_before
     });
-    assert!(names(dir.path()).is_empty());
+    assert_eq!(dump_files_below(Path::new(".")), cwd_before);
+    assert!(
+        logs.contains("official session: handshake started"),
+        "the worker's lines were not captured:\n{logs}"
+    );
     assert!(!logs.contains("datagram dump"), "{logs}");
 }
 
@@ -214,6 +260,14 @@ fn a_bad_dump_directory_is_refused_without_naming_it() {
     let file = dir.path().join("canary-file");
     std::fs::write(&file, b"x").expect("file");
     let missing = dir.path().join("canary-missing");
+    // Two work trees: a `.git` directory above the value, and a linked work tree's `.git`
+    // file in the value itself.
+    let repo = tempfile::tempdir().expect("repo");
+    std::fs::create_dir(repo.path().join(".git")).expect(".git");
+    let nested = repo.path().join("canary-a").join("canary-b");
+    std::fs::create_dir_all(&nested).expect("nested");
+    let linked = tempfile::tempdir().expect("linked");
+    std::fs::write(linked.path().join(".git"), b"gitdir: elsewhere\n").expect(".git file");
     let ((), logs) = logs_of(|| {
         for value in [
             missing.as_os_str(),
@@ -221,6 +275,8 @@ fn a_bad_dump_directory_is_refused_without_naming_it() {
             inside.as_os_str(),
             install.path().as_os_str(),
             OsStr::new(""),
+            nested.as_os_str(),
+            linked.path().as_os_str(),
         ] {
             assert!(DumpDir::accept(Some(value), install.path()).is_none());
         }
@@ -229,20 +285,91 @@ fn a_bad_dump_directory_is_refused_without_naming_it() {
     });
     assert_eq!(
         logs.matches("datagram dump directory refused").count(),
-        6,
+        8,
         "{logs}"
     );
     assert!(logs.contains("inside the game install directory"), "{logs}");
+    assert_eq!(logs.matches("inside a git work tree").count(), 2, "{logs}");
     assert!(logs.contains("not an existing directory"), "{logs}");
     assert!(logs.contains("reason=\"not a directory\""), "{logs}");
     assert!(!logs.contains("canary"), "a value was logged:\n{logs}");
-    for p in [dir.path(), install.path()] {
+    for p in [dir.path(), install.path(), repo.path(), linked.path()] {
         assert!(!logs.contains(p.to_string_lossy().as_ref()), "{logs}");
     }
     // Nothing was written anywhere.
     assert_eq!(names(dir.path()), ["canary-file"]);
     assert_eq!(names(install.path()), ["canary-inside"]);
     assert!(names(&inside).is_empty());
+    assert!(names(&nested).is_empty());
+    assert_eq!(names(linked.path()), [".git"]);
+}
+
+#[test]
+fn a_password_datagram_is_redacted_and_flagged() {
+    let dir = tempfile::tempdir().expect("dir");
+    let install = tempfile::tempdir().expect("install");
+    let account = "canary-account";
+    let password = "canary-password";
+    let auth = SessionAuthHeader::for_connection(
+        AuthConnection::Primary,
+        "9999",
+        account,
+        Some(TICKET),
+        Some(password),
+        1_700_000_000,
+    )
+    .expect("auth");
+    let datagram = encode_datagram(
+        DatagramHeader {
+            flags: FLAG_SESSION_AUTH,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders {
+            session_auth: Some(auth),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .expect("datagram");
+    assert!(find(&datagram, &utf16(password)).is_some());
+    let endpoint = Endpoint {
+        kind: DumpKind::Login,
+        target: Target::LoginServer(LoginServerEntry::default()),
+        remote_form: "form",
+        remote_name: "name",
+        local_source: "source",
+        bind: "bind",
+        send_checksum: "per-buffer",
+    };
+    let file = write_first(
+        &dir_accepted(dir.path(), install.path()),
+        &endpoint,
+        &datagram,
+        LOGIN_SERVER,
+        Some(LOCAL),
+    );
+    assert!(file.is_some(), "written");
+    drop(file);
+    let bin = std::fs::read(dir.path().join("login-first-datagram.bin")).expect("bin");
+    let txt = std::fs::read_to_string(dir.path().join("login-first-datagram.txt")).expect("txt");
+    assert_eq!(bin.len(), datagram.len());
+    for written in [&bin[..], txt.as_bytes()] {
+        assert_no_credentials(written);
+        for needle in [utf16(account), utf16(password)] {
+            assert!(find(written, &needle).is_none(), "a credential was written");
+        }
+    }
+    for part in [
+        "HasSecondString (0x02)",
+        "secondStr (UTF-16LE)",
+        "redacted: the password",
+        "THIS DATAGRAM CARRIED A PASSWORD",
+        "never hand over the files",
+    ] {
+        assert!(txt.contains(part), "{part} missing:\n{txt}");
+    }
 }
 
 #[test]

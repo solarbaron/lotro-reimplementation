@@ -4,7 +4,8 @@
 //! address, a port, an account, a ticket or datagram bytes (decision 0044 item 3). The one,
 //! documented exception is the opt-in datagram dump of [`super::dump`] (off by default):
 //! its files hold Tessera's own first datagram of each connection, the credentials replaced,
-//! and the server's address; its log lines name neither.
+//! the server's address and port and the local address and port used; its log lines name
+//! none of them.
 //!
 //! # What is logged
 //!
@@ -48,16 +49,20 @@
 //!
 //! # The login server switch
 //!
-//! `official-login.md` §3.3 sends the session to the first entry of the world status's
-//! `<loginservers>`. [`LOGIN_SERVER_ENV`] (`TESSERA_OFFICIAL_LOGIN_SERVER`), read once when
-//! the connector's thread starts ([`login_server_from_env`]), overrides that for live
-//! verification only, as the checksum switch does: a 1-based index into the non-empty
-//! entries ([`login_server_entry`]). Unset, entry 1 is used (the spec rule, unchanged). A
+//! `official-login.md` §3.3 and its invariant I3 send the session to the first non-empty
+//! entry of the world status's `<loginservers>`. [`LOGIN_SERVER_ENV`]
+//! (`TESSERA_OFFICIAL_LOGIN_SERVER`), read once when the connector's thread starts
+//! ([`login_server_from_env`]), is a deliberate departure from that rule, for live
+//! verification only and off by default, as the checksum switch is: a 1-based index into
+//! the non-empty entries ([`login_server_entry`]), so only addresses of the service's own
+//! status answer are ever used. Unset, entry 1 is used (the spec rule, unchanged). A
 //! value that is not a decimal in `1..=count` (another form, surrounding spaces, `0`, more
 //! than the entries listed) is refused with a `warn` line that does not repeat it, and entry
 //! 1 is used. The `official login: world status read` line says which entry is used
-//! (`login_server_entry="2 of 4 (override)"` or `"1 of 4"`), never an address. Engineering
-//! choices, spec silent.
+//! (`login_server_entry="2 of 4 (override)"` or `"1 of 4"`), never an address. Whether the
+//! original client ever uses an entry after the first is a question for the spec writer
+//! (`docs/m8-remediation.md` §15, L §3.3); the value forms and the refusal are engineering
+//! choices.
 
 use std::ffi::{OsStr, OsString};
 use std::net::Ipv4Addr;

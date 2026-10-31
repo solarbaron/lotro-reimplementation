@@ -700,8 +700,11 @@ the vertical flip.
 
 > **OPEN:** (implementer, 2026-10-31, after the game update of that date) The install's
 > non-empty imposter tables no longer follow the cell rule of §5.2 and the geometry of
-> this section. Of 607 tables, the 297 empty ones are unchanged; all 310 non-empty ones
-> (in every region, 223 of them with more than 15 entries) store the *i*-th entry in cell
+> this section. The install has 607 tables, not the 507 of §5.2: region 6, which the spec's
+> install did not have, holds 100, and the other regions hold as many as §5.2 says. 297 are
+> empty (207 in §5.2; 294 name nothing and 3 name two lists with a zero cell size), and they
+> still follow the empty-table rule of §5.2. All 310 non-empty ones (300 in §5.2; in every
+> region, 223 of them with more than 15 entries) store the *i*-th entry in cell
 > (*i* mod 15, ⌊*i* / 15⌋) instead of (*i* mod 16, ⌊*i* / 16⌋), and their `cell_u` and
 > `cell_v` are one whole 128-texel cell of the top-level atlas (`cell_u` × width / 128 =
 > `cell_v` × height / 128 = 1, no 31/32 margin). The atlases are larger than the formula
@@ -712,10 +715,12 @@ the vertical flip.
 > for these tables (I7's step = `cell_u` + `cell_u` / 31 would no longer land on the
 > cells); (b) whether the free column and row and the 31/32 margin of MR13 still mean
 > anything (MR13 not re-measured); (c) whether the client tells the two layouts apart by a
-> stored value or by the cell size alone. Meanwhile Tessera decodes the tables unchanged,
-> uses each entry's stored (`column`, `row`) with the I7 rule as written, and its real-data
-> test accepts either layout (the second one checked as observed above) and counts how many
-> tables use each.
+> stored value or by the cell size alone. Meanwhile Tessera decodes the tables unchanged and
+> uses each entry's stored (`column`, `row`) with the I7 rule as written. Its real-data test
+> (Tessera interim rule) keeps MR5 strict for tables that follow it, counts a table that
+> breaks only the cell rule or the cell size as an exception to this OPEN instead of
+> failing, checks every other part of MR5 and I3 for it, and asserts no other layout: the
+> 15-per-row cells and whole-cell sizes above are counted as observations only.
 
 ---
 
@@ -1603,4 +1608,4 @@ These are proposals for the owners of those specs; this session edits only this 
 | 2026-10-11 | Policy wording only, after [decision 0034](../decisions/0034-official-server-compatibility.md); no fact changed, nothing re-measured, status unchanged. "Purpose", provenance row CD1, §11 and the OPEN callouts of §11 and §19 on the compression dictionaries no longer say they are behind the M8 gate: the owner set that gate aside on 2026-10-11, and the dictionaries' body and field meanings are now M8 research within decision 0034 §2. The statement that no BIN reading was done for them stays true. |
 | 2026-10-23 | Spec writer (dirty room; no probe of its own beyond re-reading scene 0x21000004 for the answer in `ui-widgets.md` §12.2). §4.2: the round-3 implementer OPEN on the portrait stand-in camera filed and answered by reference. Status Accepted → Revised, awaiting independent review. No record fact or rule changed. |
 | 2026-10-23 | Independent review (spec-review:spec-ui-r4:3 (independent session)) of the round-4 revision: **passed**, CLEAN_ROOM.md §5.3 every item; contamination screen clean; status Revised → Accepted. Header status and review record only; no other text changed. |
-| 2026-10-31 | Implementer (clean room), after the game update of that date: OPEN filed at the end of §5.4 (non-empty imposter tables no longer follow the cell rule of §5.2), with the interim Tessera rule of the real-data test. No fact changed; not yet reviewed. |
+| 2026-10-31 | Implementer (clean room), after the game update of that date: OPEN filed at the end of §5.4 (non-empty imposter tables no longer follow the cell rule of §5.2), with the interim Tessera rule of the real-data test. After review the OPEN's table counts were restated against the spec's (607 = 507 + 100 in region 6; 297 empty, 310 non-empty) and the interim rule narrowed (MR5 stays strict, no second layout asserted). No fact changed; not yet reviewed. |

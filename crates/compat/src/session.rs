@@ -12,8 +12,9 @@
 //!   [`VariableU32`](encode_variable_u32) integers, compact variable-length
 //!   `FragmentedBlob` fragment headers, 436-byte fragmentation, and bounded
 //!   reassembly (§5).
-//! - The 9-state connection state machine (`0..8`), the handshake with its
-//!   `checkValue` derivation, and the world referral hand-off (§6).
+//! - The 9-state connection state machine (`0..8`), the handshake (the challenge's
+//!   recipients, seeds and directional dictionaries, the accept's reversed cookie), and the
+//!   world referral hand-off (§6).
 //! - 3-key Triple DES (EDE3) CBC with zero IV and PKCS#7 padding as a primitive
 //!   (§7.1; `FragmentedBlob`s with `EncryptedFragmentedBlob` set are always rejected,
 //!   `OPEN-SESSION-6`), the directional ISAAC PRNG (§7.2), and codec UUID
@@ -84,23 +85,25 @@ pub const TARGET_SO_SNDBUF: usize = 0x20000;
 /// Maximum allowed `DatagramHeader.pakSize` (`0xFF7B` = `65,403` B, §4.3, §10.1).
 pub const MAX_PAK_SIZE: u16 = 0xFF7B;
 
-/// Allowed wire bitmask for `DatagramHeader.flags` (`0x0F7FFB00`, §4.3, §10.1 rule 3).
-pub const VALID_DATAGRAM_FLAGS_MASK: u32 = 0x0F7F_FB00;
+/// Permitted wire flag union of `DatagramHeader.flags` (`0x0F7FFB06`, §4.3, §10.1 rule 3):
+/// both directions carry the low markers `0x00000002` and `0x00000004`.
+pub const VALID_DATAGRAM_FLAGS_MASK: u32 = 0x0F7F_FB06;
 
-/// Send-side disallowed bitmask for `DatagramHeader.flags` (`0xF08004FF`, the complement of
-/// `0x0F7FFB00`): an outgoing datagram clears low-byte bits `0..7`, so every flag it sends
-/// lies within [`VALID_DATAGRAM_FLAGS_MASK`] (§4.3 "On send", §10.1 rule 3).
+/// Forbidden bits of `DatagramHeader.flags` (`0xF08004F9`, the complement of `0x0F7FFB06`):
+/// a datagram with any of them set is rejected on receive and never sent (§4.3, §10.1 rule 3).
 pub const INVALID_DATAGRAM_FLAGS_MASK: u32 = !VALID_DATAGRAM_FLAGS_MASK;
 
-/// Receive-side forbidden bitmask for `DatagramHeader.flags` (`0xF08004F9`, the complement
-/// of `0x0F7FFB06`): a received packet with any of these bits set is rejected; the low-byte
-/// bits `0x02` and `0x04` are ignored if present (§4.3 "On receive", §10.1 rule 3, §11
-/// item 5).
+/// Receive-side forbidden bitmask for `DatagramHeader.flags` (`0xF08004F9`, §4.3, §10.1
+/// rule 3); the same value as [`INVALID_DATAGRAM_FLAGS_MASK`].
 pub const RECEIVE_FORBIDDEN_FLAGS_MASK: u32 = 0xF080_04F9;
 
-/// Defined flag bits that carry no optional header bytes on the wire: bit 25
-/// (`MaskedChecksumFlag`) and bit 26 (`HasFragmentedBlobsFlag`) (§4.3).
+/// The two low marker bits, which carry no optional header bytes: `MaskedChecksumFlag`
+/// (`0x00000002`) and `HasFragmentedBlobsFlag` (`0x00000004`) (§4.3).
 pub const HEADERLESS_FLAGS_MASK: u32 = FLAG_MASKED_CHECKSUM | FLAG_HAS_FRAGMENTED_BLOBS;
+
+/// The optional fields of bits 25 and 26 (`0x02000000`, 4 bytes; `0x04000000`, 8 bytes):
+/// received and checksummed, never sent by Tessera; their meaning is `OPEN-SESSION-9` (§4.3).
+pub const OBSERVED_ONLY_FLAGS_MASK: u32 = FLAG_OPTIONAL_WORD_25 | FLAG_OPTIONAL_WORDS_26;
 
 /// Flags rejected when received from a server: `0x00400000` (`ClientControlHeader`, §10.1
 /// rule 7) plus the undefined bits `0x00000400` and `0x00800000` (already rejected by rule 3).
@@ -121,12 +124,6 @@ pub const BIT_TREE_TABLE_HEADER_BYTES: usize = 0x2C;
 // them are values observed in one install (`property-system.md` §8.1). They are resolved
 // at run time (`crate::login::root_did_map_from_superblock`, the sub-map keys of §4.1.3)
 // and appear only as verification values in the tests.
-
-/// Minimum assigned local recipient ID (`0x0100`, §3.4).
-pub const MIN_LOCAL_REC_ID: u16 = 0x0100;
-
-/// Maximum assigned local recipient ID (`0xFEFF`, §3.4).
-pub const MAX_LOCAL_REC_ID: u16 = 0xFEFF;
 
 /// Maximum sequence lookahead window (`0x7FFF` = `32,767`, §5.1).
 pub const MAX_SEQ_LOOKAHEAD: u32 = 0x7FFF;
@@ -284,12 +281,18 @@ pub const FLAG_CLIENT_CONTROL: u32 = 0x0040_0000;
 pub const FLAG_UNDEFINED_23: u32 = 0x0080_0000;
 /// `ClockSyncHeader` optional header flag (`0x01000000`, bit 24).
 pub const FLAG_CLOCK_SYNC: u32 = 0x0100_0000;
-/// `MaskedChecksumFlag` (`0x02000000`, bit 25): sequenced packet whose payload checksum is
-/// ISAAC-masked; carries no optional header bytes (§4.3).
-pub const FLAG_MASKED_CHECKSUM: u32 = 0x0200_0000;
-/// `HasFragmentedBlobsFlag` (`0x04000000`, bit 26): `FragmentedBlob` fragments follow the
-/// optional headers; carries no optional header bytes (§4.3).
-pub const FLAG_HAS_FRAGMENTED_BLOBS: u32 = 0x0400_0000;
+/// `MaskedChecksumFlag` (`0x00000002`, bit 1): sequenced packet whose payload checksum is
+/// masked with the directional ISAAC word of its `seqNum`; no optional header bytes (§4.3).
+pub const FLAG_MASKED_CHECKSUM: u32 = 0x0000_0002;
+/// `HasFragmentedBlobsFlag` (`0x00000004`, bit 2): `FragmentedBlob` fragments follow the
+/// optional headers; no optional header bytes (§4.3).
+pub const FLAG_HAS_FRAGMENTED_BLOBS: u32 = 0x0000_0004;
+/// `OptionalWord25` (`0x02000000`, bit 25): a four-byte optional field, observed
+/// client to server; meaning `OPEN-SESSION-9`; Tessera never sends it (§4.3).
+pub const FLAG_OPTIONAL_WORD_25: u32 = 0x0200_0000;
+/// `OptionalWords26` (`0x04000000`, bit 26): an eight-byte optional field, observed
+/// server to client; meaning `OPEN-SESSION-9`; Tessera never sends it (§4.3).
+pub const FLAG_OPTIONAL_WORDS_26: u32 = 0x0400_0000;
 /// `FlowControlHeader` optional header flag (`0x08000000`, bit 27).
 pub const FLAG_FLOW_CONTROL: u32 = 0x0800_0000;
 
@@ -333,7 +336,7 @@ pub enum SessionError {
         /// Actual bytes following the 20-byte header.
         actual_payload_len: usize,
     },
-    /// `DatagramHeader.flags` has bits outside `0x0F7FFB00` or forbidden server flags (§10.1 rules 3, 7).
+    /// `DatagramHeader.flags` has bits outside `0x0F7FFB06` or forbidden server flags (§10.1 rules 3, 7).
     #[error("invalid or forbidden DatagramHeader flags {flags:#010x}")]
     InvalidHeaderFlags {
         /// Raw flags field.
@@ -347,7 +350,7 @@ pub enum SessionError {
         /// Checksum carried in `DatagramHeader.checksum`.
         actual: u32,
     },
-    /// Source `(IPv4, port)` did not match the existing connection for `recId >= 0x0100` (§10.1 rule 4).
+    /// Source `(IPv4, port)` did not match the existing connection of a non-zero `recId` (§10.1 rule 4).
     /// It carries no address or port, in its text or its `Debug` form: errors reach log
     /// lines, which never name one (decision 0044 item 3).
     #[error("source address does not match the peer of recId {rec_id:#06x}")]
@@ -414,7 +417,7 @@ pub enum SessionError {
         /// Count value in header.
         count: u32,
     },
-    /// `SessionAuthHeader.netVersion` is not `"180804"` or `"180804_"` followed by a
+    /// `SessionAuthHeader.netVersion` is not `"180804_"` followed by a
     /// printable ASCII version stamp, or is longer than [`MAX_SESSION_NET_VERSION_LEN`]
     /// (§6.2).
     #[error("invalid SessionAuth netVersion string")]
@@ -429,14 +432,34 @@ pub enum SessionError {
     /// Variable-length `VariableU32` was truncated or had an invalid prefix (§5.6.1).
     #[error("truncated or invalid VariableU32 encoding")]
     InvalidVariableU32,
+    /// A value above the transport compact integer's range (`0x3FFFFFFF`, §5.6.1) was to
+    /// be sent; wider values are `OPEN-SESSION-12`.
+    #[error("value {value:#010x} exceeds the VariableU32 range")]
+    VariableU32OutOfRange {
+        /// The value refused.
+        value: u32,
+    },
     /// Packet contained more than `20` (`0x14`) blob fragments (§5.6.3, §10.1 rule 8).
     #[error("packet fragment count {count} exceeds maximum {MAX_FRAGS_PER_PACKET}")]
     TooManyFragments {
         /// Fragment count.
         count: usize,
     },
-    /// Blob fragment had an invalid `queueId`: outside `1..=4` on send, `1..=6` on receive
-    /// (§5.6.2).
+    /// A fragment on receiver queue `5` or `6`, whose framing is `OPEN-SESSION-12`
+    /// (§5.6.2, §5.6.3): the datagram is dropped and counted
+    /// ([`HandshakeCounts::unsupported_queue_drops`]).
+    #[error("fragment on receiver queue {queue_id}, whose framing is unspecified")]
+    UnsupportedReceiveQueue {
+        /// The queue ID (`5` or `6`).
+        queue_id: u8,
+    },
+    /// A `ConnectChallengeHeader` whose datagram header `recId` or payload bytes `18..19`
+    /// (the incoming and outgoing recipients, §6.3) are zero: Tessera adopts only non-zero
+    /// IDs (§6.3; refusing zero is an engineering choice).
+    #[error("ConnectChallengeHeader without non-zero recipient IDs")]
+    InvalidChallengeRecipient,
+    /// Blob fragment had an invalid `queueId`: outside `1..=4` (`5` and `6` on receive are
+    /// [`SessionError::UnsupportedReceiveQueue`]) (§5.6.2).
     #[error("invalid fragmented blob delivery queue ID {queue_id}")]
     InvalidQueueId {
         /// Decoded `queueId`.
@@ -574,7 +597,7 @@ pub enum SessionError {
         /// Decoded value.
         value: u32,
     },
-    /// A peer assigned a `localRecId` that another connection already uses.
+    /// A challenge's incoming recipient ID is one another connection already uses (§3.4).
     #[error("assigned recipient ID {rec_id:#06x} is already used by another connection")]
     RecipientIdCollision {
         /// The assigned recipient ID.
@@ -1466,25 +1489,27 @@ impl BitTreeCodec for BitTreeTable {
 /// 20-byte big-endian `DatagramHeader` at the start of every decoded packet (§4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DatagramHeader {
-    /// Recipient session/connection ID (`0x0000` before session ID assignment; `>= 0x0100` once assigned).
+    /// Recipient connection ID (`0x0000` on the first `SessionAuthHeader` and
+    /// `ReferralAuthHeader`; the outgoing recipient on later client packets, the adopted
+    /// incoming recipient on server packets, §3.4, §6.3).
     pub rec_id: u16,
     /// Byte length of the packet payload immediately following this 20-byte header (`0..=0xFF7B`).
     pub pak_size: u16,
-    /// Bitmask of optional headers and packet flags (validated against `0x0F7FFB00`).
+    /// Bitmask of optional headers and packet flags (permitted union `0x0F7FFB06`, §4.3).
     pub flags: u32,
-    /// Packet sequence number: the current `sendSeqNum` on unsequenced packets (`1` on the
-    /// handshake packets, §5.1), `>= 2` on sequenced packets.
+    /// Packet sequence number: `0` on `SessionAuthHeader` and `ConnectAcceptHeader`, the
+    /// newly allocated number (`>= 2`) on a sequenced packet, the current allocated number
+    /// on a standalone acknowledgement (§5.1, §6.4.1).
     pub seq_num: u32,
-    /// 32-bit packet checksum (`headerChecksum + payloadChecksum`, with ISAAC XOR masking if `flags & 0x02000000`).
+    /// 32-bit packet checksum (`headerChecksum + payloadChecksum`, the payload part masked
+    /// by the directional ISAAC word when `MaskedChecksumFlag` is set, §4.4.2).
     pub checksum: u32,
-    /// Routing / referral iteration byte (`0x10`; always `0` on client-to-server datagrams).
-    pub iteration: u8,
-    /// Server routing table index (`0x11`; always `0` on client-to-server datagrams).
-    pub table: u8,
-    /// 16-bit millisecond timestamp (`0x12..0x13`): `0` on the handshake packets, the
-    /// network time in milliseconds modulo 65,536 with a timing header (§4.2,
-    /// [`network_time_ms`]).
-    pub time: u16,
+    /// Header bytes `16..17` (`clientWord16`): `0` before the challenge, the transport's
+    /// initial outgoing word `1` from the accept on (§4.2, §6.4). Never a clock.
+    pub client_word: u16,
+    /// Header bytes `18..19` (`peerWord18`): `0` before the challenge, then a copy of the
+    /// challenge datagram header's bytes `18..19` (§4.2, §6.4). Opaque; never a clock.
+    pub peer_word: u16,
 }
 
 impl DatagramHeader {
@@ -1497,9 +1522,8 @@ impl DatagramHeader {
         buf[4..8].copy_from_slice(&self.flags.to_be_bytes());
         buf[8..12].copy_from_slice(&self.seq_num.to_be_bytes());
         buf[12..16].copy_from_slice(&self.checksum.to_be_bytes());
-        buf[16] = self.iteration;
-        buf[17] = self.table;
-        buf[18..20].copy_from_slice(&self.time.to_be_bytes());
+        buf[16..18].copy_from_slice(&self.client_word.to_be_bytes());
+        buf[18..20].copy_from_slice(&self.peer_word.to_be_bytes());
         buf
     }
 
@@ -1510,17 +1534,16 @@ impl DatagramHeader {
     ///
     /// Returns [`SessionError`] if `bytes.len() < 20`, `(flags & 0xF08004F9) != 0`, or `pak_size > 0xFF7B`.
     pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self, SessionError> {
-        if bytes.len() < DATAGRAM_HEADER_BYTES {
+        let Some(h) = bytes.first_chunk::<DATAGRAM_HEADER_BYTES>() else {
             return Err(SessionError::DatagramTooShort { len: bytes.len() });
-        }
-        let rec_id = u16::from_be_bytes([bytes[0], bytes[1]]);
-        let pak_size = u16::from_be_bytes([bytes[2], bytes[3]]);
-        let flags = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        let seq_num = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
-        let checksum = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
-        let iteration = bytes[16];
-        let table = bytes[17];
-        let time = u16::from_be_bytes([bytes[18], bytes[19]]);
+        };
+        let rec_id = u16::from_be_bytes([h[0], h[1]]);
+        let pak_size = u16::from_be_bytes([h[2], h[3]]);
+        let flags = u32::from_be_bytes([h[4], h[5], h[6], h[7]]);
+        let seq_num = u32::from_be_bytes([h[8], h[9], h[10], h[11]]);
+        let checksum = u32::from_be_bytes([h[12], h[13], h[14], h[15]]);
+        let client_word = u16::from_be_bytes([h[16], h[17]]);
+        let peer_word = u16::from_be_bytes([h[18], h[19]]);
 
         if (flags & RECEIVE_FORBIDDEN_FLAGS_MASK) != 0 {
             return Err(SessionError::InvalidHeaderFlags { flags });
@@ -1537,9 +1560,8 @@ impl DatagramHeader {
             flags,
             seq_num,
             checksum,
-            iteration,
-            table,
-            time,
+            client_word,
+            peer_word,
         })
     }
 
@@ -1555,28 +1577,26 @@ impl DatagramHeader {
 /// Placeholder constant `0xBADD70DD` (`BA DD 70 DD` in big-endian wire order, §4.4.2).
 pub const HEADER_CHECKSUM_MAGIC_BE: u32 = HEADER_CHECKSUM_PLACEHOLDER_BE;
 
-/// Computes the 32-bit word-summing checksum primitive `compute_datagram_checksum(buf, len)` (§4.4.1).
-///
-/// Full 4-byte words are summed as little-endian `u32` values modulo `2^32`.
-/// If `len & 3 != 0`, trailing `1..=3` bytes are packed MSB-first (`<< 24`, `<< 16`, `<< 8`)
-/// and added together with `(len << 16)`.
+/// The checksum primitive `compute_datagram_checksum` of one buffer (§4.4.1): the byte
+/// length × 65,536 (for every buffer, whatever its length; an empty buffer gives `0`),
+/// plus every complete four-byte group read as a big-endian word, plus a final word of
+/// the one to three remaining bytes placed in its most significant positions, all modulo
+/// 2³².
 #[must_use]
 pub fn compute_datagram_checksum(buf: &[u8]) -> u32 {
-    let len = buf.len() as u32;
-    let mut acc = 0u32;
+    // The length term, reduced modulo 2³² (a buffer is at most a datagram long).
+    let len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
+    let mut acc = len.wrapping_shl(16);
     let (chunks, rem) = buf.as_chunks::<4>();
     for &chunk in chunks {
-        let w = u32::from_le_bytes(chunk);
-        acc = acc.wrapping_add(w);
+        acc = acc.wrapping_add(u32::from_be_bytes(chunk));
     }
     if !rem.is_empty() {
-        let mut tail = 0u32;
-        let mut shift = 24u32;
-        for &b in rem {
-            tail |= u32::from(b) << shift;
-            shift = shift.saturating_sub(8);
+        let mut tail = [0u8; 4];
+        for (slot, &b) in tail.iter_mut().zip(rem) {
+            *slot = b;
         }
-        acc = acc.wrapping_add(tail).wrapping_add(len.wrapping_shl(16));
+        acc = acc.wrapping_add(u32::from_be_bytes(tail));
     }
     acc
 }
@@ -1603,38 +1623,21 @@ pub fn combine_packet_checksum(
     Ok(hdr_sum.wrapping_add(effective_payload_sum))
 }
 
-/// Computes the wire `DatagramHeader.checksum` by the receive rule of §4.4.2 step 2:
-/// `payloadSum` is [`compute_datagram_checksum`] over the whole `pakSize` payload.
+/// `payloadSum` of §4.4.2 step 2, the same rule on send and on receive:
+/// [`compute_datagram_checksum`] summed (modulo 2³²) over each optional header buffer in
+/// ascending flag-bit order and, for each fragment, over its even-length fragment header
+/// and over its `fragDataLen`-byte payload slice as separate buffers. A standalone control
+/// packet (one optional header, such as `SessionAuthHeader`) is one whole buffer.
 ///
-/// # Errors
-///
-/// See [`combine_packet_checksum`].
-pub fn compute_packet_checksum(
-    header: DatagramHeader,
-    payload: &[u8],
-    xor_mask: Option<u32>,
-) -> Result<u32, SessionError> {
-    combine_packet_checksum(header, compute_datagram_checksum(payload), xor_mask)
-}
-
-/// `payloadSum` by the send rule of §4.4.2 step 2: [`compute_datagram_checksum`] summed
-/// (modulo 2^32) over each attached optional header buffer in ascending flag-bit order and,
-/// for each fragment, over its even-length fragment header and over its `fragDataLen`-byte
-/// payload slice as separate buffers. A standalone control packet (one optional header,
-/// such as `SessionAuthHeader`) is one buffer, so its sum is the single-call sum.
-///
-/// A fragment's 28-byte attachment (`HasAttachment`) is counted with its header buffer;
-/// §4.4.2 names only the header and the payload slice (engineering choice; Tessera never
-/// sends an attachment).
-///
-/// When a buffer other than the last has a length that is not a multiple of 4 (the 6-byte
-/// `FlowControlHeader` before a fragment, or a fragment header of length `2 mod 4`), this sum
-/// differs from the receive rule's whole-payload sum; the sender uses this rule (§4.4.2).
+/// A fragment's 28-byte attachment (`HasAttachment`) is counted with its header buffer.
+/// pending spec pass 10 writer fix: `OPEN-SESSION-10` (attachment checksum boundary);
+/// this is an engineering choice, Tessera never sends an attachment, and the receive side
+/// ([`decode_datagram`]) uses the same boundary.
 ///
 /// # Errors
 ///
 /// Returns [`SessionError`] if a header or fragment fails to encode.
-pub fn send_payload_checksum(
+pub fn payload_checksum(
     opt_headers: &OptionalHeaders,
     fragments: &[BlobFragment],
 ) -> Result<u32, SessionError> {
@@ -1658,47 +1661,8 @@ pub fn send_payload_checksum(
     Ok(sum)
 }
 
-/// Which `payloadSum` rule of §4.4.2 step 2 the client applies to the datagrams it sends.
-///
-/// §4.4.2 gives the sender rule (a sum per optional header buffer, per fragment header and
-/// per fragment payload slice) and the receiver rule (one sum over the whole `pakSize`
-/// payload); they differ for some packets (see [`send_payload_checksum`]). A clean-room
-/// sender uses the sender rule, so [`Self::PerBuffer`] is the default (§4.4.2 step 2);
-/// [`Self::WholePayload`] is a diagnostic switch for live verification only
-/// (`TESSERA_OFFICIAL_SEND_CHECKSUM`, `docs/DEVELOPMENT.md`). The receive rule never changes
-/// with it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SendChecksumRule {
-    /// The §4.4.2 send rule: [`send_payload_checksum`].
-    #[default]
-    PerBuffer,
-    /// The §4.4.2 receive rule applied on send: [`compute_datagram_checksum`] over the whole
-    /// payload.
-    WholePayload,
-}
-
-impl SendChecksumRule {
-    /// The rule's name, as `TESSERA_OFFICIAL_SEND_CHECKSUM` takes it and log lines show it.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::PerBuffer => "per-buffer",
-            Self::WholePayload => "whole-payload",
-        }
-    }
-
-    /// The rule named exactly `value` ([`Self::label`]: no other case, no surrounding
-    /// whitespace); `None` for any other value.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        [Self::PerBuffer, Self::WholePayload]
-            .into_iter()
-            .find(|r| r.label() == value)
-    }
-}
-
-/// Verifies `header.checksum` against `payload` and `xor_mask` by the receive rule
-/// (§4.4.2, §10.1 rule 6).
+/// Verifies `header.checksum` against the per-buffer `payload_sum` ([`payload_checksum`];
+/// [`DecodedPacket::payload_sum`] on receive) and `xor_mask` (§4.4.2, §10.1 rule 6).
 ///
 /// # Errors
 ///
@@ -1707,10 +1671,10 @@ impl SendChecksumRule {
 /// [`combine_packet_checksum`]).
 pub fn verify_packet_checksum(
     header: DatagramHeader,
-    payload: &[u8],
+    payload_sum: u32,
     xor_mask: Option<u32>,
 ) -> Result<(), SessionError> {
-    let expected = compute_packet_checksum(header, payload, xor_mask)?;
+    let expected = combine_packet_checksum(header, payload_sum, xor_mask)?;
     if header.checksum != expected {
         return Err(SessionError::ChecksumMismatch {
             expected,
@@ -1724,39 +1688,44 @@ pub fn verify_packet_checksum(
 // §5.6.1 VariableU32 Variable-Length Integer Encoding
 // ---------------------------------------------------------------------------
 
-/// Encodes `value` using the `VariableU32` variable-length integer scheme (§5.6.1),
-/// appending `1`, `2`, `4`, or `5` bytes to `out` and returning the number of bytes written.
-pub fn encode_variable_u32(value: u32, out: &mut Vec<u8>) -> usize {
-    if value < 0x80 {
-        out.push(value as u8);
-        1
-    } else if value < 0x4000 {
-        let b0 = 0x80u8 | ((value >> 8) as u8 & 0x3F);
-        let b1 = (value & 0xFF) as u8;
-        out.extend_from_slice(&[b0, b1]);
-        2
-    } else if value < 0x2000_0000 {
-        let b0 = 0xC0u8 | ((value >> 24) as u8 & 0x1F);
-        let b1 = ((value >> 16) & 0xFF) as u8;
-        // Hybrid endianness (§5.6.1): low 16 bits are stored as a little-endian u16 at b2..b3
-        let b2 = (value & 0xFF) as u8;
-        let b3 = ((value >> 8) & 0xFF) as u8;
-        out.extend_from_slice(&[b0, b1, b2, b3]);
-        4
-    } else {
-        out.push(0xE0);
-        out.extend_from_slice(&value.to_le_bytes());
-        5
-    }
-}
+/// The largest value the transport compact integer holds (`0x3FFFFFFF`, the four-byte
+/// tier of §5.6.1).
+pub const MAX_VARIABLE_U32: u32 = 0x3FFF_FFFF;
 
-/// Decodes a `VariableU32` variable-length integer from the start of `bytes` (§5.6.1),
-/// returning `(value, bytes_consumed)`.
+/// Encodes `value` as a transport compact integer (§5.6.1), appending `1`, `2` or `4`
+/// bytes to `out` and returning the number written: `0..=127` verbatim; `128..=16,383` as
+/// `0x80` plus bits 8–13, then bits 0–7; `16,384..=0x3FFFFFFF` as `0xC0` plus bits 24–29,
+/// then bits 16–23, then the low 16 bits little-endian.
 ///
 /// # Errors
 ///
-/// Returns [`SessionError::InvalidVariableU32`] if `bytes` has fewer bytes than required
-/// by the prefix tag in `bytes[0]` or uses an unrecognized prefix tag.
+/// [`SessionError::VariableU32OutOfRange`] for a value above [`MAX_VARIABLE_U32`]: a
+/// bounded sender refuses it rather than truncate (§5.6.1; wider values are
+/// `OPEN-SESSION-12`). Nothing is written then.
+pub fn encode_variable_u32(value: u32, out: &mut Vec<u8>) -> Result<usize, SessionError> {
+    if value < 0x80 {
+        out.push(value as u8);
+        Ok(1)
+    } else if value < 0x4000 {
+        out.extend_from_slice(&[0x80 | ((value >> 8) as u8 & 0x3F), (value & 0xFF) as u8]);
+        Ok(2)
+    } else if value <= MAX_VARIABLE_U32 {
+        let low = (value & 0xFFFF) as u16;
+        out.extend_from_slice(&[0xC0 | ((value >> 24) as u8 & 0x3F), (value >> 16) as u8]);
+        out.extend_from_slice(&low.to_le_bytes());
+        Ok(4)
+    } else {
+        Err(SessionError::VariableU32OutOfRange { value })
+    }
+}
+
+/// Decodes a transport compact integer from the start of `bytes` (§5.6.1), returning
+/// `(value, bytes_consumed)`. The tier follows from the first byte alone: top bit clear,
+/// one byte; top bits `10`, two bytes; top bits `11` (`0xC0..=0xFF`), four bytes.
+///
+/// # Errors
+///
+/// Returns [`SessionError::InvalidVariableU32`] if `bytes` is shorter than its tier.
 pub fn decode_variable_u32(bytes: &[u8]) -> Result<(u32, usize), SessionError> {
     let Some(&b0) = bytes.first() else {
         return Err(SessionError::InvalidVariableU32);
@@ -1764,27 +1733,17 @@ pub fn decode_variable_u32(bytes: &[u8]) -> Result<(u32, usize), SessionError> {
     if (b0 & 0x80) == 0 {
         Ok((u32::from(b0), 1))
     } else if (b0 & 0x40) == 0 {
-        if bytes.len() < 2 {
+        let Some(&b1) = bytes.get(1) else {
             return Err(SessionError::InvalidVariableU32);
-        }
-        let val = (u32::from(b0 & 0x3F) << 8) | u32::from(bytes[1]);
-        Ok((val, 2))
-    } else if (b0 & 0x20) == 0 {
-        if bytes.len() < 4 {
-            return Err(SessionError::InvalidVariableU32);
-        }
-        // Hybrid endianness (§5.6.1): b2 is bits 0..7, b3 is bits 8..15
-        let low16 = u16::from_le_bytes([bytes[2], bytes[3]]);
-        let val = (u32::from(b0 & 0x1F) << 24) | (u32::from(bytes[1]) << 16) | u32::from(low16);
-        Ok((val, 4))
-    } else if b0 == 0xE0 {
-        if bytes.len() < 5 {
-            return Err(SessionError::InvalidVariableU32);
-        }
-        let val = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
-        Ok((val, 5))
+        };
+        Ok(((u32::from(b0 & 0x3F) << 8) | u32::from(b1), 2))
     } else {
-        Err(SessionError::InvalidVariableU32)
+        let Some(&[_, b1, b2, b3]) = bytes.first_chunk::<4>() else {
+            return Err(SessionError::InvalidVariableU32);
+        };
+        let low16 = u16::from_le_bytes([b2, b3]);
+        let val = (u32::from(b0 & 0x3F) << 24) | (u32::from(b1) << 16) | u32::from(low16);
+        Ok((val, 4))
     }
 }
 
@@ -2102,7 +2061,7 @@ fn isaac_mix(
     *a = a.wrapping_add(*b);
 }
 
-/// Directional 32-bit ISAAC PRNG instance for `0x02000000` checksum XOR masking (§7.2).
+/// Directional 32-bit ISAAC PRNG instance for `MaskedChecksumFlag` (`0x00000002`) checksum XOR masking (§7.2).
 #[derive(Debug, Clone)]
 pub struct IsaacCipher {
     randrsl: [u32; 256],
@@ -2285,6 +2244,14 @@ pub const MAX_TICKET_STRING_LEN: usize = 4095;
 /// 36-character GUID (`123` bytes), rounded up. Engineering choice, spec silent.
 pub const MAX_SESSION_NET_VERSION_LEN: usize = 128;
 
+/// The chat connection's `netVersion` (§6.2; `official-messages-play.md` §6.6.2): the text
+/// observed for one client build (`OBS-L2`), sent with the one-byte count `0x12`.
+///
+/// **Interim and build-specific.** Its runtime source is `OPEN-SESSION-11`: it is not a
+/// release-independent constant, and a later client build may send another text. Tessera
+/// sends it until the spec names where the value comes from.
+pub const CHAT_NET_VERSION_INTERIM: &str = "180804_chat_fe_2_3";
+
 /// Which connection a `SessionAuthHeader` opens (§6.2, §6.2.1): it decides `netVersion` and
 /// `authType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2292,7 +2259,7 @@ pub enum AuthConnection {
     /// The primary login/world connection: `netVersion` `"180804_"` + the version stamp,
     /// `authType 0x00000001`.
     Primary,
-    /// The secondary chat-server connection: `netVersion` `"180804"`,
+    /// The secondary chat-server connection: `netVersion` [`CHAT_NET_VERSION_INTERIM`],
     /// `authType 0x40000002`.
     Chat,
 }
@@ -2309,27 +2276,28 @@ impl AuthConnection {
 
     /// The `netVersion` text of this connection (§6.2): `"180804_"` followed by
     /// `version_string` (`"netver:<netver_string>; didver:<didver_string>"`,
-    /// `official-login.md` §2.4.1) on the primary connection, `"180804"` on the chat
-    /// connection (where `version_string` is not used).
+    /// `official-login.md` §2.4.1) on the primary connection, the interim
+    /// [`CHAT_NET_VERSION_INTERIM`] on the chat connection (where `version_string` is not
+    /// used).
     #[must_use]
     pub fn net_version(self, version_string: &str) -> String {
         match self {
             Self::Primary => format!("{NET_VERSION_STAMP}_{version_string}"),
-            Self::Chat => NET_VERSION_STAMP.to_owned(),
+            Self::Chat => CHAT_NET_VERSION_INTERIM.to_owned(),
         }
     }
 }
 
-/// Whether `text` is a `netVersion` Tessera sends or accepts (§6.2): exactly `"180804"`, or
-/// `"180804_"` followed by printable ASCII (`0x20..=0x7E`), at most
-/// [`MAX_SESSION_NET_VERSION_LEN`] bytes.
+/// Whether `text` is a `netVersion` Tessera sends or accepts (§6.2): `"180804_"` followed
+/// by printable ASCII (`0x20..=0x7E`), at most [`MAX_SESSION_NET_VERSION_LEN`] bytes. The
+/// primary text and [`CHAT_NET_VERSION_INTERIM`] both have this form; the earlier bare
+/// `"180804"` chat text is withdrawn (§6.2.2).
 #[must_use]
 pub fn is_valid_net_version(text: &str) -> bool {
     if text.len() > MAX_SESSION_NET_VERSION_LEN {
         return false;
     }
     match text.strip_prefix(NET_VERSION_STAMP) {
-        Some("") => true,
         Some(rest) => rest.strip_prefix('_').is_some_and(|stamp| {
             !stamp.is_empty() && stamp.bytes().all(|b| (0x20..=0x7E).contains(&b))
         }),
@@ -2360,12 +2328,14 @@ pub fn check_ticket_text(ticket: &str) -> Result<(), SessionError> {
 ///
 /// The units are written straight from the string, with no intermediate copy: an
 /// `AccountString` may be a credential (`official-login.md` §6.3).
-fn encode_wstring(s: &str, out: &mut Vec<u8>) {
-    let units = s.encode_utf16().count();
-    encode_variable_u32(units as u32, out);
+fn encode_wstring(s: &str, out: &mut Vec<u8>) -> Result<(), SessionError> {
+    let units = u32::try_from(s.encode_utf16().count())
+        .map_err(|_| SessionError::VariableU32OutOfRange { value: u32::MAX })?;
+    encode_variable_u32(units, out)?;
     for unit in s.encode_utf16() {
         out.extend_from_slice(&unit.to_le_bytes());
     }
+    Ok(())
 }
 
 /// The encoded length of [`encode_wstring`]'s output for `s`.
@@ -2374,16 +2344,16 @@ fn wstring_encoded_len(s: &str) -> usize {
     variable_u32_len(units as u32).saturating_add(units.saturating_mul(2))
 }
 
-/// The byte length of a 4-tier `VariableU32` encoding of `value` (§5.6.1).
+/// The byte length of the transport compact integer encoding of `value` (§5.6.1); a
+/// value above [`MAX_VARIABLE_U32`], which [`encode_variable_u32`] refuses, is measured
+/// as four bytes.
 fn variable_u32_len(value: u32) -> usize {
     if value < 0x80 {
         1
     } else if value < 0x4000 {
         2
-    } else if value < 0x2000_0000 {
-        4
     } else {
-        5
+        4
     }
 }
 
@@ -2515,16 +2485,26 @@ impl SessionAuthCredentials {
             check_ticket_text(ticket)?;
         }
         let mut buf = Vec::with_capacity(self.encoded_len());
-        encode_wstring(&self.account_or_ticket, &mut buf);
-        if let Some(second) = &self.second_string {
-            encode_wstring(second, &mut buf);
-        }
-        if let Some(ticket) = &self.ticket {
-            let blob_len = u32::try_from(extra_blob_len(ticket.len()))
-                .map_err(|_| SessionError::InvalidTicketEncoding)?;
-            buf.extend_from_slice(&blob_len.to_le_bytes());
-            encode_variable_u32(ticket.len() as u32, &mut buf);
-            buf.extend_from_slice(ticket.as_bytes());
+        let written = (|| {
+            encode_wstring(&self.account_or_ticket, &mut buf)?;
+            if let Some(second) = &self.second_string {
+                encode_wstring(second, &mut buf)?;
+            }
+            if let Some(ticket) = &self.ticket {
+                let blob_len = u32::try_from(extra_blob_len(ticket.len()))
+                    .map_err(|_| SessionError::InvalidTicketEncoding)?;
+                let text_len =
+                    u32::try_from(ticket.len()).map_err(|_| SessionError::InvalidTicketEncoding)?;
+                buf.extend_from_slice(&blob_len.to_le_bytes());
+                encode_variable_u32(text_len, &mut buf)?;
+                buf.extend_from_slice(ticket.as_bytes());
+            }
+            Ok(())
+        })();
+        if let Err(why) = written {
+            // What was written holds credentials (`official-login.md` §6.3).
+            crate::login::zeroize_vec(&mut buf);
+            return Err(why);
         }
         Ok(buf)
     }
@@ -2584,7 +2564,7 @@ impl SessionAuthCredentials {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionAuthHeader {
     /// `netVersion`: `"180804_netver:<netver_string>; didver:<didver_string>"` on the
-    /// primary connection, `"180804"` on the chat connection ([`AuthConnection::net_version`]).
+    /// primary connection, [`CHAT_NET_VERSION_INTERIM`] on the chat connection ([`AuthConnection::net_version`]).
     pub net_version: String,
     /// `authType` (`u32` LE at `authBlock + 0x00`): [`AUTH_TYPE_PRIMARY`] or
     /// [`AUTH_TYPE_CHAT`].
@@ -2716,11 +2696,15 @@ impl SessionAuthHeader {
         // `out` is reserved first, so writing the ticket into it never moves it; the
         // temporary buffer is reserved at its exact size (`official-login.md` §6.3).
         out.reserve(self.encoded_len());
-        let mut credentials = self.credentials.encode()?;
-        let block_len = u32::try_from(credentials.len().saturating_add(12))
-            .map_err(|_| SessionError::InvalidAuthBlock)?;
-        encode_variable_u32(self.net_version.len() as u32, out);
+        let version_len = u32::try_from(self.net_version.len())
+            .map_err(|_| SessionError::InvalidSessionAuthVersion)?;
+        encode_variable_u32(version_len, out)?;
         out.extend_from_slice(self.net_version.as_bytes());
+        let mut credentials = self.credentials.encode()?;
+        let Ok(block_len) = u32::try_from(credentials.len().saturating_add(12)) else {
+            crate::login::zeroize_bytes(&mut credentials);
+            return Err(SessionError::InvalidAuthBlock);
+        };
         out.extend_from_slice(&block_len.to_le_bytes());
         out.extend_from_slice(&self.auth_type.to_le_bytes());
         out.extend_from_slice(&self.auth_flags.to_le_bytes());
@@ -2814,72 +2798,88 @@ pub struct ReferralAuthHeader {
     pub referral_cookie: u64,
 }
 
-/// `ConnectChallengeHeader` (`0x00040000`, 44 bytes) optional header (§6.3).
+/// Converts a dictionary UUID between its on-disk mixed-endian form (record bytes
+/// `16..31`) and the challenge's field-wise network form (§7.3): the first four-byte, the
+/// next two-byte and the next two-byte fields are each reversed, the final eight bytes
+/// are unchanged. The conversion is its own inverse.
+#[must_use]
+pub fn guid_fields_swapped(uuid: [u8; 16]) -> [u8; 16] {
+    let mut out = uuid;
+    out[0..4].reverse();
+    out[4..6].reverse();
+    out[6..8].reverse();
+    out
+}
+
+/// `ConnectChallengeHeader` (`0x00040000`, 44 bytes) optional header (§6.3). The incoming
+/// recipient ID is not in the payload: it is the challenge datagram header's `recId`
+/// (§3.4, §6.3).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConnectChallengeHeader {
-    /// Server's current network clock in seconds (`f64` LE at `+0x00`).
-    pub server_time: f64,
-    /// 16-bit connection ID assigned to the client, or `0` if keeping existing ID (`u16` LE at `+0x08`).
-    pub assigned_client_rec_id: u16,
-    /// Server's 16-bit recipient connection ID (`remoteRecId`, `u16` LE at `+0x0A`).
-    pub server_rec_id: u16,
-    /// Big-endian 32-bit seed for the client's outgoing ISAAC generator (`u32` BE at `+0x0C`).
-    pub outgoing_seed: u32,
-    /// Big-endian 32-bit seed for the client's incoming ISAAC generator (`u32` BE at `+0x10`).
+    /// Payload bytes `0..7`: the server-clock candidate, IEEE-754 `f64` big-endian. Parsed
+    /// and not used: its initialization use is `OPEN-SESSION-1`; the clock comes from
+    /// `ClockSyncHeader` (§6.3, §8.1).
+    pub clock_candidate: f64,
+    /// Payload bytes `8..15`: the opaque challenge value, reversed into the accept's bytes
+    /// `0..7` (§6.3, §6.4). Not a recipient ID or a seed.
+    pub cookie: [u8; 8],
+    /// Payload bytes `16..17`: unresolved (`OPEN-SESSION-1`); read and ignored, never copied
+    /// into the accept or used as a seed or recipient (§6.3).
+    pub reserved_16: [u8; 2],
+    /// Payload bytes `18..19`, big-endian: the outgoing recipient ID, the `recId` of the
+    /// accept and of every later client packet (§3.4, §6.3).
+    pub outgoing_rec_id: u16,
+    /// Payload bytes `20..23`, big-endian: the seed of the incoming (server-to-client)
+    /// ISAAC generator (§6.3, §7.2).
     pub incoming_seed: u32,
-    /// `reserved_dword_14` (`u32` LE at `+0x14`): server-side meaning `OPEN`
-    /// (`OPEN-SESSION-1`); read and ignored, `0` when Tessera builds one in tests.
-    pub reserved_dword_14: u32,
-    /// 16-bit connection table index echoed in `ConnectAcceptHeader` (`u16` LE at `+0x18`).
-    pub client_conn_idx: u16,
-    /// `reserved_word_1a` (`u16` LE at `+0x1A`): server-side meaning `OPEN`
-    /// (`OPEN-SESSION-1`); read and ignored.
-    pub reserved_word_1a: u16,
-    /// 16-byte UUID selecting the per-connection packet codec (`+0x1C..+0x2C`).
-    pub codec_uuid: [u8; 16],
+    /// Payload bytes `24..27`, big-endian: the seed of the outgoing (client-to-server)
+    /// ISAAC generator (§6.3, §7.2).
+    pub outgoing_seed: u32,
+    /// Payload bytes `28..43`: the incoming dictionary's UUID in field-wise network GUID
+    /// order ([`guid_fields_swapped`] of its on-disk bytes, §6.3, §7.3).
+    pub incoming_codec_guid: [u8; 16],
 }
 
 impl Default for ConnectChallengeHeader {
     fn default() -> Self {
         Self {
-            server_time: 0.0,
-            assigned_client_rec_id: 0,
-            server_rec_id: 0,
-            outgoing_seed: 0,
+            clock_candidate: 0.0,
+            cookie: [0u8; 8],
+            reserved_16: [0u8; 2],
+            outgoing_rec_id: 0,
             incoming_seed: 0,
-            reserved_dword_14: 0,
-            client_conn_idx: 0,
-            reserved_word_1a: 0,
-            codec_uuid: [0u8; 16],
+            outgoing_seed: 0,
+            incoming_codec_guid: [0u8; 16],
         }
     }
 }
 
 impl ConnectChallengeHeader {
-    /// The 8 wire bytes at `+0x08..+0x0F` (`assignedClientRecId` `u16` LE, `serverRecId`
-    /// `u16` LE, `outgoingSeed` `u32` BE) read as a big-endian `u64`: the
-    /// `ConnectAcceptHeader.checkValue` (§6.4 derivation rule, §10.2 Vector 5).
+    /// The byte length of the payload (`44`, §4.3).
+    pub const LEN: usize = 44;
+
+    /// The accept's first eight payload bytes as the `u64` little-endian `checkValue`: the
+    /// cookie (bytes `8..15`) reversed (§6.4, §10.2 Vector 5).
     #[must_use]
     pub fn check_value(&self) -> u64 {
-        let mut b = [0u8; 8];
-        b[0..2].copy_from_slice(&self.assigned_client_rec_id.to_le_bytes());
-        b[2..4].copy_from_slice(&self.server_rec_id.to_le_bytes());
-        b[4..8].copy_from_slice(&self.outgoing_seed.to_be_bytes());
-        u64::from_be_bytes(b)
+        u64::from_be_bytes(self.cookie)
+    }
+
+    /// The incoming dictionary UUID in its on-disk form (§7.3).
+    #[must_use]
+    pub fn incoming_codec_uuid(&self) -> [u8; 16] {
+        guid_fields_swapped(self.incoming_codec_guid)
     }
 
     /// Serializes this 44-byte `ConnectChallengeHeader` into `out` (§6.3).
     pub fn encode(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.server_time.to_le_bytes());
-        out.extend_from_slice(&self.assigned_client_rec_id.to_le_bytes());
-        out.extend_from_slice(&self.server_rec_id.to_le_bytes());
-        // Outgoing & incoming ISAAC seeds at +0x0C and +0x10 are big-endian on wire (§6.3, §11 item 2)
-        out.extend_from_slice(&self.outgoing_seed.to_be_bytes());
+        out.extend_from_slice(&self.clock_candidate.to_be_bytes());
+        out.extend_from_slice(&self.cookie);
+        out.extend_from_slice(&self.reserved_16);
+        out.extend_from_slice(&self.outgoing_rec_id.to_be_bytes());
         out.extend_from_slice(&self.incoming_seed.to_be_bytes());
-        out.extend_from_slice(&self.reserved_dword_14.to_le_bytes());
-        out.extend_from_slice(&self.client_conn_idx.to_le_bytes());
-        out.extend_from_slice(&self.reserved_word_1a.to_le_bytes());
-        out.extend_from_slice(&self.codec_uuid);
+        out.extend_from_slice(&self.outgoing_seed.to_be_bytes());
+        out.extend_from_slice(&self.incoming_codec_guid);
     }
 
     /// Decodes a 44-byte `ConnectChallengeHeader` optional header from `bytes` (§6.3).
@@ -2888,33 +2888,25 @@ impl ConnectChallengeHeader {
     ///
     /// Returns [`SessionError::OptionalHeaderOverrun`] if `bytes.len() < 44`.
     pub fn decode(bytes: &[u8]) -> Result<Self, SessionError> {
-        if bytes.len() < 44 {
+        let Some(b) = bytes.first_chunk::<{ Self::LEN }>() else {
             return Err(SessionError::OptionalHeaderOverrun {
                 flag: FLAG_CONNECT_CHALLENGE,
             });
-        }
-        let server_time = f64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ]);
-        let assigned_client_rec_id = u16::from_le_bytes([bytes[8], bytes[9]]);
-        let server_rec_id = u16::from_le_bytes([bytes[10], bytes[11]]);
-        let outgoing_seed = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
-        let incoming_seed = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
-        let reserved_dword_14 = u32::from_le_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
-        let client_conn_idx = u16::from_le_bytes([bytes[24], bytes[25]]);
-        let reserved_word_1a = u16::from_le_bytes([bytes[26], bytes[27]]);
-        let mut codec_uuid = [0u8; 16];
-        codec_uuid.copy_from_slice(&bytes[28..44]);
+        };
+        let mut clock = [0u8; 8];
+        clock.copy_from_slice(&b[0..8]);
+        let mut cookie = [0u8; 8];
+        cookie.copy_from_slice(&b[8..16]);
+        let mut incoming_codec_guid = [0u8; 16];
+        incoming_codec_guid.copy_from_slice(&b[28..44]);
         Ok(Self {
-            server_time,
-            assigned_client_rec_id,
-            server_rec_id,
-            outgoing_seed,
-            incoming_seed,
-            reserved_dword_14,
-            client_conn_idx,
-            reserved_word_1a,
-            codec_uuid,
+            clock_candidate: f64::from_be_bytes(clock),
+            cookie,
+            reserved_16: [b[16], b[17]],
+            outgoing_rec_id: u16::from_be_bytes([b[18], b[19]]),
+            incoming_seed: u32::from_be_bytes([b[20], b[21], b[22], b[23]]),
+            outgoing_seed: u32::from_be_bytes([b[24], b[25], b[26], b[27]]),
+            incoming_codec_guid,
         })
     }
 }
@@ -2943,10 +2935,10 @@ pub fn max_recv_rate_for_speed(kbps: f64) -> u32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ConnectAcceptHeader {
     /// `checkValue` (`u64` LE at `+0x00`): [`ConnectChallengeHeader::check_value`] of the
-    /// challenge being answered (§6.4).
+    /// challenge being answered, so the payload starts with the cookie reversed (§6.4).
     pub check_value: u64,
-    /// Echo of the 16-byte `codecUuid` selected from `ConnectChallengeHeader`
-    /// (`+0x08..+0x17`; all zeros when uncompressed).
+    /// The outgoing (client-to-server) dictionary's UUID, its raw on-disk bytes
+    /// (`+0x08..+0x17`, §6.4, §7.3); never the incoming UUID or an echo of the challenge.
     pub codec_uuid: [u8; 16],
     /// `maxRecvRate` in bytes/s (`u32` LE at `+0x18`): `0` or the `Net.ConnectionSpeed`
     /// value on the primary connection ([`max_recv_rate_for_speed`]),
@@ -3128,8 +3120,14 @@ pub struct OptionalHeaders {
     pub transport_fatal_error: Option<TransportErrorHeader>,
     /// Bit 22 (`0x00400000`): `ClientControlHeader` (`u32` LE, 4 bytes; client -> server only, §4.3).
     pub client_control: Option<u32>,
-    /// Bit 24 (`0x01000000`): `ClockSyncHeader` (`f64` LE, 8 bytes).
+    /// Bit 24 (`0x01000000`): `ClockSyncHeader` (`f64` big-endian, 8 bytes, §8.1).
     pub clock_sync: Option<f64>,
+    /// Bit 25 (`0x02000000`): `OptionalWord25` (4 bytes, kept as received). Its meaning is
+    /// `OPEN-SESSION-9`; Tessera never sends it (§4.3).
+    pub optional_word_25: Option<[u8; 4]>,
+    /// Bit 26 (`0x04000000`): `OptionalWords26` (8 bytes, kept as received). Its meaning
+    /// is `OPEN-SESSION-9`; Tessera never sends it (§4.3).
+    pub optional_words_26: Option<[u8; 8]>,
     /// Bit 27 (`0x08000000`): `FlowControlHeader` (6 bytes).
     pub flow_control: Option<FlowControlHeader>,
 }
@@ -3184,6 +3182,12 @@ impl OptionalHeaders {
         if self.clock_sync.is_some() {
             mask |= FLAG_CLOCK_SYNC;
         }
+        if self.optional_word_25.is_some() {
+            mask |= FLAG_OPTIONAL_WORD_25;
+        }
+        if self.optional_words_26.is_some() {
+            mask |= FLAG_OPTIONAL_WORDS_26;
+        }
         if self.flow_control.is_some() {
             mask |= FLAG_FLOW_CONTROL;
         }
@@ -3200,7 +3204,7 @@ impl OptionalHeaders {
     }
 
     /// Serializes each present optional header into its own buffer, in ascending bit order
-    /// (the per-header buffers of the send checksum rule, §4.4.2 step 2). Headers with no
+    /// (the per-header buffers of the checksum, §4.4.2 step 2). Headers with no
     /// bytes (`DisconnectHeader`) give no buffer.
     ///
     /// # Errors
@@ -3209,7 +3213,7 @@ impl OptionalHeaders {
     ///
     /// When `session_auth` is present the combined copy is wiped before returning, and the
     /// returned buffers hold the credentials: the caller wipes them (`official-login.md`
-    /// §6.3; [`send_payload_checksum`] does).
+    /// §6.3; [`payload_checksum`] does).
     pub fn encode_buffers(&self) -> Result<Vec<Vec<u8>>, SessionError> {
         let mut all = SecretBuf::with_capacity(self.encoded_len(), self.session_auth.is_some());
         let mut marks = Vec::new();
@@ -3253,6 +3257,8 @@ impl OptionalHeaders {
             fixed(self.transport_fatal_error.is_some(), 8),
             fixed(self.client_control.is_some(), 4),
             fixed(self.clock_sync.is_some(), 8),
+            fixed(self.optional_word_25.is_some(), 4),
+            fixed(self.optional_words_26.is_some(), 8),
             fixed(self.flow_control.is_some(), 6),
         ]
         .iter()
@@ -3357,12 +3363,20 @@ impl OptionalHeaders {
             out.extend_from_slice(&cc.to_le_bytes());
         }
         marks.push(out.len());
-        // Bit 24: 0x01000000 ClockSync (8 B f64 LE)
+        // Bit 24: 0x01000000 ClockSync (8 B f64 big-endian, §8.1)
         if let Some(ts) = self.clock_sync {
-            out.extend_from_slice(&ts.to_le_bytes());
+            out.extend_from_slice(&ts.to_be_bytes());
         }
         marks.push(out.len());
-        // Bits 25 (MaskedChecksumFlag) and 26 (HasFragmentedBlobsFlag) carry no bytes (§4.3).
+        // Bit 25: 0x02000000 OptionalWord25 (4 B, as received; OPEN-SESSION-9)
+        if let Some(w) = self.optional_word_25 {
+            out.extend_from_slice(&w);
+        }
+        marks.push(out.len());
+        // Bit 26: 0x04000000 OptionalWords26 (8 B, as received; OPEN-SESSION-9)
+        if let Some(w) = self.optional_words_26 {
+            out.extend_from_slice(&w);
+        }
         marks.push(out.len());
         // Bit 27: 0x08000000 FlowControl (6 B)
         if let Some(fl) = self.flow_control {
@@ -3376,11 +3390,13 @@ impl OptionalHeaders {
     /// Decodes optional headers from `payload` in strict ascending bit order (§4.3, §10.1 rules 3, 7).
     ///
     /// - Rejects any wire flag in the receive mask (`(flags & 0xF08004F9) != 0`, §4.3,
-    ///   §10.1 rule 3); the low-byte bits `0x02` and `0x04` are ignored.
+    ///   §10.1 rule 3).
     /// - On the client receive path (`from_server == true`) rejects `0x00400000`
     ///   (`ClientControlHeader`, §10.1 rule 7).
-    /// - Bits 25 (`MaskedChecksumFlag`) and 26 (`HasFragmentedBlobsFlag`) carry no optional
-    ///   header bytes ([`HEADERLESS_FLAGS_MASK`], §4.3).
+    /// - The low markers `0x00000002` (`MaskedChecksumFlag`) and `0x00000004`
+    ///   (`HasFragmentedBlobsFlag`) carry no optional header bytes
+    ///   ([`HEADERLESS_FLAGS_MASK`]); bits 25 and 26 carry four and eight bytes, read in
+    ///   ascending order between `ClockSyncHeader` and `FlowControlHeader` (§4.3).
     ///
     /// # Errors
     ///
@@ -3390,6 +3406,17 @@ impl OptionalHeaders {
         flags: u32,
         payload: &[u8],
         from_server: bool,
+    ) -> Result<(Self, usize), SessionError> {
+        Self::decode_marked(flags, payload, from_server, &mut Vec::new())
+    }
+
+    /// [`Self::decode`], pushing the end offset of every header read onto `marks` (the
+    /// per-header buffers of the checksum, §4.4.2 step 2).
+    fn decode_marked(
+        flags: u32,
+        payload: &[u8],
+        from_server: bool,
+        marks: &mut Vec<usize>,
     ) -> Result<(Self, usize), SessionError> {
         if (flags & RECEIVE_FORBIDDEN_FLAGS_MASK) != 0 {
             return Err(SessionError::InvalidHeaderFlags { flags });
@@ -3429,6 +3456,7 @@ impl OptionalHeaders {
                 switch_type,
             });
             cursor += 8;
+            marks.push(cursor);
         }
         // Bit 9: 0x00000200 AuthServerAddress (8 B)
         if (active & FLAG_AUTH_SERVER_ADDR) != 0 {
@@ -3446,11 +3474,13 @@ impl OptionalHeaders {
                 addr: SocketAddrV4::new(ip, port),
             });
             cursor += 8;
+            marks.push(cursor);
         }
         // Bit 11: 0x00000800 WorldReferral (18 B)
         if (active & FLAG_WORLD_REFERRAL) != 0 {
             hdrs.world_referral = Some(WorldReferralHeader::decode(&payload[cursor..])?);
             cursor += 18;
+            marks.push(cursor);
         }
         // Bit 12: 0x00001000 SequenceNak (4 + 4*N B)
         if (active & FLAG_SEQUENCE_NAK) != 0 {
@@ -3478,6 +3508,7 @@ impl OptionalHeaders {
                 cursor += 4;
             }
             hdrs.sequence_nak = Some(list);
+            marks.push(cursor);
         }
         // Bit 13: 0x00002000 OutOfOrderAck (4 + 4*N B)
         if (active & FLAG_OUT_OF_ORDER_ACK) != 0 {
@@ -3505,6 +3536,7 @@ impl OptionalHeaders {
                 cursor += 4;
             }
             hdrs.out_of_order_ack = Some(list);
+            marks.push(cursor);
         }
         // Bit 14: 0x00004000 CumulativeAck (4 B big-endian)
         if (active & FLAG_CUMULATIVE_ACK) != 0 {
@@ -3517,16 +3549,19 @@ impl OptionalHeaders {
             ]);
             hdrs.cumulative_ack = Some(ack);
             cursor += 4;
+            marks.push(cursor);
         }
         // Bit 15: 0x00008000 Disconnect (0 B)
         if (active & FLAG_DISCONNECT) != 0 {
             hdrs.disconnect = true;
+            marks.push(cursor);
         }
         // Bit 16: 0x00010000 SessionAuth (variable)
         if (active & FLAG_SESSION_AUTH) != 0 {
             let (lr, consumed) = SessionAuthHeader::decode(&payload[cursor..])?;
             hdrs.session_auth = Some(lr);
             cursor += consumed;
+            marks.push(cursor);
         }
         // Bit 17: 0x00020000 ReferralAuth (8 B)
         if (active & FLAG_REFERRAL_AUTH) != 0 {
@@ -3543,16 +3578,19 @@ impl OptionalHeaders {
             ]);
             hdrs.referral_auth = Some(ReferralAuthHeader { referral_cookie });
             cursor += 8;
+            marks.push(cursor);
         }
         // Bit 18: 0x00040000 ConnectChallenge (44 B)
         if (active & FLAG_CONNECT_CHALLENGE) != 0 {
             hdrs.connect_challenge = Some(ConnectChallengeHeader::decode(&payload[cursor..])?);
             cursor += 44;
+            marks.push(cursor);
         }
         // Bit 19: 0x00080000 ConnectAccept (28 B)
         if (active & FLAG_CONNECT_ACCEPT) != 0 {
             hdrs.connect_accept = Some(ConnectAcceptHeader::decode(&payload[cursor..])?);
             cursor += 28;
+            marks.push(cursor);
         }
         // Bit 20: 0x00100000 TransportError (8 B)
         if (active & FLAG_TRANSPORT_ERROR) != 0 {
@@ -3574,6 +3612,7 @@ impl OptionalHeaders {
                 error_subcode,
             });
             cursor += 8;
+            marks.push(cursor);
         }
         // Bit 21: 0x00200000 TransportFatalError (8 B)
         if (active & FLAG_TRANSPORT_FATAL_ERROR) != 0 {
@@ -3595,6 +3634,7 @@ impl OptionalHeaders {
                 error_subcode,
             });
             cursor += 8;
+            marks.push(cursor);
         }
         // Bit 22: 0x00400000 ClientControlHeader (4 B u32 LE; refused above from a server, §4.3)
         if (active & FLAG_CLIENT_CONTROL) != 0 {
@@ -3607,22 +3647,34 @@ impl OptionalHeaders {
             ]);
             hdrs.client_control = Some(cc);
             cursor += 4;
+            marks.push(cursor);
         }
-        // Bit 24: 0x01000000 ClockSync (8 B)
+        // Bit 24: 0x01000000 ClockSync (8 B f64 big-endian, §8.1)
         if (active & FLAG_CLOCK_SYNC) != 0 {
             need(cursor, 8, FLAG_CLOCK_SYNC)?;
-            let ts = f64::from_le_bytes([
-                payload[cursor],
-                payload[cursor + 1],
-                payload[cursor + 2],
-                payload[cursor + 3],
-                payload[cursor + 4],
-                payload[cursor + 5],
-                payload[cursor + 6],
-                payload[cursor + 7],
-            ]);
-            hdrs.clock_sync = Some(ts);
+            let mut ts = [0u8; 8];
+            ts.copy_from_slice(&payload[cursor..cursor + 8]);
+            hdrs.clock_sync = Some(f64::from_be_bytes(ts));
             cursor += 8;
+            marks.push(cursor);
+        }
+        // Bit 25: 0x02000000 OptionalWord25 (4 B; meaning OPEN-SESSION-9, kept as received)
+        if (active & FLAG_OPTIONAL_WORD_25) != 0 {
+            need(cursor, 4, FLAG_OPTIONAL_WORD_25)?;
+            let mut w = [0u8; 4];
+            w.copy_from_slice(&payload[cursor..cursor + 4]);
+            hdrs.optional_word_25 = Some(w);
+            cursor += 4;
+            marks.push(cursor);
+        }
+        // Bit 26: 0x04000000 OptionalWords26 (8 B; meaning OPEN-SESSION-9, kept as received)
+        if (active & FLAG_OPTIONAL_WORDS_26) != 0 {
+            need(cursor, 8, FLAG_OPTIONAL_WORDS_26)?;
+            let mut w = [0u8; 8];
+            w.copy_from_slice(&payload[cursor..cursor + 8]);
+            hdrs.optional_words_26 = Some(w);
+            cursor += 8;
+            marks.push(cursor);
         }
         // Bit 27: 0x08000000 FlowControl (6 B)
         if (active & FLAG_FLOW_CONTROL) != 0 {
@@ -3639,6 +3691,7 @@ impl OptionalHeaders {
                 interval_ms,
             });
             cursor += 6;
+            marks.push(cursor);
         }
 
         Ok((hdrs, cursor))
@@ -3677,37 +3730,54 @@ pub struct FragmentAttachment {
 /// The highest delivery queue a sender uses (`4`, §5.6.2).
 pub const MAX_SEND_QUEUE_ID: u8 = 4;
 
-/// The highest delivery queue a receiver accepts (`6`: slots `5` and `6` share the
-/// `orderNum` + `blobId` framing of queues `2` and `4`, §5.6.2, §5.6.3).
-pub const MAX_RECEIVE_QUEUE_ID: u8 = 6;
+/// The highest delivery queue a receiver accepts (`4`): receiver slots `5` and `6` are
+/// `OPEN-SESSION-12`, so a datagram with a fragment on them is dropped and counted
+/// ([`SessionError::UnsupportedReceiveQueue`]) (§5.6.2, §5.6.3).
+/// pending spec pass 10 writer fix: queues 5/6 framing (`OPEN-SESSION-12`).
+pub const MAX_RECEIVE_QUEUE_ID: u8 = 4;
+
+/// The `blobFlags` bits §5.6.3 defines (`0x01`, `0x08`, `0x10`, `0x40`, `0x80`).
+///
+/// pending spec pass 10 writer fix: `blobFlags` bit `0x02` (seen in the first server
+/// packet) and the other undefined bits. Interim engineering choice: a receiver accepts
+/// and ignores undefined bits, a sender sends them as `0`
+/// ([`BlobFragmentHeader::encode`] clears them).
+pub const DEFINED_BLOB_FLAGS: u8 = BLOB_FLAG_HAS_ATTACHMENT
+    | BLOB_FLAG_ENCRYPTED
+    | BLOB_FLAG_IS_FRAGMENTED
+    | BLOB_FLAG_DEFAULT_RECIPIENT
+    | BLOB_FLAG_OMIT_CHUNK_INFO;
 
 /// Whether a fragment of queue `queue_id` carries `orderNum` (field 3b, §5.6.3): queues
-/// `2..=6`.
+/// `2..=4`.
 const fn has_order_num(queue_id: u8) -> bool {
-    matches!(queue_id, 2..=6)
+    matches!(queue_id, 2..=4)
 }
 
-/// Whether a fragment of queue `queue_id` carries `blobId` (field 4, §5.6.3): queues `2`,
-/// `4`, `5` and `6` always, queues `1` and `3` when the blob is fragmented.
+/// Whether a fragment of queue `queue_id` carries `blobId` (field 4, §5.6.3): queues `2`
+/// and `4` always, queue `1` when the blob is fragmented (an unfragmented queue-1 header
+/// has none). Queue `3` carries it when fragmented (the current rule is kept; §5.6.2 says
+/// only that it is omitted when unfragmented).
+/// pending spec pass 10 writer fix: the queue-3 blob ID when fragmented.
 const fn has_blob_id(queue_id: u8, fragmented: bool) -> bool {
-    matches!(queue_id, 2 | 4 | 5 | 6) || (matches!(queue_id, 1 | 3) && fragmented)
+    matches!(queue_id, 2 | 4) || (matches!(queue_id, 1 | 3) && fragmented)
 }
 
 /// Compact variable-length blob fragment header (fields 1–10 in §5.6.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobFragmentHeader {
-    /// Delivery queue ID (bits `0..6` of `queueAndOpt`, §5.6.2): `1..=4` on send,
-    /// `1..=6` on receive.
+    /// Delivery queue ID (bits `0..6` of `queueAndOpt`, §5.6.2): `1..=4`.
     pub queue_id: u8,
     /// Optional 16-bit extension word (`Some` when bit 7 `0x80` of `queueAndOpt` is set, field 6).
     pub ext_word: Option<u16>,
-    /// Fragment flags byte (`blobFlags`, field 2).
+    /// Fragment flags byte (`blobFlags`, field 2), as received; bits outside
+    /// [`DEFINED_BLOB_FLAGS`] are ignored on receive and sent as `0`.
     pub blob_flags: u8,
     /// Sequence group ID (present when `queue_id == 3`, field 3a; defaults to `0`).
     pub seq_group: u16,
-    /// Per-queue ordering number (present when `queue_id` in `2..=6`, field 3b; defaults to `0xFFFF`).
+    /// Per-queue ordering number (present when `queue_id` in `2..=4`, field 3b; defaults to `0xFFFF`).
     pub order_num: u16,
-    /// 16-bit blob identifier (present when `queue_id` in `{2, 4, 5, 6}` or (`queue_id` in
+    /// 16-bit blob identifier (present when `queue_id` in `{2, 4}` or (`queue_id` in
     /// `{1, 3}` and `IsFragmented`), field 4).
     pub blob_id: u16,
     /// Zero-based fragment index (`0..num_frags - 1`, field 5a).
@@ -3731,7 +3801,8 @@ impl BlobFragmentHeader {
     /// # Errors
     ///
     /// Returns [`SessionError`] if `queue_id` is outside `1..=4` (the sender's queues,
-    /// §5.6.2), `num_frags == 0`, `num_frags <= frag_index`, or `frag_data_len >= 0x01D1`.
+    /// §5.6.2), `num_frags == 0`, `num_frags <= frag_index`, `frag_data_len >= 0x01D1`, or a
+    /// compact integer field exceeds [`MAX_VARIABLE_U32`].
     pub fn encode(&self, out: &mut Vec<u8>) -> Result<usize, SessionError> {
         if !(1..=MAX_SEND_QUEUE_ID).contains(&self.queue_id) {
             return Err(SessionError::InvalidQueueId {
@@ -3755,7 +3826,8 @@ impl BlobFragmentHeader {
         if self.ext_word.is_some() {
             queue_and_opt |= 0x80;
         }
-        let mut flags = self.blob_flags;
+        // Undefined bits go out as 0 (interim engineering choice, [`DEFINED_BLOB_FLAGS`]).
+        let mut flags = self.blob_flags & DEFINED_BLOB_FLAGS;
         if self.num_frags > 1 {
             flags |= BLOB_FLAG_IS_FRAGMENTED;
         } else {
@@ -3773,7 +3845,7 @@ impl BlobFragmentHeader {
 
         // Field 3a: seqGroup if queueId == 3
         if self.queue_id == 3 {
-            encode_variable_u32(u32::from(self.seq_group), out);
+            encode_variable_u32(u32::from(self.seq_group), out)?;
         }
         // Field 3b: orderNum if queueId in {2, 3, 4}
         if has_order_num(self.queue_id) {
@@ -3785,8 +3857,8 @@ impl BlobFragmentHeader {
         }
         // Field 5a & 5b: fragIndex and numFrags if IsFragmented
         if (flags & BLOB_FLAG_IS_FRAGMENTED) != 0 {
-            encode_variable_u32(self.frag_index, out);
-            encode_variable_u32(self.num_frags, out);
+            encode_variable_u32(self.frag_index, out)?;
+            encode_variable_u32(self.num_frags, out)?;
         }
         // Field 6: extWord if (queueAndOpt & 0x80) != 0
         if let Some(ext) = self.ext_word {
@@ -3799,9 +3871,9 @@ impl BlobFragmentHeader {
         // Field 8a & 8b: blobHeaderWord (when fragIndex == 0) and fragDataLen if (blobFlags & 0x80) == 0
         if (flags & BLOB_FLAG_OMIT_CHUNK_INFO) == 0 {
             if self.frag_index == 0 {
-                encode_variable_u32(self.blob_header_word.unwrap_or(0), out);
+                encode_variable_u32(self.blob_header_word.unwrap_or(0), out)?;
             }
-            encode_variable_u32(self.frag_data_len, out);
+            encode_variable_u32(self.frag_data_len, out)?;
         }
         // Field 9: alignPad (0x00) if serialized length of fields 1..8b is odd
         let len_so_far = out.len() - start;
@@ -3824,9 +3896,10 @@ impl BlobFragmentHeader {
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError`] if `bytes` is truncated, `queue_id` is outside `1..=6`
-    /// (§5.6.2: a receiver accepts queues `5` and `6`), `num_frags == 0`,
-    /// `num_frags <= frag_index`, `frag_data_len >= 0x01D1`, or `alignPad != 0x00`.
+    /// Returns [`SessionError`] if `bytes` is truncated, `queue_id` is outside `1..=4`
+    /// ([`SessionError::UnsupportedReceiveQueue`] for `5` and `6`, `OPEN-SESSION-12`),
+    /// `num_frags == 0`, `num_frags <= frag_index`, `frag_data_len >= 0x01D1`, or
+    /// `alignPad != 0x00`.
     pub fn decode(bytes: &[u8]) -> Result<(Self, usize), SessionError> {
         if bytes.len() < 2 {
             return Err(SessionError::FragmentPayloadOverrun);
@@ -3834,6 +3907,11 @@ impl BlobFragmentHeader {
         let queue_and_opt = bytes[0];
         let blob_flags = bytes[1];
         let queue_id = queue_and_opt & 0x7F;
+        if matches!(queue_id, 5 | 6) {
+            // pending spec pass 10 writer fix: queues 5/6 framing (OPEN-SESSION-12): the
+            // header's length is unknown, so the datagram is dropped (and counted).
+            return Err(SessionError::UnsupportedReceiveQueue { queue_id });
+        }
         if !(1..=MAX_RECEIVE_QUEUE_ID).contains(&queue_id) {
             return Err(SessionError::InvalidQueueId { queue_id });
         }
@@ -4140,7 +4218,7 @@ pub fn split_blob(
 /// A completed, reassembled `FragmentedBlob` (§5.6.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReassembledBlob {
-    /// Delivery queue ID (`1..=6`, §5.6.2).
+    /// Delivery queue ID (`1..=4`, §5.6.2).
     pub queue_id: u8,
     /// Per-queue ordering number (`0xFFFF` for `queueId == 1`).
     pub order_num: u16,
@@ -4449,24 +4527,23 @@ pub struct DecodedPacket {
     pub header: DatagramHeader,
     /// Decoded optional headers in ascending bit order (§4.3).
     pub opt_headers: OptionalHeaders,
-    /// Decoded blob fragments (non-empty only when `header.flags & 0x04000000 != 0`, §5.6.3).
+    /// Decoded blob fragments (non-empty only when `header.flags & 0x00000004 != 0`, §5.6.3).
     pub fragments: Vec<BlobFragment>,
     /// Raw payload bytes (`header.pak_size` bytes immediately following the 20-byte `DatagramHeader`).
     pub raw_payload: Vec<u8>,
+    /// The per-buffer `payloadSum` of §4.4.2 step 2 over the received bytes as they are:
+    /// each optional header, each fragment header (its alignment pad and attachment
+    /// included, see [`payload_checksum`]) and each fragment's data slice as its own buffer.
+    pub payload_sum: u32,
 }
 
-/// Encodes a packet (`header`, `opt_headers`, `fragments`) into a raw UDP datagram (§4.1–§4.4)
-/// that any receiver of §4.4.2 accepts: `payloadSum` is the receive rule's single sum over
-/// the whole payload. This is the encoder of synthetic peers (tests, fuzzing); the client's
-/// own connections send with [`encode_datagram_with_rule`] and their [`SendChecksumRule`],
-/// whose default is the §4.4.2 sender rule. For a datagram of one buffer (every handshake
-/// and standalone control packet) the two rules give the same bytes.
+/// Encodes a packet (`header`, `opt_headers`, `fragments`) into a raw UDP datagram (§4.1–§4.4).
 ///
 /// - Computes `pak_size` from the serialized optional headers and blob fragments.
-/// - Sets `FLAG_HAS_FRAGMENTED_BLOBS` (`0x04000000`) if `fragments` is non-empty, and `FLAG_MASKED_CHECKSUM`
-///   (`0x02000000`) if `xor_mask.is_some()`.
-/// - Computes `DatagramHeader.checksum` using the `0xBADD70DD` header placeholder, the
-///   whole-payload `payloadSum` and optional `xor_mask` (§4.4.2).
+/// - Sets `HasFragmentedBlobsFlag` (`0x00000004`) if `fragments` is non-empty, and
+///   `MaskedChecksumFlag` (`0x00000002`) if `xor_mask.is_some()`.
+/// - Computes `DatagramHeader.checksum` from the `0xBADD70DD` header placeholder, the
+///   per-buffer `payloadSum` ([`payload_checksum`]) and the optional `xor_mask` (§4.4.2).
 /// - Prepends `0x0000` when `wire_codec` is `None`, or `header.rec_id` (big-endian) followed by
 ///   the bit-tree compressed `[DatagramHeader[2..20] | payload]` when `wire_codec` is `Some` (§4.1.1, §4.1.2).
 ///   A packet with a `SessionAuthHeader` is a control packet and is always written
@@ -4476,37 +4553,14 @@ pub struct DecodedPacket {
 ///
 /// # Errors
 ///
-/// Returns [`SessionError`] if optional headers or fragments are invalid or exceed `MAX_PAK_SIZE`.
+/// Returns [`SessionError`] if optional headers or fragments are invalid, a flag outside
+/// `0x0F7FFB06` is set, or the payload exceeds `MAX_PAK_SIZE`.
 pub fn encode_datagram(
-    header: DatagramHeader,
-    opt_headers: &OptionalHeaders,
-    fragments: &[BlobFragment],
-    xor_mask: Option<u32>,
-    wire_codec: Option<&dyn BitTreeCodec>,
-) -> Result<Vec<u8>, SessionError> {
-    encode_datagram_with_rule(
-        header,
-        opt_headers,
-        fragments,
-        xor_mask,
-        wire_codec,
-        SendChecksumRule::WholePayload,
-    )
-}
-
-/// [`encode_datagram`] with `payloadSum` computed by `rule` ([`SendChecksumRule`]); every
-/// other byte of the datagram is the same for both rules.
-///
-/// # Errors
-///
-/// See [`encode_datagram`].
-pub fn encode_datagram_with_rule(
     mut header: DatagramHeader,
     opt_headers: &OptionalHeaders,
     fragments: &[BlobFragment],
     xor_mask: Option<u32>,
     wire_codec: Option<&dyn BitTreeCodec>,
-    rule: SendChecksumRule,
 ) -> Result<Vec<u8>, SessionError> {
     if fragments.len() > MAX_FRAGS_PER_PACKET {
         return Err(SessionError::TooManyFragments {
@@ -4529,14 +4583,20 @@ pub fn encode_datagram_with_rule(
     opt_headers.encode(&mut payload.buf)?;
     payload.buf.extend_from_slice(&frag_bytes);
 
-    if payload.buf.len() > usize::from(MAX_PAK_SIZE) {
+    let Ok(pak_size) = u16::try_from(payload.buf.len()) else {
         return Err(SessionError::InvalidPakSize {
             pak_size: u16::MAX,
             actual_payload_len: payload.buf.len(),
         });
+    };
+    if pak_size > MAX_PAK_SIZE {
+        return Err(SessionError::InvalidPakSize {
+            pak_size,
+            actual_payload_len: payload.buf.len(),
+        });
     }
 
-    header.pak_size = payload.buf.len() as u16;
+    header.pak_size = pak_size;
     header.flags |= opt_headers.flags_mask();
     if !fragments.is_empty() {
         header.flags |= FLAG_HAS_FRAGMENTED_BLOBS;
@@ -4550,13 +4610,9 @@ pub fn encode_datagram_with_rule(
         });
     }
 
-    // §4.4.2 step 2, send rule: `payloadSum` is summed per optional header buffer and per
-    // fragment (see [`send_payload_checksum`]); the receiver sums the whole payload. The
-    // diagnostic switch applies the receive rule instead ([`SendChecksumRule`]).
-    let payload_sum = match rule {
-        SendChecksumRule::PerBuffer => send_payload_checksum(opt_headers, fragments)?,
-        SendChecksumRule::WholePayload => compute_datagram_checksum(&payload.buf),
-    };
+    // §4.4.2 step 2: `payloadSum` per optional header buffer and per fragment header and
+    // data slice; the receiver sums the same buffers ([`decode_datagram`]).
+    let payload_sum = payload_checksum(opt_headers, fragments)?;
     header.checksum = combine_packet_checksum(header, payload_sum, xor_mask)?;
     let wire_hdr = header.to_wire_bytes();
 
@@ -4583,12 +4639,62 @@ pub fn encode_datagram_with_rule(
     }
 }
 
+/// The optional headers, the fragments and the per-buffer `payloadSum` (§4.4.2 step 2)
+/// of a decoded packet's `payload` for header `flags` (§4.3, §5.6.3, §10.1 rules 3, 7, 8).
+///
+/// # Errors
+///
+/// Returns [`SessionError`] if a header or fragment is malformed or trailing bytes remain.
+pub fn parse_packet_payload(
+    flags: u32,
+    payload: &[u8],
+    from_server: bool,
+) -> Result<(OptionalHeaders, Vec<BlobFragment>, u32), SessionError> {
+    let mut marks = Vec::new();
+    let (opt_headers, mut cursor) =
+        OptionalHeaders::decode_marked(flags, payload, from_server, &mut marks)?;
+    let mut sum = 0u32;
+    let mut from = 0usize;
+    for end in marks {
+        if let Some(buffer) = payload.get(from..end) {
+            sum = sum.wrapping_add(compute_datagram_checksum(buffer));
+        }
+        from = end;
+    }
+    let mut fragments = Vec::new();
+    if (flags & FLAG_HAS_FRAGMENTED_BLOBS) != 0 {
+        while let Some(rest) = payload.get(cursor..).filter(|r| !r.is_empty()) {
+            if fragments.len() >= MAX_FRAGS_PER_PACKET {
+                return Err(SessionError::TooManyFragments {
+                    count: fragments.len() + 1,
+                });
+            }
+            let (frag, consumed) = BlobFragment::decode(rest)?;
+            let header_len = consumed.saturating_sub(frag.payload.len());
+            if let Some(header) = rest.get(..header_len) {
+                sum = sum
+                    .wrapping_add(compute_datagram_checksum(header))
+                    .wrapping_add(compute_datagram_checksum(&frag.payload));
+            }
+            cursor += consumed;
+            fragments.push(frag);
+        }
+    } else if cursor < payload.len() {
+        return Err(SessionError::TrailingPayloadBytes {
+            remaining: payload.len() - cursor,
+        });
+    }
+    Ok((opt_headers, fragments, sum))
+}
+
 /// Decodes and validates a raw UDP datagram before sequence-window/ISAAC-mask lookup (§4.1–§4.3, §10.1 rules 1–3, 7, 8).
 ///
-/// If `verify_unmasked_checksum` is `true` and `(header.flags & 0x02000000) == 0`, this function
-/// also verifies `DatagramHeader.checksum` immediately. When `(header.flags & 0x02000000) != 0`,
-/// callers should verify the checksum via [`verify_packet_checksum`] after checking the sequence
-/// window and obtaining the sequence number's ISAAC `xor_mask` (§5.1, §10.1 rules 5–6).
+/// The payload is parsed first, so that its per-buffer `payloadSum`
+/// ([`DecodedPacket::payload_sum`], §4.4.2) is known. If `verify_unmasked_checksum` is
+/// `true` and `MaskedChecksumFlag` (`0x00000002`) is clear, `DatagramHeader.checksum` is
+/// verified at once. A masked packet's checksum is verified with
+/// [`verify_packet_checksum`] after the sequence window check, with the sequence number's
+/// ISAAC `xor_mask` (§5.1, §10.1 rules 5–6).
 ///
 /// # Errors
 ///
@@ -4622,43 +4728,23 @@ pub fn decode_datagram(
         out
     };
 
-    if decoded_buf.len() < DATAGRAM_HEADER_BYTES {
+    let Some(payload) = decoded_buf.get(DATAGRAM_HEADER_BYTES..) else {
         return Err(SessionError::DatagramTooShort {
             len: decoded_buf.len() + 2,
         });
-    }
-
-    let header = DatagramHeader::from_wire_bytes(&decoded_buf[0..DATAGRAM_HEADER_BYTES])?;
-    let actual_payload_len = decoded_buf.len() - DATAGRAM_HEADER_BYTES;
-    if usize::from(header.pak_size) != actual_payload_len {
+    };
+    let header = DatagramHeader::from_wire_bytes(&decoded_buf)?;
+    if usize::from(header.pak_size) != payload.len() {
         return Err(SessionError::InvalidPakSize {
             pak_size: header.pak_size,
-            actual_payload_len,
+            actual_payload_len: payload.len(),
         });
     }
 
-    let payload = &decoded_buf[DATAGRAM_HEADER_BYTES..];
+    let (opt_headers, fragments, payload_sum) =
+        parse_packet_payload(header.flags, payload, from_server)?;
     if verify_unmasked_checksum && (header.flags & FLAG_MASKED_CHECKSUM) == 0 {
-        verify_packet_checksum(header, payload, None)?;
-    }
-
-    let (opt_headers, mut cursor) = OptionalHeaders::decode(header.flags, payload, from_server)?;
-    let mut fragments = Vec::new();
-    if (header.flags & FLAG_HAS_FRAGMENTED_BLOBS) != 0 {
-        while cursor < payload.len() {
-            if fragments.len() >= MAX_FRAGS_PER_PACKET {
-                return Err(SessionError::TooManyFragments {
-                    count: fragments.len() + 1,
-                });
-            }
-            let (frag, consumed) = BlobFragment::decode(&payload[cursor..])?;
-            cursor += consumed;
-            fragments.push(frag);
-        }
-    } else if cursor < payload.len() {
-        return Err(SessionError::TrailingPayloadBytes {
-            remaining: payload.len() - cursor,
-        });
+        verify_packet_checksum(header, payload_sum, None)?;
     }
 
     Ok(DecodedPacket {
@@ -4667,6 +4753,7 @@ pub fn decode_datagram(
         opt_headers,
         fragments,
         raw_payload: payload.to_vec(),
+        payload_sum,
     })
 }
 
@@ -4719,7 +4806,10 @@ pub enum DisconnectReason {
         /// Wire `errorSubcode`.
         error_subcode: u32,
     },
-    /// `ConnectChallengeHeader.codecUuid` matched no loaded dictionary (§6.4 step 3).
+    /// The challenge's dictionary UUID was null, did not match the install's incoming
+    /// dictionary, or the connection has no dictionaries (§7.3: an explicit
+    /// unsupported-negotiation result; the chat connection's dictionary source is
+    /// `OPEN-SESSION-1`).
     UnsupportedCodec,
     /// The retransmit table overflowed its limits (§5.1).
     OutboundWindowOverflow,
@@ -4821,19 +4911,29 @@ pub struct HandshakeCounts {
     /// optional headers acted on and their fragments ingested); a datagram refused at any
     /// step is not counted.
     pub received_ok: u64,
+    /// Received datagrams dropped because a fragment was on receiver queue `5` or `6`,
+    /// whose framing is `OPEN-SESSION-12` ([`SessionError::UnsupportedReceiveQueue`]).
+    pub unsupported_queue_drops: u64,
 }
 
-/// `DatagramHeader.time` for the network time `network_sec` (§4.2): the floor of
-/// `network_sec × 1,000`, reduced modulo `65,536`. A time that is not finite gives `0`.
-#[must_use]
-pub fn network_time_ms(network_sec: f64) -> u16 {
-    let ms = (network_sec * 1000.0).floor();
-    if !ms.is_finite() {
-        return 0;
-    }
-    // `as` saturates out-of-range values; the reduction keeps the low 16 bits.
-    u16::try_from((ms as i64).rem_euclid(65_536)).unwrap_or(0)
+/// The install's two directional dictionary UUIDs, each the raw on-disk bytes `16..31` of
+/// its record (§4.1.3, §7.3): kept apart, never merged into one acceptable list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CodecUuids {
+    /// The incoming (server-to-client) dictionary's UUID (key `0x10000001` after its
+    /// redirect): a challenge must name it, in its field-wise converted form (§6.3, §7.3).
+    pub incoming: [u8; 16],
+    /// The outgoing (client-to-server) dictionary's UUID (key `0x10000002`): written
+    /// verbatim into the accept (§6.4, §7.3).
+    pub outgoing: [u8; 16],
 }
+
+/// The initial outgoing word of header bytes `16..17` from the accept on (§4.2, §6.4).
+///
+/// pending spec pass 10 writer fix: the client header word on sequenced packets after the
+/// accept (`OPEN-SESSION-8`). Tessera keeps `1` on every later packet until the spec gives
+/// the word's evolution.
+pub const INITIAL_CLIENT_WORD: u16 = 1;
 
 /// Per-connection state machine, sequence window, ISAAC generators, and fragmented blob reassembler (§3.4, §5–§8).
 pub struct SessionConnection {
@@ -4852,6 +4952,8 @@ pub struct SessionConnection {
     extended_silence_timeout: bool,
     server_clock_offset_sec: f64,
     last_switch_seq: u32,
+    client_word: u16,
+    peer_word: u16,
 
     send_seq_num: u32,
     recv_seq_expected: u32,
@@ -4861,8 +4963,8 @@ pub struct SessionConnection {
     retransmit_table: BTreeMap<u32, SentPacketRecord>,
     out_of_order_ack_queue: VecDeque<u32>,
     dropped_out_of_order_acks: u64,
-    registered_codec_uuids: Vec<[u8; 16]>,
-    active_codec_uuid: [u8; 16],
+    codec_uuids: Option<CodecUuids>,
+    codecs_negotiated: bool,
 
     stored_session_auth: Option<SessionAuthHeader>,
     stored_referral_auth: Option<ReferralAuthHeader>,
@@ -4874,7 +4976,6 @@ pub struct SessionConnection {
     outbound_datagrams: VecDeque<Vec<u8>>,
     events: VecDeque<SessionEvent>,
 
-    send_checksum: SendChecksumRule,
     counts: HandshakeCounts,
     closed_from: Option<ConnectionState>,
 }
@@ -4910,9 +5011,11 @@ impl Drop for SessionConnection {
 
 impl SessionConnection {
     /// Creates a new `SessionConnection` to `remote_addr` in State `0` (`Idle`) with
-    /// `localRecId = 0x0000`, `remoteRecId = 0x0000` and `sendSeqNum = 1`: the local ID is
-    /// the one a `ConnectChallengeHeader` assigns later (§3.4, §5.1, §6.1, §6.2). Its
-    /// `maxRecvRate` is `0` until [`Self::set_max_recv_rate`] (§6.4).
+    /// `localRecId = 0x0000`, `remoteRecId = 0x0000` and `sendSeqNum = 1` (pre-incremented,
+    /// so the first sequenced packet carries `2`): both IDs come from a
+    /// `ConnectChallengeHeader` later (§3.4, §5.1, §6.1, §6.2). Its `maxRecvRate` is `0`
+    /// until [`Self::set_max_recv_rate`] (§6.4), and it has no dictionary UUIDs until
+    /// [`Self::set_codec_uuids`] (§7.3).
     #[must_use]
     pub fn new(remote_addr: SocketAddrV4, now_sec: f64) -> Self {
         Self {
@@ -4931,6 +5034,8 @@ impl SessionConnection {
             extended_silence_timeout: false,
             server_clock_offset_sec: 0.0,
             last_switch_seq: 0,
+            client_word: 0,
+            peer_word: 0,
 
             send_seq_num: 1,
             recv_seq_expected: 1,
@@ -4940,8 +5045,8 @@ impl SessionConnection {
             retransmit_table: BTreeMap::new(),
             out_of_order_ack_queue: VecDeque::new(),
             dropped_out_of_order_acks: 0,
-            registered_codec_uuids: Vec::new(),
-            active_codec_uuid: [0u8; 16],
+            codec_uuids: None,
+            codecs_negotiated: false,
 
             stored_session_auth: None,
             stored_referral_auth: None,
@@ -4953,7 +5058,6 @@ impl SessionConnection {
             outbound_datagrams: VecDeque::new(),
             events: VecDeque::new(),
 
-            send_checksum: SendChecksumRule::PerBuffer,
             counts: HandshakeCounts::default(),
             closed_from: None,
         }
@@ -4970,19 +5074,6 @@ impl SessionConnection {
     #[must_use]
     pub fn max_recv_rate(&self) -> u32 {
         self.max_recv_rate
-    }
-
-    /// Sets the `payloadSum` rule of every datagram this connection queues from now on
-    /// ([`SendChecksumRule`]; the default is the §4.4.2 send rule). The receive rule does not
-    /// change.
-    pub fn set_send_checksum_rule(&mut self, rule: SendChecksumRule) {
-        self.send_checksum = rule;
-    }
-
-    /// The `payloadSum` rule of the datagrams this connection queues.
-    #[must_use]
-    pub fn send_checksum_rule(&self) -> SendChecksumRule {
-        self.send_checksum
     }
 
     /// What this connection counted of its handshake and its datagrams.
@@ -5012,14 +5103,15 @@ impl SessionConnection {
             && now_sec - self.state_entered_at_sec >= CLOSING_CLEANUP_SEC
     }
 
-    /// Returns the local client `recId`: `0x0000` until a `ConnectChallengeHeader` assigns
-    /// one in `0x0100..=0xFEFF` (§3.4; an assigned `0` keeps `0x0000`, §6.3).
+    /// Returns the local (incoming) `recId`: `0x0000` until a `ConnectChallengeHeader`'s
+    /// datagram header gives a non-zero one (§3.4, §6.3).
     #[must_use]
     pub fn local_rec_id(&self) -> u16 {
         self.local_rec_id
     }
 
-    /// Returns the remote server `recId` (`0` prior to `ConnectChallengeHeader`).
+    /// Returns the outgoing `recId` (`0` prior to `ConnectChallengeHeader`, then its payload
+    /// bytes `18..19`, §6.3).
     #[must_use]
     pub fn server_rec_id(&self) -> u16 {
         self.server_rec_id
@@ -5068,10 +5160,11 @@ impl SessionConnection {
         self.retransmit_table.len()
     }
 
-    /// The negotiated codec UUID (all zeros when no `BitTreeTable` codec is attached, §7.3).
+    /// Whether the challenge named the install's incoming dictionary, so the directional
+    /// codecs are in use (§7.3).
     #[must_use]
-    pub fn active_codec_uuid(&self) -> [u8; 16] {
-        self.active_codec_uuid
+    pub fn codecs_negotiated(&self) -> bool {
+        self.codecs_negotiated
     }
 
     /// Enables or disables the `300.0`-second extended silence timeout in State `5` (§8.2).
@@ -5079,12 +5172,12 @@ impl SessionConnection {
         self.extended_silence_timeout = enabled;
     }
 
-    /// Registers the 16-byte `codecUuid` (`+0x10..+0x1F`) of a loaded `BitTreeTable`
-    /// dictionary (§6.4 step 3, §7.3).
-    pub fn register_codec_uuid(&mut self, uuid: [u8; 16]) {
-        if !self.registered_codec_uuids.contains(&uuid) {
-            self.registered_codec_uuids.push(uuid);
-        }
+    /// Sets the install's directional dictionary UUIDs (§7.3). A connection without them
+    /// answers every `ConnectChallengeHeader` with the unsupported-negotiation result
+    /// ([`DisconnectReason::UnsupportedCodec`]); the chat connection has none, its
+    /// dictionary source being `OPEN-SESSION-1` (§6.3).
+    pub fn set_codec_uuids(&mut self, uuids: CodecUuids) {
+        self.codec_uuids = Some(uuids);
     }
 
     /// Pops the next queued outbound UDP datagram ready to transmit to `remote_addr`.
@@ -5102,35 +5195,36 @@ impl SessionConnection {
         self.events.pop_front()
     }
 
-    /// The `DatagramHeader` of an outgoing packet with `seq_num` and `time` (§4.2):
-    /// `recId` is `remoteRecId` (`0x0000` before the challenge), `iteration` and `table` are
-    /// always `0x00` on client-to-server datagrams.
-    fn base_datagram_header(&self, seq_num: u32, time: u16) -> DatagramHeader {
+    /// The `DatagramHeader` of an outgoing packet with `seq_num` (§4.2): `recId` is the
+    /// outgoing recipient (`0x0000` before the challenge); bytes `16..19` are the client
+    /// word and the copied peer word (both `0` before the challenge, §4.2, §6.4).
+    fn base_datagram_header(&self, seq_num: u32) -> DatagramHeader {
         DatagramHeader {
             rec_id: self.server_rec_id,
             pak_size: 0,
             flags: 0,
             seq_num,
             checksum: 0,
-            iteration: 0,
-            table: 0,
-            time,
+            client_word: self.client_word,
+            peer_word: self.peer_word,
         }
     }
 
-    /// `DatagramHeader.time` of an outgoing packet carrying `opt` (§4.2): with a
-    /// `ClockSyncHeader` or `FlowControlHeader` attached, the current network time in
-    /// milliseconds (floor of seconds × 1,000) modulo 65,536 ([`network_time_ms`]); `0`
-    /// otherwise. The handshake packets (`SessionAuthHeader`, `ReferralAuthHeader`,
-    /// `ConnectAcceptHeader`) carry neither and send `0`, as §4.2 gives. What the client
-    /// sends on a post-handshake packet without either timing header is unconfirmed
-    /// (`OPEN-SESSION-8`): Tessera keeps `0` there and prescribes nothing else.
-    fn packet_time(&self, opt: &OptionalHeaders, now_sec: f64) -> u16 {
-        if opt.clock_sync.is_some() || opt.flow_control.is_some() {
-            network_time_ms(now_sec + self.server_clock_offset_sec)
-        } else {
-            0
+    /// Encodes one of this connection's own datagrams. Tessera never sends the optional
+    /// fields of bits 25 and 26 (§4.3).
+    fn encode_own(
+        header: DatagramHeader,
+        opt: &OptionalHeaders,
+        fragments: &[BlobFragment],
+        xor_mask: Option<u32>,
+        codec: Option<&dyn BitTreeCodec>,
+    ) -> Result<Vec<u8>, SessionError> {
+        if (opt.flags_mask() & OBSERVED_ONLY_FLAGS_MASK) != 0 {
+            return Err(SessionError::InvalidHeaderFlags {
+                flags: opt.flags_mask(),
+            });
         }
+        encode_datagram(header, opt, fragments, xor_mask, codec)
     }
 
     /// Drops the stored `SessionAuthHeader` (its credentials are wiped on drop) and
@@ -5151,15 +5245,15 @@ impl SessionConnection {
         self.events.push_back(SessionEvent::Disconnected { reason });
     }
 
-    /// Whether a `BitTreeTable` codec was negotiated: the `ConnectChallengeHeader` named a
-    /// non-null `codecUuid` (§7.3).
+    /// Whether the directional codecs were negotiated: the `ConnectChallengeHeader` named
+    /// the install's incoming dictionary (§7.3).
     fn codec_negotiated(&self) -> bool {
-        self.active_codec_uuid != [0u8; 16]
+        self.codecs_negotiated
     }
 
     /// The wire codec for a normal sequenced data packet: only on a connection that
-    /// negotiated a non-null `codecUuid` and once `remoteRecId` is known (§4.1.1, §4.1.2,
-    /// §7.3); otherwise the packet goes out with `wirePrefix` `0x0000`. Control packets
+    /// negotiated the directional codecs and once the outgoing recipient is known (§4.1.1,
+    /// §4.1.2, §7.3); otherwise the packet goes out with `wirePrefix` `0x0000`. Control packets
     /// always go out with `wirePrefix` `0x0000` (§4.1.1).
     fn data_codec<'c>(
         &self,
@@ -5188,8 +5282,8 @@ impl SessionConnection {
 
     /// Initiates a session by transitioning from State `0` to State `1` and queueing an
     /// unsequenced `SessionAuthHeader` (`0x00010000`) datagram (§6.1, §6.2): `wirePrefix`
-    /// `0x0000`, `recId` `0x0000`, `seqNum` `1` (the current `sendSeqNum`, §5.1), `time`
-    /// `0`, `iteration` and `table` `0`. Build the header with
+    /// `0x0000`, `recId` `0x0000`, `seqNum` `0` (not the sequenced-packet counter, §5.1),
+    /// the final four header bytes `0`. Build the header with
     /// [`SessionAuthHeader::for_connection`].
     ///
     /// # Errors
@@ -5208,12 +5302,13 @@ impl SessionConnection {
         self.state_entered_at_sec = now_sec;
         self.last_handshake_retransmit_sec = now_sec;
 
-        let hdr = self.base_datagram_header(self.send_seq_num, 0);
+        // §5.1, §6.2: sequence zero, independent of the next sequenced-packet counter.
+        let hdr = self.base_datagram_header(0);
         let opt = OptionalHeaders {
             session_auth: Some(session_auth),
             ..OptionalHeaders::default()
         };
-        let dgram = encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
+        let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;
         self.outbound_datagrams.push_back(dgram);
         self.counts.session_auth = self.counts.session_auth.saturating_add(1);
         Ok(())
@@ -5221,7 +5316,7 @@ impl SessionConnection {
 
     /// Initiates a world-server session by transitioning from State `0` to State `1` and queueing
     /// an unsequenced `ReferralAuthHeader` (`0x00020000`) datagram (§6.1, §6.5) with `seqNum`
-    /// `1` and `time` `0` (§4.2, §5.1).
+    /// the current counter value (`1`) and the final four header bytes `0` (§4.2, §5.1).
     ///
     /// # Errors
     ///
@@ -5240,21 +5335,32 @@ impl SessionConnection {
         self.state_entered_at_sec = now_sec;
         self.last_handshake_retransmit_sec = now_sec;
 
-        let hdr = self.base_datagram_header(self.send_seq_num, 0);
+        let hdr = self.base_datagram_header(self.referral_auth_seq());
         let opt = OptionalHeaders {
             referral_auth: Some(wlr),
             ..OptionalHeaders::default()
         };
-        let dgram = encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
+        let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;
         self.outbound_datagrams.push_back(dgram);
         self.counts.referral_auth = self.counts.referral_auth.saturating_add(1);
         Ok(())
     }
 
-    /// Sends a sequenced (`flags & 0x02000000`) packet carrying `opt_headers` and `fragments`,
-    /// recording it in the outbound retransmission table with its ISAAC `xor_mask` (§5.1, §7.2).
-    /// The packet is compressed with `outgoing_codec` (the client-to-server dictionary) once
-    /// `remoteRecId` is known (§4.1.2).
+    /// `seqNum` of a `ReferralAuthHeader` datagram.
+    ///
+    /// pending spec pass 10 writer fix: `ReferralAuthHeader` sequence (`OPEN-SESSION-9`).
+    /// The current behaviour is kept: the unchanged counter value, `1` (§5.1, §6.4.1).
+    fn referral_auth_seq(&self) -> u32 {
+        self.send_seq_num
+    }
+
+    /// Sends a sequenced (`MaskedChecksumFlag` `0x00000002`) packet carrying `opt_headers`
+    /// and `fragments`, recording it in the outbound retransmission table with its ISAAC
+    /// `xor_mask` (§5.1, §7.2). The packet allocates the next sequence number (the first is
+    /// `2`) and draws its outgoing mask; a `ClockSyncHeader` carried here uses that number
+    /// and mask, not a second word (§6.4.1). The packet is compressed with
+    /// `outgoing_codec` (the client-to-server dictionary) once the codecs are negotiated
+    /// (§4.1.2, §7.3).
     ///
     /// # Errors
     ///
@@ -5274,6 +5380,12 @@ impl SessionConnection {
         if self.outgoing_isaac.is_none() {
             return Err(SessionError::InvalidState { state: self.state });
         }
+        // §4.3: Tessera never sends bits 25 and 26; refused before a number is used up.
+        if (opt_headers.flags_mask() & OBSERVED_ONLY_FLAGS_MASK) != 0 {
+            return Err(SessionError::InvalidHeaderFlags {
+                flags: opt_headers.flags_mask(),
+            });
+        }
         if self.retransmit_table.len() >= MAX_UNACKED_SENT_PACKETS {
             self.close(DisconnectReason::OutboundWindowOverflow, now_sec);
             return Err(SessionError::OutboundWindowOverflow);
@@ -5289,7 +5401,10 @@ impl SessionConnection {
             return Err(SessionError::OutboundWindowOverflow);
         }
 
-        // Attach FlowControl header if >= 1/3 s and >= 1,400 bytes received (§5.5)
+        // Attach FlowControl header if >= 1/3 s and >= 1,400 bytes received (§5.5).
+        // pending spec pass 10 writer fix: when the first standalone FlowControl is sent
+        // and its field values (§6.4.1 observes a first sequenced packet carrying only
+        // FlowControl). The current §5.5 attach-on-send behaviour is kept.
         let elapsed_flow = now_sec - self.last_flow_sent_sec;
         if opt_headers.flow_control.is_none()
             && elapsed_flow >= (1.0 / 3.0)
@@ -5310,16 +5425,9 @@ impl SessionConnection {
         let xor_mask = outgoing.next_mask();
         self.send_seq_num = next_seq;
 
-        let hdr = self.base_datagram_header(next_seq, self.packet_time(&opt_headers, now_sec));
+        let hdr = self.base_datagram_header(next_seq);
         let codec = self.data_codec(outgoing_codec);
-        let dgram = encode_datagram_with_rule(
-            hdr,
-            &opt_headers,
-            &fragments,
-            Some(xor_mask),
-            codec,
-            self.send_checksum,
-        )?;
+        let dgram = Self::encode_own(hdr, &opt_headers, &fragments, Some(xor_mask), codec)?;
         self.retransmit_table.insert(
             next_seq,
             SentPacketRecord {
@@ -5491,7 +5599,17 @@ impl SessionConnection {
         }
 
         // Decode framing & structural bounds first without mutating connection state
-        let pkt = decode_datagram(datagram, true, self.receive_codec(codecs.incoming), true)?;
+        let pkt = match decode_datagram(datagram, true, self.receive_codec(codecs.incoming), true) {
+            Ok(pkt) => pkt,
+            Err(err @ SessionError::UnsupportedReceiveQueue { .. }) => {
+                // pending spec pass 10 writer fix: queues 5/6 framing (OPEN-SESSION-12):
+                // dropped and counted.
+                self.counts.unsupported_queue_drops =
+                    self.counts.unsupported_queue_drops.saturating_add(1);
+                return Err(err);
+            }
+            Err(err) => return Err(err),
+        };
         let hdr = pkt.header;
 
         if let Some(cr) = &pkt.opt_headers.connect_challenge {
@@ -5506,10 +5624,16 @@ impl SessionConnection {
                 );
                 return Err(SessionError::UnexpectedConnectChallenge { state: self.state });
             }
-            // §3.4, §6.4 step 1: when another active connection occupies the assigned slot,
-            // the challenge is ignored (nothing changes, nothing is answered).
-            let id = cr.assigned_client_rec_id;
-            if Self::accepts_assigned_rec_id(id) && id != self.local_rec_id && rec_id_in_use(id) {
+            // §6.3: the incoming recipient is the challenge datagram header's recId and the
+            // outgoing one payload bytes 18..19; Tessera adopts only non-zero IDs.
+            if hdr.rec_id == 0 || cr.outgoing_rec_id == 0 {
+                tracing::debug!("ConnectChallengeHeader without recipient IDs dropped");
+                return Err(SessionError::InvalidChallengeRecipient);
+            }
+            // §3.4: when another active connection occupies the adopted ID, the challenge
+            // is ignored (nothing changes, nothing is answered).
+            let id = hdr.rec_id;
+            if id != self.local_rec_id && rec_id_in_use(id) {
                 tracing::debug!(
                     rec_id = id,
                     "assigned recipient ID already in use; challenge ignored"
@@ -5519,15 +5643,13 @@ impl SessionConnection {
         }
 
         // The reassembly key's sender ID, computed once for the check and the ingest: a
-        // ConnectChallengeHeader in this packet sets `serverRecId` before its fragments are
-        // ingested (§6.4 step 1), so its fragments are keyed by the new ID.
+        // ConnectChallengeHeader in this packet sets the outgoing recipient before its
+        // fragments are ingested (§6.3), so its fragments are keyed by the new ID.
         let sender_rec_id = pkt
             .opt_headers
             .connect_challenge
             .as_ref()
-            .map_or(self.server_rec_id, |cr| {
-                Self::challenge_server_rec_id(cr, hdr.rec_id)
-            });
+            .map_or(self.server_rec_id, |cr| cr.outgoing_rec_id);
 
         // Rule 8: every fragment is checked before anything is committed.
         self.reassembler
@@ -5535,7 +5657,7 @@ impl SessionConnection {
 
         // Rules 5 & 6: sequence window and checksum, computed on copies (§5.1, §7.2).
         let commit = if (hdr.flags & FLAG_MASKED_CHECKSUM) != 0 {
-            self.check_sequenced(hdr, &pkt.raw_payload)?
+            self.check_sequenced(hdr, pkt.payload_sum)?
         } else {
             SequenceCommit::Unsequenced
         };
@@ -5565,17 +5687,18 @@ impl SessionConnection {
             .bytes_received_since_flow
             .saturating_add(datagram.len() as u32);
 
-        // State 2 -> State 5 on the next valid server packet after ConnectChallengeHeader (§6.4)
+        // State 2 -> State 5 (§6.4.1): this packet came from the adopted peer and passed the
+        // framing, directional decompression, checksum and sequence checks above.
         if self.state == ConnectionState::ChallengeAcceptSent
             && pkt.opt_headers.connect_challenge.is_none()
             && pkt.opt_headers.transport_error.is_none()
             && pkt.opt_headers.transport_fatal_error.is_none()
         {
-            self.enter_connected_state(now_sec)?;
+            self.enter_connected_state(now_sec);
         }
 
         // Process optional headers (§5.2–§5.4, §6.3–§6.7, §8.1–§8.2)
-        self.process_optional_headers(&pkt.opt_headers, hdr.rec_id, now_sec, codecs.outgoing)?;
+        self.process_optional_headers(&pkt.opt_headers, hdr, now_sec, codecs.outgoing)?;
 
         // Process blob fragments (checked above; duplicate sequenced packets were dropped,
         // §5.6.4)
@@ -5598,7 +5721,7 @@ impl SessionConnection {
     fn check_sequenced(
         &self,
         hdr: DatagramHeader,
-        payload: &[u8],
+        payload_sum: u32,
     ) -> Result<SequenceCommit, SessionError> {
         // §7.2: masked packets need the incoming generator a ConnectChallengeHeader seeds.
         let Some(incoming) = self.incoming_isaac.as_ref() else {
@@ -5622,7 +5745,7 @@ impl SessionConnection {
                     expected: self.recv_seq_expected,
                 });
             };
-            verify_packet_checksum(hdr, payload, Some(saved_mask))?;
+            verify_packet_checksum(hdr, payload_sum, Some(saved_mask))?;
             return Ok(SequenceCommit::FillGap(seq));
         }
         let new_gaps = (seq - self.recv_seq_expected - 1) as usize;
@@ -5637,7 +5760,7 @@ impl SessionConnection {
             skipped_masks.push((skipped_seq, isaac.next_mask()));
         }
         let packet_mask = isaac.next_mask();
-        verify_packet_checksum(hdr, payload, Some(packet_mask))?;
+        verify_packet_checksum(hdr, payload_sum, Some(packet_mask))?;
         Ok(SequenceCommit::Advance {
             isaac: Box::new(isaac),
             skipped_masks,
@@ -5645,23 +5768,7 @@ impl SessionConnection {
         })
     }
 
-    /// Whether a `ConnectChallengeHeader` may assign `id` as the local recipient ID: a
-    /// value in `0x0100..=0xFEFF` (§3.4). `0` keeps the existing ID (§6.3).
-    fn accepts_assigned_rec_id(id: u16) -> bool {
-        (MIN_LOCAL_REC_ID..=MAX_LOCAL_REC_ID).contains(&id)
-    }
-
-    /// The `remoteRecId` a challenge gives (§6.4 step 1): its `serverRecId`, or, when that
-    /// is `0`, the `recId` of the incoming packet's `DatagramHeader`.
-    fn challenge_server_rec_id(cr: &ConnectChallengeHeader, incoming_rec_id: u16) -> u16 {
-        if cr.server_rec_id == 0 {
-            incoming_rec_id
-        } else {
-            cr.server_rec_id
-        }
-    }
-
-    fn enter_connected_state(&mut self, now_sec: f64) -> Result<(), SessionError> {
+    fn enter_connected_state(&mut self, now_sec: f64) {
         self.state = ConnectionState::Connected;
         self.state_entered_at_sec = now_sec;
         self.last_clock_sync_sent_sec = now_sec;
@@ -5669,69 +5776,63 @@ impl SessionConnection {
             local_rec_id: self.local_rec_id,
             server_rec_id: self.server_rec_id,
         });
-        // Immediately queue the initial ClockSyncHeader (0x01000000) on entering State 5 (§6.4, §8.1)
-        let opt = OptionalHeaders {
-            clock_sync: Some(now_sec + self.server_clock_offset_sec),
-            ..OptionalHeaders::default()
-        };
-        let hdr = self.base_datagram_header(self.send_seq_num, self.packet_time(&opt, now_sec));
-        let dgram = encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
-        self.outbound_datagrams.push_back(dgram);
-        Ok(())
+        // §8.1: no ClockSyncHeader on entry (that rule is withdrawn); the periodic timer
+        // runs from here.
     }
 
-    /// Answers a `ConnectChallengeHeader` that arrived in a packet with `DatagramHeader.recId`
-    /// `incoming_rec_id` (§6.4 steps 1–4).
+    /// Answers a `ConnectChallengeHeader` that arrived in a packet with `DatagramHeader`
+    /// `incoming` (§6.3, §6.4, §7.2, §7.3).
     fn accept_challenge(
         &mut self,
         cr: &ConnectChallengeHeader,
-        incoming_rec_id: u16,
+        incoming: DatagramHeader,
         now_sec: f64,
     ) -> Result<(), SessionError> {
         self.counts.challenges = self.counts.challenges.saturating_add(1);
-        // Step 3: a non-null codec UUID must match a loaded dictionary (§7.3).
-        let is_null_uuid = cr.codec_uuid == [0u8; 16];
-        if !is_null_uuid && !self.registered_codec_uuids.contains(&cr.codec_uuid) {
+        // §7.3: the challenge must name the install's incoming dictionary, compared after the
+        // field-wise conversion; a null UUID, a mismatch or a connection without
+        // dictionaries is an explicit unsupported-negotiation result.
+        let named = cr.incoming_codec_uuid();
+        let Some(uuids) = self
+            .codec_uuids
+            .filter(|u| named != [0u8; 16] && u.incoming == named)
+        else {
             self.close(DisconnectReason::UnsupportedCodec, now_sec);
             return Err(SessionError::UnsupportedCodecUuid {
-                uuid: cr.codec_uuid,
+                uuid: cr.incoming_codec_guid,
             });
-        }
-        // Step 1: take the assigned local ID (`0` keeps the existing one, §6.3; the slot was
-        // checked free before), the server's recipient ID (`0` keeps the packet's `recId`)
-        // and the server clock.
-        if Self::accepts_assigned_rec_id(cr.assigned_client_rec_id) {
-            self.local_rec_id = cr.assigned_client_rec_id;
-        } else if cr.assigned_client_rec_id != 0 {
-            tracing::debug!(
-                assigned = cr.assigned_client_rec_id,
-                "assigned recipient ID outside 0x0100..=0xFEFF ignored"
-            );
-        }
-        self.server_rec_id = Self::challenge_server_rec_id(cr, incoming_rec_id);
-        self.active_codec_uuid = cr.codec_uuid;
-        self.server_clock_offset_sec = cr.server_time - now_sec;
-        // Step 2: seed the directional ISAAC generators (§7.2).
+        };
+        // §6.3: the incoming recipient from the challenge datagram header, the outgoing
+        // one from payload bytes 18..19 (both checked non-zero and free before). The
+        // clock candidate is parsed and not used (OPEN-SESSION-1); the clock comes from
+        // ClockSyncHeader (§8.1).
+        self.local_rec_id = incoming.rec_id;
+        self.server_rec_id = cr.outgoing_rec_id;
+        self.codecs_negotiated = true;
+        // §4.2, §6.4: the accept's own word and the challenge header's bytes 18..19.
+        self.client_word = INITIAL_CLIENT_WORD;
+        self.peer_word = incoming.peer_word;
+        // §7.2: the incoming generator from payload bytes 20..23, the outgoing one from
+        // 24..27.
         self.outgoing_isaac = Some(IsaacCipher::from_seed(cr.outgoing_seed));
         self.incoming_isaac = Some(IsaacCipher::from_seed(cr.incoming_seed));
 
-        // Step 4: ConnectAcceptHeader with the derived checkValue, the codec echo and this
+        // §6.4: the cookie reversed, the outgoing dictionary's on-disk UUID and this
         // connection's maxRecvRate.
         let resp = ConnectAcceptHeader {
             check_value: cr.check_value(),
-            codec_uuid: self.active_codec_uuid,
+            codec_uuid: uuids.outgoing,
             max_recv_rate: self.max_recv_rate,
         };
         self.stored_connect_accept = Some(resp);
 
-        // Unsequenced, uncompressed, `recId = remoteRecId`, `seqNum` the current
-        // `sendSeqNum` (`1` in the handshake), `time` `0` (§4.2, §5.1, §6.4 step 4).
-        let hdr = self.base_datagram_header(self.send_seq_num, 0);
+        // Unsequenced, uncompressed, sequence zero (no ISAAC word, §6.4).
+        let hdr = self.base_datagram_header(0);
         let resp_opt = OptionalHeaders {
             connect_accept: Some(resp),
             ..OptionalHeaders::default()
         };
-        let dgram = encode_datagram_with_rule(hdr, &resp_opt, &[], None, None, self.send_checksum)?;
+        let dgram = Self::encode_own(hdr, &resp_opt, &[], None, None)?;
         self.outbound_datagrams.push_back(dgram);
         self.counts.connect_accept = self.counts.connect_accept.saturating_add(1);
 
@@ -5742,7 +5843,7 @@ impl SessionConnection {
             // State 1 is left: the stored credentials and cookie are no longer retransmitted.
             self.forget_auth();
         } else if self.state == ConnectionState::ChallengeAcceptSent {
-            self.enter_connected_state(now_sec)?;
+            self.enter_connected_state(now_sec);
         }
         Ok(())
     }
@@ -5750,13 +5851,13 @@ impl SessionConnection {
     fn process_optional_headers(
         &mut self,
         opt: &OptionalHeaders,
-        incoming_rec_id: u16,
+        incoming: DatagramHeader,
         now_sec: f64,
         outgoing_codec: Option<&dyn BitTreeCodec>,
     ) -> Result<(), SessionError> {
         // ConnectChallengeHeader (0x00040000, §6.3, §6.4)
         if let Some(cr) = &opt.connect_challenge {
-            self.accept_challenge(cr, incoming_rec_id, now_sec)?;
+            self.accept_challenge(cr, incoming, now_sec)?;
         }
 
         // CumulativeAckHeader (0x00004000, big-endian u32, §5.2)
@@ -5778,17 +5879,13 @@ impl SessionConnection {
                 if let Some(rec) = self.retransmit_table.get(&s)
                     && rec.retransmit_eligible
                 {
-                    let hdr = self.base_datagram_header(
-                        rec.seq_num,
-                        self.packet_time(&rec.opt_headers, now_sec),
-                    );
-                    let dgram = encode_datagram_with_rule(
+                    let hdr = self.base_datagram_header(rec.seq_num);
+                    let dgram = Self::encode_own(
                         hdr,
                         &rec.opt_headers,
                         &rec.fragments,
                         Some(rec.xor_mask),
                         codec,
-                        self.send_checksum,
                     )?;
                     self.outbound_datagrams.push_back(dgram);
                 } else if self.out_of_order_ack_queue.len() >= MAX_PENDING_OUT_OF_ORDER_ACKS {
@@ -5838,8 +5935,8 @@ impl SessionConnection {
                 .push_back(SessionEvent::AuthServerAddress(lsa.addr));
         }
 
-        // ClockSyncHeader (0x01000000, §8.1)
-        if let Some(server_time) = opt.clock_sync {
+        // ClockSyncHeader (0x01000000, §8.1): the synchronized network clock offset.
+        if let Some(server_time) = opt.clock_sync.filter(|t| t.is_finite()) {
             self.server_clock_offset_sec = server_time - now_sec;
         }
 
@@ -5908,16 +6005,21 @@ impl SessionConnection {
                 }
                 if now_sec - self.last_handshake_retransmit_sec >= SESSION_AUTH_RETRANSMIT_SEC {
                     self.last_handshake_retransmit_sec = now_sec;
-                    // The stored first datagram again: `seqNum` is the unchanged
-                    // `sendSeqNum` (`1`), `time` `0` (§4.2, §5.1).
-                    let hdr = self.base_datagram_header(self.send_seq_num, 0);
+                    // The stored first datagram again, with the same sequence number:
+                    // `0` for SessionAuthHeader (§5.1), the ReferralAuthHeader rule
+                    // otherwise ([`Self::referral_auth_seq`]).
+                    let seq = if self.stored_session_auth.is_some() {
+                        0
+                    } else {
+                        self.referral_auth_seq()
+                    };
+                    let hdr = self.base_datagram_header(seq);
                     let opt = OptionalHeaders {
                         session_auth: self.stored_session_auth.clone(),
                         referral_auth: self.stored_referral_auth,
                         ..OptionalHeaders::default()
                     };
-                    let dgram =
-                        encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
+                    let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;
                     self.outbound_datagrams.push_back(dgram);
                     self.counts.auth_retransmits = self.counts.auth_retransmits.saturating_add(1);
                 }
@@ -5931,13 +6033,13 @@ impl SessionConnection {
                     && let Some(resp) = self.stored_connect_accept
                 {
                     self.last_handshake_retransmit_sec = now_sec;
-                    let hdr = self.base_datagram_header(self.send_seq_num, 0);
+                    // Sequence zero, as the first accept (§6.4).
+                    let hdr = self.base_datagram_header(0);
                     let opt = OptionalHeaders {
                         connect_accept: Some(resp),
                         ..OptionalHeaders::default()
                     };
-                    let dgram =
-                        encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
+                    let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;
                     self.outbound_datagrams.push_back(dgram);
                     self.counts.connect_accept_retransmits =
                         self.counts.connect_accept_retransmits.saturating_add(1);
@@ -5958,25 +6060,22 @@ impl SessionConnection {
                 if !self.out_of_order_ack_queue.is_empty() {
                     let count = self.out_of_order_ack_queue.len().min(MAX_NAK_ENTRIES);
                     let list: Vec<u32> = self.out_of_order_ack_queue.drain(..count).collect();
-                    self.queue_control(
-                        now_sec,
-                        OptionalHeaders {
-                            out_of_order_ack: Some(list),
-                            ..OptionalHeaders::default()
-                        },
-                    )?;
+                    self.queue_control(OptionalHeaders {
+                        out_of_order_ack: Some(list),
+                        ..OptionalHeaders::default()
+                    })?;
                 }
 
-                // Periodic ClockSyncHeader every 30.0 s (§8.1)
+                // Periodic ClockSyncHeader every 30.0 s (§8.1), sent standalone.
+                // pending spec pass 10 writer fix: standalone ClockSync sequence
+                // (OPEN-SESSION-9); the current unsequenced form with the current counter
+                // value is kept ([`Self::queue_control`]).
                 if now_sec - self.last_clock_sync_sent_sec >= CLOCK_SYNC_INTERVAL_SEC {
                     self.last_clock_sync_sent_sec = now_sec;
-                    self.queue_control(
-                        now_sec,
-                        OptionalHeaders {
-                            clock_sync: Some(now_sec + self.server_clock_offset_sec),
-                            ..OptionalHeaders::default()
-                        },
-                    )?;
+                    self.queue_control(OptionalHeaders {
+                        clock_sync: Some(now_sec + self.server_clock_offset_sec),
+                        ..OptionalHeaders::default()
+                    })?;
                 }
 
                 // SequenceNakHeader every 0.6 s while gaps exist (§5.3), else
@@ -5990,25 +6089,19 @@ impl SessionConnection {
                             .copied()
                             .take(MAX_NAK_ENTRIES)
                             .collect();
-                        self.queue_control(
-                            now_sec,
-                            OptionalHeaders {
-                                sequence_nak: Some(list),
-                                ..OptionalHeaders::default()
-                            },
-                        )?;
+                        self.queue_control(OptionalHeaders {
+                            sequence_nak: Some(list),
+                            ..OptionalHeaders::default()
+                        })?;
                     }
                 } else if self.recv_seq_expected > 1
                     && now_sec - self.last_ack_nak_sent_sec >= CUMULATIVE_ACK_INTERVAL_SEC
                 {
                     self.last_ack_nak_sent_sec = now_sec;
-                    self.queue_control(
-                        now_sec,
-                        OptionalHeaders {
-                            cumulative_ack: Some(self.recv_seq_expected),
-                            ..OptionalHeaders::default()
-                        },
-                    )?;
+                    self.queue_control(OptionalHeaders {
+                        cumulative_ack: Some(self.recv_seq_expected),
+                        ..OptionalHeaders::default()
+                    })?;
                 }
             }
             ConnectionState::DisconnectingFlush => {
@@ -6018,13 +6111,10 @@ impl SessionConnection {
                     self.state = ConnectionState::DisconnectSent;
                     self.state_entered_at_sec = now_sec;
                     self.last_handshake_retransmit_sec = now_sec;
-                    self.queue_control(
-                        now_sec,
-                        OptionalHeaders {
-                            disconnect: true,
-                            ..OptionalHeaders::default()
-                        },
-                    )?;
+                    self.queue_control(OptionalHeaders {
+                        disconnect: true,
+                        ..OptionalHeaders::default()
+                    })?;
                 }
             }
             ConnectionState::DisconnectSent => {
@@ -6033,13 +6123,10 @@ impl SessionConnection {
                 } else if now_sec - self.last_handshake_retransmit_sec >= DISCONNECT_RETRANSMIT_SEC
                 {
                     self.last_handshake_retransmit_sec = now_sec;
-                    self.queue_control(
-                        now_sec,
-                        OptionalHeaders {
-                            disconnect: true,
-                            ..OptionalHeaders::default()
-                        },
-                    )?;
+                    self.queue_control(OptionalHeaders {
+                        disconnect: true,
+                        ..OptionalHeaders::default()
+                    })?;
                 }
             }
             ConnectionState::Idle
@@ -6119,11 +6206,16 @@ impl SessionConnection {
         next
     }
 
-    /// Queues an unsequenced control packet that carries the last assigned `seqNum` without
-    /// `MaskedChecksumFlag` and goes out uncompressed (§4.1.1, §5.1).
-    fn queue_control(&mut self, now_sec: f64, opt: OptionalHeaders) -> Result<(), SessionError> {
-        let hdr = self.base_datagram_header(self.send_seq_num, self.packet_time(&opt, now_sec));
-        let dgram = encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
+    /// Queues an unsequenced control packet that goes out uncompressed without
+    /// `MaskedChecksumFlag` (§4.1.1). It repeats the current allocated outgoing sequence
+    /// number and allocates none and draws no mask: the standalone acknowledgement rule of
+    /// §6.4.1. The other standalone controls (negative acknowledgements, out-of-order
+    /// acknowledgements, ClockSync, disconnects) follow it too.
+    /// pending spec pass 10 writer fix: other unsequenced classes (`OPEN-SESSION-9`); the
+    /// current behaviour is kept.
+    fn queue_control(&mut self, opt: OptionalHeaders) -> Result<(), SessionError> {
+        let hdr = self.base_datagram_header(self.send_seq_num);
+        let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;
         self.outbound_datagrams.push_back(dgram);
         Ok(())
     }
@@ -6215,9 +6307,10 @@ impl SessionMultiplexer {
 
     /// Routes an incoming UDP datagram from `source_addr` per §3.4 and §10.1 rule 4:
     /// - If `recId` (the non-zero `wirePrefix`, or `DatagramHeader.recId` behind a zero
-    ///   prefix) lies in `0x0100..=0xFEFF` and a connection holds that slot with
-    ///   `source_addr` as its peer, that connection takes the packet.
-    /// - Otherwise (`recId < 0x0100`, an empty slot, or a slot whose peer is another
+    ///   prefix) is non-zero and a connection adopted it with `source_addr` as its peer,
+    ///   that connection takes the packet (§6.3: any adopted non-zero ID; the earlier range
+    ///   check is superseded).
+    /// - Otherwise (`recId` `0`, an ID no connection adopted, or one whose peer is another
     ///   address) the connection whose remote `(IPv4, port)` equals `source_addr` takes it;
     ///   if that connection is past State `1` (its `localRecId` is non-zero) and the packet's
     ///   `recId` is neither `0x0000` nor that `localRecId`, the packet is rejected.
@@ -6258,8 +6351,7 @@ impl SessionMultiplexer {
             return Err(unknown);
         }
         // Step 2: the slot `recId`, from its own peer's address.
-        let by_id = (MIN_LOCAL_REC_ID..=MAX_LOCAL_REC_ID)
-            .contains(&header_rec_id)
+        let by_id = (header_rec_id != 0)
             .then(|| {
                 self.connections
                     .iter()
@@ -6741,9 +6833,11 @@ pub fn decode_message(
 // §9.3 Post-Handshake Session/Version Negotiation Messages (0x0000012C..0x00000130)
 // ---------------------------------------------------------------------------
 
-fn encode_pstring_ascii(s: &str, out: &mut Vec<u8>) {
-    encode_variable_u32(s.len() as u32, out);
+fn encode_pstring_ascii(s: &str, out: &mut Vec<u8>) -> Result<(), SessionError> {
+    let len = u32::try_from(s.len()).map_err(|_| SessionError::CountOverflow { count: s.len() })?;
+    encode_variable_u32(len, out)?;
     out.extend_from_slice(s.as_bytes());
+    Ok(())
 }
 
 fn decode_pstring_ascii(bytes: &[u8], opcode: u32) -> Result<(String, usize), SessionError> {
@@ -6812,12 +6906,16 @@ pub struct VersionStatusMessage {
 
 impl VersionStatusMessage {
     /// Serializes `VersionStatusMessage` (`0x0000012D`) inner payload starting at Offset `0x00` (§9.3).
-    #[must_use]
-    pub fn encode(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::VariableU32OutOfRange`] for a text longer than the compact
+    /// integer holds (§5.6.1).
+    pub fn encode(&self) -> Result<Vec<u8>, SessionError> {
         let mut out = Vec::new();
         out.extend_from_slice(&self.status.to_le_bytes());
-        encode_pstring_ascii(&self.server_version_info, &mut out);
-        out
+        encode_pstring_ascii(&self.server_version_info, &mut out)?;
+        Ok(out)
     }
 
     /// Decodes `VersionStatusMessage` (`0x0000012D`) from inner payload bytes starting at Offset `0x00` (§9.3).
@@ -6917,11 +7015,15 @@ impl LoginQueueStatusMessage {
     /// Serializes `LoginQueueStatusMessage` (`0x00000130`) inner payload starting at Offset
     /// `0x00` (§9.3): `logonResult`, `detailText`, then `queuePosition` and `queueTotal` only
     /// when `queue` is set and `logonResult` is [`LOGON_RESULT_QUEUED`].
-    #[must_use]
-    pub fn encode(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::VariableU32OutOfRange`] for a text longer than the compact
+    /// integer holds (§5.6.1).
+    pub fn encode(&self) -> Result<Vec<u8>, SessionError> {
         let mut out = Vec::new();
         out.extend_from_slice(&self.login_result.to_le_bytes());
-        encode_wstring(&self.detail_text, &mut out);
+        encode_wstring(&self.detail_text, &mut out)?;
         if let Some(q) = self
             .queue
             .filter(|_| self.login_result == LOGON_RESULT_QUEUED)
@@ -6929,7 +7031,7 @@ impl LoginQueueStatusMessage {
             out.extend_from_slice(&q.position.to_le_bytes());
             out.extend_from_slice(&q.total.to_le_bytes());
         }
-        out
+        Ok(out)
     }
 
     /// Decodes `LoginQueueStatusMessage` (`0x00000130`) from inner payload bytes starting at
@@ -7027,8 +7129,8 @@ impl ControlMessage {
         Ok(match self {
             Self::VersionRequest => (OPCODE_VERSION_REQUEST, Vec::new()),
             Self::ClientVersion(m) => (OPCODE_CLIENT_VERSION, m.encode()?),
-            Self::VersionStatus(m) => (OPCODE_VERSION_STATUS, m.encode()),
-            Self::LoginQueueStatus(m) => (OPCODE_LOGIN_QUEUE_STATUS, m.encode()),
+            Self::VersionStatus(m) => (OPCODE_VERSION_STATUS, m.encode()?),
+            Self::LoginQueueStatus(m) => (OPCODE_LOGIN_QUEUE_STATUS, m.encode()?),
             Self::SystemNotification(_) => {
                 return Err(SessionError::ReceiveOnlyMessage {
                     opcode: OPCODE_SYSTEM_NOTIFICATION,
@@ -7045,6 +7147,9 @@ impl ControlMessage {
     /// or `body` is malformed.
     pub fn decode(opcode: u32, body: &[u8]) -> Result<Self, SessionError> {
         match opcode {
+            // pending spec pass 10 writer fix: the opcode of the first server blobs vs the
+            // 0x12F "empty" rule (§6.4.1 observes a first server blob whose framing the spec
+            // does not tie to 0x12F); no change: 0x12F is read as empty, as §9.3 gives.
             OPCODE_VERSION_REQUEST => Ok(Self::VersionRequest),
             OPCODE_CLIENT_VERSION => Ok(Self::ClientVersion(ClientVersionMessage::decode(body)?)),
             OPCODE_VERSION_STATUS => Ok(Self::VersionStatus(VersionStatusMessage::decode(body)?)),
@@ -7076,9 +7181,9 @@ pub fn encode_batch_container(
     let count_of =
         |n: usize| u32::try_from(n).map_err(|_| SessionError::CountOverflow { count: n });
     let mut body = Vec::new();
-    encode_variable_u32(count_of(sub_envelopes.len())?, &mut body);
+    encode_variable_u32(count_of(sub_envelopes.len())?, &mut body)?;
     for (sub_opcode, sub_payload) in sub_envelopes {
-        encode_variable_u32(*sub_opcode, &mut body);
+        encode_variable_u32(*sub_opcode, &mut body)?;
         body.extend_from_slice(&count_of(sub_payload.len())?.to_le_bytes());
         body.extend_from_slice(sub_payload);
     }
@@ -7103,7 +7208,7 @@ pub fn encode_single_wrapper_with_context(
             count: sub_envelope_payload.len(),
         })?;
     let mut body = Vec::new();
-    encode_variable_u32(sub_opcode, &mut body);
+    encode_variable_u32(sub_opcode, &mut body)?;
     body.extend_from_slice(&len.to_le_bytes());
     body.extend_from_slice(sub_envelope_payload);
     body.extend_from_slice(&context_id.to_le_bytes());

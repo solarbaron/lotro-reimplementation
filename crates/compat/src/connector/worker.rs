@@ -221,9 +221,8 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
     };
     let stop = || control.cancelled();
     let clock = Instant::now();
-    // Read once per attempt, before any network operation (`super::diag` "The send
-    // checksum switch", "The login server switch"; `super::dump` "The switch").
-    let send_checksum = super::diag::send_checksum_from_env();
+    // Read once per attempt, before any network operation (`super::diag` "The login
+    // server switch"; `super::dump` "The switch").
     let login_server = super::diag::login_server_from_env();
     let dump_value = super::dump::dump_dir_from_env();
     out.progress(LoginStage::Authenticating);
@@ -392,10 +391,9 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         chat_endpoint: joined.chat_endpoint,
         version: local.version.clone(),
         codecs: local.codecs.clone(),
-        codec_uuids: local.codec_uuids.clone(),
+        codec_uuids: local.codec_uuids,
         schema: SchemaView(local.data.clone()),
         cancel: control.cancel_flag(),
-        send_checksum,
         net: local.net.clone(),
         login_server_entry: joined.login_server_entry,
         dump,

@@ -59,10 +59,11 @@ use crate::session::{
     AUTH_FLAG_HAS_EXTRA_BLOB, AUTH_FLAG_HAS_SECOND_STRING, ConnectionState, DATAGRAM_HEADER_BYTES,
     DatagramHeader, FLAG_AUTH_SERVER_ADDR, FLAG_CLIENT_CONTROL, FLAG_CLOCK_SYNC,
     FLAG_CONNECT_ACCEPT, FLAG_CONNECT_CHALLENGE, FLAG_CUMULATIVE_ACK, FLAG_DISCONNECT,
-    FLAG_FLOW_CONTROL, FLAG_HAS_FRAGMENTED_BLOBS, FLAG_MASKED_CHECKSUM, FLAG_OUT_OF_ORDER_ACK,
-    FLAG_REFERRAL_AUTH, FLAG_SEQUENCE_NAK, FLAG_SERVER_REDIRECT, FLAG_SESSION_AUTH,
-    FLAG_TRANSPORT_ERROR, FLAG_TRANSPORT_FATAL_ERROR, FLAG_WORLD_REFERRAL, SessionAuthHeader,
-    SessionError, UdpDatagramTransport, VALID_DATAGRAM_FLAGS_MASK, decode_variable_u32,
+    FLAG_FLOW_CONTROL, FLAG_HAS_FRAGMENTED_BLOBS, FLAG_MASKED_CHECKSUM, FLAG_OPTIONAL_WORD_25,
+    FLAG_OPTIONAL_WORDS_26, FLAG_OUT_OF_ORDER_ACK, FLAG_REFERRAL_AUTH, FLAG_SEQUENCE_NAK,
+    FLAG_SERVER_REDIRECT, FLAG_SESSION_AUTH, FLAG_TRANSPORT_ERROR, FLAG_TRANSPORT_FATAL_ERROR,
+    FLAG_WORLD_REFERRAL, HEADERLESS_FLAGS_MASK, SessionAuthHeader, SessionError,
+    UdpDatagramTransport, VALID_DATAGRAM_FLAGS_MASK, decode_variable_u32,
 };
 
 use super::diag::{AuthMode, LOGIN_SERVER_ENV, LoginServerEntry};
@@ -86,13 +87,14 @@ const PREFIX_BYTES: usize = 2;
 /// Where the optional headers start in an unencoded datagram (§4.3: header offset `0x14`).
 const PAYLOAD_AT: usize = PREFIX_BYTES + DATAGRAM_HEADER_BYTES;
 
-/// The optional-header bits of `flags`: every defined bit but the two that carry no header
-/// bytes (§4.3).
-const OPTIONAL_HEADER_BITS: u32 =
-    VALID_DATAGRAM_FLAGS_MASK & !(FLAG_MASKED_CHECKSUM | FLAG_HAS_FRAGMENTED_BLOBS);
+/// The optional-header bits of `flags`: every defined bit but the two low markers, which
+/// carry no header bytes (§4.3).
+const OPTIONAL_HEADER_BITS: u32 = VALID_DATAGRAM_FLAGS_MASK & !HEADERLESS_FLAGS_MASK;
 
-/// The names of the 18 flag bits (§4.3), in ascending bit order.
-const FLAG_NAMES: [(u32, &str); 18] = [
+/// The names of the 20 flag bits (§4.3), in ascending bit order.
+const FLAG_NAMES: [(u32, &str); 20] = [
+    (FLAG_MASKED_CHECKSUM, "MaskedChecksumFlag"),
+    (FLAG_HAS_FRAGMENTED_BLOBS, "HasFragmentedBlobsFlag"),
     (FLAG_SERVER_REDIRECT, "ServerRedirectHeader"),
     (FLAG_AUTH_SERVER_ADDR, "AuthServerAddressHeader"),
     (FLAG_WORLD_REFERRAL, "WorldReferralHeader"),
@@ -108,8 +110,8 @@ const FLAG_NAMES: [(u32, &str); 18] = [
     (FLAG_TRANSPORT_FATAL_ERROR, "TransportFatalErrorHeader"),
     (FLAG_CLIENT_CONTROL, "ClientControlHeader"),
     (FLAG_CLOCK_SYNC, "ClockSyncHeader"),
-    (FLAG_MASKED_CHECKSUM, "MaskedChecksumFlag"),
-    (FLAG_HAS_FRAGMENTED_BLOBS, "HasFragmentedBlobsFlag"),
+    (FLAG_OPTIONAL_WORD_25, "OptionalWord25"),
+    (FLAG_OPTIONAL_WORDS_26, "OptionalWords26"),
     (FLAG_FLOW_CONTROL, "FlowControlHeader"),
 ];
 
@@ -235,8 +237,6 @@ pub struct Endpoint {
     pub local_source: &'static str,
     /// [`super::diag::BindCase`]'s label.
     pub bind: &'static str,
-    /// [`crate::session::SendChecksumRule`]'s label.
-    pub send_checksum: &'static str,
 }
 
 /// A connection's counts when it ends, for the `.txt` file. `None`: not counted on this
@@ -765,23 +765,16 @@ fn describe(datagram: &[u8]) -> Result<Described, &'static str> {
     row(
         &mut rows,
         h + 0x10,
-        1,
-        "iteration (u8)",
-        &num(header.iteration.into(), 2),
-    );
-    row(
-        &mut rows,
-        h + 0x11,
-        1,
-        "table (u8)",
-        &num(header.table.into(), 2),
+        2,
+        "clientWord16 (u16 BE)",
+        &num(header.client_word.into(), 4),
     );
     row(
         &mut rows,
         h + 0x12,
         2,
-        "time (u16 BE)",
-        &num(header.time.into(), 4),
+        "peerWord18 (u16 BE)",
+        &num(header.peer_word.into(), 4),
     );
     let end = match header.flags & OPTIONAL_HEADER_BITS {
         FLAG_SESSION_AUTH => session_auth(
@@ -1117,13 +1110,12 @@ fn first_text(
         "\nEndpoint\n  connection: {kind}\n  remote address: {target}\n  \
          remote address and port used: {remote}\n  remote address range: {}\n  \
          remote form: {}\n  remote host: {}\n  local address and port bound: {local}\n  \
-         local address source: {}\n  bind case (§3.2): {}\n  send checksum rule (§4.4.2): {}",
+         local address source: {}\n  bind case (§3.2): {}",
         range_label(*remote.ip()),
         endpoint.remote_form,
         endpoint.remote_name,
         endpoint.local_source,
         endpoint.bind,
-        endpoint.send_checksum,
     );
     t
 }

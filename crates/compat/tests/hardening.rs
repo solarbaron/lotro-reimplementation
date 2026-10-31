@@ -6,13 +6,13 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use tessera_compat::login::{LauncherConfig, LoginError, MAX_XML_INPUT_BYTES, UserPreferences};
 use tessera_compat::session::{
-    AuthConnection, BitTreeCodec, BitTreeNode, BitTreeTable, BlobFragmentHeader,
+    AuthConnection, BitTreeCodec, BitTreeNode, BitTreeTable, BlobFragmentHeader, CodecUuids,
     ConnectChallengeHeader, ConnectionState, DatagramHeader, InMemoryUdpTransport,
     MAX_CONTAINER_DEPTH, MAX_NAK_ENTRIES, MAX_PENDING_OUT_OF_ORDER_ACKS, MAX_UNPACKED_MESSAGES,
     OPCODE_BATCH_CONTAINER, OPCODE_SINGLE_WRAPPER, OptionalHeaders, SessionAuthHeader,
     SessionConnection, SessionError, SessionMultiplexer, WireCodecs, dispatch_message,
     encode_batch_container, encode_datagram, encode_message, encode_single_wrapper,
-    encode_variable_u32,
+    encode_variable_u32, guid_fields_swapped,
 };
 
 /// An account-only `SessionAuthHeader` of the primary connection (`official-session.md`
@@ -27,6 +27,12 @@ fn account_auth(account: &str, timestamp: u32) -> Result<SessionAuthHeader, Sess
         timestamp,
     )
 }
+
+/// The synthetic dictionaries' on-disk UUIDs (`official-session.md` §7.3).
+const UUIDS: CodecUuids = CodecUuids {
+    incoming: [0x21; 16],
+    outgoing: [0x12; 16],
+};
 
 fn peer(last: u8) -> SocketAddrV4 {
     SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, last), 9000)
@@ -101,7 +107,7 @@ fn bit_tree_table_cycle_terminates_and_leaves_no_partial_output() {
 fn oversized_sequence_group_is_rejected() {
     // queueId 3, default recipient (0x40) and no chunk information (0x80).
     let mut bytes = vec![0x03, 0xC0];
-    encode_variable_u32(0x0001_0000, &mut bytes);
+    encode_variable_u32(0x0001_0000, &mut bytes).unwrap();
     bytes.extend_from_slice(&[0x00, 0x00]); // orderNum
     bytes.extend_from_slice(&[0x00; 4]);
     assert_eq!(
@@ -110,7 +116,7 @@ fn oversized_sequence_group_is_rejected() {
     );
 
     let mut ok = vec![0x03, 0xC0];
-    encode_variable_u32(0xFFFF, &mut ok);
+    encode_variable_u32(0xFFFF, &mut ok).unwrap();
     ok.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
     let (hdr, _) = BlobFragmentHeader::decode(&ok).expect("16-bit group decodes");
     assert_eq!(hdr.seq_group, 0xFFFF);
@@ -146,21 +152,32 @@ fn out_of_order_ack_queue_is_capped_and_counted() {
 
 /// Starts `id`'s login so it is in State 1, where a challenge is acted on (§6.4).
 fn start(mux: &mut SessionMultiplexer, id: u16) {
-    mux.connection_mut(id)
-        .unwrap()
-        .start_login(account_auth("A", 0).unwrap(), 0.0)
+    let conn = mux.connection_mut(id).unwrap();
+    conn.set_codec_uuids(UUIDS);
+    conn.start_login(account_auth("A", 0).unwrap(), 0.0)
         .unwrap();
 }
 
-fn challenge(assigned: u16) -> Vec<u8> {
-    unsequenced(&OptionalHeaders {
-        connect_challenge: Some(ConnectChallengeHeader {
-            assigned_client_rec_id: assigned,
-            server_rec_id: 0x0222,
-            ..ConnectChallengeHeader::default()
-        }),
-        ..OptionalHeaders::default()
-    })
+/// A challenge from incoming recipient `incoming` (its datagram header's `recId`, §6.3).
+fn challenge(incoming: u16) -> Vec<u8> {
+    encode_datagram(
+        DatagramHeader {
+            rec_id: incoming,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders {
+            connect_challenge: Some(ConnectChallengeHeader {
+                outgoing_rec_id: 0x0222,
+                incoming_codec_guid: guid_fields_swapped(UUIDS.incoming),
+                ..ConnectChallengeHeader::default()
+            }),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .expect("encode challenge")
 }
 
 /// A peer that assigned a recipient ID held by another connection used to
@@ -203,22 +220,28 @@ fn recipient_id_collision_never_replaces_another_connection() {
 
     // A datagram for `b` still reaches `b`, not `a`.
     let (id, _) = mux
-        .receive_from_peer(&challenge(0), peer(2), 0.2, WireCodecs::NONE)
+        .receive_from_peer(&challenge(0x0200), peer(2), 0.2, WireCodecs::NONE)
         .expect("b accepts its own challenge");
     assert_eq!(id, b);
 }
 
-/// Assigned recipient IDs above the local range are ignored: the local ID stays `0`.
+/// Any adopted non-zero recipient ID is taken (`official-session.md` §6.3: the earlier
+/// range check is superseded); a zero one is refused.
 #[test]
-fn out_of_range_assigned_recipient_id_is_ignored() {
+fn any_non_zero_incoming_recipient_id_is_adopted() {
     let mut mux = SessionMultiplexer::new();
     let a = mux.create_connection(peer(1), 0.0).unwrap();
     start(&mut mux, a);
+    assert_eq!(
+        mux.receive_from_peer(&challenge(0), peer(1), 0.1, WireCodecs::NONE)
+            .map(|_| ()),
+        Err(SessionError::InvalidChallengeRecipient)
+    );
     let (id, _) = mux
         .receive_from_peer(&challenge(0xFFF0), peer(1), 0.1, WireCodecs::NONE)
         .expect("challenge accepted");
     assert_eq!(id, a);
-    assert_eq!(mux.connection(a).unwrap().local_rec_id(), 0);
+    assert_eq!(mux.connection(a).unwrap().local_rec_id(), 0xFFF0);
 }
 
 /// A full handle space used to make allocation spin forever.

@@ -1926,7 +1926,7 @@ pub fn discover_network_version(query: &NetworkVersionQuery<'_>) -> NetworkVersi
 /// # Errors
 ///
 /// Returns [`LoginError::ConfigInvalid`] when `version_str` is not ASCII or longer than
-/// `u32::MAX` bytes.
+/// the compact integer holds (`0x3FFFFFFF` bytes, `official-session.md` §5.6.1).
 pub fn encode_client_version_payload(version_str: &str) -> Result<Vec<u8>, LoginError> {
     let raw = version_str.as_bytes();
     if !raw.is_ascii() {
@@ -1937,8 +1937,10 @@ pub fn encode_client_version_payload(version_str: &str) -> Result<Vec<u8>, Login
     let len = u32::try_from(raw.len()).map_err(|_| LoginError::ConfigInvalid {
         reason: "client version string is too long".to_owned(),
     })?;
-    let mut out = Vec::with_capacity(raw.len().saturating_add(5));
-    crate::session::encode_variable_u32(len, &mut out);
+    let mut out = Vec::with_capacity(raw.len().saturating_add(4));
+    crate::session::encode_variable_u32(len, &mut out).map_err(|_| LoginError::ConfigInvalid {
+        reason: "client version string is too long".to_owned(),
+    })?;
     out.extend_from_slice(raw);
     Ok(out)
 }

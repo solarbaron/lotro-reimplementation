@@ -144,7 +144,8 @@ fn the_login_datagram_is_written_as_sent_with_its_credentials_replaced() {
         "local address and port bound: 192.0.2.1:5000",
         "local address source: wildcard (0.0.0.0)",
         "bind case (§3.2): Case B",
-        "send checksum rule (§4.4.2): per-buffer",
+        "clientWord16 (u16 BE)",
+        "peerWord18 (u16 BE)",
         "At close",
         "reason: HandshakeTimeout",
         "state: SessionAuthSent",
@@ -341,7 +342,6 @@ fn a_password_datagram_is_redacted_and_flagged() {
         remote_name: "name",
         local_source: "source",
         bind: "bind",
-        send_checksum: "per-buffer",
     };
     let file = write_first(
         &dir_accepted(dir.path(), install.path()),
@@ -541,7 +541,7 @@ fn the_chat_connection_is_written_with_its_credentials_replaced() {
     let txt = std::fs::read_to_string(dir.path().join("chat-first-datagram.txt")).expect("txt");
     assert_no_credentials(txt.as_bytes());
     for part in [
-        "\"180804\"",
+        "\"180804_chat_fe_2_3\"",
         "0x40000002 (1073741826)",
         "remote address: the chat server",
         "remote address and port used: 192.0.2.30:9200",

@@ -24,15 +24,26 @@ use tessera_compat::chat_session::{
 use tessera_compat::play::PlayError;
 use tessera_compat::play::chat::ChatCategories;
 use tessera_compat::session::{
-    AUTH_FLAG_HAS_EXTRA_BLOB, ConnectChallengeHeader, DatagramHeader, InMemoryUdpTransport,
-    IsaacCipher, OptionalHeaders, SessionError, UdpDatagramTransport, decode_datagram,
-    encode_datagram, split_blob,
+    AUTH_FLAG_HAS_EXTRA_BLOB, CHAT_NET_VERSION_INTERIM, CodecUuids, ConnectChallengeHeader,
+    DatagramHeader, InMemoryUdpTransport, IsaacCipher, OptionalHeaders, SessionError,
+    UdpDatagramTransport, decode_datagram, encode_datagram, guid_fields_swapped, split_blob,
 };
 use tessera_compat::world::{
     EncodedPropertyTable, EncodedPropertyValue, PropertyType, WireReader, WorldError,
     encode_event_envelope,
 };
 use tessera_net::{ChatChannel, Command, Event, SocialCommand, SocialEvent};
+
+/// Synthetic dictionary UUIDs for the chat connection, so the tests reach the chat protocol
+/// above the handshake. The live chat connection has none: its dictionary source is
+/// `OPEN-SESSION-1` (`official-session.md` §6.3), so its challenge is refused.
+const UUIDS: CodecUuids = CodecUuids {
+    incoming: [
+        0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0, 0xF0,
+        0x01,
+    ],
+    outgoing: [0x5A; 16],
+};
 
 fn hex(s: &str) -> Vec<u8> {
     s.split_whitespace()
@@ -610,8 +621,10 @@ fn tickets_are_checked_as_text_not_decoded() {
 fn chat_auth_header_modes() {
     let ticket = "AAEC";
     let h = chat_auth_header("acct", Some(ticket), 1000).expect("header");
-    // §6.6.2 item 1, `official-session.md` §6.2: `netVersion` "180804", 0x40000002, 0x04.
-    assert_eq!(h.net_version, "180804");
+    // §6.6.2 item 1, `official-session.md` §6.2: the interim `netVersion`
+    // "180804_chat_fe_2_3" (OPEN-SESSION-11), 0x40000002, 0x04.
+    assert_eq!(h.net_version, "180804_chat_fe_2_3");
+    assert_eq!(h.net_version, CHAT_NET_VERSION_INTERIM);
     assert_eq!(h.auth_type, AUTH_TYPE_CHAT);
     assert_eq!(h.auth_flags, AUTH_FLAG_HAS_EXTRA_BLOB);
     let c = &h.credentials;
@@ -619,7 +632,10 @@ fn chat_auth_header_modes() {
     assert_eq!(c.ticket.as_deref(), Some("AAEC"));
     let mut wire = Vec::new();
     h.encode(&mut wire).expect("encode");
-    assert_eq!(&wire[..7], &[0x06, b'1', b'8', b'0', b'8', b'0', b'4']);
+    assert_eq!(wire[0], 0x12);
+    assert_eq!(&wire[1..19], b"180804_chat_fe_2_3");
+    // The authBlock starts at +0x17 (§6.2): authType 0x40000002.
+    assert_eq!(&wire[0x17..0x1B], &[0x02, 0x00, 0x00, 0x40]);
     // extraBlobLen 5 = the 1-byte length 4 and the 4 ASCII characters, undecoded.
     assert!(wire.ends_with(&[5, 0, 0, 0, 4, b'A', b'A', b'E', b'C']));
 
@@ -695,22 +711,21 @@ impl FakeServer {
     }
 
     fn challenge() -> Vec<u8> {
-        Self::challenge_naming([0u8; 16])
+        Self::challenge_naming(UUIDS.incoming)
     }
 
-    /// A challenge whose `codecUuid` is `codec_uuid`.
+    /// A challenge naming the dictionary whose on-disk UUID is `codec_uuid` (converted
+    /// field-wise, `official-session.md` §6.3, §7.3).
     fn challenge_naming(codec_uuid: [u8; 16]) -> Vec<u8> {
         let opt = OptionalHeaders {
             connect_challenge: Some(ConnectChallengeHeader {
-                server_time: 1.0,
-                assigned_client_rec_id: 0x0111,
-                server_rec_id: 0x0222,
-                outgoing_seed: 0xCAFE_1234,
+                clock_candidate: 1.0,
+                cookie: [1, 2, 3, 4, 5, 6, 7, 8],
+                reserved_16: [0, 0],
+                outgoing_rec_id: 0x0222,
                 incoming_seed: INCOMING_SEED,
-                reserved_dword_14: 0,
-                client_conn_idx: 4,
-                reserved_word_1a: 0,
-                codec_uuid,
+                outgoing_seed: 0xCAFE_1234,
+                incoming_codec_guid: guid_fields_swapped(codec_uuid),
             }),
             ..OptionalHeaders::default()
         };
@@ -841,7 +856,7 @@ fn sent_blobs(client: &mut ChatClient<InMemoryUdpTransport>) -> Vec<(u64, u32, V
 
 #[test]
 fn chat_client_end_to_end() {
-    let config = ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 1000);
+    let config = ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 1000).with_codec_uuids(UUIDS);
     assert!(!format!("{config:?}").contains("acct"), "account redacted");
     let mut client = ChatClient::with_transport(
         InMemoryUdpTransport::new(CLIENT),
@@ -866,13 +881,11 @@ fn chat_client_end_to_end() {
         .expect("SessionAuth");
     assert_eq!(auth.auth_type, 0x4000_0002);
     assert_eq!(auth.auth_flags, 0x04);
-    // `official-session.md` §6.2: `netVersion` "180804" on the chat connection, and the
+    // `official-session.md` §6.2: the interim `netVersion` on the chat connection, and the
     // ticket's text undecoded.
-    assert_eq!(auth.net_version, "180804");
-    assert_eq!(
-        &auth_dgram[22..29],
-        &[0x06, b'1', b'8', b'0', b'8', b'0', b'4']
-    );
+    assert_eq!(auth.net_version, "180804_chat_fe_2_3");
+    assert_eq!(auth_dgram[22], 0x12);
+    assert_eq!(&auth_dgram[23..41], b"180804_chat_fe_2_3");
     assert_eq!(auth.credentials.ticket.as_deref(), Some("AAEC"));
 
     // Handshake, then the login status.
@@ -1247,7 +1260,7 @@ fn sent(net: &Arc<Mutex<Net>>) -> Vec<(usize, tessera_compat::session::DecodedPa
 #[test]
 fn reconnect_binds_a_fresh_socket_and_flushes_the_old_disconnect() {
     let net = Arc::new(Mutex::new(Net::default()));
-    let config = ChatConfig::new(SERVER, "acct", None, 0);
+    let config = ChatConfig::new(SERVER, "acct", None, 0).with_codec_uuids(UUIDS);
     let mut client = ChatClient::with_binder(net_binder(&net), config, ChatCodecs::default(), 0.0)
         .expect("client");
     let schema = no_schema();
@@ -1336,7 +1349,7 @@ fn ready_then_dropped(
     net: &Arc<Mutex<Net>>,
     fail_rebind: bool,
 ) -> (ChatClient<NetSocket>, FakeServer) {
-    let config = ChatConfig::new(SERVER, "acct", None, 0);
+    let config = ChatConfig::new(SERVER, "acct", None, 0).with_codec_uuids(UUIDS);
     let mut client = ChatClient::with_binder(net_binder(net), config, ChatCodecs::default(), 0.0)
         .expect("client");
     let schema = no_schema();
@@ -1402,7 +1415,7 @@ fn a_failed_rebind_on_retire_is_not_a_connect_failure() {
 #[test]
 fn a_failed_connection_attempt_schedules_a_retry() {
     let net = Arc::new(Mutex::new(Net::default()));
-    let config = ChatConfig::new(SERVER, "acct", None, 0);
+    let config = ChatConfig::new(SERVER, "acct", None, 0).with_codec_uuids(UUIDS);
     let mut client = ChatClient::with_binder(net_binder(&net), config, ChatCodecs::default(), 0.0)
         .expect("client");
     let schema = no_schema();
@@ -1435,7 +1448,8 @@ fn a_failed_connection_attempt_schedules_a_retry() {
 
 #[test]
 fn set_ticket_validates() {
-    let mut config = ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 0);
+    let mut config =
+        ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 0).with_codec_uuids(UUIDS);
     assert_eq!(
         config.set_ticket(Some("not base64!".into())),
         Err(PlayError::InvalidTicket)
@@ -1444,8 +1458,35 @@ fn set_ticket_validates() {
     assert_eq!(config.set_ticket(None), Ok(()));
 }
 
-/// `official-session.md` §6.4 step 3, §7.3: a chat challenge that names a loaded dictionary
-/// is accepted, and a datagram compressed with it then decodes.
+/// `official-session.md` §6.3, §7.3 (OPEN-SESSION-1): by default a chat connection has no
+/// dictionaries, so its challenge is the explicit unsupported result: no accept is sent.
+#[test]
+fn a_chat_challenge_without_dictionaries_is_unsupported() {
+    let config = ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 1000);
+    assert!(format!("{config:?}").contains("codec_uuids: false"));
+    let mut client = ChatClient::with_transport(
+        InMemoryUdpTransport::new(CLIENT),
+        config,
+        ChatCodecs::default(),
+        0.0,
+    )
+    .expect("client");
+    let schema = no_schema();
+    client.poll(1.0, &schema).expect("poll");
+    let _ = client.transport_mut().pop_outbound().expect("SessionAuth");
+    client
+        .transport_mut()
+        .push_inbound(FakeServer::challenge(), SERVER);
+    let _ = client.poll(1.1, &schema);
+    while let Some((d, _)) = client.transport_mut().pop_outbound() {
+        let p = decode_datagram(&d, false, None, false).expect("decode");
+        assert!(p.opt_headers.connect_accept.is_none(), "no accept");
+    }
+}
+
+/// `official-session.md` §7.3 (synthetic dictionaries): a chat challenge that names the
+/// configured incoming dictionary is accepted, and a datagram compressed with it then
+/// decodes.
 #[test]
 fn chat_challenge_naming_a_loaded_dictionary() {
     use tessera_compat::session::{BitTreeCodec, BitTreeTable};
@@ -1456,8 +1497,11 @@ fn chat_challenge_naming_a_loaded_dictionary() {
         outgoing: None,
     };
     let config =
-        ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 1000).with_codec_uuids(vec![UUID]);
-    assert!(format!("{config:?}").contains("codec_uuids: 1"));
+        ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 1000).with_codec_uuids(CodecUuids {
+            incoming: UUID,
+            outgoing: [8; 16],
+        });
+    assert!(format!("{config:?}").contains("codec_uuids: true"));
     let mut client =
         ChatClient::with_transport(InMemoryUdpTransport::new(CLIENT), config, codecs, 0.0)
             .expect("client");
@@ -1492,7 +1536,8 @@ fn chat_challenge_naming_a_loaded_dictionary() {
 /// A refused refreshed ticket leaves the old one in use (`official-login.md` §4.3, §6.3).
 #[test]
 fn a_refused_ticket_keeps_the_old_one() {
-    let mut config = ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 0);
+    let mut config =
+        ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 0).with_codec_uuids(UUIDS);
     assert_eq!(
         config.set_ticket(Some("bad ticket".into())),
         Err(PlayError::InvalidTicket)

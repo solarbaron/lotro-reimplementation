@@ -8,8 +8,8 @@ use tessera_compat::session::{
     AuthConnection, AuthServerAddressHeader, BIT_TREE_TABLE_FORMAT_UUID,
     BLOB_FLAG_DEFAULT_RECIPIENT, BLOB_FLAG_ENCRYPTED, BLOB_FLAG_HAS_ATTACHMENT, BindPlan,
     BindPorts, BitTreeCodec, BitTreeNode, BitTreeTable, BlobFragment, BlobFragmentHeader,
-    BlobReassembler, CHAT_MAX_RECV_RATE, ClientVersionMessage, ConnectAcceptHeader,
-    ConnectChallengeHeader, ConnectionState, ControlMessage, DEFAULT_MAX_CONTAINER_DEPTH,
+    BlobReassembler, ClientVersionMessage, CodecUuids, ConnectAcceptHeader, ConnectChallengeHeader,
+    ConnectionState, ControlMessage, DEFAULT_MAX_CONTAINER_DEPTH,
     DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, DatagramHeader, DisconnectReason,
     ENVELOPE_FLAG_HAS_ROUTING_HEADER, ENVELOPE_FLAG_ZLIB_COMPRESSED, EnvelopeContext,
     FLAG_AUTH_SERVER_ADDR, FLAG_CLIENT_CONTROL, FLAG_CLOCK_SYNC, FLAG_CONNECT_CHALLENGE,
@@ -22,17 +22,15 @@ use tessera_compat::session::{
     MAX_UNIQUE_PORT_ATTEMPTS, MessageRoutingHeader, OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION,
     OPCODE_LOGIN_QUEUE_STATUS, OPCODE_SINGLE_WRAPPER, OPCODE_SYSTEM_NOTIFICATION,
     OPCODE_VERSION_REQUEST, OPCODE_VERSION_STATUS, OptionalHeaders, RECEIVE_FORBIDDEN_FLAGS_MASK,
-    ReferralAuthHeader, SendChecksumRule, ServerRedirectHeader, SessionAuthHeader,
-    SessionConnection, SessionError, SessionEvent, SessionMultiplexer, SystemNotificationMessage,
-    TransportErrorHeader, UdpDatagramTransport, VALID_DATAGRAM_FLAGS_MASK, VersionStatusMessage,
-    WireCodecs, WorldReferralHeader, check_ticket_text, combine_packet_checksum,
-    compute_datagram_checksum, compute_packet_checksum, decode_datagram, decode_message,
-    decode_variable_u32, des3_cbc_decrypt, des3_cbc_encrypt, dispatch_message,
-    encode_batch_container, encode_datagram, encode_datagram_with_rule, encode_message,
-    encode_message_with_routing, encode_single_wrapper, encode_single_wrapper_with_context,
-    encode_variable_u32, max_recv_rate_for_speed, next_unique_port, send_payload_checksum,
-    sndbuf_probe_midpoint, split_blob, unique_port_candidates, unique_port_ip_value,
-    unique_port_seed, verify_packet_checksum,
+    ReferralAuthHeader, ServerRedirectHeader, SessionAuthHeader, SessionConnection, SessionError,
+    SessionEvent, SessionMultiplexer, SystemNotificationMessage, TransportErrorHeader,
+    UdpDatagramTransport, VALID_DATAGRAM_FLAGS_MASK, VersionStatusMessage, WireCodecs,
+    WorldReferralHeader, check_ticket_text, combine_packet_checksum, compute_datagram_checksum,
+    decode_datagram, decode_message, des3_cbc_decrypt, des3_cbc_encrypt, dispatch_message,
+    encode_batch_container, encode_datagram, encode_message, encode_message_with_routing,
+    encode_single_wrapper, encode_single_wrapper_with_context, encode_variable_u32,
+    guid_fields_swapped, next_unique_port, payload_checksum, sndbuf_probe_midpoint, split_blob,
+    unique_port_candidates, unique_port_ip_value, unique_port_seed, verify_packet_checksum,
 };
 
 /// The synthetic version stamp of Vector 6 (`official-session.md` §10.2,
@@ -64,51 +62,51 @@ fn ticket_auth(account: &str, ticket: &str, timestamp: u32) -> SessionAuthHeader
     .expect("ticket header")
 }
 
-/// Parses a spec vector's hex text.
-fn hex(text: &str) -> Vec<u8> {
-    text.split_whitespace()
-        .map(|b| u8::from_str_radix(b, 16).expect("hex byte"))
-        .collect()
-}
+/// The on-disk UUIDs of Vector 5's synthetic dictionaries (§10.2): incoming and outgoing.
+const IN_UUID: [u8; 16] = [
+    0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0, 0xF0, 0x01,
+];
+const OUT_UUID: [u8; 16] = [
+    0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00, 0xAB, 0xCD,
+];
+/// Both, by direction (§7.3).
+const UUIDS: CodecUuids = CodecUuids {
+    incoming: IN_UUID,
+    outgoing: OUT_UUID,
+};
 
-/// A connection in State 2 whose ISAAC generators a synthetic `ConnectChallengeHeader`
-/// seeded (outgoing seed `0x0101_0101`, incoming seed `incoming_seed`); the challenge
-/// assigned it `local_rec_id`, the server's ID is `0x0304`. Its outbound queue is drained.
-fn challenged_connection(
-    peer: SocketAddrV4,
-    local_rec_id: u16,
-    incoming_seed: u32,
-) -> SessionConnection {
-    challenged_connection_with_codec(peer, local_rec_id, incoming_seed, [0u8; 16])
-}
-
-/// [`challenged_connection`] whose challenge names `codec_uuid` (registered first when it is
-/// not null, §7.3).
-fn challenged_connection_with_codec(
-    peer: SocketAddrV4,
-    local_rec_id: u16,
-    incoming_seed: u32,
-    codec_uuid: [u8; 16],
-) -> SessionConnection {
-    let mut conn = SessionConnection::new(peer, 0.0);
-    if codec_uuid != [0u8; 16] {
-        conn.register_codec_uuid(codec_uuid);
+/// A synthetic primary `ConnectChallengeHeader` (§6.3): outgoing recipient `0x0304`, the
+/// seeds of Vector 5, naming [`IN_UUID`].
+fn template_challenge() -> ConnectChallengeHeader {
+    ConnectChallengeHeader {
+        clock_candidate: 1000.0,
+        cookie: [0x02, 0x01, 0x04, 0x03, 0x11, 0x22, 0x33, 0x44],
+        reserved_16: [0xAA, 0xBB],
+        outgoing_rec_id: 0x0304,
+        incoming_seed: 0x1122_3344,
+        outgoing_seed: 0x5566_7788,
+        incoming_codec_guid: guid_fields_swapped(IN_UUID),
     }
-    conn.start_login(account_auth("A", 0).unwrap(), 0.0)
-        .unwrap();
+}
+
+/// A synthetic primary `ConnectChallengeHeader` datagram (§6.3): header `recId`
+/// `incoming_rec_id`, payload outgoing recipient `0x0304`, outgoing seed `0x0101_0101`,
+/// the incoming seed `incoming_seed`, naming [`IN_UUID`] converted field-wise.
+fn challenge_for(incoming_rec_id: u16, incoming_seed: u32) -> Vec<u8> {
     let challenge = ConnectChallengeHeader {
-        server_time: 0.0,
-        assigned_client_rec_id: local_rec_id,
-        server_rec_id: 0x0304,
-        outgoing_seed: 0x0101_0101,
+        clock_candidate: 0.0,
+        cookie: [1, 2, 3, 4, 5, 6, 7, 8],
+        reserved_16: [0, 0],
+        outgoing_rec_id: 0x0304,
         incoming_seed,
-        reserved_dword_14: 0,
-        client_conn_idx: 1,
-        reserved_word_1a: 0,
-        codec_uuid,
+        outgoing_seed: 0x0101_0101,
+        incoming_codec_guid: guid_fields_swapped(IN_UUID),
     };
-    let dgram = encode_datagram(
-        DatagramHeader::default(),
+    encode_datagram(
+        DatagramHeader {
+            rec_id: incoming_rec_id,
+            ..DatagramHeader::default()
+        },
         &OptionalHeaders {
             connect_challenge: Some(challenge),
             ..OptionalHeaders::default()
@@ -117,7 +115,22 @@ fn challenged_connection_with_codec(
         None,
         None,
     )
-    .unwrap();
+    .unwrap()
+}
+
+/// A connection in State 2 whose ISAAC generators a synthetic `ConnectChallengeHeader`
+/// seeded ([`challenge_for`]); its incoming recipient is `local_rec_id`, the outgoing one
+/// `0x0304`. It has Vector 5's dictionary UUIDs. Its outbound queue is drained.
+fn challenged_connection(
+    peer: SocketAddrV4,
+    local_rec_id: u16,
+    incoming_seed: u32,
+) -> SessionConnection {
+    let mut conn = SessionConnection::new(peer, 0.0);
+    conn.set_codec_uuids(UUIDS);
+    conn.start_login(account_auth("A", 0).unwrap(), 0.0)
+        .unwrap();
+    let dgram = challenge_for(local_rec_id, incoming_seed);
     conn.receive_datagram(&dgram, peer, 0.0, WireCodecs::NONE)
         .unwrap();
     assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
@@ -192,121 +205,7 @@ fn transport_and_port_selection() {
     assert_eq!(sndbuf_probe_midpoint(131071, 131072), None);
 }
 
-// ---------------------------------------------------------------------------
-// §10.2 Synthetic Test Vectors 1A, 1B, 2, 3, 4
-// ---------------------------------------------------------------------------
-
-#[test]
-fn vector_1_datagram_checksum_aligned_and_unaligned() {
-    // Vector 1A: 4-byte aligned buffer (len = 8)
-    let buf_1a = [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-    assert_eq!(compute_datagram_checksum(&buf_1a), 0x0C0A_0806);
-
-    // Vector 1B: Unaligned buffer with 2 trailing bytes (len = 6)
-    let buf_1b = [0x01u8, 0x02, 0x03, 0x04, 0xAA, 0xBB];
-    assert_eq!(compute_datagram_checksum(&buf_1b), 0xAEC4_0201);
-}
-
-#[test]
-fn vector_2_unencoded_cumulative_ack_datagram() {
-    let hdr = DatagramHeader {
-        rec_id: 0x0102,
-        pak_size: 4,
-        flags: FLAG_CUMULATIVE_ACK,
-        seq_num: 5,
-        checksum: 0,
-        iteration: 0,
-        table: 0,
-        time: 0x03E8,
-    };
-    assert_eq!(hdr.header_checksum(), 0xCEB3_DFBB);
-
-    let opt = OptionalHeaders {
-        cumulative_ack: Some(0x0000_000A),
-        ..OptionalHeaders::default()
-    };
-    let dgram = encode_datagram(hdr, &opt, &[], None, None).expect("encode CumulativeAck");
-    let expected: [u8; 26] = [
-        0x00, 0x00, 0x01, 0x02, 0x00, 0x04, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x05, 0xD8,
-        0xB3, 0xDF, 0xBB, 0x00, 0x00, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x0A,
-    ];
-    assert_eq!(dgram, expected);
-
-    let decoded = decode_datagram(&dgram, true, None, true).expect("decode CumulativeAck");
-    assert_eq!(decoded.wire_prefix, 0x0000);
-    assert_eq!(decoded.header.rec_id, 0x0102);
-    assert_eq!(decoded.header.pak_size, 4);
-    assert_eq!(decoded.header.flags, FLAG_CUMULATIVE_ACK);
-    assert_eq!(decoded.header.seq_num, 5);
-    assert_eq!(decoded.header.checksum, 0xD8B3_DFBB);
-    assert_eq!(decoded.header.time, 0x03E8);
-    assert_eq!(decoded.opt_headers.cumulative_ack, Some(10));
-}
-
-#[test]
-fn vector_3_variable_u32_round_trip() {
-    let cases: &[(u32, &[u8])] = &[
-        (0x0000_0000, &[0x00]),
-        (0x0000_007F, &[0x7F]),
-        (0x0000_0080, &[0x80, 0x80]),
-        (0x0000_0186, &[0x81, 0x86]),
-        (0x0000_3FFF, &[0xBF, 0xFF]),
-        (0x0000_4000, &[0xC0, 0x00, 0x00, 0x40]),
-        (0x0102_0304, &[0xC1, 0x02, 0x04, 0x03]),
-        (0x2000_0000, &[0xE0, 0x00, 0x00, 0x00, 0x20]),
-        (0xDEAD_BEEF, &[0xE0, 0xEF, 0xBE, 0xAD, 0xDE]),
-    ];
-
-    for &(val, expected_bytes) in cases {
-        let mut buf = Vec::new();
-        let n = encode_variable_u32(val, &mut buf);
-        assert_eq!(n, expected_bytes.len());
-        assert_eq!(buf.as_slice(), expected_bytes);
-
-        let (decoded, consumed) = decode_variable_u32(&buf).expect("decode_variable_u32");
-        assert_eq!(decoded, val);
-        assert_eq!(consumed, expected_bytes.len());
-    }
-    // §5.6.1: first bytes 0xE1..=0xFF are invalid.
-    for b0 in [0xE1u8, 0xFF] {
-        assert_eq!(
-            decode_variable_u32(&[b0, 0, 0, 0, 0]),
-            Err(SessionError::InvalidVariableU32)
-        );
-    }
-    // Vector 3 table row: 0x3000001B uses the 5-byte form.
-    let mut buf = Vec::new();
-    encode_variable_u32(0x3000_001B, &mut buf);
-    assert_eq!(buf, [0xE0, 0x1B, 0x00, 0x00, 0x30]);
-}
-
-#[test]
-fn vector_4_compact_blob_fragment_header() {
-    let hdr = BlobFragmentHeader {
-        queue_id: 2,
-        ext_word: None,
-        blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT,
-        seq_group: 0,
-        order_num: 0x0007,
-        blob_id: 0x002A,
-        frag_index: 0,
-        num_frags: 1,
-        recipient_id: 2,
-        blob_header_word: Some(0x0000_0186),
-        frag_data_len: 0x0010,
-        attachment: None,
-    };
-
-    let mut out = Vec::new();
-    let written = hdr.encode(&mut out).expect("encode fragment header");
-    let expected: [u8; 10] = [0x02, 0x40, 0x07, 0x00, 0x2A, 0x00, 0x81, 0x86, 0x10, 0x00];
-    assert_eq!(written, 10);
-    assert_eq!(out, expected);
-
-    let (decoded, consumed) = BlobFragmentHeader::decode(&out).expect("decode fragment header");
-    assert_eq!(consumed, 10);
-    assert_eq!(decoded, hdr);
-}
+// The §10.2 synthetic vectors 1–7 are in `tests/session_vectors.rs`.
 
 // ---------------------------------------------------------------------------
 // §4.1 Bit-Tree Wire Codec & §7.1–§7.3 3DES-CBC + ISAAC PRNG
@@ -321,9 +220,8 @@ fn bit_tree_wire_codec_round_trip() {
         flags: FLAG_CUMULATIVE_ACK,
         seq_num: 9,
         checksum: 0,
-        iteration: 1,
-        table: 2,
-        time: 500,
+        client_word: 1,
+        peer_word: 500,
     };
     let opt = OptionalHeaders {
         cumulative_ack: Some(9),
@@ -387,62 +285,6 @@ fn synthetic_ticket() -> String {
         .collect()
 }
 
-/// §10.2 Vector 6: the complete first datagram of the primary connection.
-const VECTOR_6: &str = "00 00 00 00 00 75 00 01 00 00 00 00 00 01 08 35 15 01 00 00 00 00 3F 31 38 30 38 30 34 5F 6E 65 74 76 65 72 3A 31 32 33 34 3B 20 64 69 64 76 65 72 3A 30 31 30 32 30 33 30 34 2D 30 35 30 36 2D 30 37 30 38 2D 30 39 30 41 2D 30 42 30 43 30 44 30 45 30 46 31 30 31 00 00 00 01 00 00 00 04 00 00 00 00 00 00 60 05 53 00 55 00 42 00 30 00 31 00 16 00 00 00 15 53 59 4E 54 48 2B 54 49 43 4B 45 54 2F 41 42 43 31 32 33 3D 3D";
-
-#[test]
-fn vector_6_first_datagram_is_byte_exact() {
-    let header = ticket_auth("SUB01", "SYNTH+TICKET/ABC123==", 0x6000_0000);
-    assert_eq!(
-        header.net_version,
-        "180804_netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10"
-    );
-    assert_eq!(header.net_version.len(), 63);
-    assert_eq!((header.auth_type, header.auth_flags), (0x0000_0001, 0x04));
-
-    let server = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 10), 9000);
-    let mut conn = SessionConnection::new(server, 0.0);
-    assert_eq!(conn.local_rec_id(), 0);
-    assert_eq!(conn.send_seq_num(), 1);
-    // The clock of the first datagram does not reach the wire: `time` is 0 (§4.2).
-    conn.start_login(header.clone(), 12.345).unwrap();
-    let first = conn.pop_outbound_datagram().expect("first datagram");
-    let expected = hex(VECTOR_6);
-    assert_eq!(expected.len(), 139);
-    assert_eq!(first, expected);
-
-    // Its parts: a 117-byte payload, payloadSum 0xB4C43647, hdrSum 0x5370DEBA.
-    let parsed = decode_datagram(&first, false, None, true).unwrap();
-    assert_eq!(parsed.header.pak_size, 117);
-    assert_eq!(compute_datagram_checksum(&parsed.raw_payload), 0xB4C4_3647);
-    assert_eq!(parsed.header.header_checksum(), 0x5370_DEBA);
-    assert_eq!(parsed.header.checksum, 0x0835_1501);
-    assert_eq!(
-        (
-            parsed.header.seq_num,
-            parsed.header.iteration,
-            parsed.header.table,
-            parsed.header.time
-        ),
-        (1, 0, 0, 0)
-    );
-    assert_eq!(parsed.opt_headers.session_auth, Some(header));
-
-    // The retransmit in State 1 is the same datagram (`seqNum` 1, `time` 0).
-    conn.tick(14.5).unwrap();
-    assert_eq!(conn.pop_outbound_datagram().expect("retransmit"), expected);
-    // Both send checksum rules give the same bytes: one buffer.
-    let mut whole = SessionConnection::new(server, 0.0);
-    whole.set_send_checksum_rule(SendChecksumRule::WholePayload);
-    whole
-        .start_login(
-            ticket_auth("SUB01", "SYNTH+TICKET/ABC123==", 0x6000_0000),
-            0.0,
-        )
-        .unwrap();
-    assert_eq!(whole.pop_outbound_datagram().unwrap(), expected);
-}
-
 #[test]
 fn session_auth_selection_rule_per_connection() {
     let ticket = synthetic_ticket();
@@ -490,7 +332,8 @@ fn session_auth_selection_rule_per_connection() {
     with_password.encode(&mut buf).unwrap();
     assert_eq!(SessionAuthHeader::decode(&buf).unwrap().0, with_password);
 
-    // Rule 2: the chat connection: `netVersion` "180804" (7 wire bytes), 0x40000002, 0x04.
+    // Rule 2: the chat connection: the interim `netVersion` "180804_chat_fe_2_3" (count
+    // 0x12, 19 wire bytes; OPEN-SESSION-11), 0x40000002, 0x04; authBlock at +0x17.
     let chat = SessionAuthHeader::for_connection(
         AuthConnection::Chat,
         "ignored",
@@ -500,12 +343,19 @@ fn session_auth_selection_rule_per_connection() {
         1,
     )
     .unwrap();
-    assert_eq!(chat.net_version, "180804");
+    assert_eq!(chat.net_version, "180804_chat_fe_2_3");
+    assert_eq!(
+        chat.net_version,
+        tessera_compat::session::CHAT_NET_VERSION_INTERIM
+    );
     assert_eq!((chat.auth_type, chat.auth_flags), (AUTH_TYPE_CHAT, 0x04));
     let mut buf = Vec::new();
     chat.encode(&mut buf).unwrap();
-    assert_eq!(&buf[..7], &[0x06, 0x31, 0x38, 0x30, 0x38, 0x30, 0x34]);
-    assert_eq!(&buf[11..19], &[0x02, 0, 0, 0x40, 0x04, 0, 0, 0]);
+    assert_eq!(buf[0], 0x12);
+    assert_eq!(&buf[1..19], b"180804_chat_fe_2_3");
+    let block_len = u32::from_le_bytes([buf[19], buf[20], buf[21], buf[22]]);
+    assert_eq!(block_len as usize, buf.len() - 0x17);
+    assert_eq!(&buf[0x17..0x17 + 8], &[0x02, 0, 0, 0x40, 0x04, 0, 0, 0]);
     assert_eq!(SessionAuthHeader::decode(&buf).unwrap().0, chat);
 
     // Rule 3: account only, on either connection: authFlags 0, the account string only.
@@ -663,7 +513,7 @@ fn session_auth_accepts_and_emits_only_the_listed_modes() {
         SessionAuthHeader::decode(&wrong),
         Err(SessionError::InvalidAuthBlock)
     );
-    // `netVersion` must be "180804" or "180804_" with a stamp.
+    // `netVersion` must be "180804_" with a stamp (the bare "180804" is withdrawn).
     let mut bad_version = buf.clone();
     bad_version[1] = b'2';
     assert_eq!(
@@ -678,106 +528,28 @@ fn session_auth_accepts_and_emits_only_the_listed_modes() {
 // §6.3–§6.4 ConnectChallengeHeader -> ConnectAcceptHeader (§10.2 Vector 5)
 // ---------------------------------------------------------------------------
 
-fn vector_5_challenge() -> ConnectChallengeHeader {
-    ConnectChallengeHeader {
-        server_time: 1000.0,
-        assigned_client_rec_id: 0x0102,
-        server_rec_id: 0x0304,
-        outgoing_seed: 0x1122_3344,
-        incoming_seed: 0x5566_7788,
-        reserved_dword_14: 0,
-        client_conn_idx: 0x0005,
-        reserved_word_1a: 0,
-        codec_uuid: [0u8; 16],
-    }
-}
-
-/// §10.2 Vector 5: the complete challenge datagram.
-const VECTOR_5_CHALLENGE: &str = "00 00 00 00 00 2C 00 04 00 00 00 00 00 00 19 AE AB 27 00 00 00 00 00 00 00 00 00 40 8F 40 02 01 04 03 11 22 33 44 55 66 77 88 00 00 00 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00";
-
-/// §10.2 Vector 5: the complete accept datagram of the primary connection.
-const VECTOR_5_ACCEPT: &str = "00 00 03 04 00 1C 00 08 00 00 00 00 00 01 0D 94 21 04 00 00 00 00 44 33 22 11 03 04 01 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00";
-
 #[test]
-fn vector_5_challenge_and_accept_are_byte_exact() {
-    let challenge = vector_5_challenge();
-    // The challenge datagram as the spec gives it, checksum 0x19AEAB27.
-    let dgram = encode_datagram(
-        DatagramHeader::default(),
-        &OptionalHeaders {
-            connect_challenge: Some(challenge),
-            ..OptionalHeaders::default()
-        },
-        &[],
-        None,
-        None,
-    )
-    .unwrap();
-    assert_eq!(dgram, hex(VECTOR_5_CHALLENGE));
-    assert_eq!(challenge.check_value(), 0x0201_0403_1122_3344);
-
-    // The primary connection answers with the Vector 5 accept datagram.
-    let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 5), 9000);
-    let mut conn = SessionConnection::new(server, 0.0);
-    conn.start_login(account_auth("A", 0).unwrap(), 0.0)
-        .unwrap();
-    conn.pop_outbound_datagram().expect("SessionAuthHeader");
-    conn.receive_datagram(&hex(VECTOR_5_CHALLENGE), server, 7.5, WireCodecs::NONE)
-        .unwrap();
-    // §6.4 step 1: the assigned ID becomes the local ID (Vector 5: 0x0102), the server's ID
-    // the remote ID.
-    assert_eq!(conn.local_rec_id(), 0x0102);
-    assert_eq!(conn.server_rec_id(), 0x0304);
-    assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
-    let accept = conn.pop_outbound_datagram().expect("ConnectAcceptHeader");
-    assert_eq!(accept, hex(VECTOR_5_ACCEPT));
-    let parsed = decode_datagram(&accept, false, None, true).unwrap();
-    assert_eq!(parsed.header.header_checksum(), 0xFA70_E9BD);
-    assert_eq!(compute_datagram_checksum(&parsed.raw_payload), 0x1323_3747);
-    let resp = parsed.opt_headers.connect_accept.unwrap();
-    assert_eq!(resp.check_value, 0x0201_0403_1122_3344);
-    assert_eq!(resp.codec_uuid, [0u8; 16]);
-    assert_eq!(resp.max_recv_rate, 0);
-    assert_eq!(parsed.header.flags & FLAG_MASKED_CHECKSUM, 0);
-    // The State 2 retransmit is the same datagram.
-    conn.tick(8.2).unwrap();
-    assert_eq!(conn.pop_outbound_datagram().unwrap(), hex(VECTOR_5_ACCEPT));
-
-    // On the chat connection `maxRecvRate` is 0x00040000 (`00 00 04 00` at +0x18).
-    let mut chat = SessionConnection::new(server, 0.0);
-    chat.set_max_recv_rate(CHAT_MAX_RECV_RATE);
-    chat.start_login(
-        SessionAuthHeader::for_connection(AuthConnection::Chat, "", "A", None, None, 0).unwrap(),
-        0.0,
-    )
-    .unwrap();
-    chat.pop_outbound_datagram().expect("SessionAuthHeader");
-    chat.receive_datagram(&hex(VECTOR_5_CHALLENGE), server, 0.1, WireCodecs::NONE)
-        .unwrap();
-    let accept = chat.pop_outbound_datagram().expect("accept");
-    assert_eq!(&accept[22 + 0x18..22 + 0x1C], &[0x00, 0x00, 0x04, 0x00]);
-    // checkValue and codecUuid are those of the primary connection's accept.
-    assert_eq!(&accept[22..22 + 0x18], &hex(VECTOR_5_ACCEPT)[22..22 + 0x18]);
-
-    // `Net.ConnectionSpeed`: floor(kbps × 102.4), 0 for the default 0.00.
-    assert_eq!(max_recv_rate_for_speed(0.0), 0);
-    assert_eq!(max_recv_rate_for_speed(1000.0), 102_400);
-    assert_eq!(max_recv_rate_for_speed(1.5), 153);
-    assert_eq!(max_recv_rate_for_speed(-3.0), 0);
-    assert_eq!(max_recv_rate_for_speed(f64::NAN), 0);
-}
-
-#[test]
-fn assigned_rec_id_zero_keeps_and_out_of_range_is_ignored() {
+fn zero_recipient_ids_in_a_challenge_are_refused() {
+    // §6.3: the incoming recipient is the challenge header's recId, the outgoing one payload
+    // bytes 18..19; Tessera adopts only non-zero IDs (engineering choice) and nothing
+    // changes for a challenge naming zero.
     let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 6), 9000);
-    for assigned in [0u16, 0x0001, 0xFF00] {
+    for (header_rec_id, outgoing) in [(0u16, 0x0304u16), (0x0102, 0)] {
         let mut conn = SessionConnection::new(server, 0.0);
+        conn.set_codec_uuids(UUIDS);
         conn.start_login(account_auth("A", 0).unwrap(), 0.0)
             .unwrap();
-        let mut challenge = vector_5_challenge();
-        challenge.assigned_client_rec_id = assigned;
+        conn.pop_outbound_datagram();
+        let challenge = ConnectChallengeHeader {
+            outgoing_rec_id: outgoing,
+            incoming_codec_guid: guid_fields_swapped(IN_UUID),
+            ..ConnectChallengeHeader::default()
+        };
         let dgram = encode_datagram(
-            DatagramHeader::default(),
+            DatagramHeader {
+                rec_id: header_rec_id,
+                ..DatagramHeader::default()
+            },
             &OptionalHeaders {
                 connect_challenge: Some(challenge),
                 ..OptionalHeaders::default()
@@ -787,83 +559,95 @@ fn assigned_rec_id_zero_keeps_and_out_of_range_is_ignored() {
             None,
         )
         .unwrap();
-        conn.receive_datagram(&dgram, server, 0.1, WireCodecs::NONE)
-            .unwrap();
-        // §3.4: the local ID starts at 0x0000 and stays there.
-        assert_eq!(conn.local_rec_id(), 0, "{assigned:#x}");
+        assert_eq!(
+            conn.receive_datagram(&dgram, server, 0.1, WireCodecs::NONE),
+            Err(SessionError::InvalidChallengeRecipient)
+        );
+        assert_eq!(conn.state(), ConnectionState::SessionAuthSent);
+        assert_eq!((conn.local_rec_id(), conn.server_rec_id()), (0, 0));
+        assert!(conn.pop_outbound_datagram().is_none(), "no accept");
     }
-}
-
-#[test]
-fn server_rec_id_zero_keeps_the_packets_rec_id() {
-    let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 6), 9000);
+    // Any non-zero pair is adopted (the earlier 0x0100..=0xFEFF range is superseded).
     let mut conn = SessionConnection::new(server, 0.0);
+    conn.set_codec_uuids(UUIDS);
     conn.start_login(account_auth("A", 0).unwrap(), 0.0)
         .unwrap();
-    conn.pop_outbound_datagram();
-    let mut challenge = vector_5_challenge();
-    challenge.server_rec_id = 0;
-    let dgram = encode_datagram(
-        DatagramHeader {
-            rec_id: 0x0777,
-            ..DatagramHeader::default()
-        },
-        &OptionalHeaders {
-            connect_challenge: Some(challenge),
-            ..OptionalHeaders::default()
-        },
-        &[],
-        None,
-        None,
-    )
-    .unwrap();
-    conn.receive_datagram(&dgram, server, 0.1, WireCodecs::NONE)
+    conn.receive_datagram(&challenge_for(0x0001, 1), server, 0.1, WireCodecs::NONE)
         .unwrap();
-    assert_eq!(conn.server_rec_id(), 0x0777);
-    let accept =
-        decode_datagram(&conn.pop_outbound_datagram().unwrap(), false, None, true).unwrap();
-    assert_eq!(accept.header.rec_id, 0x0777);
+    assert_eq!(
+        (conn.local_rec_id(), conn.server_rec_id()),
+        (0x0001, 0x0304)
+    );
 }
 
 #[test]
 fn unsupported_codec_uuid_closes_with_reason() {
+    // §7.3: a null UUID, the unconverted on-disk bytes, the outgoing UUID, or a connection
+    // without dictionaries (the chat connection, OPEN-SESSION-1): the explicit unsupported
+    // result, nothing answered.
     let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 7), 9000);
+    let with_guid = |guid: [u8; 16]| {
+        encode_datagram(
+            DatagramHeader {
+                rec_id: 0x0102,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders {
+                connect_challenge: Some(ConnectChallengeHeader {
+                    outgoing_rec_id: 0x0304,
+                    incoming_codec_guid: guid,
+                    ..ConnectChallengeHeader::default()
+                }),
+                ..OptionalHeaders::default()
+            },
+            &[],
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    let cases = [
+        (Some(UUIDS), [0u8; 16]),
+        (Some(UUIDS), IN_UUID),
+        (Some(UUIDS), guid_fields_swapped(OUT_UUID)),
+        (None, guid_fields_swapped(IN_UUID)),
+    ];
+    for (uuids, guid) in cases {
+        let mut conn = SessionConnection::new(server, 0.0);
+        if let Some(u) = uuids {
+            conn.set_codec_uuids(u);
+        }
+        conn.start_login(account_auth("A", 0).unwrap(), 0.0)
+            .unwrap();
+        conn.pop_outbound_datagram();
+        assert_eq!(
+            conn.receive_datagram(&with_guid(guid), server, 0.1, WireCodecs::NONE)
+                .unwrap_err(),
+            SessionError::UnsupportedCodecUuid { uuid: guid }
+        );
+        assert_eq!(conn.state(), ConnectionState::Closing);
+        assert_eq!(
+            conn.pop_event(),
+            Some(SessionEvent::Disconnected {
+                reason: DisconnectReason::UnsupportedCodec
+            })
+        );
+        assert!(conn.pop_outbound_datagram().is_none(), "no accept");
+        assert!(!conn.codecs_negotiated());
+    }
+    // The incoming UUID converted field-wise is accepted.
     let mut conn = SessionConnection::new(server, 0.0);
+    conn.set_codec_uuids(UUIDS);
     conn.start_login(account_auth("A", 0).unwrap(), 0.0)
         .unwrap();
-    let mut challenge = vector_5_challenge();
-    challenge.codec_uuid = [0xAB; 16];
-    let dgram = encode_datagram(
-        DatagramHeader::default(),
-        &OptionalHeaders {
-            connect_challenge: Some(challenge),
-            ..OptionalHeaders::default()
-        },
-        &[],
-        None,
-        None,
+    conn.receive_datagram(
+        &with_guid(guid_fields_swapped(IN_UUID)),
+        server,
+        0.1,
+        WireCodecs::NONE,
     )
     .unwrap();
-    assert_eq!(
-        conn.receive_datagram(&dgram, server, 0.1, WireCodecs::NONE)
-            .unwrap_err(),
-        SessionError::UnsupportedCodecUuid { uuid: [0xAB; 16] }
-    );
-    assert_eq!(conn.state(), ConnectionState::Closing);
-    assert_eq!(
-        conn.pop_event(),
-        Some(SessionEvent::Disconnected {
-            reason: DisconnectReason::UnsupportedCodec
-        })
-    );
-    // A registered dictionary UUID is accepted.
-    let mut conn = SessionConnection::new(server, 0.0);
-    conn.register_codec_uuid([0xAB; 16]);
-    conn.start_login(account_auth("A", 0).unwrap(), 0.0)
-        .unwrap();
-    conn.receive_datagram(&dgram, server, 0.1, WireCodecs::NONE)
-        .unwrap();
-    assert_eq!(conn.active_codec_uuid(), [0xAB; 16]);
+    assert!(conn.codecs_negotiated());
 }
 
 #[test]
@@ -890,15 +674,13 @@ fn all_optional_headers_ascending_bit_order() {
         session_auth: None,
         referral_auth: None,
         connect_challenge: Some(ConnectChallengeHeader {
-            server_time: 1234.5,
-            assigned_client_rec_id: 0x0150,
-            server_rec_id: 0x0250,
-            outgoing_seed: 0x1122_3344,
-            incoming_seed: 0x5566_7788,
-            reserved_dword_14: 0,
-            client_conn_idx: 3,
-            reserved_word_1a: 0,
-            codec_uuid: [0u8; 16],
+            clock_candidate: 1234.5,
+            cookie: [9, 8, 7, 6, 5, 4, 3, 2],
+            reserved_16: [0xAA, 0xBB],
+            outgoing_rec_id: 0x0250,
+            incoming_seed: 0x1122_3344,
+            outgoing_seed: 0x5566_7788,
+            incoming_codec_guid: guid_fields_swapped(IN_UUID),
         }),
         connect_accept: None,
         transport_error: Some(TransportErrorHeader {
@@ -908,6 +690,8 @@ fn all_optional_headers_ascending_bit_order() {
         transport_fatal_error: None,
         client_control: None,
         clock_sync: Some(4567.89),
+        optional_word_25: Some([1, 2, 3, 4]),
+        optional_words_26: Some([5, 6, 7, 8, 9, 10, 11, 12]),
         flow_control: Some(FlowControlHeader {
             bytes_received_delta: 2048,
             interval_ms: 500,
@@ -989,10 +773,9 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
 
     // Step 1: Client starts login -> State 1 (SessionAuthSent)
     let login_req = account_auth("acct", 1000).expect("SessionAuthHeader");
-    mux.connection_mut(login_id)
-        .expect("conn")
-        .start_login(login_req, 0.0)
-        .expect("start_login");
+    let login_conn = mux.connection_mut(login_id).expect("conn");
+    login_conn.set_codec_uuids(UUIDS);
+    login_conn.start_login(login_req, 0.0).expect("start_login");
     assert_eq!(
         mux.connection(login_id).expect("conn").state(),
         ConnectionState::SessionAuthSent
@@ -1004,20 +787,18 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
         decode_datagram(&sent_login_dgram, false, None, true).expect("parse SessionAuth");
     assert!(parsed_login.opt_headers.session_auth.is_some());
 
-    // Step 2: Server sends ConnectChallenge (0x00040000) assigning recId = 0x0111
+    // Step 2: Server sends ConnectChallenge (0x00040000) from recId 0x0111, naming 0x0222
     let outgoing_seed = 0xCAFE_1234u32;
     let incoming_seed = 0xBEEF_5678u32;
     let cr_opt = OptionalHeaders {
         connect_challenge: Some(ConnectChallengeHeader {
-            server_time: 500.0,
-            assigned_client_rec_id: 0x0111,
-            server_rec_id: 0x0222,
-            outgoing_seed,
+            clock_candidate: 500.0,
+            cookie: [1, 2, 3, 4, 5, 6, 7, 8],
+            reserved_16: [0, 0],
+            outgoing_rec_id: 0x0222,
             incoming_seed,
-            reserved_dword_14: 0,
-            client_conn_idx: 4,
-            reserved_word_1a: 0,
-            codec_uuid: [0u8; 16],
+            outgoing_seed,
+            incoming_codec_guid: guid_fields_swapped(IN_UUID),
         }),
         ..OptionalHeaders::default()
     };
@@ -1092,7 +873,7 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
         .expect("receive seq 4 out of order");
     {
         let conn = mux.connection_mut(routed_id).expect("conn");
-        // Connection transitioned State 2 -> State 5 and queued initial ClockSync
+        // Connection transitioned State 2 -> State 5 (no ClockSync on entry, §8.1)
         assert_eq!(conn.state(), ConnectionState::Connected);
         assert_eq!(conn.recv_seq_expected(), 4);
         assert_eq!(conn.missing_gap_count(), 2); // gaps for seq 2 and 3
@@ -1100,10 +881,9 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
         // Tick at t = 0.9 s (>= 0.6 s) to trigger SequenceNak for missing seqs [2, 3]
         conn.tick(0.9).expect("tick nak");
     }
-    // Drain initial ClockSync and SequenceNak
+    // Drain the SequenceNak
     let flushed = mux.flush_outbound(&mut transport).expect("flush");
-    assert_eq!(flushed, 2);
-    let _initial_ts = transport.pop_outbound().expect("initial ClockSync");
+    assert_eq!(flushed, 1);
     let (sequence_nak_dgram, _) = transport.pop_outbound().expect("SequenceNak datagram");
     let parsed_sequence_nak =
         decode_datagram(&sequence_nak_dgram, false, None, true).expect("parse SequenceNak");
@@ -1259,7 +1039,7 @@ fn message_envelope_zlib_and_recursive_batch_container_0x186() {
     );
     // §9.4.2: bytes after resultCode are ignored.
     let mut long_body = Vec::new();
-    encode_variable_u32(0x0000_0203, &mut long_body);
+    encode_variable_u32(0x0000_0203, &mut long_body).unwrap();
     long_body.extend_from_slice(&u32::try_from(inner.len()).unwrap().to_le_bytes());
     long_body.extend_from_slice(&inner);
     long_body.extend_from_slice(&7u64.to_le_bytes());
@@ -1349,7 +1129,7 @@ fn hostile_input_rejection_rules_1_to_8() {
     };
     let mut forbidden_dgram = vec![0x00, 0x00];
     let mut fh = forbidden_hdr;
-    fh.checksum = compute_packet_checksum(fh, &[], None).unwrap();
+    fh.checksum = combine_packet_checksum(fh, 0, None).unwrap();
     forbidden_dgram.extend_from_slice(&fh.to_wire_bytes());
     assert!(matches!(
         decode_datagram(&forbidden_dgram, true, None, true),
@@ -1525,11 +1305,10 @@ fn hostile_input_rejection_rules_1_to_8() {
             | FLAG_MASKED_CHECKSUM,
         seq_num: 2,
         checksum: 0,
-        iteration: 0,
-        table: 0,
-        time: 0,
+        client_word: 0,
+        peer_word: 0,
     };
-    assert!(verify_packet_checksum(hdr_check, &[], Some(0)).is_err());
+    assert!(verify_packet_checksum(hdr_check, 0, Some(0)).is_err());
 
     // Verify zlib bomb protection on decode_message
     let mut fake_bomb = vec![ENVELOPE_FLAG_ZLIB_COMPRESSED];
@@ -1670,7 +1449,7 @@ fn dat_bit_tree_table_and_4bit_wire_body_header() {
     assert_eq!(dec_pkt.header.rec_id, 0x0142);
     assert_eq!(dec_pkt.fragments.len(), 1);
     assert_eq!(dec_pkt.fragments[0].payload, vec![0xAA; 32]);
-    verify_packet_checksum(dec_pkt.header, &dec_pkt.raw_payload, Some(0xABCD_EF01))
+    verify_packet_checksum(dec_pkt.header, dec_pkt.payload_sum, Some(0xABCD_EF01))
         .expect("verify checksum");
 }
 
@@ -1679,9 +1458,13 @@ fn dat_bit_tree_table_and_4bit_wire_body_header() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn reconciled_datagram_header_flags_mask_0x0f7ffb00() {
-    assert_eq!(VALID_DATAGRAM_FLAGS_MASK, 0x0F7F_FB00);
-    assert_eq!(INVALID_DATAGRAM_FLAGS_MASK, 0xF080_04FF);
+fn datagram_header_flags_mask_0x0f7ffb06() {
+    // §4.3: the permitted union 0x0F7FFB06 in both directions; the forbidden mask is its
+    // complement, 0xF08004F9.
+    assert_eq!(VALID_DATAGRAM_FLAGS_MASK, 0x0F7F_FB06);
+    assert_eq!(INVALID_DATAGRAM_FLAGS_MASK, 0xF080_04F9);
+    assert_eq!(FLAG_MASKED_CHECKSUM, 0x0000_0002);
+    assert_eq!(FLAG_HAS_FRAGMENTED_BLOBS, 0x0000_0004);
     // §4.3 / §10.1 rule 3: the receive mask is the complement of 0x0F7FFB06.
     assert_eq!(RECEIVE_FORBIDDEN_FLAGS_MASK, 0xF080_04F9);
     assert_eq!(RECEIVE_FORBIDDEN_FLAGS_MASK, !0x0F7F_FB06);
@@ -1722,39 +1505,36 @@ fn reconciled_datagram_header_flags_mask_0x0f7ffb00() {
             Err(SessionError::InvalidHeaderFlags { flags }) if flags == bad_bit
         ));
     }
-    // ... while the low-byte bits 0x02 and 0x04 are ignored on receive: a packet that
-    // carries them is accepted (its checksum covers the bits as sent).
-    for ignored in [0x0000_0002u32, 0x0000_0004, 0x0000_0006] {
+    // ... while the low markers 0x02 and 0x04 are kept in both directions and carry no
+    // optional header bytes (§4.3).
+    for marker in [0x0000_0002u32, 0x0000_0004, 0x0000_0006] {
         let mut raw = [0u8; 20];
-        raw[4..8].copy_from_slice(&ignored.to_be_bytes());
-        assert_eq!(
-            DatagramHeader::from_wire_bytes(&raw).unwrap().flags,
-            ignored
-        );
-        let mut hdr = DatagramHeader {
-            rec_id: 0x0100,
-            flags: ignored | FLAG_DISCONNECT,
-            ..DatagramHeader::default()
-        };
-        hdr.checksum = compute_packet_checksum(hdr, &[], None).unwrap();
-        let mut dgram = vec![0u8, 0];
-        dgram.extend_from_slice(&hdr.to_wire_bytes());
-        let pkt = decode_datagram(&dgram, true, None, true).expect("accepted");
-        assert!(pkt.opt_headers.disconnect);
+        raw[4..8].copy_from_slice(&marker.to_be_bytes());
+        assert_eq!(DatagramHeader::from_wire_bytes(&raw).unwrap().flags, marker);
     }
-    // The sender never sets them: they are outside the send mask.
-    assert!(
+    let mut hdr = DatagramHeader {
+        rec_id: 0x0100,
+        flags: FLAG_HAS_FRAGMENTED_BLOBS | FLAG_DISCONNECT,
+        ..DatagramHeader::default()
+    };
+    hdr.checksum = combine_packet_checksum(hdr, 0, None).unwrap();
+    let mut dgram = vec![0u8, 0];
+    dgram.extend_from_slice(&hdr.to_wire_bytes());
+    let pkt = decode_datagram(&dgram, true, None, true).expect("accepted");
+    assert!(pkt.opt_headers.disconnect && pkt.fragments.is_empty());
+    // The masked marker needs the sequence's ISAAC word on send.
+    assert_eq!(
         encode_datagram(
             DatagramHeader {
-                flags: 0x0000_0002,
+                flags: FLAG_MASKED_CHECKSUM,
                 ..DatagramHeader::default()
             },
             &OptionalHeaders::default(),
             &[],
             None,
             None
-        )
-        .is_err()
+        ),
+        Err(SessionError::MissingChecksumMask)
     );
 
     // 0x00400000 (ClientControl, 4 B u32 LE) is valid Client -> Server (from_server == false),
@@ -1887,7 +1667,8 @@ fn message_routing_header_and_post_handshake_control_messages() {
             encode_variable_u32(
                 u32::try_from(text.encode_utf16().count()).unwrap(),
                 &mut bytes,
-            );
+            )
+            .unwrap();
             for unit in text.encode_utf16() {
                 bytes.extend_from_slice(&unit.to_le_bytes());
             }
@@ -1913,7 +1694,7 @@ fn message_routing_header_and_post_handshake_control_messages() {
 
     // ClientVersionMessage strings are ASCII.
     let mut non_ascii = Vec::new();
-    encode_variable_u32(2, &mut non_ascii);
+    encode_variable_u32(2, &mut non_ascii).unwrap();
     non_ascii.extend_from_slice("é".as_bytes());
     assert_eq!(
         ClientVersionMessage::decode(&non_ascii),
@@ -2094,15 +1875,17 @@ fn bit_tree_null_child_is_rejected_at_traversal() {
 #[test]
 fn control_packets_stay_uncompressed_and_errors_close_with_reason() {
     let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 8), 9000);
-    let codec = BitTreeTable::synthetic_dictionary([0x44; 16]);
+    let codec = BitTreeTable::synthetic_dictionary(IN_UUID);
     let mut conn = SessionConnection::new(server, 0.0);
-    conn.register_codec_uuid([0x44; 16]);
+    conn.set_codec_uuids(UUIDS);
     conn.start_login(account_auth("A", 0).unwrap(), 0.0)
         .unwrap();
-    let mut challenge = vector_5_challenge();
-    challenge.codec_uuid = [0x44; 16];
+    let challenge = template_challenge();
     let dgram = encode_datagram(
-        DatagramHeader::default(),
+        DatagramHeader {
+            rec_id: 0x0102,
+            ..DatagramHeader::default()
+        },
         &OptionalHeaders {
             connect_challenge: Some(challenge),
             ..OptionalHeaders::default()
@@ -2190,6 +1973,7 @@ fn multiplexer_falls_back_to_source_address_on_id_miss() {
     let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 10), 9000);
     let mut mux = SessionMultiplexer::new();
     let id = mux.create_connection(server, 0.0).unwrap();
+    mux.connection_mut(id).unwrap().set_codec_uuids(UUIDS);
     mux.connection_mut(id)
         .unwrap()
         .start_login(account_auth("A", 0).unwrap(), 0.0)
@@ -2242,11 +2026,11 @@ fn vector_4_fragment() -> BlobFragment {
     }
 }
 
-/// §4.4.2 step 2: the sender sums `compute_datagram_checksum` per optional header buffer and
-/// per fragment; with the unaligned 6-byte `FlowControlHeader` in front of the Vector 4
-/// fragment this differs from the receiver's whole-payload sum.
+/// §4.4.2 step 2: sender and receiver sum `compute_datagram_checksum` per optional header
+/// buffer and per fragment header and data; with the 6-byte `FlowControlHeader` in front of
+/// the Vector 4 fragment this differs from the withdrawn whole-payload sum.
 #[test]
-fn send_checksum_is_summed_per_buffer() {
+fn checksum_is_summed_per_buffer_on_send_and_receive() {
     let flow = FlowControlHeader {
         bytes_received_delta: 0x0102_0304,
         interval_ms: 0x0506,
@@ -2272,7 +2056,7 @@ fn send_checksum_is_summed_per_buffer() {
         .wrapping_add(compute_datagram_checksum(frag_header))
         .wrapping_add(compute_datagram_checksum(frag_payload));
     assert_eq!(
-        send_payload_checksum(&opt, std::slice::from_ref(&frag)).unwrap(),
+        payload_checksum(&opt, std::slice::from_ref(&frag)).unwrap(),
         per_buffer
     );
     let whole = [flow_bytes.clone(), frag_bytes.clone()].concat();
@@ -2282,7 +2066,7 @@ fn send_checksum_is_summed_per_buffer() {
     let frag_only = compute_datagram_checksum(frag_header)
         .wrapping_add(compute_datagram_checksum(frag_payload));
     assert_eq!(
-        send_payload_checksum(&OptionalHeaders::default(), std::slice::from_ref(&frag)).unwrap(),
+        payload_checksum(&OptionalHeaders::default(), std::slice::from_ref(&frag)).unwrap(),
         frag_only
     );
     assert_ne!(frag_only, compute_datagram_checksum(&frag_bytes));
@@ -2292,37 +2076,25 @@ fn send_checksum_is_summed_per_buffer() {
         seq_num: 1,
         ..DatagramHeader::default()
     };
-    let dgram = encode_datagram_with_rule(
-        hdr,
-        &opt,
-        std::slice::from_ref(&frag),
-        None,
-        None,
-        SendChecksumRule::PerBuffer,
-    )
-    .unwrap();
+    let dgram = encode_datagram(hdr, &opt, std::slice::from_ref(&frag), None, None).unwrap();
     let parsed = decode_datagram(&dgram, true, None, false).unwrap();
+    assert_eq!(parsed.payload_sum, per_buffer);
     assert_eq!(
         parsed.header.checksum,
         combine_packet_checksum(parsed.header, per_buffer, None).unwrap()
     );
-    // The receive rule sums the whole payload, so this packet does not verify by it.
+    // The receiver sums the same buffers (§4.4.2), so the packet verifies ...
+    decode_datagram(&dgram, true, None, true).expect("the per-buffer rule verifies");
+    // ... and a whole-payload sum must fail it.
+    let mut whole_sum = dgram.clone();
+    let mut hdr2 = parsed.header;
+    hdr2.checksum =
+        combine_packet_checksum(parsed.header, compute_datagram_checksum(&whole), None).unwrap();
+    whole_sum[2..22].copy_from_slice(&hdr2.to_wire_bytes());
     assert!(matches!(
-        decode_datagram(&dgram, true, None, true),
+        decode_datagram(&whole_sum, true, None, true),
         Err(SessionError::ChecksumMismatch { .. })
     ));
-    // `encode_datagram` (the synthetic peers' encoder) uses the receive rule.
-    let peer = encode_datagram(hdr, &opt, std::slice::from_ref(&frag), None, None).unwrap();
-    decode_datagram(&peer, true, None, true).expect("the receive rule verifies");
-    // With one buffer the rules agree (Vector 2 is such a packet).
-    let ack = OptionalHeaders {
-        cumulative_ack: Some(10),
-        ..OptionalHeaders::default()
-    };
-    assert_eq!(
-        encode_datagram_with_rule(hdr, &ack, &[], None, None, SendChecksumRule::PerBuffer).unwrap(),
-        encode_datagram(hdr, &ack, &[], None, None).unwrap()
-    );
 }
 
 /// A masked checksum needs its ISAAC word (§4.4.2 step 3).
@@ -2334,10 +2106,10 @@ fn masked_checksum_requires_a_mask() {
         ..DatagramHeader::default()
     };
     assert_eq!(
-        compute_packet_checksum(hdr, &[], None),
+        combine_packet_checksum(hdr, 0, None),
         Err(SessionError::MissingChecksumMask)
     );
-    assert!(compute_packet_checksum(hdr, &[], Some(7)).is_ok());
+    assert!(combine_packet_checksum(hdr, 0, Some(7)).is_ok());
 }
 
 /// A codec that counts its encodes, so a test can tell which dictionary compressed a send.
@@ -2383,7 +2155,7 @@ fn nak_resend_uses_the_outgoing_codec() {
         incoming: Some(&incoming),
         outgoing: Some(&outgoing),
     };
-    let mut conn = challenged_connection_with_codec(peer, 0x0100, 0x0000_0099, [0x55; 16]);
+    let mut conn = challenged_connection(peer, 0x0100, 0x0000_0099);
     let seq = conn
         .send_blob(2, 0, 0x10, &[0x00; 32], 0.1, codecs.outgoing)
         .unwrap();
@@ -2464,20 +2236,9 @@ fn isaac_must_be_seeded_before_sequenced_traffic() {
     assert!(conn.pop_outbound_datagram().is_none());
 }
 
-fn challenge_datagram(assigned: u16) -> Vec<u8> {
-    let mut challenge = vector_5_challenge();
-    challenge.assigned_client_rec_id = assigned;
-    encode_datagram(
-        DatagramHeader::default(),
-        &OptionalHeaders {
-            connect_challenge: Some(challenge),
-            ..OptionalHeaders::default()
-        },
-        &[],
-        None,
-        None,
-    )
-    .unwrap()
+/// A challenge from incoming recipient `incoming_rec_id` ([`challenge_for`]).
+fn challenge_datagram(incoming_rec_id: u16) -> Vec<u8> {
+    challenge_for(incoming_rec_id, 0x1122_3344)
 }
 
 /// §6.4: a `ConnectChallengeHeader` is acted on only in States 1 and 2.
@@ -2498,7 +2259,7 @@ fn challenge_outside_states_1_and_2_is_dropped() {
 
     // State 2 acts on it (and moves to State 5, §6.1); State 5 drops a later one.
     let mut conn = challenged_connection(peer, 0x0150, 1);
-    conn.receive_datagram(&challenge_datagram(0), peer, 0.1, WireCodecs::NONE)
+    conn.receive_datagram(&challenge_datagram(0x0150), peer, 0.1, WireCodecs::NONE)
         .unwrap();
     assert_eq!(conn.state(), ConnectionState::Connected);
     while conn.pop_outbound_datagram().is_some() {}
@@ -2546,7 +2307,7 @@ fn a_bad_fragment_rejects_the_packet_before_any_commit() {
     let mut hostile = hostile;
     let mut parsed = decode_datagram(&hostile, true, None, false).unwrap();
     parsed.header.checksum =
-        compute_packet_checksum(parsed.header, &parsed.raw_payload, Some(mask_2)).unwrap();
+        combine_packet_checksum(parsed.header, parsed.payload_sum, Some(mask_2)).unwrap();
     hostile[2..22].copy_from_slice(&parsed.header.to_wire_bytes());
     assert_eq!(
         conn.receive_datagram(&hostile, peer, 0.1, WireCodecs::NONE),
@@ -2595,7 +2356,7 @@ fn reassembly_table_capacity_is_checked_before_commit() {
         let mut dgram = dgram;
         let mut parsed = decode_datagram(&dgram, true, None, false).unwrap();
         parsed.header.checksum =
-            compute_packet_checksum(parsed.header, &parsed.raw_payload, None).unwrap();
+            combine_packet_checksum(parsed.header, parsed.payload_sum, None).unwrap();
         dgram[2..22].copy_from_slice(&parsed.header.to_wire_bytes());
         conn.receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE)
             .unwrap();
@@ -2690,6 +2451,7 @@ fn removed_connections_are_refused_and_ids_move_on() {
     let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 37), 9000);
     let mut mux = SessionMultiplexer::new();
     let a = mux.create_connection(server, 0.0).unwrap();
+    mux.connection_mut(a).unwrap().set_codec_uuids(UUIDS);
     mux.connection_mut(a)
         .unwrap()
         .start_login(account_auth("A", 0).unwrap(), 0.0)
@@ -2698,6 +2460,7 @@ fn removed_connections_are_refused_and_ids_move_on() {
         .unwrap();
     assert_eq!(mux.connection(a).unwrap().local_rec_id(), 0x0300);
     let b = mux.create_connection(server, 0.0).unwrap();
+    mux.connection_mut(b).unwrap().set_codec_uuids(UUIDS);
     mux.connection_mut(b)
         .unwrap()
         .start_login(account_auth("A", 0).unwrap(), 0.0)
@@ -2736,6 +2499,7 @@ fn closing_connections_take_no_address_routed_traffic_and_are_reaped() {
     let mut mux = SessionMultiplexer::new();
     let auth = || account_auth("A", 0).unwrap();
     let old = mux.create_connection(server, 0.0).unwrap();
+    mux.connection_mut(old).unwrap().set_codec_uuids(UUIDS);
     mux.connection_mut(old)
         .unwrap()
         .start_login(auth(), 0.0)
@@ -2746,12 +2510,13 @@ fn closing_connections_take_no_address_routed_traffic_and_are_reaped() {
         ConnectionState::Closing
     );
     let new = mux.create_connection(server, 20.0).unwrap();
+    mux.connection_mut(new).unwrap().set_codec_uuids(UUIDS);
     mux.connection_mut(new)
         .unwrap()
         .start_login(auth(), 20.0)
         .unwrap();
     let (routed, _) = mux
-        .receive_from_peer(&challenge_datagram(0), server, 20.5, WireCodecs::NONE)
+        .receive_from_peer(&challenge_datagram(0x0400), server, 20.5, WireCodecs::NONE)
         .unwrap();
     assert_eq!(routed, new);
     assert_eq!(
@@ -2767,7 +2532,7 @@ fn closing_connections_take_no_address_routed_traffic_and_are_reaped() {
 fn local_disconnect_ends_with_a_reason() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 39), 9000);
     let mut conn = challenged_connection(peer, 0x0100, 6);
-    conn.receive_datagram(&challenge_datagram(0), peer, 0.1, WireCodecs::NONE)
+    conn.receive_datagram(&challenge_datagram(0x0100), peer, 0.1, WireCodecs::NONE)
         .unwrap();
     assert_eq!(conn.state(), ConnectionState::Connected);
     while conn.pop_event().is_some() {}
@@ -2798,16 +2563,6 @@ fn connection_debug_redacts_credentials() {
     assert!(!format!("{header:?}").contains("canary"));
 }
 
-/// Rebuilds an unmasked datagram's checksum by the receive rule (§4.4.2), so a test packet
-/// with several header and fragment buffers is accepted.
-fn with_receive_rule_checksum(mut dgram: Vec<u8>) -> Vec<u8> {
-    let mut parsed = decode_datagram(&dgram, true, None, false).unwrap();
-    parsed.header.checksum =
-        compute_packet_checksum(parsed.header, &parsed.raw_payload, None).unwrap();
-    dgram[2..22].copy_from_slice(&parsed.header.to_wire_bytes());
-    dgram
-}
-
 /// §6.4 step 1, §5.6.4, §10.1 rule 8: the fragments of a packet that carries a
 /// `ConnectChallengeHeader` are checked and ingested under one sender key, the challenge's
 /// `serverRecId`.
@@ -2815,54 +2570,52 @@ fn with_receive_rule_checksum(mut dgram: Vec<u8>) -> Vec<u8> {
 fn fragments_beside_a_challenge_are_keyed_by_the_new_server_id() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 41), 9000);
     let mut conn = SessionConnection::new(peer, 0.0);
+    conn.set_codec_uuids(UUIDS);
     conn.start_login(account_auth("A", 0).unwrap(), 0.0)
         .unwrap();
     // While `serverRecId` is 0, blob 7 opens with 3 fragments.
-    let early = with_receive_rule_checksum(
-        encode_datagram(
-            DatagramHeader::default(),
-            &OptionalHeaders::default(),
-            &[multi_frag(0, 3, 8)],
-            None,
-            None,
-        )
-        .unwrap(),
-    );
+    let early = encode_datagram(
+        DatagramHeader::default(),
+        &OptionalHeaders::default(),
+        &[multi_frag(0, 3, 8)],
+        None,
+        None,
+    )
+    .unwrap();
     conn.receive_datagram(&early, peer, 0.1, WireCodecs::NONE)
         .unwrap();
     // The challenge packet opens blob 7 with 2 fragments. It is keyed by serverRecId
     // 0x0304, so it does not clash with the 3-fragment blob under ID 0.
-    let opening = with_receive_rule_checksum(
-        encode_datagram(
-            DatagramHeader::default(),
-            &OptionalHeaders {
-                connect_challenge: Some(vector_5_challenge()),
-                ..OptionalHeaders::default()
-            },
-            &[multi_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD)],
-            None,
-            None,
-        )
-        .unwrap(),
-    );
+    let opening = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0102,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders {
+            connect_challenge: Some(template_challenge()),
+            ..OptionalHeaders::default()
+        },
+        &[multi_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD)],
+        None,
+        None,
+    )
+    .unwrap();
     conn.receive_datagram(&opening, peer, 0.2, WireCodecs::NONE)
         .expect("checked and ingested under serverRecId 0x0304");
     assert_eq!(conn.server_rec_id(), 0x0304);
     while conn.pop_event().is_some() {}
     // Its second fragment completes the blob under the same key.
-    let closing = with_receive_rule_checksum(
-        encode_datagram(
-            DatagramHeader {
-                rec_id: 0x0102,
-                ..DatagramHeader::default()
-            },
-            &OptionalHeaders::default(),
-            &[multi_frag(1, 2, 8)],
-            None,
-            None,
-        )
-        .unwrap(),
-    );
+    let closing = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0102,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders::default(),
+        &[multi_frag(1, 2, 8)],
+        None,
+        None,
+    )
+    .unwrap();
     conn.receive_datagram(&closing, peer, 0.3, WireCodecs::NONE)
         .unwrap();
     let mut blobs = Vec::new();
@@ -2875,11 +2628,10 @@ fn fragments_beside_a_challenge_are_keyed_by_the_new_server_id() {
     assert_eq!(blobs[0].payload.len(), MAX_BLOB_FRAG_PAYLOAD + 8);
 }
 
-/// §4.1.1, §7.3: with an all-zero `codecUuid` nothing is compressed or decompressed: sends
-/// carry `wirePrefix` `0x0000` and a datagram with a non-zero `wirePrefix` is refused. With a
-/// negotiated `codecUuid` both directions use the codecs.
+/// §4.1.1, §7.3: before the challenge negotiates the directional codecs a datagram with a
+/// non-zero `wirePrefix` is refused; once negotiated both directions use the codecs.
 #[test]
-fn null_codec_uuid_means_no_wire_compression() {
+fn codecs_are_used_only_once_negotiated() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 42), 9000);
     let codec = CountingCodec::new();
     let codecs = WireCodecs {
@@ -2907,28 +2659,27 @@ fn null_codec_uuid_means_no_wire_compression() {
         "long enough to reach the prefix check"
     );
 
-    // Null codecUuid: plain send, compressed receive refused.
-    let mut plain = challenged_connection(peer, 0x0100, 5);
-    assert_eq!(plain.active_codec_uuid(), [0u8; 16]);
-    let encodes = codec.encodes();
+    // Before the challenge: the SessionAuthHeader goes out plain, a compressed datagram is
+    // refused.
+    let mut plain = SessionConnection::new(peer, 0.0);
+    plain.set_codec_uuids(UUIDS);
     plain
-        .send_blob(2, 0, 0x10, &[0x00; 32], 0.1, codecs.outgoing)
+        .start_login(account_auth("A", 0).unwrap(), 0.0)
         .unwrap();
     let sent = plain.pop_outbound_datagram().unwrap();
     assert_eq!(&sent[0..2], &[0x00, 0x00]);
-    assert_eq!(codec.encodes(), encodes);
-    decode_datagram(&sent, false, None, false).expect("an unencoded datagram");
+    assert!(!plain.codecs_negotiated());
     assert_eq!(
         plain.receive_datagram(&compressed, peer, 0.2, codecs),
         Err(SessionError::MissingWireCodec {
             wire_prefix: 0x0100
         })
     );
-    assert_eq!(plain.state(), ConnectionState::ChallengeAcceptSent);
+    assert_eq!(plain.state(), ConnectionState::SessionAuthSent);
 
     // Negotiated codecUuid: compressed send with wirePrefix = remoteRecId, compressed
     // receive accepted.
-    let mut negotiated = challenged_connection_with_codec(peer, 0x0100, 5, [0x55; 16]);
+    let mut negotiated = challenged_connection(peer, 0x0100, 5);
     let encodes = codec.encodes();
     negotiated
         .send_blob(2, 0, 0x10, &[0x00; 32], 0.1, codecs.outgoing)
@@ -3008,7 +2759,7 @@ fn optional_headers_encoded_len_matches_encode() {
         referral_auth: Some(ReferralAuthHeader {
             referral_cookie: 0x55,
         }),
-        connect_challenge: Some(vector_5_challenge()),
+        connect_challenge: Some(template_challenge()),
         connect_accept: Some(ConnectAcceptHeader {
             check_value: 1,
             codec_uuid: [0u8; 16],
@@ -3024,6 +2775,8 @@ fn optional_headers_encoded_len_matches_encode() {
         }),
         client_control: Some(7),
         clock_sync: Some(1.5),
+        optional_word_25: Some([1; 4]),
+        optional_words_26: Some([2; 8]),
         flow_control: Some(FlowControlHeader {
             bytes_received_delta: 1,
             interval_ms: 2,
@@ -3051,7 +2804,7 @@ fn login_queue_status_reads_the_queue_only_when_queued() {
             total: 9,
         }),
     };
-    let body = queued.encode();
+    let body = queued.encode().unwrap();
     assert_eq!(&body[..4], &[0x64, 0x14, 0x04, 0x80]);
     assert_eq!(body.len(), 4 + 1 + 8 + 8);
     assert_eq!(LoginQueueStatusMessage::decode(&body).unwrap(), queued);
@@ -3084,7 +2837,7 @@ fn login_queue_status_reads_the_queue_only_when_queued() {
             total: 2,
         }),
     };
-    assert_eq!(not_written.encode(), accepted);
+    assert_eq!(not_written.encode().unwrap(), accepted);
 
     // Refused: any other negative value.
     let refused = [0x05u8, 0x40, 0x00, 0x80, 0x00];
@@ -3113,24 +2866,11 @@ fn an_occupied_slot_ignores_the_challenge() {
     for (h, _) in [(a, first), (b, second)] {
         let conn = mux.connection_mut(h).unwrap();
         assert_eq!(conn.local_rec_id(), 0);
+        conn.set_codec_uuids(UUIDS);
         conn.start_login(account_auth("A", 0).unwrap(), 0.0)
             .unwrap();
     }
-    let challenge = |assigned: u16| {
-        let mut c = vector_5_challenge();
-        c.assigned_client_rec_id = assigned;
-        encode_datagram(
-            DatagramHeader::default(),
-            &OptionalHeaders {
-                connect_challenge: Some(c),
-                ..OptionalHeaders::default()
-            },
-            &[],
-            None,
-            None,
-        )
-        .unwrap()
-    };
+    let challenge = |incoming: u16| challenge_for(incoming, 1);
     let (taken, _) = mux
         .receive_from_peer(&challenge(0x0200), first, 0.1, WireCodecs::NONE)
         .unwrap();
@@ -3159,10 +2899,11 @@ fn an_occupied_slot_ignores_the_challenge() {
     assert_eq!(mux.connection(b).unwrap().local_rec_id(), 0x0201);
 }
 
-/// §5.6.2–§5.6.3: `blobId` is on the wire for queue 3 when the blob is fragmented; a
-/// receiver accepts queues 5 and 6 with the `orderNum` + `blobId` framing of 2 and 4.
+/// §5.6.2–§5.6.3: `blobId` is on the wire for queue 3 when the blob is fragmented (the
+/// kept rule; pending spec pass 10 writer fix); queues 5 and 6 are OPEN-SESSION-12 and a
+/// fragment on them is refused (the datagram is dropped and counted).
 #[test]
-fn queue_3_fragments_carry_a_blob_id_and_queues_5_and_6_are_received() {
+fn queue_3_fragments_carry_a_blob_id_and_queues_5_and_6_are_dropped() {
     let frags = split_blob(3, 9, 0x0042, 0x13, None, 0x6F, &vec![7u8; 500]).unwrap();
     assert_eq!(frags.len(), 2);
     for f in &frags {
@@ -3182,124 +2923,165 @@ fn queue_3_fragments_carry_a_blob_id_and_queues_5_and_6_are_received() {
     assert_eq!(&wire[..5], &[0x03, 0x40, 0x13, 0x09, 0x00]);
     assert_eq!(BlobFragmentHeader::decode(&wire).unwrap().0.blob_id, 0);
 
-    // Queues 5 and 6: orderNum and blobId, decoded on receive; never sent.
+    // Queues 5 and 6: their framing is unspecified (OPEN-SESSION-12): refused, and a
+    // connection counts the dropped datagram.
     for queue in [5u8, 6] {
         let raw = [queue, 0x40, 0x07, 0x00, 0x2A, 0x00, 0x05, 0x01];
-        let (hdr, used) = BlobFragmentHeader::decode(&raw).unwrap();
-        assert_eq!(used, 8);
         assert_eq!(
-            (hdr.queue_id, hdr.order_num, hdr.blob_id, hdr.frag_data_len),
-            (queue, 7, 0x2A, 1)
-        );
-        assert_eq!(
-            hdr.encode(&mut Vec::new()),
-            Err(SessionError::InvalidQueueId { queue_id: queue })
+            BlobFragmentHeader::decode(&raw),
+            Err(SessionError::UnsupportedReceiveQueue { queue_id: queue })
         );
     }
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 71), 9000);
+    let mut conn = challenged_connection(peer, 0x0150, 1);
+    let mut hdr = DatagramHeader {
+        rec_id: 0x0150,
+        flags: FLAG_HAS_FRAGMENTED_BLOBS,
+        pak_size: 8,
+        ..DatagramHeader::default()
+    };
+    let payload = [5u8, 0x40, 0x07, 0x00, 0x2A, 0x00, 0x00, 0x00];
+    hdr.checksum = combine_packet_checksum(hdr, 0, None).unwrap();
+    let mut dgram = vec![0u8, 0];
+    dgram.extend_from_slice(&hdr.to_wire_bytes());
+    dgram.extend_from_slice(&payload);
+    assert_eq!(
+        conn.receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE),
+        Err(SessionError::UnsupportedReceiveQueue { queue_id: 5 })
+    );
+    assert_eq!(conn.handshake_counts().unsupported_queue_drops, 1);
+    assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
     assert!(matches!(
         BlobFragmentHeader::decode(&[7, 0x40, 0, 0, 0, 0, 0, 0]),
         Err(SessionError::InvalidQueueId { queue_id: 7 })
     ));
 }
 
-/// §4.2: `time` is set on a packet with `ClockSyncHeader` or `FlowControlHeader` (network
-/// milliseconds modulo 65,536) and is 0 otherwise (`OPEN-SESSION-8`); `iteration` and
-/// `table` are always 0.
+/// §4.2, §6.4, §6.4.1, §8.1: after the accept every client packet carries the client word 1
+/// (pending spec pass 10 writer fix: OPEN-SESSION-8 keeps it) and a copy of the challenge
+/// header's bytes 18..19; State 5 queues no ClockSyncHeader; the first sequenced packet is
+/// sequence 2; a standalone acknowledgement repeats the current sequence without drawing a
+/// mask; a ClockSyncHeader on a sequenced packet uses that packet's sequence and mask.
 #[test]
-fn the_time_field_is_set_only_with_a_timing_header() {
-    assert_eq!(tessera_compat::session::network_time_ms(1.5), 1500);
-    assert_eq!(tessera_compat::session::network_time_ms(65.5361), 0);
-    assert_eq!(tessera_compat::session::network_time_ms(f64::NAN), 0);
+fn header_words_and_sequences_after_the_accept() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 70), 9000);
-    let mut conn = challenged_connection(peer, 0x0150, 1);
-    // The next server packet connects (State 5) and queues the initial ClockSyncHeader.
+    let mut conn = SessionConnection::new(peer, 0.0);
+    conn.set_codec_uuids(UUIDS);
+    conn.start_login(account_auth("A", 0).unwrap(), 0.0)
+        .unwrap();
+    let auth = decode_datagram(&conn.pop_outbound_datagram().unwrap(), false, None, true).unwrap();
+    assert_eq!(
+        (
+            auth.header.seq_num,
+            auth.header.client_word,
+            auth.header.peer_word
+        ),
+        (0, 0, 0)
+    );
+    let challenge = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0150,
+            client_word: 0x3344,
+            peer_word: 0x1122,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders {
+            connect_challenge: Some(template_challenge()),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    conn.receive_datagram(&challenge, peer, 0.1, WireCodecs::NONE)
+        .unwrap();
+    let accept =
+        decode_datagram(&conn.pop_outbound_datagram().unwrap(), false, None, true).unwrap();
+    assert_eq!(
+        (
+            accept.header.rec_id,
+            accept.header.seq_num,
+            accept.header.client_word,
+            accept.header.peer_word
+        ),
+        (0x0304, 0, 1, 0x1122)
+    );
+    // The next valid server packet connects; nothing is queued on entry.
     let mut ack = DatagramHeader {
         rec_id: 0x0150,
-        flags: FLAG_CUMULATIVE_ACK,
-        pak_size: 4,
         ..DatagramHeader::default()
     };
-    ack.checksum = compute_packet_checksum(ack, &[0, 0, 0, 0], None).unwrap();
-    let mut dgram = vec![0u8, 0];
-    dgram.extend_from_slice(&ack.to_wire_bytes());
-    dgram.extend_from_slice(&[0, 0, 0, 0]);
-    conn.receive_datagram(&dgram, peer, 2.25, WireCodecs::NONE)
-        .unwrap();
-    assert_eq!(conn.state(), ConnectionState::Connected);
-    let sync = decode_datagram(&conn.pop_outbound_datagram().unwrap(), false, None, true).unwrap();
-    let net_time = sync.opt_headers.clock_sync.expect("ClockSyncHeader");
-    assert_eq!(
-        sync.header.time,
-        tessera_compat::session::network_time_ms(net_time)
-    );
-    assert_ne!(sync.header.time, 0);
-    assert_eq!((sync.header.iteration, sync.header.table), (0, 0));
-    // A sequenced blob without a timing header: `time` 0.
-    conn.send_blob(4, 0, 0x12C, &[0, 1, 2], 2.5, None).unwrap();
-    let blob = decode_datagram(&conn.pop_outbound_datagram().unwrap(), false, None, false).unwrap();
-    assert!(blob.opt_headers.flow_control.is_none());
-    assert_eq!(blob.header.time, 0);
-    assert_eq!(blob.header.seq_num, 2);
-}
-
-/// §4.4.2 step 2 with the client's own fragment layouts (§5.6.2–§5.6.3), hand-built: a
-/// queue-4 `0x12C` fragment and a queue-3, sequence-group-0x13 `0x6F` fragment. The header
-/// bytes are written out from the §5.6.3 table, and the expected sums were worked out from
-/// §4.4.1 by hand, not with the crate's functions.
-#[test]
-fn send_checksum_vectors_for_the_version_and_entry_fragments() {
-    // `0x12C`: queue 4, default recipient, orderNum 1, blobId 1, header word 0x12C
-    // (VariableU32 `81 2C`), 7 payload bytes, one pad byte: a 10-byte header (2 mod 4).
-    let version_payload: Vec<u8> = (0..7u8).collect();
-    let frags = split_blob(4, 1, 1, 0, None, 0x0000_012C, &version_payload).unwrap();
-    let [version] = frags.as_slice() else {
-        panic!("{frags:?}");
-    };
-    let mut bytes = Vec::new();
-    version.encode(&mut bytes).unwrap();
-    assert_eq!(
-        &bytes[..10],
-        &[0x04, 0x40, 0x01, 0x00, 0x01, 0x00, 0x81, 0x2C, 0x07, 0x00]
-    );
-    assert_eq!(&bytes[10..], version_payload.as_slice());
-    let sum = send_payload_checksum(&OptionalHeaders::default(), frags.as_slice()).unwrap();
-    assert_eq!(sum, 0x3A9A_4705, "per buffer");
-    assert_eq!(
-        compute_datagram_checksum(&bytes),
-        0x3897_430E,
-        "whole payload"
-    );
-
-    // `0x6F`: queue 3, sequence group 0x13, orderNum 5, no blobId (unfragmented), header
-    // word 0x6F, 9 payload bytes; 7 header bytes and one pad byte (0 mod 4). The sums still
-    // differ from the whole-payload one: the payload's tail carries its own length term.
-    let entry_payload = [0x00, 0x42, 0, 0, 0, 0, 0, 0, 0x02];
-    let frags = split_blob(3, 5, 0, 0x13, None, 0x0000_006F, &entry_payload).unwrap();
-    let mut bytes = Vec::new();
-    frags[0].encode(&mut bytes).unwrap();
-    assert_eq!(
-        &bytes[..8],
-        &[0x03, 0x40, 0x13, 0x05, 0x00, 0x6F, 0x09, 0x00]
-    );
-    assert_eq!(
-        send_payload_checksum(&OptionalHeaders::default(), frags.as_slice()).unwrap(),
-        0x0725_F103
-    );
-    assert_eq!(
-        compute_datagram_checksum(&bytes),
-        0x072D_F103,
-        "whole payload"
-    );
-    // With the 6-byte `FlowControlHeader` in front, three buffers.
     let opt = OptionalHeaders {
-        flow_control: Some(FlowControlHeader {
-            bytes_received_delta: 0x0102_0304,
-            interval_ms: 0x0506,
-        }),
+        cumulative_ack: Some(0),
         ..OptionalHeaders::default()
     };
+    ack.seq_num = 2;
+    let mut server = IsaacCipher::from_seed(template_challenge().incoming_seed);
+    let dgram = encode_datagram(ack, &opt, &[], Some(server.next_mask()), None).unwrap();
+    conn.receive_datagram(&dgram, peer, 0.2, WireCodecs::NONE)
+        .unwrap();
+    assert_eq!(conn.state(), ConnectionState::Connected);
+    assert!(
+        conn.pop_outbound_datagram().is_none(),
+        "no ClockSync on entry"
+    );
+
+    let mut client = IsaacCipher::from_seed(template_challenge().outgoing_seed);
+    // The first sequenced packet: sequence 2 with the first outgoing word.
+    conn.send_blob(4, 0, 0x12C, &[0, 1, 2], 0.3, None).unwrap();
+    let blob = decode_datagram(&conn.pop_outbound_datagram().unwrap(), false, None, false).unwrap();
     assert_eq!(
-        send_payload_checksum(&opt, frags.as_slice()).unwrap(),
-        0x0E32_F407
+        (
+            blob.header.seq_num,
+            blob.header.client_word,
+            blob.header.peer_word
+        ),
+        (2, 1, 0x1122)
+    );
+    verify_packet_checksum(blob.header, blob.payload_sum, Some(client.next_mask())).unwrap();
+    // A standalone acknowledgement repeats the current sequence (2) and draws nothing.
+    conn.tick(2.5).unwrap();
+    let standalone =
+        decode_datagram(&conn.pop_outbound_datagram().unwrap(), false, None, true).unwrap();
+    assert!(standalone.opt_headers.cumulative_ack.is_some());
+    assert_eq!(standalone.header.flags & FLAG_MASKED_CHECKSUM, 0);
+    assert_eq!(standalone.header.seq_num, 2);
+    assert_eq!(conn.send_seq_num(), 2);
+    // A ClockSync on a sequenced packet: sequence 3 with the second word, not a third.
+    let seq = conn
+        .send_sequenced_packet(
+            OptionalHeaders {
+                clock_sync: Some(1000.0),
+                ..OptionalHeaders::default()
+            },
+            Vec::new(),
+            false,
+            2.6,
+            None,
+        )
+        .unwrap();
+    assert_eq!(seq, 3);
+    let sync = decode_datagram(&conn.pop_outbound_datagram().unwrap(), false, None, false).unwrap();
+    assert_eq!(sync.header.seq_num, 3);
+    verify_packet_checksum(sync.header, sync.payload_sum, Some(client.next_mask())).unwrap();
+    // Bits 25 and 26 are never sent.
+    assert!(matches!(
+        conn.send_sequenced_packet(
+            OptionalHeaders {
+                optional_word_25: Some([0; 4]),
+                ..OptionalHeaders::default()
+            },
+            Vec::new(),
+            false,
+            2.7,
+            None,
+        ),
+        Err(SessionError::InvalidHeaderFlags { .. })
+    ));
+    assert_eq!(
+        conn.send_seq_num(),
+        3,
+        "nothing allocated for a refused packet"
     );
 }

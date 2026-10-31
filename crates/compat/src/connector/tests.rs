@@ -47,9 +47,9 @@ use crate::login::{
 };
 use crate::net_access::{NetworkAccess, Revocation};
 use crate::session::{
-    BitTreeTable, ConnectChallengeHeader, ConnectionState, DatagramHeader, IsaacCipher,
+    BitTreeTable, CodecUuids, ConnectionState, DatagramHeader, IsaacCipher,
     LoginQueueStatusMessage, OPCODE_BATCH_CONTAINER, OPCODE_SYSTEM_NOTIFICATION, OptionalHeaders,
-    SessionError, UdpDatagramTransport, VersionStatusMessage, WorldReferralHeader, decode_datagram,
+    SessionError, UdpDatagramTransport, VersionStatusMessage, WorldReferralHeader,
     encode_batch_container, encode_datagram, encode_variable_u32, split_blob,
 };
 use crate::world::{
@@ -58,6 +58,10 @@ use crate::world::{
     encode_event_envelope,
 };
 use crate::{CompatBackend, CompatConfig};
+// The synthetic service's challenge, decoder and dictionary UUIDs.
+use super::test_support::{
+    INCOMING_UUID, OUTGOING_UUID, challenge_datagram, decode_client_datagram,
+};
 
 const LOCAL: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 5000);
 const LOGIN_SERVER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 10), 9001);
@@ -118,11 +122,11 @@ fn records() -> Records {
     );
     m.insert(
         0x0E01_0000,
-        BitTreeTable::synthetic_dictionary([1; 16]).to_dat_bytes(),
+        BitTreeTable::synthetic_dictionary(OUTGOING_UUID).to_dat_bytes(),
     );
     m.insert(
         0x0E01_0001,
-        BitTreeTable::synthetic_dictionary([2; 16]).to_dat_bytes(),
+        BitTreeTable::synthetic_dictionary(INCOMING_UUID).to_dat_bytes(),
     );
     Records(m)
 }
@@ -882,7 +886,7 @@ impl Run {
             if dst != to {
                 continue;
             }
-            let pkt = decode_datagram(&d, false, None, false).expect("client datagram");
+            let pkt = decode_client_datagram(&d, false).expect("client datagram");
             if let Some(f) = pkt.fragments.into_iter().next() {
                 return (f.header.blob_header_word.expect("word"), f.payload);
             }
@@ -941,6 +945,12 @@ impl Run {
     }
 }
 
+/// The directional UUIDs of the synthetic install's dictionaries.
+const SYNTHETIC_CODEC_UUIDS: CodecUuids = CodecUuids {
+    incoming: INCOMING_UUID,
+    outgoing: OUTGOING_UUID,
+};
+
 /// A synthetic UDP server connection.
 struct Server {
     rec_id: u16,
@@ -958,31 +968,16 @@ impl Server {
     }
 
     fn challenge(&self, seed: u32) -> Vec<u8> {
-        let opt = OptionalHeaders {
-            connect_challenge: Some(ConnectChallengeHeader {
-                server_time: 1.0,
-                assigned_client_rec_id: self.rec_id,
-                server_rec_id: 0x0222,
-                outgoing_seed: 0xCAFE_1234,
-                incoming_seed: seed,
-                reserved_dword_14: 0,
-                client_conn_idx: 4,
-                reserved_word_1a: 0,
-                codec_uuid: [0u8; 16],
-            }),
-            ..OptionalHeaders::default()
-        };
-        encode_datagram(
-            DatagramHeader {
-                rec_id: self.rec_id,
-                ..DatagramHeader::default()
-            },
-            &opt,
-            &[],
-            None,
-            None,
-        )
-        .expect("challenge")
+        let d = challenge_datagram(
+            self.rec_id,
+            0x0222,
+            0x3344,
+            seed,
+            0xCAFE_1234,
+            INCOMING_UUID,
+        );
+        assert!(!d.is_empty(), "challenge");
+        d
     }
 
     fn control(&self, opt: OptionalHeaders) -> Vec<u8> {
@@ -1164,7 +1159,7 @@ fn to_character_list(run: &mut Run) -> Server {
     let (auth, dst) = run.wait_sent();
     assert_eq!(dst, LOGIN_SERVER);
     assert!(
-        decode_datagram(&auth, false, None, true)
+        decode_client_datagram(&auth, true)
             .expect("decode")
             .opt_headers
             .session_auth
@@ -1180,7 +1175,8 @@ fn to_character_list(run: &mut Run) -> Server {
         status: 1,
         server_version_info: "ok".to_owned(),
     }
-    .encode();
+    .encode()
+    .expect("encode");
     let d = login.blob(0x12D, &encode_event_envelope(&status_ok));
     run.world.deliver(d, LOGIN_SERVER);
     let d = login.event(0x6C, &character_list());
@@ -1209,7 +1205,7 @@ fn into_world(run: &mut Run, login: &Server) -> Server {
     loop {
         let (d, dst) = run.wait_sent();
         if dst == WORLD_SERVER
-            && decode_datagram(&d, false, None, false)
+            && decode_client_datagram(&d, false)
                 .expect("referral auth")
                 .opt_headers
                 .referral_auth
@@ -1237,7 +1233,7 @@ fn ack_portal_exit(run: &mut Run, world: &Server) {
         .expect("loaded");
     let acked = loop {
         let (d, dst) = run.wait_sent();
-        let Ok(pkt) = decode_datagram(&d, false, None, false) else {
+        let Ok(pkt) = decode_client_datagram(&d, false) else {
             continue;
         };
         if dst == WORLD_SERVER
@@ -2097,7 +2093,7 @@ fn the_session_reaches_the_character_list_and_the_world() {
     // SessionAuthHeader to the login server, with the subscription and the ticket.
     let (auth, dst) = run.wait_sent();
     assert_eq!(dst, LOGIN_SERVER);
-    let sa = decode_datagram(&auth, false, None, true)
+    let sa = decode_client_datagram(&auth, true)
         .expect("decode")
         .opt_headers
         .session_auth
@@ -2120,7 +2116,8 @@ fn the_session_reaches_the_character_list_and_the_world() {
         status: 1,
         server_version_info: "ok".to_owned(),
     }
-    .encode();
+    .encode()
+    .expect("encode");
     let d = login.blob(0x12D, &encode_event_envelope(&status_ok));
     run.world.deliver(d, LOGIN_SERVER);
     let d = login.event(0x6C, &character_list());
@@ -2155,7 +2152,7 @@ fn the_session_reaches_the_character_list_and_the_world() {
     let ra = loop {
         let (d, dst) = run.wait_sent();
         if dst == WORLD_SERVER {
-            break decode_datagram(&d, false, None, false)
+            break decode_client_datagram(&d, false)
                 .expect("referral auth")
                 .opt_headers
                 .referral_auth
@@ -2209,7 +2206,7 @@ fn the_session_reaches_the_character_list_and_the_world() {
     while !said_disconnect {
         if let Some((d, dst)) = run.world.pop_sent() {
             said_disconnect = dst == WORLD_SERVER
-                && decode_datagram(&d, false, None, false).is_ok_and(|p| p.opt_headers.disconnect);
+                && decode_client_datagram(&d, false).is_ok_and(|p| p.opt_headers.disconnect);
         } else {
             assert!(Instant::now() < until, "no Disconnect was sent");
             std::thread::sleep(Duration::from_millis(2));
@@ -2298,7 +2295,7 @@ fn a_second_referral_disconnects_the_replaced_world_connection() {
     while !(to_new && old_disconnect) {
         match run.world.pop_sent() {
             Some((d, dst)) => {
-                let pkt = decode_datagram(&d, false, None, false);
+                let pkt = decode_client_datagram(&d, false);
                 if dst == WORLD_SERVER_2 {
                     to_new |= pkt
                         .as_ref()
@@ -2361,7 +2358,8 @@ fn a_full_event_queue_stops_reading_the_socket() {
                 total: 10_000,
             }),
         }
-        .encode();
+        .encode()
+        .expect("encode");
         let d = login.blob(0x130, &encode_event_envelope(&q));
         run.world.deliver(d, LOGIN_SERVER);
     }
@@ -2469,10 +2467,11 @@ fn session_start(
         chat_endpoint: chat,
         version,
         codecs: crate::chat_session::ChatCodecs::default(),
-        codec_uuids: Vec::new(),
+        // The dictionaries' UUIDs without the codecs: the challenge names the incoming one,
+        // and the client's datagrams go out uncompressed (`official-session.md` §7.3).
+        codec_uuids: SYNTHETIC_CODEC_UUIDS,
         schema: SchemaView(Arc::new(records())),
         cancel,
-        send_checksum: Default::default(),
         net: Default::default(),
         login_server_entry: Default::default(),
         dump: None,
@@ -2625,7 +2624,7 @@ fn the_referral_disconnects_the_login_connection_gracefully() {
         d.step(t, true, &go);
         said_disconnect |= world.take_sent().iter().any(|(dg, dst)| {
             *dst == LOGIN_SERVER
-                && decode_datagram(dg, false, None, false).is_ok_and(|p| p.opt_headers.disconnect)
+                && decode_client_datagram(dg, false).is_ok_and(|p| p.opt_headers.disconnect)
         });
         assert!(
             !d.take_events()
@@ -2697,7 +2696,8 @@ fn notifications(server: &mut Server, from: usize, n: usize) -> Vec<u8> {
         .map(|i| {
             let units: Vec<u16> = i.to_string().encode_utf16().collect();
             let mut body = Vec::new();
-            encode_variable_u32(u32::try_from(units.len()).expect("short"), &mut body);
+            encode_variable_u32(u32::try_from(units.len()).expect("short"), &mut body)
+                .expect("short");
             for u in units {
                 body.extend_from_slice(&u.to_le_bytes());
             }
@@ -3069,7 +3069,7 @@ fn withdraw_while_queued_ends_the_wait_without_a_world_refusal() {
 
 /// Whether `datagram` carries the given optional header.
 fn has_session_auth(datagram: &[u8]) -> bool {
-    decode_datagram(datagram, false, None, true).is_ok_and(|p| p.opt_headers.session_auth.is_some())
+    decode_client_datagram(datagram, true).is_ok_and(|p| p.opt_headers.session_auth.is_some())
 }
 
 #[test]
@@ -3168,7 +3168,7 @@ fn a_world_challenge_after_the_cancel_is_not_answered() {
         let _ = d.shutdown_step(t);
         for (datagram, dst) in world.take_sent() {
             assert_ne!(dst, WORLD_SERVER, "sent to the world server at {t}");
-            let pkt = decode_datagram(&datagram, false, None, false);
+            let pkt = decode_client_datagram(&datagram, false);
             assert!(
                 pkt.is_ok_and(|p| p.opt_headers.connect_accept.is_none()),
                 "a ConnectAccept at {t}"
@@ -3202,6 +3202,8 @@ fn driver_with_chat_handshake() -> (World, SessionDriver<FakeNet>, Server) {
     assert!(d.in_world());
     let (player, name) = d.wants_chat(1.2).expect("the chat session is due");
     let net = FakeNet(world.clone());
+    // Synthetic chat dictionaries, to reach the chat protocol (live runs have none).
+    d.set_chat_codec_uuids_for_tests(SYNTHETIC_CODEC_UUIDS);
     d.attach_chat(
         net.chat_binder(None).expect("binder"),
         player,
@@ -3242,7 +3244,7 @@ fn a_cancel_during_the_chat_handshake_sends_no_chat_datagram() {
         for (datagram, dst) in world.take_sent() {
             assert_ne!(dst, CHAT_SERVER, "a chat datagram at {t}");
             if dst == LOGIN_SERVER {
-                said_disconnect |= decode_datagram(&datagram, false, None, false)
+                said_disconnect |= decode_client_datagram(&datagram, false)
                     .is_ok_and(|p| p.opt_headers.disconnect);
             }
         }
@@ -3291,6 +3293,8 @@ fn a_chat_attachment_after_the_cancel_binds_nothing() {
     d.step(1.1, true, &go);
     let (player, name) = d.wants_chat(1.2).expect("the chat session is due");
     let net = FakeNet(world.clone());
+    // Synthetic chat dictionaries, to reach the chat protocol (live runs have none).
+    d.set_chat_codec_uuids_for_tests(SYNTHETIC_CODEC_UUIDS);
     d.attach_chat(
         net.chat_binder(None).expect("binder"),
         player,
@@ -3451,7 +3455,7 @@ fn the_shutdown_drops_play_messages_not_yet_queued() {
     assert!(d.in_world());
     let opcodes = |sent: Vec<(Vec<u8>, SocketAddrV4)>| -> Vec<u32> {
         sent.iter()
-            .filter_map(|(d, _)| decode_datagram(d, false, None, false).ok())
+            .filter_map(|(d, _)| decode_client_datagram(d, false).ok())
             .flat_map(|p| p.fragments)
             .filter_map(|f| f.header.blob_header_word)
             .collect()
@@ -4092,7 +4096,7 @@ fn sent_blobs(world: &World) -> Vec<(u32, SocketAddrV4)> {
         .take_sent()
         .into_iter()
         .filter_map(|(d, dst)| {
-            let pkt = decode_datagram(&d, false, None, false).ok()?;
+            let pkt = decode_client_datagram(&d, false).ok()?;
             Some(
                 pkt.fragments
                     .into_iter()

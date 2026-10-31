@@ -10,14 +10,14 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use libfuzzer_sys::fuzz_target;
 use tessera_compat::session::{
     AuthConnection, BindPorts, BitTreeTable, BlobFragment, BlobFragmentHeader, BlobReassembler,
-    ConnectAcceptHeader, ConnectChallengeHeader, ControlMessage, DatagramHeader,
+    CodecUuids, ConnectAcceptHeader, ConnectChallengeHeader, ControlMessage, DatagramHeader,
     OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS,
     OPCODE_SINGLE_WRAPPER, OPCODE_SYSTEM_NOTIFICATION, OPCODE_VERSION_REQUEST,
-    OPCODE_VERSION_STATUS, OptionalHeaders, SendChecksumRule, SessionAuthHeader, SessionConnection,
+    OPCODE_VERSION_STATUS, OptionalHeaders, SessionAuthHeader, SessionConnection,
     SessionMultiplexer, WireCodecs, WorldReferralHeader, check_ticket_text,
     compute_datagram_checksum, decode_datagram, decode_message, decode_variable_u32,
-    des3_cbc_decrypt, dispatch_message, encode_datagram, encode_datagram_with_rule,
-    is_valid_net_version, max_recv_rate_for_speed, unique_port_candidates,
+    des3_cbc_decrypt, dispatch_message, encode_datagram, encode_variable_u32, guid_fields_swapped,
+    is_valid_net_version, max_recv_rate_for_speed, parse_packet_payload, unique_port_candidates,
 };
 
 /// The synthetic version stamp (`official-session.md` §10.2 Vector 6).
@@ -41,13 +41,26 @@ fn account_auth(
 /// A synthetic record DID (the real one is resolved at run time).
 const SYNTHETIC_DICT_DID: u32 = 0x0E01_0001;
 
-/// A synthetic non-null `codecUuid`: only a connection that negotiated one decompresses
-/// (official-session.md §4.1.1, §7.3).
-const FUZZ_CODEC_UUID: [u8; 16] = [0x5A; 16];
+/// Synthetic directional dictionary UUIDs: only a connection whose challenge named the
+/// incoming one decompresses (official-session.md §4.1.1, §7.3).
+const FUZZ_CODEC_UUIDS: CodecUuids = CodecUuids {
+    incoming: [
+        0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0, 0xF0,
+        0x01,
+    ],
+    outgoing: [0x5A; 16],
+};
 
 fuzz_target!(|data: &[u8]| {
     let _ = compute_datagram_checksum(data);
-    let _ = decode_variable_u32(data);
+    // The compact integer (§5.6.1): whatever decodes re-encodes to a value of the same
+    // tier width or less, and decodes back.
+    if let Ok((value, used)) = decode_variable_u32(data) {
+        let mut out = Vec::new();
+        let written = encode_variable_u32(value, &mut out).expect("a decoded value encodes");
+        assert!(written <= used);
+        assert_eq!(decode_variable_u32(&out), Ok((value, written)));
+    }
     let _ = DatagramHeader::from_wire_bytes(data);
     let _ = SessionAuthHeader::decode(data);
     let _ = ConnectChallengeHeader::decode(data);
@@ -75,29 +88,26 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
         }
-        let _ = SendChecksumRule::parse(text);
         let _ = tessera_compat::net_access::TlsFailure::from_tls_text(text);
     }
     // The handshake diagnostics read a refused datagram once more (no checksum, no codec).
     let _ = tessera_compat::connector::diag::carries_challenge(data);
-    // The send checksum switch (official-session.md §4.4.2): both rules on what decoded.
-    let rule = if data.first().is_some_and(|b| b & 1 == 1) {
-        SendChecksumRule::WholePayload
-    } else {
-        SendChecksumRule::PerBuffer
-    };
+    // The per-buffer checksum (official-session.md §4.4.2) is the same on send and on
+    // receive: what decoded and re-encodes verifies.
     if let Ok(pkt) = decode_datagram(data, true, None, false) {
         let mask = (pkt.header.flags & tessera_compat::session::FLAG_MASKED_CHECKSUM != 0)
             .then_some(0x1234_5678);
-        if let Ok(again) = encode_datagram_with_rule(
-            pkt.header,
-            &pkt.opt_headers,
-            &pkt.fragments,
-            mask,
-            None,
-            rule,
-        ) {
-            let _ = decode_datagram(&again, true, None, true);
+        if let Ok(again) = encode_datagram(pkt.header, &pkt.opt_headers, &pkt.fragments, mask, None)
+        {
+            let back = decode_datagram(&again, true, None, false).expect("re-encoded decodes");
+            assert!(
+                tessera_compat::session::verify_packet_checksum(
+                    back.header,
+                    back.payload_sum,
+                    mask
+                )
+                .is_ok()
+            );
         }
     }
 
@@ -109,6 +119,12 @@ fuzz_target!(|data: &[u8]| {
         let flags = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
         let _ = OptionalHeaders::decode(flags, &data[4..], true);
         let _ = OptionalHeaders::decode(flags, &data[4..], false);
+        let _ = parse_packet_payload(flags, &data[4..], true);
+        let _ = guid_fields_swapped(
+            data.get(..16)
+                .and_then(|b| <[u8; 16]>::try_from(b).ok())
+                .unwrap_or_default(),
+        );
     }
 
     if let Ok((frag, _)) = BlobFragment::decode(data) {
@@ -139,10 +155,9 @@ fuzz_target!(|data: &[u8]| {
     let mut conn = SessionConnection::new(peer, 0.0);
     let _ = conn.receive_datagram(data, peer, 0.5, codecs);
     // In State 1 a ConnectChallengeHeader is acted on (official-session.md §6.4). The
-    // registered codecUuid lets a challenge that names it attach the codecs (§7.3).
+    // dictionary UUIDs let a challenge that names the incoming one attach the codecs (§7.3).
     let mut started = SessionConnection::new(peer, 0.0);
-    started.register_codec_uuid(FUZZ_CODEC_UUID);
-    started.set_send_checksum_rule(rule);
+    started.set_codec_uuids(FUZZ_CODEC_UUIDS);
     if let Ok(auth) = account_auth("A", 0)
         && started.start_login(auth, 0.0).is_ok()
     {
@@ -152,24 +167,24 @@ fuzz_target!(|data: &[u8]| {
     }
     // A connection whose synthetic challenge negotiated a codec takes compressed datagrams.
     let mut negotiated = SessionConnection::new(peer, 0.0);
-    negotiated.register_codec_uuid(FUZZ_CODEC_UUID);
+    negotiated.set_codec_uuids(FUZZ_CODEC_UUIDS);
     let challenge = OptionalHeaders {
         connect_challenge: Some(ConnectChallengeHeader {
-            server_time: 0.0,
-            assigned_client_rec_id: 0,
-            server_rec_id: 0x0304,
-            outgoing_seed: 1,
+            outgoing_rec_id: 0x0304,
             incoming_seed: 2,
-            reserved_dword_14: 0,
-            client_conn_idx: 1,
-            reserved_word_1a: 0,
-            codec_uuid: FUZZ_CODEC_UUID,
+            outgoing_seed: 1,
+            incoming_codec_guid: guid_fields_swapped(FUZZ_CODEC_UUIDS.incoming),
+            ..ConnectChallengeHeader::default()
         }),
         ..OptionalHeaders::default()
     };
+    let challenge_header = DatagramHeader {
+        rec_id: 0x0102,
+        ..DatagramHeader::default()
+    };
     if let Ok(auth) = account_auth("A", 0)
         && negotiated.start_login(auth, 0.0).is_ok()
-        && let Ok(dgram) = encode_datagram(DatagramHeader::default(), &challenge, &[], None, None)
+        && let Ok(dgram) = encode_datagram(challenge_header, &challenge, &[], None, None)
         && negotiated
             .receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE)
             .is_ok()
@@ -193,6 +208,7 @@ fuzz_target!(|data: &[u8]| {
     let mut mux = SessionMultiplexer::new();
     if let Ok(id) = mux.create_connection(peer, 0.0) {
         if let (Some(conn), Ok(auth)) = (mux.connection_mut(id), account_auth("A", 0)) {
+            conn.set_codec_uuids(FUZZ_CODEC_UUIDS);
             let _ = conn.start_login(auth, 0.0);
         }
         let _ = mux.receive_from_peer(data, peer, 0.5, WireCodecs::NONE);

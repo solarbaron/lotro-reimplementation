@@ -45,9 +45,9 @@ use tessera_compat::play::chat::{
     PID_CHAT_CATEGORY, PID_CHAT_SENDER_ID, PID_CHAT_SENDER_NAME, PID_CHAT_TEXT,
 };
 use tessera_compat::session::{
-    BindPlan, BitTreeTable, ConnectChallengeHeader, DatagramHeader, IsaacCipher,
+    BindPlan, BitTreeTable, CodecUuids, ConnectChallengeHeader, DatagramHeader, IsaacCipher,
     MAX_UNIQUE_PORT_ATTEMPTS, OptionalHeaders, SessionError, UdpDatagramTransport,
-    WorldReferralHeader, encode_datagram, split_blob,
+    WorldReferralHeader, encode_datagram, guid_fields_swapped, split_blob,
 };
 use tessera_compat::world::{
     CharacterListResponse, CharacterSummaryEntry, EncodedPropertyTable, EncodedPropertyValue,
@@ -204,18 +204,27 @@ impl ConnectorNet for Net {
     }
 }
 
+/// The synthetic dictionaries' on-disk UUIDs by direction (`official-session.md` §7.3).
+const UUIDS: CodecUuids = CodecUuids {
+    incoming: [
+        0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0, 0xF0,
+        0x01,
+    ],
+    outgoing: [0x5A; 16],
+};
+
+/// A primary challenge from incoming recipient `rec_id` naming the incoming dictionary
+/// (`official-session.md` §6.3).
 fn challenge(rec_id: u16, seed: u32) -> Option<Vec<u8>> {
     let opt = OptionalHeaders {
         connect_challenge: Some(ConnectChallengeHeader {
-            server_time: 1.0,
-            assigned_client_rec_id: rec_id,
-            server_rec_id: 0x0222,
-            outgoing_seed: 0xCAFE_1234,
+            clock_candidate: 1.0,
+            cookie: [1, 2, 3, 4, 5, 6, 7, 8],
+            reserved_16: [0, 0],
+            outgoing_rec_id: 0x0222,
             incoming_seed: seed,
-            reserved_dword_14: 0,
-            client_conn_idx: 4,
-            reserved_word_1a: 0,
-            codec_uuid: [0u8; 16],
+            outgoing_seed: 0xCAFE_1234,
+            incoming_codec_guid: guid_fields_swapped(UUIDS.incoming),
         }),
         ..OptionalHeaders::default()
     };
@@ -329,18 +338,20 @@ fn session_ready() -> Option<Vec<u8>> {
     .ok()
 }
 
-fn codecs(on: bool) -> (ChatCodecs, Vec<[u8; 16]>) {
+/// The wire codecs (bit 3: on) and the dictionaries' UUIDs, always given so the challenge
+/// is accepted; without the codecs the client's datagrams go out uncompressed.
+fn codecs(on: bool) -> (ChatCodecs, CodecUuids) {
     if !on {
-        return (ChatCodecs::default(), Vec::new());
+        return (ChatCodecs::default(), UUIDS);
     }
-    let out = Arc::new(BitTreeTable::synthetic_dictionary([1; 16]));
-    let inc = Arc::new(BitTreeTable::synthetic_dictionary([2; 16]));
+    let out = Arc::new(BitTreeTable::synthetic_dictionary(UUIDS.outgoing));
+    let inc = Arc::new(BitTreeTable::synthetic_dictionary(UUIDS.incoming));
     (
         ChatCodecs {
             incoming: Some(inc),
             outgoing: Some(out),
         },
-        vec![[1; 16], [2; 16]],
+        UUIDS,
     )
 }
 
@@ -383,7 +394,6 @@ fn start(net: &mut Net, flags: u8) -> Option<SessionDriver<Net>> {
         codec_uuids,
         schema: SchemaView(Arc::new(NoData)),
         cancel: Arc::new(AtomicBool::new(flags & 0x40 != 0)),
-        send_checksum: Default::default(),
         // Bit 5 of the first byte: `Net.ComputeUniquePort` off (§3.2 Case C).
         net: NetPreferences {
             compute_unique_port: flags & 0x20 == 0,

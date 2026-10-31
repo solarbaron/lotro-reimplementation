@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The handshake diagnostics (`super::super::diag`), the send checksum switch and the
+//! The handshake diagnostics (`super::super::diag`), the per-buffer send checksum and the
 //! login's neutral TLS line, on the synthetic service and a virtual clock: the counts are
 //! right, and no log line, at any level, names a host, an address or a port.
 
 use super::*;
 use crate::connector::diag::{
     AuthMode, BindCase, HANDSHAKE_REPORT_SEC, LocalSource, RejectKind, RemoteForm, RemoteName,
-    send_checksum_rule,
 };
 use crate::connector::login_phase::{ChainStep, PlainSteps, exchange};
 use crate::login::NotSentKind;
 use crate::net_access::TlsFailure;
 use crate::session::{
-    DisconnectReason as LinkEnd, SendChecksumRule, SessionConnection, combine_packet_checksum,
-    compute_datagram_checksum, encode_datagram_with_rule, send_payload_checksum,
+    DisconnectReason as LinkEnd, SessionConnection, combine_packet_checksum,
+    compute_datagram_checksum, guid_fields_swapped, payload_checksum,
 };
 
 /// A log sink for [`logs_of`].
@@ -101,13 +100,11 @@ fn a_handshake_timeout_logs_its_counts_and_no_endpoint() {
     assert_eq!(r.local, LocalSource::Wildcard);
     assert_eq!(r.remote, RemoteForm::HostPort);
     assert_eq!(r.remote_name, RemoteName::Resolved);
-    assert_eq!(r.send_checksum, SendChecksumRule::PerBuffer);
     // The start line, the waiting lines (debug, every 5 s) and the failure line.
     assert!(
         logs.contains("official session: handshake started"),
         "{logs}"
     );
-    assert!(logs.contains("send_checksum=\"per-buffer\""), "{logs}");
     let waiting = logs.matches("official session: handshake waiting").count();
     assert!(waiting >= 3, "{waiting} waiting lines:\n{logs}");
     let failed: Vec<&str> = logs
@@ -236,12 +233,17 @@ fn client_masks(n: usize) -> Vec<u32> {
     (0..n).map(|_| isaac.next_mask()).collect()
 }
 
-/// Which `payloadSum` rules `datagram`'s checksum fits: `(whole payload, per buffer)`. A
-/// masked checksum fits a rule when one of `masks` makes it.
+/// Which `payloadSum` rules `datagram`'s checksum fits: `(whole payload, per buffer)`: the
+/// withdrawn whole-payload sum and the §4.4.2 per-buffer sum. A masked checksum fits a rule
+/// when one of `masks` makes it.
 fn rules_fitting(datagram: &[u8], masks: &[u32]) -> (bool, bool) {
-    let pkt = decode_datagram(datagram, false, None, false).expect("decodes");
+    let pkt = decode_client_datagram(datagram, false).expect("decodes");
     let whole = compute_datagram_checksum(&pkt.raw_payload);
-    let per = send_payload_checksum(&pkt.opt_headers, &pkt.fragments).expect("re-encodes");
+    let per = payload_checksum(&pkt.opt_headers, &pkt.fragments).expect("re-encodes");
+    assert_eq!(
+        per, pkt.payload_sum,
+        "the received buffers are the sent ones"
+    );
     let fits = |sum: u32| {
         if pkt.header.flags & crate::session::FLAG_MASKED_CHECKSUM == 0 {
             combine_packet_checksum(pkt.header, sum, None).ok() == Some(pkt.header.checksum)
@@ -254,69 +256,55 @@ fn rules_fitting(datagram: &[u8], masks: &[u32]) -> (bool, bool) {
     (fits(whole), fits(per))
 }
 
-/// A connected session on the send checksum `rule` that sends traffic with two or more
-/// buffers: every datagram the client sent to the login server, and the logs.
-fn connected_traffic(rule: SendChecksumRule) -> (Vec<Vec<u8>>, String) {
-    let mut start = session_start(0, None, Arc::default());
-    start.send_checksum = rule;
-    let (sent, logs) = logs_of(|| {
-        let (world, mut d, mut login) = driver_at_characters_from(Service::default(), start);
-        // At least 1,400 bytes received, then a blob sent a second later: it carries a
-        // `FlowControlHeader` (6 bytes) before its fragment (`official-session.md` §5.5),
-        // two buffers whose sums differ by the two rules.
-        for _ in 0..30 {
-            world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
-        }
-        d.step(0.2, true, &go);
+/// A connected session that sends traffic with two or more buffers: every datagram the
+/// client sent to the login server.
+fn connected_traffic() -> Vec<Vec<u8>> {
+    let start = session_start(0, None, Arc::default());
+    let (world, mut d, mut login) = driver_at_characters_from(Service::default(), start);
+    // At least 1,400 bytes received, then a blob sent a second later: it carries a
+    // `FlowControlHeader` (6 bytes) before its fragment (`official-session.md` §5.5),
+    // buffers whose per-buffer sum differs from the whole-payload one.
+    for _ in 0..30 {
+        world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
+    }
+    d.step(0.2, true, &go);
+    let _ = d.take_events();
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.2,
+    )
+    .expect("enter");
+    let mut t = 1.2;
+    while t < 6.0 {
+        d.step(t, true, &go);
         let _ = d.take_events();
-        d.command(
-            &Command::EnterWorld {
-                character: "Aldo".to_owned(),
-            },
-            1.2,
-        )
-        .expect("enter");
-        let mut t = 1.2;
-        while t < 6.0 {
-            d.step(t, true, &go);
-            let _ = d.take_events();
-            t += 0.5;
-        }
-        world.take_sent()
-    });
-    let sent = sent
+        t += 0.5;
+    }
+    world
+        .take_sent()
         .into_iter()
         .filter(|(_, to)| *to == LOGIN_SERVER)
         .map(|(d, _)| d)
-        .collect();
-    (sent, logs)
+        .collect()
 }
 
 #[test]
-fn the_whole_payload_rule_reaches_every_datagram_sent() {
+fn every_datagram_sent_fits_the_per_buffer_rule_and_not_the_withdrawn_one() {
+    // `official-session.md` §4.4.2: one per-buffer rule on send and on receive; the
+    // whole-payload rule is withdrawn and must fail a multi-buffer datagram.
     let masks = client_masks(4096);
-    let (whole_run, logs) = connected_traffic(SendChecksumRule::WholePayload);
-    assert!(logs.contains("send_checksum=\"whole-payload\""), "{logs}");
-    let (per_run, _) = connected_traffic(SendChecksumRule::PerBuffer);
-    assert!(whole_run.len() >= 4, "{}", whole_run.len());
-    // Every datagram of each run fits its own rule.
-    for (i, dgram) in whole_run.iter().enumerate() {
-        assert!(rules_fitting(dgram, &masks).0, "whole-payload datagram {i}");
-    }
-    for (i, dgram) in per_run.iter().enumerate() {
+    let run = connected_traffic();
+    assert!(run.len() >= 4, "{}", run.len());
+    for (i, dgram) in run.iter().enumerate() {
         assert!(rules_fitting(dgram, &masks).1, "per-buffer datagram {i}");
     }
-    // And the rules differ for some of them: the switch changed bytes on the wire.
-    let differing = whole_run
-        .iter()
-        .filter(|d| rules_fitting(d, &masks) == (true, false))
-        .count();
-    assert!(differing > 0, "no datagram where the rules differ");
-    let per_differing = per_run
+    let differing = run
         .iter()
         .filter(|d| rules_fitting(d, &masks) == (false, true))
         .count();
-    assert!(per_differing > 0);
+    assert!(differing > 0, "no datagram where the rules differ");
 }
 
 /// An independent check of the client's sent checksums (`official-session.md` §4.4, §5.1,
@@ -345,33 +333,49 @@ impl SendOracle {
         }
     }
 
-    /// §4.4.1, from the spec's table.
+    /// §4.4.1, from the spec's table: the length × 65,536 for every buffer, big-endian
+    /// words, the tail in the high positions.
     fn sum(b: &[u8]) -> u32 {
-        let mut acc = 0u32;
+        let len = u32::try_from(b.len()).expect("short");
+        let mut acc = len.wrapping_mul(65_536);
         let whole = b.len() / 4 * 4;
         for w in b[..whole].as_chunks::<4>().0 {
-            acc = acc.wrapping_add(u32::from_le_bytes(*w));
+            acc = acc.wrapping_add(u32::from_be_bytes(*w));
         }
         let tail = &b[whole..];
-        if !tail.is_empty() {
-            let mut t = 0u32;
-            for (j, byte) in tail.iter().enumerate() {
-                t |= u32::from(*byte) << (24 - 8 * j);
-            }
-            let len = u32::try_from(b.len()).expect("short");
-            acc = acc.wrapping_add(t).wrapping_add(len.wrapping_mul(65_536));
+        let mut t = 0u32;
+        for (j, byte) in tail.iter().enumerate() {
+            t |= u32::from(*byte) << (24 - 8 * j);
         }
-        acc
+        acc.wrapping_add(t)
     }
 
-    /// §5.6.1 sizes.
+    /// §5.6.1 sizes: three tiers.
     fn vlen(v: u32) -> usize {
         match v {
             0..=0x7F => 1,
             0x80..=0x3FFF => 2,
-            0x4000..=0x1FFF_FFFF => 4,
-            _ => 5,
+            _ => 4,
         }
+    }
+
+    /// §4.3: the byte length of each optional header the client sends, in ascending flag
+    /// order; a standalone `SessionAuthHeader` is the whole `opt_len`.
+    fn opt_lens(o: &OptionalHeaders, opt_len: usize) -> Vec<usize> {
+        let list = |s: &Option<Vec<u32>>| s.as_ref().map(|v| 4 + 4 * v.len());
+        [
+            list(&o.sequence_nak),
+            list(&o.out_of_order_ack),
+            o.cumulative_ack.map(|_| 4),
+            o.session_auth.as_ref().map(|_| opt_len),
+            o.referral_auth.map(|_| 8),
+            o.connect_accept.map(|_| 28),
+            o.clock_sync.map(|_| 8),
+            o.flow_control.map(|_| 6),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     /// §5.6.3: the even-length fragment header of `h` (fields 1–9; no attachment).
@@ -410,27 +414,23 @@ impl SendOracle {
     /// Checks one uncompressed datagram the client sent; returns whether it was masked.
     fn check(&mut self, datagram: &[u8]) -> bool {
         assert_eq!(&datagram[..2], &[0, 0], "uncompressed");
-        let pkt = decode_datagram(datagram, false, None, false).expect("decodes");
+        let pkt = decode_client_datagram(datagram, false).expect("decodes");
         let payload = &pkt.raw_payload;
-        // The payload split (§4.4.2 step 2): the optional headers (every one a multiple of
-        // four bytes but the 6-byte `FlowControlHeader`, which comes last), then each
-        // fragment's header and its data.
+        // The payload split (§4.4.2 step 2): each optional header, then each fragment's
+        // header and its data, every one its own buffer.
         let frag_bytes: usize = pkt
             .fragments
             .iter()
             .map(|f| Self::header_len(&f.header) + f.payload.len())
             .sum();
         let opt_len = payload.len() - frag_bytes;
-        let flow = if pkt.opt_headers.flow_control.is_some() {
-            6
-        } else {
-            0
-        };
-        let mut sum = Self::sum(&payload[..opt_len - flow]);
-        if flow > 0 {
-            sum = sum.wrapping_add(Self::sum(&payload[opt_len - flow..opt_len]));
+        let mut sum = 0u32;
+        let mut at = 0usize;
+        for n in Self::opt_lens(&pkt.opt_headers, opt_len) {
+            sum = sum.wrapping_add(Self::sum(&payload[at..at + n]));
+            at += n;
         }
-        let mut at = opt_len;
+        assert_eq!(at, opt_len, "the optional headers cover their part");
         for f in &pkt.fragments {
             let h = Self::header_len(&f.header);
             sum = sum.wrapping_add(Self::sum(&payload[at..at + h]));
@@ -445,7 +445,7 @@ impl SendOracle {
         let wire = u32::from_be_bytes([header[12], header[13], header[14], header[15]]);
         header[12..16].copy_from_slice(&[0xBA, 0xDD, 0x70, 0xDD]);
         let hdr_sum = Self::sum(&header);
-        let masked = pkt.header.flags & 0x0200_0000 != 0;
+        let masked = pkt.header.flags & 0x0000_0002 != 0;
         let payload_sum = if masked {
             let seq = pkt.header.seq_num;
             let word = match self.words.get(&seq) {
@@ -522,7 +522,7 @@ fn every_datagram_sent_fits_an_independent_checksum_oracle() {
         if oracle.check(&dgram) {
             masked += 1;
         }
-        let pkt = decode_datagram(&dgram, false, None, false).expect("decodes");
+        let pkt = decode_client_datagram(&dgram, false).expect("decodes");
         if pkt.opt_headers.flow_control.is_some() && !pkt.fragments.is_empty() {
             flow_and_fragment += 1;
         }
@@ -546,15 +546,15 @@ fn every_datagram_sent_fits_an_independent_checksum_oracle() {
     assert!(opcodes.contains(&(0x6F, 3, 0x13)), "{opcodes:?}");
 }
 
-/// The handshake datagrams of a connection on `rule`: the `SessionAuthHeader`, the
+/// The handshake datagrams of a connection: the `SessionAuthHeader`, the
 /// `ConnectAcceptHeader` after a challenge and, on a second connection, the
 /// `ReferralAuthHeader`.
-fn handshake_datagrams(rule: SendChecksumRule) -> Vec<Vec<u8>> {
+fn handshake_datagrams() -> Vec<Vec<u8>> {
     let start = session_start(0, None, Arc::default());
     let auth = start.handoff.session_auth_header(1_000).expect("auth");
     let mut out = Vec::new();
     let mut conn = SessionConnection::new(LOGIN_SERVER, 0.0);
-    conn.set_send_checksum_rule(rule);
+    conn.set_codec_uuids(SYNTHETIC_CODEC_UUIDS);
     conn.start_login(auth, 0.0).expect("login");
     while let Some(d) = conn.pop_outbound_datagram() {
         out.push(d);
@@ -566,7 +566,7 @@ fn handshake_datagrams(rule: SendChecksumRule) -> Vec<Vec<u8>> {
         out.push(d);
     }
     let mut world = SessionConnection::new(WORLD_SERVER, 0.0);
-    world.set_send_checksum_rule(rule);
+    world.set_codec_uuids(SYNTHETIC_CODEC_UUIDS);
     world
         .start_world_login(0x0102_0304_0506_0708, 0.0)
         .expect("referral");
@@ -577,41 +577,43 @@ fn handshake_datagrams(rule: SendChecksumRule) -> Vec<Vec<u8>> {
 }
 
 #[test]
-fn the_handshake_datagrams_are_the_same_under_both_rules() {
-    // One buffer each: the two rules give the same sum, so the switch cannot change a
-    // State-1 or State-2 timeout (`super::super::diag` "The send checksum switch").
-    let per = handshake_datagrams(SendChecksumRule::PerBuffer);
-    let whole = handshake_datagrams(SendChecksumRule::WholePayload);
-    assert_eq!(per.len(), 3);
-    assert_eq!(per, whole);
-    let kinds: Vec<(bool, bool, bool)> = per
+fn the_handshake_datagrams_are_one_buffer_each() {
+    // One buffer each, so the per-buffer and the withdrawn whole-payload sums agree; the
+    // auth and the accept carry sequence 0, the referral the kept counter value 1
+    // (`official-session.md` §5.1, §6.4; OPEN-SESSION-9).
+    let datagrams = handshake_datagrams();
+    assert_eq!(datagrams.len(), 3);
+    let kinds: Vec<(bool, bool, bool, u32)> = datagrams
         .iter()
         .map(|d| {
-            let o = decode_datagram(d, false, None, false)
-                .expect("decodes")
-                .opt_headers;
+            assert_eq!(rules_fitting(d, &[]), (true, true));
+            let p = decode_client_datagram(d, true).expect("decodes");
+            let o = p.opt_headers;
             (
                 o.session_auth.is_some(),
                 o.connect_accept.is_some(),
                 o.referral_auth.is_some(),
+                p.header.seq_num,
             )
         })
         .collect();
     assert_eq!(
         kinds,
         [
-            (true, false, false),
-            (false, true, false),
-            (false, false, true)
+            (true, false, false, 0),
+            (false, true, false, 0),
+            (false, false, true, 1)
         ]
     );
 }
 
 #[test]
-fn the_chat_connection_uses_the_send_checksum_rule() {
-    for rule in [SendChecksumRule::WholePayload, SendChecksumRule::PerBuffer] {
-        let mut start = session_start(0, Some(CHAT_SERVER), Arc::default());
-        start.send_checksum = rule;
+fn the_chat_challenge_is_an_unsupported_negotiation() {
+    // `official-session.md` §6.3, §7.3 (OPEN-SESSION-1): the chat dictionary source is not
+    // known, so the chat connection has no dictionaries and its challenge is refused with
+    // the explicit unsupported result, logged as a chat handshake failure.
+    let ((), logs) = logs_of(|| {
+        let start = session_start(0, Some(CHAT_SERVER), Arc::default());
         let (world, mut d, mut login) = driver_at_characters_from(
             Service {
                 chat_socket: true,
@@ -638,83 +640,36 @@ fn the_chat_connection_uses_the_send_checksum_rule() {
             &go,
         );
         d.step(2.3, true, &go);
-        let mut chat = Server::new(0x0111, 0xBEEF_0003);
+        let chat = Server::new(0x0111, 0xBEEF_0003);
         world.deliver_chat(chat.challenge(0xBEEF_0003));
-        world.deliver_chat(chat.control(OptionalHeaders {
-            cumulative_ack: Some(0),
-            ..OptionalHeaders::default()
-        }));
-        let status = crate::chat_session::events::ChatEvent::LoginStatus { status: 0 };
-        world.deliver_chat(chat.event(status.opcode(), &status.encode().expect("status")));
-        // Rooms worth more than 1,400 bytes, then silence until the heartbeat (15 s idle):
-        // the heartbeat's blob carries a `FlowControlHeader` before its fragment.
-        for i in 0..60 {
-            let add = crate::chat_session::events::ChatEvent::AddRoom {
-                notice_flags: 0,
-                room: crate::chat_session::wire::ChatRoomDescriptor::new(
-                    crate::chat_session::wire::DescriptorKind::UserRoom,
-                    0,
-                    format!("room{i}"),
-                ),
-            };
-            let inner = add.encode().expect("event");
-            world.deliver_chat(chat.event(add.opcode(), &inner));
-        }
-        let mut t = 2.4;
-        while t < 20.0 {
-            d.step(t, true, &go);
-            let _ = d.take_events();
-            t += 0.5;
-        }
-        let masks = client_masks(4096);
-        let chat_sent: Vec<Vec<u8>> = world
+        d.step(2.4, true, &go);
+        let _ = d.take_events();
+        // No accept went to the chat server.
+        let accepts = world
             .take_sent()
             .into_iter()
             .filter(|(_, to)| *to == CHAT_SERVER)
-            .map(|(d, _)| d)
-            .collect();
-        assert!(chat_sent.len() > 3, "{}", chat_sent.len());
-        let fits: Vec<(bool, bool)> = chat_sent.iter().map(|d| rules_fitting(d, &masks)).collect();
-        match rule {
-            SendChecksumRule::WholePayload => {
-                assert!(fits.iter().all(|f| f.0), "{fits:?}");
-                assert!(fits.contains(&(true, false)), "{fits:?}");
-            }
-            SendChecksumRule::PerBuffer => {
-                assert!(fits.iter().all(|f| f.1), "{fits:?}");
-                assert!(fits.contains(&(false, true)), "{fits:?}");
-            }
-        }
-    }
+            .filter(|(d, _)| {
+                decode_client_datagram(d, false)
+                    .is_ok_and(|p| p.opt_headers.connect_accept.is_some())
+            })
+            .count();
+        assert_eq!(accepts, 0);
+    });
+    let failed: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("official chat session: handshake failed"))
+        .collect();
+    assert!(
+        failed.iter().any(|l| l.contains("UnsupportedCodec")),
+        "{logs}"
+    );
+    assert_no_endpoint(&logs);
 }
 
-/// A `ConnectChallengeHeader` naming `codec_uuid`.
+/// A `ConnectChallengeHeader` naming the dictionary whose on-disk UUID is `codec_uuid`.
 fn challenge_with_codec(codec_uuid: [u8; 16]) -> Vec<u8> {
-    let opt = OptionalHeaders {
-        connect_challenge: Some(ConnectChallengeHeader {
-            server_time: 1.0,
-            assigned_client_rec_id: 0x0111,
-            server_rec_id: 0x0222,
-            outgoing_seed: 0xCAFE_1234,
-            incoming_seed: 1,
-            reserved_dword_14: 0,
-            client_conn_idx: 4,
-            reserved_word_1a: 0,
-            codec_uuid,
-        }),
-        ..OptionalHeaders::default()
-    };
-    encode_datagram(
-        DatagramHeader {
-            rec_id: 0x0111,
-            ..DatagramHeader::default()
-        },
-        &opt,
-        &[],
-        None,
-        None,
-    )
-    .expect("challenge")
+    challenge_datagram(0x0111, 0x0222, 0, 1, 0xCAFE_1234, codec_uuid)
 }
 
 #[test]
@@ -750,6 +705,36 @@ fn an_unsupported_codec_challenge_is_counted_once() {
         assert!(line.contains(field), "{field} missing: {line}");
     }
     assert_no_endpoint(&logs);
+}
+
+#[test]
+fn a_null_or_unconverted_or_outgoing_challenge_uuid_is_unsupported() {
+    // `official-session.md` §7.3: the challenge's bytes 28..43 are the incoming dictionary's
+    // UUID converted field-wise; a null UUID, the raw on-disk bytes (unconverted) and the
+    // outgoing dictionary's UUID are each the explicit unsupported result.
+    let incoming = INCOMING_UUID;
+    let outgoing = OUTGOING_UUID;
+    for named in [[0u8; 16], guid_fields_swapped(incoming), outgoing] {
+        let (world, mut d) = driver_at_login(Service::default(), 0);
+        world.take_sent();
+        world.deliver(challenge_with_codec(named), LOGIN_SERVER);
+        d.step(0.0, true, &go);
+        assert!(d.ended(), "{named:02X?}");
+        let r = d.handshake_report(false, 0.0).expect("report");
+        assert_eq!(r.link.rejected.codec, 1, "{named:02X?}");
+        assert!(
+            world.take_sent().iter().all(|(d, _)| {
+                decode_client_datagram(d, false)
+                    .is_ok_and(|p| p.opt_headers.connect_accept.is_none())
+            }),
+            "no accept for {named:02X?}"
+        );
+    }
+    // The converted incoming UUID is accepted.
+    let (world, mut d) = driver_at_login(Service::default(), 0);
+    world.deliver(challenge_with_codec(incoming), LOGIN_SERVER);
+    d.step(0.0, true, &go);
+    assert!(!d.ended());
 }
 
 #[test]
@@ -835,97 +820,6 @@ fn errors_and_links_print_no_address_in_debug() {
     let (_world, d) = driver_at_login(Service::default(), 0);
     let t = format!("{d:?}");
     assert!(!t.contains("192.0.2."), "{t}");
-}
-
-#[test]
-fn the_two_rules_differ_only_in_the_checksum() {
-    // Two optional header buffers, the first not a multiple of 4 bytes long: the rules
-    // give different sums (`send_payload_checksum`).
-    let opt = OptionalHeaders {
-        flow_control: Some(crate::session::FlowControlHeader {
-            bytes_received_delta: 0x0102_0304,
-            interval_ms: 0x0506,
-        }),
-        clock_sync: Some(12.5),
-        ..OptionalHeaders::default()
-    };
-    let hdr = DatagramHeader {
-        rec_id: 0x0222,
-        ..DatagramHeader::default()
-    };
-    let per = encode_datagram_with_rule(hdr, &opt, &[], None, None, SendChecksumRule::PerBuffer)
-        .expect("per-buffer");
-    let whole =
-        encode_datagram_with_rule(hdr, &opt, &[], None, None, SendChecksumRule::WholePayload)
-            .expect("whole-payload");
-    // `encode_datagram` (the synthetic peers' encoder) uses the receive rule.
-    assert_eq!(
-        whole,
-        encode_datagram(hdr, &opt, &[], None, None).expect("peer")
-    );
-    assert_eq!(per.len(), whole.len());
-    let differing: Vec<usize> = per
-        .iter()
-        .zip(&whole)
-        .enumerate()
-        .filter(|(_, (a, b))| a != b)
-        .map(|(i, _)| i)
-        .collect();
-    assert!(!differing.is_empty());
-    // Only the checksum field (wire prefix 2 + header bytes 12..16).
-    assert!(
-        differing.iter().all(|i| (14..18).contains(i)),
-        "{differing:?}"
-    );
-    // The receiver's rule accepts the whole-payload sum and refuses the per-buffer one.
-    assert!(decode_datagram(&whole, true, None, true).is_ok());
-    assert!(matches!(
-        decode_datagram(&per, true, None, true),
-        Err(SessionError::ChecksumMismatch { .. })
-    ));
-}
-
-#[test]
-fn the_switch_reads_two_names_and_refuses_the_rest() {
-    use std::ffi::OsStr;
-    let ((), logs) = logs_of(|| {
-        assert_eq!(send_checksum_rule(None), SendChecksumRule::PerBuffer);
-        assert_eq!(
-            send_checksum_rule(Some(OsStr::new("per-buffer"))),
-            SendChecksumRule::PerBuffer
-        );
-        assert_eq!(
-            send_checksum_rule(Some(OsStr::new("whole-payload"))),
-            SendChecksumRule::WholePayload
-        );
-        // Exactly the two names: no other case, no surrounding spaces.
-        for bad in [
-            "",
-            "whole",
-            "wholepayload",
-            "1",
-            "per_buffer",
-            " whole-payload",
-            "Whole-Payload",
-            "PER-BUFFER",
-        ] {
-            assert_eq!(
-                send_checksum_rule(Some(OsStr::new(bad))),
-                SendChecksumRule::PerBuffer,
-                "{bad}"
-            );
-        }
-    });
-    assert_eq!(
-        logs.matches("unknown send checksum rule refused").count(),
-        8,
-        "{logs}"
-    );
-    assert!(logs.contains(" WARN "), "{logs}");
-    assert!(
-        !logs.contains("per_buffer") && !logs.contains("PER-BUFFER"),
-        "the value is not logged: {logs}"
-    );
 }
 
 #[test]

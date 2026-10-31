@@ -42,9 +42,9 @@ use crate::play::PlayError;
 use crate::play::chat::{ChatCategories, MAX_ARGUMENT_UNITS, MAX_CHAT_UNITS};
 use crate::play::{check_units, clean_display_name};
 use crate::session::{
-    BindPlan, BitTreeCodec, CHAT_MAX_RECV_RATE, ConnectionState,
-    DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, MAX_DATAGRAM_BUF, SendChecksumRule, SessionAuthHeader,
-    SessionConnection, SessionEvent, SessionMultiplexer, UdpDatagramTransport, WireCodecs,
+    BindPlan, BitTreeCodec, CHAT_MAX_RECV_RATE, CodecUuids, ConnectionState,
+    DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, MAX_DATAGRAM_BUF, SessionAuthHeader, SessionConnection,
+    SessionEvent, SessionMultiplexer, UdpDatagramTransport, WireCodecs,
 };
 use crate::world::{PropertySchemaLookup, decode_event_envelope, encode_event_envelope};
 
@@ -104,18 +104,17 @@ pub struct ChatConfig {
     ticket_base64: Option<String>,
     /// Unix time in seconds when the transport was initialised (`clientTimestamp`).
     pub client_timestamp: u32,
-    /// The `payloadSum` rule of every datagram the chat connection sends
-    /// (`official-session.md` §4.4.2; `crate::connector::diag` "The send checksum switch");
-    /// the default is the spec's sender rule.
-    pub send_checksum: SendChecksumRule,
     /// The first local IPv4 address, the Case B seed of the sockets [`ChatClient::open`]
     /// binds (`official-session.md` §3.2: the chat transport uses the defaults); `None`
     /// binds Case C.
     pub first_local: Option<Ipv4Addr>,
-    /// The `codecUuid`s of the install's loaded dictionaries (`official-session.md` §4.1.2),
-    /// registered on every chat connection: a `ConnectChallengeHeader` naming one of them is
-    /// accepted (§6.4 step 3).
-    pub codec_uuids: Vec<[u8; 16]>,
+    /// Directional dictionary UUIDs for the chat connection, `None` by default, and every
+    /// production caller leaves it so: the chat dictionary source is `OPEN-SESSION-1`
+    /// (`official-session.md` §6.3, §7.3; the primary rule does not apply to chat), so a
+    /// chat `ConnectChallengeHeader` is an explicit unsupported-negotiation result
+    /// (`DisconnectReason::UnsupportedCodec`). Synthetic tests set it to reach the chat
+    /// protocol above the handshake ([`Self::with_codec_uuids`]).
+    pub codec_uuids: Option<CodecUuids>,
 }
 
 impl Drop for ChatConfig {
@@ -136,9 +135,8 @@ impl std::fmt::Debug for ChatConfig {
             .field("account", &"<redacted>")
             .field("ticket", &self.ticket_base64.as_ref().map(|_| "<redacted>"))
             .field("client_timestamp", &self.client_timestamp)
-            .field("send_checksum", &self.send_checksum)
             .field("first_local", &self.first_local.map(|_| "<set>"))
-            .field("codec_uuids", &self.codec_uuids.len())
+            .field("codec_uuids", &self.codec_uuids.is_some())
             .finish()
     }
 }
@@ -158,17 +156,17 @@ impl ChatConfig {
             account: account.into(),
             ticket_base64,
             client_timestamp,
-            send_checksum: SendChecksumRule::default(),
             first_local: None,
-            codec_uuids: Vec::new(),
+            codec_uuids: None,
         }
     }
 
-    /// This configuration with `uuids`, the `codecUuid`s of the loaded dictionaries, which
-    /// every chat connection registers before its login (`official-session.md` §6.4 step 3).
+    /// This configuration with directional dictionary UUIDs for synthetic tests (see
+    /// [`Self::codec_uuids`]). No production caller uses it: the chat dictionary source is
+    /// `OPEN-SESSION-1` (`official-session.md` §6.3).
     #[must_use]
-    pub fn with_codec_uuids(mut self, uuids: Vec<[u8; 16]>) -> Self {
-        self.codec_uuids = uuids;
+    pub fn with_codec_uuids(mut self, uuids: CodecUuids) -> Self {
+        self.codec_uuids = Some(uuids);
         self
     }
 
@@ -177,14 +175,6 @@ impl ChatConfig {
     #[must_use]
     pub fn with_first_local(mut self, first_local: Option<Ipv4Addr>) -> Self {
         self.first_local = first_local;
-        self
-    }
-
-    /// This configuration with the send checksum `rule` for every datagram of the chat
-    /// connection.
-    #[must_use]
-    pub fn with_send_checksum(mut self, rule: SendChecksumRule) -> Self {
-        self.send_checksum = rule;
         self
     }
 
@@ -580,12 +570,12 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         self.transport_used = true;
         match self.mux.connection_mut(id) {
             Some(conn) => {
-                // The loaded dictionaries, so a challenge naming one is accepted
-                // (`official-session.md` §6.4 step 3, §7.3).
-                for u in &self.config.codec_uuids {
-                    conn.register_codec_uuid(*u);
+                // No dictionaries unless a synthetic test set them: the chat dictionary
+                // source is OPEN-SESSION-1, so a live chat challenge is refused as an
+                // unsupported negotiation (`official-session.md` §6.3, §7.3).
+                if let Some(uuids) = self.config.codec_uuids {
+                    conn.set_codec_uuids(uuids);
                 }
-                conn.set_send_checksum_rule(self.config.send_checksum);
                 // `maxRecvRate` of the chat connection (`official-session.md` §6.4).
                 conn.set_max_recv_rate(CHAT_MAX_RECV_RATE);
                 conn.start_login(auth, now)?;
@@ -869,7 +859,6 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                 &conn.handshake_counts(),
                 self.counters.transport_errors,
                 self.counters.recv_errors,
-                conn.send_checksum_rule(),
             );
         }
     }

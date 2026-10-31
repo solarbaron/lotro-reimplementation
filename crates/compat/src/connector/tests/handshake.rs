@@ -6,9 +6,7 @@
 
 use super::*;
 use crate::login::NetPreferences;
-use crate::session::{
-    BindPlan, BindPorts, LOGON_RESULT_QUEUED, LoginQueuePosition, decode_datagram,
-};
+use crate::session::{BindPlan, BindPorts, LOGON_RESULT_QUEUED, LoginQueuePosition};
 
 /// The bind plans the synthetic network was asked for.
 fn plans(world: &World) -> Vec<BindPlan> {
@@ -37,14 +35,20 @@ fn the_socket_binds_the_wildcard_with_case_b_by_default() {
         }]
     );
     assert_eq!(d.first_local_ipv4(), Some(*LOCAL.ip()));
-    // The first datagram is the §6.2 one: `seqNum` 1, `time` 0, the primary mode.
+    // The first datagram is the §6.2 one: `seqNum` 0, the final four header bytes 0, the
+    // primary mode.
     let sent = world.take_sent();
     let (first, to) = sent.first().expect("first datagram");
     assert_eq!(*to, LOGIN_SERVER);
-    let pkt = decode_datagram(first, false, None, true).expect("decodes");
+    let pkt = decode_client_datagram(first, true).expect("decodes");
     assert_eq!(
-        (pkt.header.rec_id, pkt.header.seq_num, pkt.header.time),
-        (0, 1, 0)
+        (
+            pkt.header.rec_id,
+            pkt.header.seq_num,
+            pkt.header.client_word,
+            pkt.header.peer_word
+        ),
+        (0, 0, 0, 0)
     );
     let auth = pkt.opt_headers.session_auth.expect("SessionAuthHeader");
     assert_eq!(
@@ -158,14 +162,28 @@ fn accept_after_challenge(start: SessionStart) -> crate::session::ConnectAcceptH
     d.step(0.1, true, &go);
     let sent = world.take_sent();
     let (accept, _) = sent.first().expect("accept");
-    let pkt = decode_datagram(accept, false, None, true).expect("decodes");
-    // §6.4 step 4: `recId` is the server's, `seqNum` 1, `time` 0.
+    let pkt = decode_client_datagram(accept, true).expect("decodes");
+    // §6.4: `recId` from the challenge's payload bytes 18..19, `seqNum` 0, the client word
+    // 1 and the challenge header's bytes 18..19.
     assert_eq!(
-        (pkt.header.rec_id, pkt.header.seq_num, pkt.header.time),
-        (0x0222, 1, 0)
+        (
+            pkt.header.rec_id,
+            pkt.header.seq_num,
+            pkt.header.client_word,
+            pkt.header.peer_word
+        ),
+        (0x0222, 0, 1, 0x3344)
     );
     assert_eq!(d.connection_ids().0, 0x0111);
-    pkt.opt_headers.connect_accept.expect("ConnectAcceptHeader")
+    let accept = pkt.opt_headers.connect_accept.expect("ConnectAcceptHeader");
+    // §6.4, §7.3: the cookie reversed and the outgoing dictionary's on-disk UUID.
+    assert_eq!(
+        accept.check_value.to_le_bytes(),
+        [8, 7, 6, 5, 4, 3, 2, 1],
+        "the cookie reversed"
+    );
+    assert_eq!(accept.codec_uuid, OUTGOING_UUID);
+    accept
 }
 
 #[test]
@@ -199,7 +217,7 @@ fn the_client_messages_go_on_the_queues_of_the_outbound_table() {
     let frags: Vec<_> = world
         .take_sent()
         .iter()
-        .filter_map(|(d, _)| decode_datagram(d, false, None, false).ok())
+        .filter_map(|(d, _)| decode_client_datagram(d, false).ok())
         .flat_map(|p| p.fragments)
         .map(|f| f.header)
         .collect();
@@ -261,7 +279,10 @@ fn a_negative_logon_result_ends_the_session_and_zero_is_accepted() {
         }),
     };
     world.deliver(
-        login.blob(0x130, &encode_event_envelope(&queued.encode())),
+        login.blob(
+            0x130,
+            &encode_event_envelope(&queued.encode().expect("encode")),
+        ),
         LOGIN_SERVER,
     );
     let accepted = LoginQueueStatusMessage {
@@ -270,7 +291,10 @@ fn a_negative_logon_result_ends_the_session_and_zero_is_accepted() {
         queue: None,
     };
     world.deliver(
-        login.blob(0x130, &encode_event_envelope(&accepted.encode())),
+        login.blob(
+            0x130,
+            &encode_event_envelope(&accepted.encode().expect("encode")),
+        ),
         LOGIN_SERVER,
     );
     d.step(0.1, true, &go);
@@ -292,7 +316,10 @@ fn a_negative_logon_result_ends_the_session_and_zero_is_accepted() {
         queue: None,
     };
     world.deliver(
-        login.blob(0x130, &encode_event_envelope(&refused.encode())),
+        login.blob(
+            0x130,
+            &encode_event_envelope(&refused.encode().expect("encode")),
+        ),
         LOGIN_SERVER,
     );
     d.step(0.2, true, &go);
@@ -317,7 +344,8 @@ fn a_version_status_of_0_refuses_and_another_value_is_ignored() {
             status,
             server_version_info: "v".to_owned(),
         }
-        .encode();
+        .encode()
+        .expect("encode");
         encode_event_envelope(&m)
     };
     let (world, mut d) = started(session_start(0, None, Arc::default()));

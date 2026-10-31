@@ -7,7 +7,8 @@
 //! space `0x15C..=0x195` plus `0x1A2`. Parts:
 //!
 //! - this file: the endpoint rule of §6.1.1 and the `SessionAuthHeader` of §6.6.2 (ticket
-//!   authentication with the undecoded ASCII Base64 GLS ticket, `netVersion` `"180804"`);
+//!   authentication with the undecoded ASCII Base64 GLS ticket, the interim `netVersion`
+//!   [`crate::session::CHAT_NET_VERSION_INTERIM`], `OPEN-SESSION-11`);
 //! - [`wire`]: `ChatRoomDescriptor`, the container encodings and `ChatMessagePayload`
 //!   (§6.6.4);
 //! - [`events`]: all 59 events of the catalogue (§6.6.5) as typed requests and events;
@@ -86,7 +87,9 @@ pub fn check_ticket(s: &str) -> Result<(), PlayError> {
 }
 
 /// Builds the chat-server `SessionAuthHeader` (§6.6.2 item 1, `official-session.md`
-/// §6.2–§6.2.1): `netVersion` `"180804"`, `authType = 0x40000002`, and with a ticket
+/// §6.2–§6.2.1): the interim `netVersion` [`crate::session::CHAT_NET_VERSION_INTERIM`]
+/// (`"180804_chat_fe_2_3"`, build-specific, `OPEN-SESSION-11`), `authType = 0x40000002`, and
+/// with a ticket
 /// `authFlags = 0x04` and the ticket's ASCII Base64 text (undecoded) in `extraBlob`;
 /// without one, `authFlags = 0` (account only). `client_timestamp` is the Unix time in
 /// seconds when the transport was initialised. An empty ticket counts as none.

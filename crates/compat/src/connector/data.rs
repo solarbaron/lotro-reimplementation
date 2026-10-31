@@ -21,7 +21,7 @@ use crate::login::{
     root_did_map_from_superblock,
 };
 use crate::play::chat::{ChatCategories, LiteralTexts, TextResolver};
-use crate::session::{BitTreeCodec, BitTreeTable};
+use crate::session::{BitTreeCodec, BitTreeTable, CodecUuids};
 use crate::world::{
     EncodedPropertyValue, LocalizedTokenText, PortalStateSchema, PortalStateSchemaLookup,
     PropertySchemaLookup, PropertyType,
@@ -215,8 +215,8 @@ pub struct LocalInputs {
     pub version: VersionInfo,
     /// The two wire codecs (`official-session.md` §4.1.2).
     pub codecs: ChatCodecs,
-    /// The `codecUuid`s of the loaded dictionaries (`official-session.md` §6.4 step 3).
-    pub codec_uuids: Vec<[u8; 16]>,
+    /// The loaded dictionaries' UUIDs by direction (`official-session.md` §7.3).
+    pub codec_uuids: CodecUuids,
     /// The `[Net]` keys of `UserPreferences.ini` (`official-session.md` §3.2 item 1), the
     /// defaults without a preferences file.
     pub net: NetPreferences,
@@ -284,7 +284,7 @@ fn dictionary(
 /// The two wire codecs from the install (`official-login.md` §2.4.3; `official-session.md`
 /// §4.1.2–§4.1.3): the root DID map from `client_general.dat`'s superblock, its compression
 /// dictionary sub-map, then `0x10000002` (client to server) and `0x10000001` (server to
-/// client, through its deferred redirect).
+/// client, through its deferred redirect), with their two UUIDs by direction (§7.3).
 ///
 /// # Errors
 ///
@@ -292,7 +292,7 @@ fn dictionary(
 pub(crate) fn load_codecs(
     install_root: &Path,
     data: &dyn InstallData,
-) -> Result<(ChatCodecs, Vec<[u8; 16]>), LoginError> {
+) -> Result<(ChatCodecs, CodecUuids), LoginError> {
     let header = archive_header(&install_root.join(GENERAL_ARCHIVE))?;
     let root_did = root_did_map_from_superblock(&header)?;
     let root = record(data, root_did)?;
@@ -301,10 +301,12 @@ pub(crate) fn load_codecs(
     let map = DataIdMap::parse(&sub)?;
     let (outgoing, out_uuid) = dictionary(data, &map, DICT_KEY_CLIENT_TO_SERVER)?;
     let (incoming, in_uuid) = dictionary(data, &map, DICT_KEY_SERVER_TO_CLIENT_DEFERRED)?;
-    let mut uuids = vec![out_uuid];
-    if in_uuid != out_uuid {
-        uuids.push(in_uuid);
-    }
+    // Kept apart by direction (`official-session.md` §7.3): the challenge must name the
+    // incoming one, the accept carries the outgoing one.
+    let uuids = CodecUuids {
+        incoming: in_uuid,
+        outgoing: out_uuid,
+    };
     Ok((
         ChatCodecs {
             incoming: Some(incoming),

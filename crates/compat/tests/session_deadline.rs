@@ -8,10 +8,11 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use tessera_compat::connector::worker::{LOOP_WAIT_MAX, LOOP_WAIT_MIN, loop_wait};
 use tessera_compat::session::{
-    AuthConnection, BLOB_REASSEMBLY_EXPIRY_SEC, BlobFragment, CLOSING_CLEANUP_SEC,
+    AuthConnection, BLOB_REASSEMBLY_EXPIRY_SEC, BlobFragment, CLOSING_CLEANUP_SEC, CodecUuids,
     ConnectChallengeHeader, ConnectionState, DISCONNECT_FLUSH_LIMIT_SEC, DISCONNECT_SENT_LIMIT_SEC,
     DatagramHeader, EXTENDED_SILENCE_TIMEOUT_SEC, IsaacCipher, OptionalHeaders, SessionAuthHeader,
-    SessionError, SessionEvent, SessionMultiplexer, WireCodecs, encode_datagram, split_blob,
+    SessionError, SessionEvent, SessionMultiplexer, WireCodecs, encode_datagram,
+    guid_fields_swapped, split_blob,
 };
 
 /// An account-only `SessionAuthHeader` of the primary connection (`official-session.md`
@@ -31,6 +32,11 @@ const SERVER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 40), 
 const OTHER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 41), 9000);
 const ASSIGNED: u16 = 0x0111;
 const SEED: u32 = 0xBEEF_0042;
+/// The synthetic dictionaries' on-disk UUIDs (`official-session.md` §7.3).
+const UUIDS: CodecUuids = CodecUuids {
+    incoming: [0x21; 16],
+    outgoing: [0x12; 16],
+};
 /// Less than any timer step and more than float noise.
 const JUST_BEFORE: f64 = 1e-3;
 
@@ -43,6 +49,7 @@ fn at_login(t: f64) -> (SessionMultiplexer, u16) {
     let mut mux = SessionMultiplexer::new();
     let id = mux.create_connection(SERVER, t).expect("id");
     let conn = mux.connection_mut(id).expect("conn");
+    conn.set_codec_uuids(UUIDS);
     conn.start_login(account_auth("A", 0).expect("auth"), t)
         .expect("login");
     drain(&mut mux, id);
@@ -68,15 +75,13 @@ fn challenge() -> Vec<u8> {
         },
         &OptionalHeaders {
             connect_challenge: Some(ConnectChallengeHeader {
-                server_time: 1.0,
-                assigned_client_rec_id: ASSIGNED,
-                server_rec_id: 0x0222,
-                outgoing_seed: 0xCAFE_1234,
+                clock_candidate: 1.0,
+                cookie: [1, 2, 3, 4, 5, 6, 7, 8],
+                reserved_16: [0, 0],
+                outgoing_rec_id: 0x0222,
                 incoming_seed: SEED,
-                reserved_dword_14: 0,
-                client_conn_idx: 4,
-                reserved_word_1a: 0,
-                codec_uuid: [0u8; 16],
+                outgoing_seed: 0xCAFE_1234,
+                incoming_codec_guid: guid_fields_swapped(UUIDS.incoming),
             }),
             ..OptionalHeaders::default()
         },

@@ -107,7 +107,7 @@ fn sent_payloads(world: &World, op: u32) -> Vec<Vec<u8>> {
     world
         .take_sent()
         .into_iter()
-        .filter_map(|(d, _)| decode_datagram(&d, false, None, false).ok())
+        .filter_map(|(d, _)| decode_client_datagram(&d, false).ok())
         .flat_map(|pkt| pkt.fragments)
         .filter(|f| f.header.blob_header_word == Some(op))
         .filter_map(|f| f.payload.get(1..).map(<[u8]>::to_vec))
@@ -1407,6 +1407,8 @@ fn the_user_rooms_joined_take_the_user_channel_slots_of_world_chat() {
     d.step(1.1, true, &go);
     let (player, name) = d.wants_chat(1.2).expect("the chat session is due");
     let net = FakeNet(world.clone());
+    // Synthetic chat dictionaries, to reach the chat protocol (live runs have none).
+    d.set_chat_codec_uuids_for_tests(SYNTHETIC_CODEC_UUIDS);
     d.attach_chat(
         net.chat_binder(None).expect("binder"),
         player,

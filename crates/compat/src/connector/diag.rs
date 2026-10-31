@@ -13,8 +13,7 @@
 //!   `official session: handshake started`, with the labels of [`HandshakeReport`]: the
 //!   §3.2 bind case ([`BindCase`]), where the local address came from ([`LocalSource`]),
 //!   the form of the remote address ([`RemoteForm`], [`RemoteName`]), the §6.2.1
-//!   authentication mode ([`AuthMode`]), the send checksum rule ([`SendChecksumRule`]) and
-//!   the `netVersion` string in full (a version label, not a secret; `none` on a world
+//!   authentication mode ([`AuthMode`]) and the `netVersion` string in full (a version label, not a secret; `none` on a world
 //!   connection, whose `ReferralAuthHeader` carries none).
 //! - While a connection waits in its handshake (States `1` and `2`), every
 //!   [`HANDSHAKE_REPORT_SEC`] one `debug` line, `official session: handshake waiting`, with
@@ -28,24 +27,11 @@
 //!   logs `official chat session: handshake failed` (`info`, [`log_chat_failed`]) when it
 //!   closes from its handshake, with the connection's own counts.
 //!
-//! # The send checksum switch
+//! # The checksum rule
 //!
-//! [`SEND_CHECKSUM_ENV`] (`TESSERA_OFFICIAL_SEND_CHECKSUM`) is read once when the
-//! connector's thread starts ([`send_checksum_from_env`]): exactly `per-buffer` (the
-//! default, the §4.4.2 sender rule) or exactly `whole-payload` (the §4.4.2 receiver rule
-//! applied on send). Any other value (another case, surrounding spaces) is refused with a
-//! `warn` line that does not repeat it, and the default is used. The rule applies to every
-//! datagram the client sends: the login and world connections and the chat-server
-//! connection. The receive rule never changes. This is a live-verification aid for the
-//! contested rule (`docs/m8-remediation.md` §15, S §4.4.2), off by default
-//! (`docs/DEVELOPMENT.md`).
-//!
-//! The two rules give different bytes only for a datagram with two or more buffers (optional
-//! headers and fragments, [`crate::session::send_payload_checksum`]). The handshake's own
-//! datagrams (`SessionAuthHeader`, `ReferralAuthHeader`, `ConnectAcceptHeader`) carry one
-//! buffer each and are byte-identical under both rules, so the switch cannot change a
-//! State-`1` or State-`2` timeout; it is for a session that connects but whose later
-//! traffic goes unanswered. Engineering choices, spec silent.
+//! Every datagram is sent and verified with the one per-buffer `payloadSum` of
+//! `official-session.md` §4.4.2 ([`crate::session::payload_checksum`]); the earlier
+//! whole-payload rule and its live-verification switch are withdrawn by the spec.
 //!
 //! # The login server switch
 //!
@@ -53,7 +39,7 @@
 //! entry of the world status's `<loginservers>`. [`LOGIN_SERVER_ENV`]
 //! (`TESSERA_OFFICIAL_LOGIN_SERVER`), read once when the connector's thread starts
 //! ([`login_server_from_env`]), is a deliberate departure from that rule, for live
-//! verification only and off by default, as the checksum switch is: a 1-based index into
+//! verification only and off by default: a 1-based index into
 //! the non-empty entries ([`login_server_entry`]), so only addresses of the service's own
 //! status answer are ever used. Unset, entry 1 is used (the spec rule, unchanged). A
 //! value that is not a decimal in `1..=count` (another form, surrounding spaces, `0`, more
@@ -69,11 +55,8 @@ use std::net::Ipv4Addr;
 
 use crate::session::{
     AUTH_FLAG_HAS_EXTRA_BLOB, AUTH_FLAG_HAS_SECOND_STRING, AUTH_TYPE_CHAT, AUTH_TYPE_PRIMARY,
-    BindPorts, ConnectionState, HandshakeCounts, SendChecksumRule, SessionError, decode_datagram,
+    BindPorts, ConnectionState, HandshakeCounts, SessionError, decode_datagram,
 };
-
-/// The environment variable of the send checksum switch (module docs).
-pub const SEND_CHECKSUM_ENV: &str = "TESSERA_OFFICIAL_SEND_CHECKSUM";
 
 /// Every how many seconds a connection still in its handshake logs its counts (`debug`).
 pub const HANDSHAKE_REPORT_SEC: f64 = 5.0;
@@ -160,35 +143,6 @@ pub fn login_server_entry(value: Option<&OsStr>, count: usize) -> LoginServerEnt
 #[must_use]
 pub fn login_server_from_env() -> Option<OsString> {
     std::env::var_os(LOGIN_SERVER_ENV)
-}
-
-/// The send checksum rule for the variable's value `value` (`None`: unset). An unknown
-/// value (or one that is not Unicode) is refused with a `warn` line, without the value,
-/// and the default rule is used.
-#[must_use]
-pub fn send_checksum_rule(value: Option<&std::ffi::OsStr>) -> SendChecksumRule {
-    let Some(raw) = value else {
-        return SendChecksumRule::default();
-    };
-    match raw.to_str().and_then(SendChecksumRule::parse) {
-        Some(rule) => rule,
-        None => {
-            tracing::warn!(
-                variable = SEND_CHECKSUM_ENV,
-                used = SendChecksumRule::default().label(),
-                "official session: unknown send checksum rule refused (per-buffer or \
-                 whole-payload); the default is used"
-            );
-            SendChecksumRule::default()
-        }
-    }
-}
-
-/// [`send_checksum_rule`] of the process environment's [`SEND_CHECKSUM_ENV`]; read once,
-/// when the connector's thread starts.
-#[must_use]
-pub fn send_checksum_from_env() -> SendChecksumRule {
-    send_checksum_rule(std::env::var_os(SEND_CHECKSUM_ENV).as_deref())
 }
 
 /// Which case of `official-session.md` §3.2 item 3 chose the session's local port, as a
@@ -548,8 +502,6 @@ pub struct HandshakeReport {
     pub remote_name: RemoteName,
     /// The authentication of the connection's first datagram.
     pub auth: AuthMode,
-    /// The send checksum rule.
-    pub send_checksum: SendChecksumRule,
 }
 
 impl HandshakeReport {
@@ -571,7 +523,6 @@ impl HandshakeReport {
             remote = self.remote.label(),
             remote_name = self.remote_name.label(),
             auth = self.auth.label(),
-            send_checksum = self.send_checksum.label(),
             net_version = net_version.unwrap_or("none"),
             "official session: handshake started"
         );
@@ -606,7 +557,6 @@ impl HandshakeReport {
             bind = self.bind.label(),
             remote = self.remote.label(),
             auth = self.auth.label(),
-            send_checksum = self.send_checksum.label(),
             "official session: handshake waiting"
         );
     }
@@ -649,7 +599,6 @@ impl HandshakeReport {
             remote = self.remote.label(),
             remote_name = self.remote_name.label(),
             auth = self.auth.label(),
-            send_checksum = self.send_checksum.label(),
             "official session: handshake failed"
         );
     }
@@ -664,7 +613,6 @@ pub fn log_chat_failed(
     counts: &HandshakeCounts,
     refused: u64,
     recv_errors: u64,
-    rule: SendChecksumRule,
 ) {
     tracing::info!(
         connection = "chat",
@@ -680,7 +628,6 @@ pub fn log_chat_failed(
         challenges = counts.challenges,
         refused,
         recv_errors,
-        send_checksum = rule.label(),
         "official chat session: handshake failed"
     );
 }

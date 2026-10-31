@@ -353,7 +353,6 @@ commit message.
 | `TESSERA_GOLDEN_BLESS_LOCAL=1` | Re-bless tier-2 goldens that differ, and bless pictures changed since the previous install version: the owner's approval (never together with `TESSERA_GOLDEN_REQUIRE`; `TESSERA_BLESS` does not touch them; see "Local goldens after a game update" below) |
 | `TESSERA_SHEET_DIR` | Also copy the pictures a panel test takes to this folder, for judging them by eye |
 | `TESSERA_SEED`, `TESSERA_SAMPLE` | Reproducible sampling in real-data tests |
-| `TESSERA_OFFICIAL_SEND_CHECKSUM` | M8 live-verification aid, off by default: `per-buffer` or `whole-payload` payload checksum on every datagram the client sends to an official server, chat server included (see "Official session handshake diagnostics" below) |
 | `TESSERA_OFFICIAL_LOGIN_SERVER` | M8 live-verification aid, off by default: a 1-based index into the world status's login servers, instead of the first; a deliberate departure from `official-login.md` §3.3 and I3 (see "Official session handshake diagnostics" below) |
 | `TESSERA_OFFICIAL_DUMP_DIR` | M8 live-verification aid, off by default: an existing directory outside the install and outside any git work tree that receives Tessera's own first datagram of each official connection, credentials replaced, with a description. The files hold the server's address and port and the local address and port used: for the owner and the spec writer only, **never commit them** (see "Official session handshake diagnostics" below) |
 | `TESSERA_TARGET_DIR` | Used by `tools/dev-setup.sh --fix` to place the build cache |
@@ -443,7 +442,7 @@ handshake, never an address, port, account or ticket (`crates/compat/src/connect
   from, the form of the remote address (`remote`: `remoteHost:port`, `remoteHost` with `-p`,
   `localHost:remoteHost:port`, or for the world connection the referral address with its own
   IP or the login server's; `remote_name`: literal IPv4 or resolved name), the `authType`
-  mode of §6.2.1, the send checksum rule and the `netVersion` string in full (`net_version`, a
+  mode of §6.2.1 and the `netVersion` string in full (`net_version`, a
   version label; `none` on the world connection, whose `ReferralAuthHeader` carries none);
 - `official session: handshake waiting` (`debug`, every 5 s while a connection is in its
   handshake) and `official session: handshake failed` (`info`, when a connection closes from
@@ -463,29 +462,11 @@ handshake, never an address, port, account or ticket (`crates/compat/src/connect
 
 `RUST_LOG=info,tessera_compat=debug` shows the waiting lines too.
 
-**Send checksum switch (off by default).** `official-session.md` §4.4.2 gives two rules for
-the payload checksum, the sender's (a sum per header and fragment buffer) and the receiver's
-(one sum over the whole payload); which one the service expects is an open spec question
-(`docs/m8-remediation.md` §15, S §4.4.2). As a live-verification aid only,
-`TESSERA_OFFICIAL_SEND_CHECKSUM` chooses the rule for every datagram the client sends (login,
-world and chat-server connections): exactly `per-buffer` (the default, the spec's sender
-rule) or exactly `whole-payload` (no other case, no surrounding spaces). It is read once per
-login attempt, before any network operation; any other value is refused with a warning that
-does not repeat it, and the default is used. The receive rule never changes. The rule in use
-is in the `handshake started` line.
-
-The two rules give different bytes only for a datagram with two or more buffers, such as a
-`FlowControlHeader` sent with a blob fragment; those first appear once a connection is
-connected (State 5). The handshake's own datagrams (`SessionAuthHeader`, `ReferralAuthHeader`,
-`ConnectAcceptHeader`) have one buffer each and are the same under both rules, so the switch
-cannot help with a timeout in State 1 or 2 (`received=0`, or `state=Some(ChallengeAcceptSent)`).
-Use it when a session connects but its later messages go unanswered (no character list, a
-silence timeout after `connection established`):
-
-```sh
-TESSERA_OFFICIAL_SEND_CHECKSUM=whole-payload RUST_LOG=info,tessera_compat=debug \
-    cargo run --release -p tessera-client -- --start-screen
-```
+**Checksum rule.** Every datagram is sent and verified with the one per-buffer payload
+checksum of `official-session.md` §4.4.2 (a sum per optional header, per fragment header and
+per fragment data slice, on send and on receive). The earlier whole-payload receive rule and
+the `TESSERA_OFFICIAL_SEND_CHECKSUM` switch that applied it on send are withdrawn by the spec
+(pass 10); the variable is no longer read.
 
 **Login server switch (off by default).** `official-login.md` §3.3 and its invariant I3 send
 the session to the first non-empty entry of the world status's `<loginservers>`. As a
@@ -493,7 +474,7 @@ live-verification aid only, and as a deliberate departure from that rule,
 `TESSERA_OFFICIAL_LOGIN_SERVER=<n>` uses entry `n` instead: a 1-based index into the non-empty
 entries, plain decimal digits, from 1 to the number listed (the `world status read` line says
 how many). Any other value is refused with a warning that does not repeat it, and entry 1 is
-used. It is read once per login attempt, like the checksum switch. Use it when the first login
+used. It is read once per login attempt, before any network operation. Use it when the first login
 server never answers (`received=0` in `handshake failed`), to see whether another one does.
 Only addresses from the service's own status answer are used. Whether the original client ever
 uses a later entry (after a handshake timeout, say) is an open question for the spec writer

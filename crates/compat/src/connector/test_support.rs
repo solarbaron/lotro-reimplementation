@@ -44,7 +44,7 @@ use crate::play::chat::{
 use crate::session::{
     BindPlan, BitTreeTable, ConnectChallengeHeader, DatagramHeader, IsaacCipher, OptionalHeaders,
     SessionError, UdpDatagramTransport, VersionStatusMessage, decode_datagram, encode_datagram,
-    split_blob,
+    guid_fields_swapped, split_blob,
 };
 use crate::world::{
     CharacterListResponse, CharacterSummaryEntry, EncodedPropertyTable, EncodedPropertyValue,
@@ -76,9 +76,24 @@ const LOGIN_SERVER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 10
 const TICKET: &str = "AAECAwQFBgcICQ==";
 /// The install's datacenter URL.
 const GLS: &str = "https://gls.example.invalid/datacenter";
-/// The login server's assigned recipient ID and the seed of its outgoing masks.
+/// The login server's assigned recipient ID (the client's incoming recipient) and the seed
+/// of its outgoing masks (the client's incoming seed).
 const REC_ID: u16 = 0x0111;
 const SEED: u32 = 0xBEEF_0001;
+/// The client's outgoing recipient, named in the challenge's payload bytes 18..19.
+const SERVER_REC_ID: u16 = 0x0222;
+/// The challenge header's bytes 18..19, which the client copies (`official-session.md` §4.2).
+const PEER_WORD: u16 = 0x5A5A;
+/// The on-disk UUIDs of the synthetic install's dictionaries (`official-session.md` §7.3):
+/// incoming (`0x0E010001`) and outgoing (`0x0E010000`). Asymmetric, so the challenge's
+/// field-wise conversion matters.
+pub const INCOMING_UUID: [u8; 16] = [
+    0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0, 0xF0, 0x01,
+];
+/// See [`INCOMING_UUID`].
+pub const OUTGOING_UUID: [u8; 16] = [
+    0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00, 0xAB, 0xCD,
+];
 
 /// The name of the one character the synthetic account has.
 pub const CHARACTER: &str = "Aldo";
@@ -305,7 +320,7 @@ impl SyntheticService {
         }
         let mut st = self.state();
         let st = &mut *st;
-        let first = decode_datagram(datagram, false, None, true).ok();
+        let first = decode_client_datagram(datagram, true).ok();
         if first
             .as_ref()
             .is_some_and(|p| p.opt_headers.session_auth.is_some())
@@ -323,7 +338,7 @@ impl SyntheticService {
             st.server = Some(server);
             return;
         }
-        let Ok(pkt) = decode_datagram(datagram, false, None, false) else {
+        let Ok(pkt) = decode_client_datagram(datagram, false) else {
             return;
         };
         if pkt.opt_headers.disconnect {
@@ -345,7 +360,8 @@ impl SyntheticService {
                         status: 1,
                         server_version_info: "ok".to_owned(),
                     }
-                    .encode();
+                    .encode()
+                    .unwrap_or_default();
                     vec![
                         server.blob(0x12D, &encode_event_envelope(&ok)),
                         server.event(0x6C, &character_list()),
@@ -382,6 +398,66 @@ impl SyntheticService {
     }
 }
 
+/// The client's outgoing dictionary, with which the synthetic server reads the client's
+/// compressed datagrams (`official-session.md` §4.1.2); built once.
+pub fn client_to_server_codec() -> &'static BitTreeTable {
+    static CODEC: std::sync::OnceLock<BitTreeTable> = std::sync::OnceLock::new();
+    CODEC.get_or_init(|| BitTreeTable::synthetic_dictionary(OUTGOING_UUID))
+}
+
+/// A datagram the client sent, decoded as a synthetic server reads it: compressed with the
+/// outgoing dictionary or not (`official-session.md` §4.1); the checksum is verified when
+/// `verify` (unmasked packets only, as [`decode_datagram`] does).
+///
+/// # Errors
+///
+/// What [`decode_datagram`] returns.
+pub fn decode_client_datagram(
+    datagram: &[u8],
+    verify: bool,
+) -> Result<crate::session::DecodedPacket, SessionError> {
+    decode_datagram(datagram, false, Some(client_to_server_codec()), verify)
+}
+
+/// A primary `ConnectChallengeHeader` datagram of a synthetic server (`official-session.md`
+/// §6.3): header `recId` `incoming_rec_id` (the client's incoming recipient) and bytes
+/// 18..19 `peer_word`; the payload names `outgoing_rec_id`, the two seeds and the incoming
+/// dictionary `incoming_uuid` (on-disk form, converted field-wise here).
+#[must_use]
+pub fn challenge_datagram(
+    incoming_rec_id: u16,
+    outgoing_rec_id: u16,
+    peer_word: u16,
+    incoming_seed: u32,
+    outgoing_seed: u32,
+    incoming_uuid: [u8; 16],
+) -> Vec<u8> {
+    let opt = OptionalHeaders {
+        connect_challenge: Some(ConnectChallengeHeader {
+            clock_candidate: 1.0,
+            cookie: [1, 2, 3, 4, 5, 6, 7, 8],
+            reserved_16: [0, 0],
+            outgoing_rec_id,
+            incoming_seed,
+            outgoing_seed,
+            incoming_codec_guid: guid_fields_swapped(incoming_uuid),
+        }),
+        ..OptionalHeaders::default()
+    };
+    encode_datagram(
+        DatagramHeader {
+            rec_id: incoming_rec_id,
+            peer_word,
+            ..DatagramHeader::default()
+        },
+        &opt,
+        &[],
+        None,
+        None,
+    )
+    .unwrap_or_default()
+}
+
 /// The synthetic login server's connection state.
 #[derive(Debug)]
 struct Server {
@@ -398,31 +474,14 @@ impl Server {
     }
 
     fn challenge(&self) -> Vec<u8> {
-        let opt = OptionalHeaders {
-            connect_challenge: Some(ConnectChallengeHeader {
-                server_time: 1.0,
-                assigned_client_rec_id: REC_ID,
-                server_rec_id: 0x0222,
-                outgoing_seed: 0xCAFE_1234,
-                incoming_seed: SEED,
-                reserved_dword_14: 0,
-                client_conn_idx: 4,
-                reserved_word_1a: 0,
-                codec_uuid: [0u8; 16],
-            }),
-            ..OptionalHeaders::default()
-        };
-        encode_datagram(
-            DatagramHeader {
-                rec_id: REC_ID,
-                ..DatagramHeader::default()
-            },
-            &opt,
-            &[],
-            None,
-            None,
+        challenge_datagram(
+            REC_ID,
+            SERVER_REC_ID,
+            PEER_WORD,
+            SEED,
+            0xCAFE_1234,
+            INCOMING_UUID,
         )
-        .unwrap_or_default()
     }
 
     fn control(&self, opt: OptionalHeaders) -> Vec<u8> {
@@ -635,11 +694,11 @@ fn records() -> Records {
     );
     m.insert(
         0x0E01_0000,
-        BitTreeTable::synthetic_dictionary([1; 16]).to_dat_bytes(),
+        BitTreeTable::synthetic_dictionary(OUTGOING_UUID).to_dat_bytes(),
     );
     m.insert(
         0x0E01_0001,
-        BitTreeTable::synthetic_dictionary([2; 16]).to_dat_bytes(),
+        BitTreeTable::synthetic_dictionary(INCOMING_UUID).to_dat_bytes(),
     );
     Records(m)
 }

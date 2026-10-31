@@ -124,9 +124,8 @@
 //! Each connection logs a start line, a `debug` line every
 //! [`super::diag::HANDSHAKE_REPORT_SEC`] while it is in its handshake, and one `info` line
 //! with its counts when it closes from its handshake ([`super::diag`] has the fields;
-//! [`SessionDriver::handshake_report`] gives them to tests). Every datagram the session
-//! sends uses [`SessionStart::send_checksum`], the chat-server connection's too
-//! ([`ChatConfig::with_send_checksum`]); the receive rule never changes. A cancel or a
+//! [`SessionDriver::handshake_report`] gives them to tests). Every datagram is sent and
+//! verified with the per-buffer checksum of `official-session.md` §4.4.2. A cancel or a
 //! revoked network right during a handshake logs the counts once
 //! ([`super::diag::HandshakeReport::log_ended`]).
 //!
@@ -163,12 +162,11 @@ use crate::play::inbound::{PlayMessage, decode_play_message};
 use crate::play::movement::{MoveStep, PredictedState};
 use crate::play::{OutgoingEvent, clean_display_name};
 use crate::session::{
-    BindPlan, BindPorts, ClientVersionMessage, ConnectionState, ControlMessage,
+    BindPlan, BindPorts, ClientVersionMessage, CodecUuids, ConnectionState, ControlMessage,
     DEFAULT_MAX_CONTAINER_DEPTH, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
-    DisconnectReason as LinkEnd, LogonOutcome, MAX_DATAGRAM_BUF, MAX_LOCAL_REC_ID,
-    MIN_DATAGRAM_BYTES, MIN_LOCAL_REC_ID, OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS,
-    SendChecksumRule, SessionError, SessionEvent, SessionMultiplexer, UdpDatagramTransport,
-    dispatch_message, max_recv_rate_for_speed,
+    DisconnectReason as LinkEnd, LogonOutcome, MAX_DATAGRAM_BUF, MIN_DATAGRAM_BYTES,
+    OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS, SessionError, SessionEvent,
+    SessionMultiplexer, UdpDatagramTransport, dispatch_message, max_recv_rate_for_speed,
 };
 use crate::world::{
     AccountEvictionNotice, CharacterEnterWorldRequest, CharacterListResponse,
@@ -446,14 +444,13 @@ impl std::fmt::Debug for Link {
 }
 
 impl Link {
-    /// A connection to `peer` (of the address form `remote`) whose datagrams use the send
-    /// checksum `rule` and whose `ConnectAcceptHeader` carries `max_recv_rate`
-    /// (`official-session.md` §6.4); `dump`: its datagram dump, when that is on.
-    #[allow(clippy::too_many_arguments)]
+    /// A connection to `peer` (of the address form `remote`) with the install's directional
+    /// dictionary UUIDs `uuids` (`official-session.md` §7.3) and whose
+    /// `ConnectAcceptHeader` carries `max_recv_rate` (§6.4); `dump`: its datagram dump,
+    /// when that is on.
     fn new(
         peer: SocketAddrV4,
-        uuids: &[[u8; 16]],
-        rule: SendChecksumRule,
+        uuids: CodecUuids,
         max_recv_rate: u32,
         auth: AuthMode,
         remote: (RemoteForm, RemoteName),
@@ -463,10 +460,7 @@ impl Link {
         let mut mux = SessionMultiplexer::new();
         let conn = mux.create_connection(peer, now)?;
         if let Some(c) = mux.connection_mut(conn) {
-            for u in uuids {
-                c.register_codec_uuid(*u);
-            }
-            c.set_send_checksum_rule(rule);
+            c.set_codec_uuids(uuids);
             c.set_max_recv_rate(max_recv_rate);
         }
         Ok(Self {
@@ -684,17 +678,13 @@ pub struct SessionStart {
     pub version: VersionInfo,
     /// The wire codecs.
     pub codecs: ChatCodecs,
-    /// The dictionaries' `codecUuid`s.
-    pub codec_uuids: Vec<[u8; 16]>,
+    /// The dictionaries' directional UUIDs (`official-session.md` §7.3).
+    pub codec_uuids: CodecUuids,
     /// The install's tables.
     pub schema: SchemaView,
     /// The attempt's cancel flag (the connector's): the ticket refresh thread looks at it
     /// right before its request.
     pub cancel: Arc<AtomicBool>,
-    /// The `payloadSum` rule of every datagram the session sends (`official-session.md`
-    /// §4.4.2; [`super::diag`] "The send checksum switch"); the default is the spec's
-    /// sender rule.
-    pub send_checksum: SendChecksumRule,
     /// The `[Net]` keys of `UserPreferences.ini` (`official-session.md` §3.2 item 1): the
     /// bind address, the port case and the `maxRecvRate` of the login and world
     /// connections.
@@ -714,8 +704,7 @@ impl std::fmt::Debug for SessionStart {
             .field("refresher", &self.refresher)
             .field("chat_endpoint", &self.chat_endpoint.map(|_| "<set>"))
             .field("version", &self.version)
-            .field("codec_uuids", &self.codec_uuids.len())
-            .field("send_checksum", &self.send_checksum)
+            .field("codec_uuids", &"<set>")
             .field("net", &self.net)
             .field("login_server_entry", &self.login_server_entry)
             .field("dump", &self.dump.is_some())
@@ -805,7 +794,7 @@ pub struct SessionDriver<N: ConnectorNet> {
     /// for its first datagram ([`Self::flush`]).
     transport: Tap<N::Udp>,
     codecs: ChatCodecs,
-    codec_uuids: Vec<[u8; 16]>,
+    codec_uuids: CodecUuids,
     login: Link,
     world: Option<Link>,
     old: Vec<Link>,
@@ -857,7 +846,6 @@ pub struct SessionDriver<N: ConnectorNet> {
     refused_log: LogLimit,
     unknown_log: LogLimit,
     send_log: LogLimit,
-    send_checksum: SendChecksumRule,
     bind: BindCase,
     local_source: LocalSource,
     /// The first local IPv4 address (the Case B seed, §3.2), for the chat transport too.
@@ -868,6 +856,10 @@ pub struct SessionDriver<N: ConnectorNet> {
     net_version: String,
     /// The datagram dump's directory ([`super::dump`]); `None`: off.
     dump: Option<DumpDir>,
+    /// Synthetic tests only: dictionary UUIDs for the chat connection, so a test reaches
+    /// the chat protocol above the handshake (live runs have none, OPEN-SESSION-1).
+    #[cfg(test)]
+    chat_codec_uuids: Option<CodecUuids>,
 }
 
 impl<N: ConnectorNet> std::fmt::Debug for SessionDriver<N> {
@@ -1023,12 +1015,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
             remote_name: remote.1.label(),
             local_source: local_source.label(),
             bind: bind.label(),
-            send_checksum: start.send_checksum.label(),
         });
         let mut login = Link::new(
             peer,
-            &start.codec_uuids,
-            start.send_checksum,
+            start.codec_uuids,
             max_recv_rate,
             mode,
             remote,
@@ -1083,13 +1073,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
             refused_log: LogLimit::default(),
             unknown_log: LogLimit::default(),
             send_log: LogLimit::default(),
-            send_checksum: start.send_checksum,
             bind,
             local_source,
             first_local,
             max_recv_rate,
             net_version,
             dump: start.dump,
+            #[cfg(test)]
+            chat_codec_uuids: None,
         };
         if stop() {
             return Err(StartFailure::Cancelled);
@@ -1400,8 +1391,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 .chain(self.old.iter().enumerate().rev().map(|(i, l)| (2 + i, l)))
                 .chain(std::iter::once((0usize, &self.login)))
         };
-        let in_range = rec_id.filter(|id| (MIN_LOCAL_REC_ID..=MAX_LOCAL_REC_ID).contains(id));
-        if let Some(id) = in_range {
+        // Any adopted non-zero ID (`official-session.md` §6.3: the earlier range check is
+        // superseded).
+        if let Some(id) = rec_id.filter(|id| *id != 0) {
             // Step 2: the connection with that ID, from its own server's address.
             if let Some((i, _)) =
                 candidates().find(|(_, l)| l.rec_id() == Some(id) && l.peer == src)
@@ -1440,7 +1432,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
             remote: link.remote.0,
             remote_name: link.remote.1,
             auth: link.auth,
-            send_checksum: self.send_checksum,
         }
     }
 
@@ -1779,12 +1770,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
             remote_name: RemoteName::FromReferral.label(),
             local_source: self.local_source.label(),
             bind: self.bind.label(),
-            send_checksum: self.send_checksum.label(),
         });
         match Link::new(
             addr,
-            &self.codec_uuids,
-            self.send_checksum,
+            self.codec_uuids,
             self.max_recv_rate,
             AuthMode::Referral,
             (form, RemoteName::FromReferral),
@@ -2985,6 +2974,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
             || self.old.iter().any(Link::flushing)
     }
 
+    /// Synthetic tests only: the chat connections attached from now on accept a challenge
+    /// naming `uuids.incoming` (see [`ChatConfig::with_codec_uuids`]).
+    #[cfg(test)]
+    pub fn set_chat_codec_uuids_for_tests(&mut self, uuids: CodecUuids) {
+        self.chat_codec_uuids = Some(uuids);
+    }
+
     /// Opens the chat-server session with `binder` (`official-messages-play.md` §6.6). A
     /// failure is tried again after [`CHAT_RETRY_SEC`] (§6.6.3's Initial Connect Policy),
     /// with one warning. `stop` is looked at right before the socket is bound: once it holds
@@ -3013,9 +3009,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
             Some(self.handoff.gls_ticket().to_owned()),
             unix_seconds(),
         )
-        .with_send_checksum(self.send_checksum)
-        .with_first_local(self.first_local)
-        .with_codec_uuids(self.codec_uuids.clone());
+        .with_first_local(self.first_local);
+        // No dictionary UUIDs for chat: its dictionary source is OPEN-SESSION-1, so its
+        // challenge stays an explicit unsupported result (`official-session.md` §6.3, §7.3).
+        #[cfg(test)]
+        let config = match self.chat_codec_uuids {
+            Some(uuids) => config.with_codec_uuids(uuids),
+            None => config,
+        };
         let mut binder = binder;
         let allowance = Arc::clone(&self.chat_allowance);
         let dump = self
@@ -3064,7 +3065,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 .map_or("not known", |h| RemoteName::of_host(&h.remote_host).label()),
             local_source: LocalSource::Wildcard.label(),
             bind: BindCase::of(&plan.ports).label(),
-            send_checksum: self.send_checksum.label(),
         }
     }
 

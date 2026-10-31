@@ -7,8 +7,9 @@
 //!    the script keys that skill and effect records name (a definition of the key in any
 //!    table, or a scriptlet such a definition invokes, transitively; Run nodes not followed)
 //!    names a 0x39 or 0x44 record that exists and decodes; Beam nodes and their systems are
-//!    counted. The counts are printed (the key set here is the one `tessera-gamedata`
-//!    exposes: behaviours, the five hook scripts, effect and interval scripts).
+//!    counted. The counts are printed and checked against this install's local census
+//!    baseline (decision 0045; the key set here is the one `tessera-gamedata` exposes:
+//!    behaviours, the five hook scripts, effect and interval scripts).
 //! 2. ROADMAP P2 exit criterion 3, in the walker: a headless scenario applies effects whose
 //!    script reaches a never-ending Particle node to the player and casts skills whose
 //!    behaviour reaches Particle nodes at a dummy figure; the session figures' scripts must
@@ -262,18 +263,24 @@ fn every_particle_node_reached_by_combat_records_names_an_existing_record() {
     for b in &beam_systems {
         assert!(systems.contains_key(b), "beam system {b:#010x} exists");
     }
-    // §10.5: the counts of §10.2's first row, as lower bounds (95 %): this test's key set is
-    // narrower than §10.2's (implementer OPEN of §10.5) and the install version varies.
+    // §10.5: the counts of §10.2's first row (this test's key set is narrower than §10.2's,
+    // implementer OPEN of §10.5), checked against this install's local census baseline
+    // (decision 0045).
+    let mut census = tessera_testkit::census!(
+        "every_particle_node_reached_by_combat_records_names_an_existing_record",
+        &dir
+    )
+    .expect("census");
     for (what, got, spec) in [
         ("Particle nodes", r.particles.len(), 20_689usize),
         ("effect DIDs", dids.len(), 6_598),
         ("Beam nodes", r.beams.len(), 1_496),
     ] {
-        assert!(
-            got * 100 >= spec * 95,
-            "§10.2 {what}: {got} of about {spec}"
-        );
+        assert!(got > 0, "§10.2 {what}: none reached");
+        census.count_vs_spec(what, got, spec);
     }
+    census.count("beam systems", beam_systems.len());
+    census.finish();
 }
 
 /// Real time the observer gives the workers per driver poll while the combat data or the

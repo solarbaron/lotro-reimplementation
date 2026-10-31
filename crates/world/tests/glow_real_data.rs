@@ -13,7 +13,9 @@
 //!   noon and at midnight outdoors.
 //!
 //! The record DIDs below are the spec's (§6.1, §6.2). Invariants always fail the test;
-//! census counts are printed and compared, and fail only with `TESSERA_CENSUS=strict`.
+//! census counts are printed next to the spec's and checked against this install's local
+//! baseline (decision 0045, `tessera-testkit`; `TESSERA_CENSUS_STRICT=1` compares them with
+//! the spec's).
 //!
 //! Run `cargo test --release -p tessera-world --test glow_real_data -- --nocapture`.
 
@@ -45,10 +47,6 @@ const COMMON_DESCRIPTORS: [u32; 2] = [0x4700_165A, 0x4700_64BE];
 fn game_dir() -> Option<PathBuf> {
     let dir = PathBuf::from(std::env::var_os("TESSERA_GAME_DIR")?);
     dir.is_dir().then_some(dir)
-}
-
-fn strict() -> bool {
-    std::env::var_os("TESSERA_CENSUS").is_some_and(|v| v == "strict")
 }
 
 struct World {
@@ -472,17 +470,24 @@ fn light_glow_sed_census() {
         ("§6.5", "ignore_inside_outside.true", 1_773),
         ("§6.5", "ignore_inside_outside.false", 1_940 - 1_773),
     ];
-    let mut differ = Vec::new();
+    let mut differ = 0usize;
     for (section, k, spec) in rows {
         let got = total.get(k);
         let mark = if got == *spec { "  " } else { "!!" };
         eprintln!("  {mark} [{section}] {k}: spec {spec}, measured {got}");
-        if got != *spec {
-            differ.push(*k);
+        differ += usize::from(got != *spec);
+    }
+    eprintln!("{} census rows, {differ} differ from the spec", rows.len());
+    // One name per tally key; a spec row missing on this install counts as 0.
+    let dir = game_dir().expect("install");
+    let mut c = tessera_testkit::census!("light_glow_sed_census", &dir).expect("census");
+    for (_, k, spec) in rows {
+        c.count_vs_spec(k, total.get(k), *spec);
+    }
+    for (k, n) in &total.n {
+        if !rows.iter().any(|(_, r, _)| r == k) {
+            c.count(k, *n);
         }
     }
-    eprintln!("{} census rows, {} differ", rows.len(), differ.len());
-    if strict() {
-        assert!(differ.is_empty(), "census differs: {differ:?}");
-    }
+    c.finish();
 }

@@ -5,8 +5,9 @@
 //! census of §3.3, the depth-bias table of §6.5, and the builder invariants 6–7 for every
 //! decal against the explorer's synthetic receiver (§9.3).
 //!
-//! Skipped unless `TESSERA_GAME_DIR` points at an install. Census mismatches fail only with
-//! `TESSERA_CENSUS=strict`; invariants always fail.
+//! Skipped unless `TESSERA_GAME_DIR` points at an install. The census is checked against
+//! this install's local baseline (decision 0045, `tessera-testkit`; the spec's numbers are
+//! the spec values, checked under `TESSERA_CENSUS_STRICT=1`); invariants always fail.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -30,10 +31,6 @@ use tessera_wstate::ObjectStore;
 fn game_dir() -> Option<PathBuf> {
     let dir = PathBuf::from(std::env::var_os("TESSERA_GAME_DIR")?);
     dir.is_dir().then_some(dir)
-}
-
-fn strict() -> bool {
-    std::env::var_os("TESSERA_CENSUS").is_some_and(|v| v == "strict")
 }
 
 /// A square through the box centre facing −Y′, larger than the box (§9.3).
@@ -263,11 +260,9 @@ fn decal_parameters_and_meshes() {
         ("outdoor sticks (T, T, T, F)", 4_555),
         ("interior sticks (T, T, T, F)", 10_493),
     ];
-    let mut differ = 0;
     for (k, spec) in rows {
         let got = census.get(k).copied().unwrap_or(0);
         let mark = if got == spec { "  " } else { "!!" };
-        differ += usize::from(got != spec);
         eprintln!("  {mark} {k}: spec {spec}, measured {got}");
     }
     eprintln!(
@@ -275,13 +270,23 @@ fn decal_parameters_and_meshes() {
         decals,
         materials.len()
     );
-    if strict() {
-        assert_eq!(differ, 0, "census differs");
-        assert_eq!(decals, 16_511);
-        assert_eq!(materials.len(), 140);
-    }
     for b in bad.iter().take(10) {
         eprintln!("  FAIL {b}");
     }
     assert!(bad.is_empty(), "{} decal invariants violated", bad.len());
+    // `decals.md` §3.3 and §6.5 figures: one name per census key, a key missing on this
+    // install counts as 0.
+    let mut c = tessera_testkit::census!("decal_parameters_and_meshes", &dir).expect("census");
+    c.count_vs_spec("decals", decals, 16_511u32);
+    c.count_vs_spec("materials", materials.len(), 140u32);
+    c.count("preview triangles", triangles);
+    for (k, spec) in rows {
+        c.count_vs_spec(k, census.get(k).copied().unwrap_or(0), spec);
+    }
+    for (k, n) in &census {
+        if !rows.iter().any(|(r, _)| r == k) {
+            c.count(k, *n);
+        }
+    }
+    c.finish();
 }

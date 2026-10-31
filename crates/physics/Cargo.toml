@@ -24,6 +24,7 @@ proptest.workspace = true
 # dev-dependency: it depends on this crate.
 tessera-dat.workspace = true
 tessera-mesh.workspace = true
+tessera-testkit.workspace = true
 
 [lints]
 workspace = true

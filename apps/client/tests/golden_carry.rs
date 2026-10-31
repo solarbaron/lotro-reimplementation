@@ -93,10 +93,19 @@ impl Base {
 }
 
 fn set_mtime(dir: &Path, at: SystemTime) {
-    std::fs::File::open(dir)
-        .expect("open dir")
-        .set_modified(at)
-        .expect("mtime");
+    // Windows opens a directory only with FILE_FLAG_BACKUP_SEMANTICS, and setting its
+    // time needs write access.
+    #[cfg(windows)]
+    let dir = {
+        use std::os::windows::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(0x0200_0000)
+            .open(dir)
+    };
+    #[cfg(not(windows))]
+    let dir = std::fs::File::open(dir);
+    dir.expect("open dir").set_modified(at).expect("mtime");
 }
 
 #[test]

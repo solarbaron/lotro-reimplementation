@@ -824,7 +824,7 @@ fn social_scenarios_render_on_the_install() {
 
     // Local-only goldens of the fellowship and trade pictures (decision 0031 tier 2).
     let (mut blessed, mut matched, mut carried) = (0, 0, 0);
-    let mut pending = goldens::Pending::default();
+    let mut pending = goldens::Pending::for_dir(&golden_dir, &flags);
     for (name, (width, height, data)) in shots {
         let pic = goldens::Rgba {
             width,

@@ -6,12 +6,17 @@
 # unchanged picture over from the previous install version by itself and never blesses a
 # changed one; it leaves one record per picture under
 #   <base>/review/<version>/changed/*.tsv   package, test, function, name, old version,
-#                                          old golden, actual, diff, differing pixels
+#                                          old golden, actual, diff, differing pixels,
+#                                          subject
 #   <base>/review/<version>/carried/*.tsv   package, test, function, name, from version,
-#                                          old golden, new golden
+#                                          old golden, new golden, subject
 #   <base>/review/<version>/new/*.tsv       package, test, function, name, version,
-#                                          blessed|missing, golden
+#                                          blessed|missing, golden, note
 #   <base>/review/last-version              the version of the latest check
+# The subject says what a picture shows when its name does not (the parity tooltips' family
+# and DID; `-` otherwise); a new picture's note names the other subject a previous version's
+# golden of the same name showed (`-` otherwise). Older records without these columns are
+# read too.
 # This tool prints the counts and the review list of one install version, writes the list
 # to <base>/review/<version>.tsv, and with --html writes one local page showing old | new |
 # diff side by side through file:// links (no picture is copied or embedded).
@@ -127,6 +132,17 @@ html_escape() {
     printf '%s' "$s"
 }
 
+# " (subject)" for a record's subject column, empty for none or `-`; $2 = html escapes it.
+subject_note() {
+    local s="${1:-}"
+    [ -n "$s" ] && [ "$s" != "-" ] || return 0
+    if [ "${2:-}" = html ]; then
+        printf ' (%s)' "$(html_escape "$s")"
+    else
+        printf ' (%s)' "$s"
+    fi
+}
+
 # Concatenates the records of one kind (sorted by file name).
 records() {
     local dir="$1"
@@ -156,11 +172,11 @@ write_html() {
             "$(count_lines "$changed")" "$ncarried" "$nnew"
         printf '<p>Approve a picture by running its test with TESSERA_GOLDEN_BLESS_LOCAL=1.</p>\n'
         if [ -n "$changed" ]; then
-            while IFS=$'\t' read -r pkg test fn name oldv old actual diff pixels; do
-                printf '<h2>%s/%s/%s: %s (since %s, %s pixels differ)</h2>\n' \
+            while IFS=$'\t' read -r pkg test fn name oldv old actual diff pixels subject; do
+                printf '<h2>%s/%s/%s: %s%s (since %s, %s pixels differ)</h2>\n' \
                     "$(html_escape "$pkg")" "$(html_escape "$test")" "$(html_escape "$fn")" \
-                    "$(html_escape "$name")" "$(html_escape "$oldv")" \
-                    "$(html_escape "$pixels")"
+                    "$(html_escape "$name")" "$(subject_note "$subject" html)" \
+                    "$(html_escape "$oldv")" "$(html_escape "$pixels")"
                 printf '<table><tr><th>old (%s)</th><th>new</th><th>diff</th></tr><tr>\n' \
                     "$(html_escape "$oldv")"
                 for p in "$old" "$actual" "$diff"; do
@@ -203,19 +219,27 @@ review() {
         local tmp
         tmp="$(mktemp "$base/review/.review.XXXXXX")"
         {
-            printf 'package\ttest\tfunction\tname\told_version\told_golden\tactual\tdiff\tdiffering_pixels\n'
+            printf 'package\ttest\tfunction\tname\told_version\told_golden\tactual\tdiff\tdiffering_pixels\tsubject\n'
             [ -z "$changed" ] || printf '%s\n' "$changed"
         } > "$tmp"
         mv -f "$tmp" "$list"
         echo "review list: $list"
     fi
     if [ -n "$changed" ]; then
-        while IFS=$'\t' read -r pkg test fn name oldv old actual diff pixels; do
-            echo "changed: $pkg/$test/$fn/$name since $oldv ($pixels pixels differ)"
+        while IFS=$'\t' read -r pkg test fn name oldv old actual diff pixels subject; do
+            echo "changed: $pkg/$test/$fn/$name$(subject_note "$subject") since $oldv" \
+                "($pixels pixels differ)"
             echo "  old:  $old"
             echo "  new:  $actual"
             echo "  diff: $diff"
         done <<< "$changed"
+    fi
+    if [ -n "$new" ]; then
+        # New pictures whose name showed another subject before (not compared).
+        while IFS=$'\t' read -r pkg test fn name _v state _golden note; do
+            [ -n "${note:-}" ] && [ "$note" != "-" ] || continue
+            echo "new ($state, another subject before): $pkg/$test/$fn/$name: $note"
+        done <<< "$new"
     fi
     if [ -n "$html" ]; then
         write_html "$html" "$version" "$changed" "$(count_lines "$carried")" \
@@ -233,7 +257,7 @@ self_test() {
     local d="$base/review/$v"
     mkdir -p "$d/changed" "$d/carried" "$d/new"
     local g="$base/pkg/test/fn"
-    printf 'pkg\ttest\tfn\ta<b\tfedcba9876543210\t%s\t%s\t%s\t12\n' \
+    printf 'pkg\ttest\tfn\ta<b\tfedcba9876543210\t%s\t%s\t%s\t12\titem 0x11\n' \
         "$g/fedcba9876543210/a<b.png" "$g/$v/a<b.actual.png" "$g/$v/a<b.diff.png" \
         > "$d/changed/one.tsv"
     printf 'pkg\ttest\tfn\tsized\tfedcba9876543210\t%s\t%s\t-\t40\n' \
@@ -242,7 +266,8 @@ self_test() {
         printf 'pkg\ttest\tfn\tc%s\tfedcba9876543210\told\tnew\n' "$n" > "$d/carried/$n.tsv"
     done
     printf 'pkg\ttest\tfn\tn1\t%s\tblessed\tp\n' "$v" > "$d/new/1.tsv"
-    printf 'pkg\ttest\tfn\tn2\t%s\tmissing\tp\n' "$v" > "$d/new/2.tsv"
+    printf 'pkg\ttest\tfn\tn2\t%s\tmissing\tp\tnow item 2; old showed item 1\n' "$v" \
+        > "$d/new/2.tsv"
     printf '%s\n' "$v" > "$base/review/last-version"
     mkdir -p "$tmp/out" "$tmp/repo/.git"
 
@@ -260,7 +285,12 @@ self_test() {
     check "$out" "carried over: 3" "the review"
     check "$out" "changed: 2" "the review"
     check "$out" "new: 2 (blessed 1, missing 1)" "the review"
-    check "$out" "changed: pkg/test/fn/a<b since fedcba9876543210 (12 pixels differ)" "the review"
+    check "$out" "changed: pkg/test/fn/a<b (item 0x11) since fedcba9876543210 (12 pixels differ)" \
+        "the review"
+    check "$out" "changed: pkg/test/fn/sized since fedcba9876543210 (40 pixels differ)" \
+        "the review (a record without a subject)"
+    check "$out" "new (missing, another subject before): pkg/test/fn/n2: now item 2" \
+        "the review"
     local list="$base/review/$v.tsv"
     if [ ! -f "$list" ] || [ "$(wc -l < "$list" | tr -d ' ')" != 3 ]; then
         echo "self-test: the review list $list does not hold a header and two lines" >&2
@@ -272,6 +302,7 @@ self_test() {
         check "$(cat "$page")" 'gold%20base' "the page (encoded path)"
         check "$(cat "$page")" 'a&lt;b' "the page (escaped name)"
         check "$(cat "$page")" '(none: the sizes differ)' "the page"
+        check "$(cat "$page")" 'a&lt;b (item 0x11)' "the page (subject)"
     else
         echo "self-test: no page written" >&2
         fail=1
@@ -314,7 +345,7 @@ while [ $# -gt 0 ]; do
             [ $# -ge 2 ] || usage_error "--html needs a file"
             html="$2"; shift 2 ;;
         --self-test) run_self_test=1; shift ;;
-        -h|--help) sed -n '2,32p' "$script"; exit 0 ;;
+        -h|--help) sed -n '2,37p' "$script"; exit 0 ;;
         *) usage_error "unknown option $1" ;;
     esac
 done

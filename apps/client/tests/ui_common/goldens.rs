@@ -22,11 +22,22 @@
 //!   fails, with or without `TESSERA_GOLDEN_REQUIRE`, until the owner approves the picture
 //!   with `TESSERA_GOLDEN_BLESS_LOCAL=1`. Without a previous golden the first-run rules
 //!   apply. Carry-over works only for directories of the layout above under the base.
+//! - **Subjects:** a picture whose name does not say what it shows (the parity tooltips'
+//!   `item-07` is the seventh record of a sample that an update can change) is checked with
+//!   [`check_with_subject`]: a previous golden counts only when the caller reads the same
+//!   subject for it in that version's directory (for example from its index); otherwise the
+//!   first-run rules apply and the `new` record notes the other subject.
 //! - **Review records** (one file per picture, so parallel test binaries never share a
 //!   file): `<base>/review/<version>/changed/<key>.tsv` (package, test, function, name, old
-//!   version, old golden, actual, diff, differing pixels), `.../carried/<key>.tsv` and
-//!   `.../new/<key>.tsv`; `<base>/review/last-version` holds the version of the latest check.
-//!   A pass, a carry-over or a blessing removes the picture's `changed` entry.
+//!   version, old golden, actual, diff, differing pixels, subject), `.../carried/<key>.tsv`
+//!   (package, test, function, name, from version, old golden, new golden, subject) and
+//!   `.../new/<key>.tsv` (package, test, function, name, version, `blessed` or `missing`,
+//!   golden, note on another subject); `-` for no subject or note;
+//!   `<base>/review/last-version` holds the version of the latest check.
+//!   A pass, a carry-over or a blessing removes the picture's `changed` entry. A
+//!   [`Pending`] made with [`Pending::for_dir`] also removes, when its test ends without a
+//!   panic, the records (and the actual and diff images) of pictures of that directory
+//!   that this run did not take (renamed or dropped shots).
 //!   `tools/golden-review.sh` prints them and builds the review page.
 //! - **Comparison:** the CPU painter's tolerance (one step per channel, no neighbourhood
 //!   search, no outliers). On a mismatch the actual and diff images go next to the golden.
@@ -36,8 +47,22 @@
 //! Logs print paths and counts only.
 #![allow(dead_code)]
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// The picture names checked in this process, per golden directory (for
+/// [`prune_unchecked`]).
+static CHECKED: Mutex<BTreeMap<PathBuf, BTreeSet<String>>> = Mutex::new(BTreeMap::new());
+
+fn note_checked(dir: &Path, name: &str) {
+    if let Ok(mut m) = CHECKED.lock() {
+        m.entry(dir.to_path_buf())
+            .or_default()
+            .insert(name.to_owned());
+    }
+}
 
 /// An RGBA picture (8 bits per channel, rows top to bottom).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,13 +121,40 @@ impl Outcome {
 /// Golden failures collected so that every picture of a test is checked (and changed ones
 /// are listed for review) before the test fails. [`Self::finish`] panics with every
 /// message; dropping a non-empty collector does the same unless the thread is already
-/// panicking.
+/// panicking. Made with [`Self::for_dir`], it first runs [`prune_unchecked`] for that
+/// directory (only when the thread is not panicking).
 #[derive(Debug, Default)]
 pub struct Pending {
     failures: Vec<String>,
+    /// The golden directory and base to prune at the end.
+    run: Option<(PathBuf, PathBuf)>,
 }
 
 impl Pending {
+    /// A collector for the pictures of golden directory `dir` (made before the first
+    /// picture of the run is checked), pruning the review records of pictures this run did
+    /// not take when the test ends without a panic.
+    #[must_use]
+    pub fn for_dir(dir: &Path, flags: &Flags) -> Self {
+        // A run starts here: only the pictures checked from now on count as taken.
+        if let Ok(mut m) = CHECKED.lock() {
+            m.remove(dir);
+        }
+        Self {
+            failures: Vec::new(),
+            run: Some((
+                dir.to_path_buf(),
+                flags.base.clone().unwrap_or_else(base_dir),
+            )),
+        }
+    }
+
+    fn prune(&mut self) {
+        if let Some((dir, base)) = self.run.take() {
+            prune_unchecked(&base, &dir);
+        }
+    }
+
     /// Records one failure message.
     pub fn push(&mut self, message: String) {
         eprintln!("{message}");
@@ -123,6 +175,7 @@ impl Pending {
 
     /// Panics with every recorded message, if any.
     pub fn finish(mut self) {
+        self.prune();
         let failures = std::mem::take(&mut self.failures);
         assert!(
             failures.is_empty(),
@@ -135,7 +188,11 @@ impl Pending {
 
 impl Drop for Pending {
     fn drop(&mut self) {
-        if !self.failures.is_empty() && !std::thread::panicking() {
+        if std::thread::panicking() {
+            return;
+        }
+        self.prune();
+        if !self.failures.is_empty() {
             let failures = std::mem::take(&mut self.failures);
             panic!(
                 "{} golden failures:\n{}",
@@ -444,6 +501,32 @@ pub fn check_with_compare(
     flags: &Flags,
     cmp: impl FnOnce(&Rgba, &Rgba) -> (bool, String, Rgba),
 ) -> Result<Outcome, String> {
+    check_with_subject(dir, name, img, flags, cmp, None)
+}
+
+/// What a picture shows, when its name does not say it (module docs, subjects).
+pub struct Subject<'a> {
+    /// The subject of this run's picture (one line, for example `item 0x70001234`).
+    pub id: &'a str,
+    /// The subject the picture of the same name showed in a previous install version's
+    /// golden directory (given that directory), or `None` when it is not known there. A
+    /// previous golden whose subject differs or is unknown is not compared.
+    pub previous: &'a dyn Fn(&Path) -> Option<String>,
+}
+
+/// [`check_with_compare`] for a picture with a [`Subject`]: a previous install version's
+/// golden is used for a carry-over only when it showed the same subject.
+///
+/// # Errors
+/// As [`check_with_compare`].
+pub fn check_with_subject(
+    dir: &Path,
+    name: &str,
+    img: &Rgba,
+    flags: &Flags,
+    cmp: impl FnOnce(&Rgba, &Rgba) -> (bool, String, Rgba),
+    subject: Option<&Subject<'_>>,
+) -> Result<Outcome, String> {
     let (require, bless) = (flags.require, flags.bless_local);
     if require && bless {
         return Err(
@@ -451,6 +534,7 @@ pub fn check_with_compare(
         );
     }
     check_outside_work_trees(dir)?;
+    note_checked(dir, name);
     if let Some(sheet) = &flags.sheet {
         let p = sheet.join(format!("{name}.png"));
         if let Err(e) = write_atomic(&p, img) {
@@ -484,17 +568,26 @@ pub fn check_with_compare(
         })?;
         return compare_current(dir, name, img, &want, &path, place.as_ref(), cmp);
     }
-    if let Some(p) = &place
-        && let Some((from_version, old)) = previous_golden(dir, name, &p.version)
-    {
-        return carry_over(dir, name, img, p, &from_version, &old, cmp);
+    let mut note = "-".to_owned();
+    if let Some(p) = &place {
+        let previous = previous_golden(dir, name, &p.version, subject);
+        if let Some((from_version, old)) = previous.found {
+            return carry_over(dir, name, img, p, &from_version, &old, subject, cmp);
+        }
+        if let (Some((version, other)), Some(s)) = (previous.other, subject) {
+            eprintln!(
+                "golden: {name}: the golden of install {version} shows another subject; \
+                 not compared (first-run rules)"
+            );
+            note = format!("now {}; {version} showed {other}", s.id);
+        }
     }
     if require {
         if let Some(p) = &place {
             p.record(
                 Kind::New,
                 name,
-                &[p.version.as_str(), "missing", &show(&path)],
+                &[p.version.as_str(), "missing", &show(&path), &note],
             );
         }
         return Err(format!(
@@ -508,7 +601,7 @@ pub fn check_with_compare(
         p.record(
             Kind::New,
             name,
-            &[p.version.as_str(), "blessed", &show(&path)],
+            &[p.version.as_str(), "blessed", &show(&path), &note],
         );
     }
     Ok(Outcome::Blessed(path))
@@ -556,6 +649,7 @@ fn compare_current(
 
 /// Judges `img` against `old`, the golden of the same name of install version
 /// `from_version` (module docs, carry-over).
+#[allow(clippy::too_many_arguments)]
 fn carry_over(
     dir: &Path,
     name: &str,
@@ -563,8 +657,10 @@ fn carry_over(
     place: &Place,
     from_version: &str,
     old: &Path,
+    subject: Option<&Subject<'_>>,
     cmp: impl FnOnce(&Rgba, &Rgba) -> (bool, String, Rgba),
 ) -> Result<Outcome, String> {
+    let subject_id = subject.map_or("-", |s| s.id);
     let path = dir.join(format!("{name}.png"));
     let old_bytes = std::fs::read(old).map_err(|e| format!("{}: {e}", old.display()))?;
     let want = decode(old).map_err(|e| {
@@ -604,7 +700,7 @@ fn carry_over(
             place.record(
                 Kind::Carried,
                 name,
-                &[from_version, &show(old), &show(&path)],
+                &[from_version, &show(old), &show(&path), subject_id],
             );
             return Ok(Outcome::CarriedOver {
                 path,
@@ -625,6 +721,7 @@ fn carry_over(
             &show(&actual),
             &diff_shown,
             &bad.to_string(),
+            subject_id,
         ],
     );
     Err(format!(
@@ -660,14 +757,37 @@ pub fn is_version_name(s: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// What [`previous_golden`] found.
+#[derive(Debug, Default)]
+struct Previous {
+    /// The version and path of the previous golden.
+    found: Option<(String, PathBuf)>,
+    /// Without one: the newest version whose golden of the name shows another subject, and
+    /// that subject (`unknown` when the caller could not read it).
+    other: Option<(String, String)>,
+}
+
 /// The previous golden of `<dir>/<name>.png`: among the sibling directories of `dir` named
-/// like an install version other than `current` that hold `<name>.png`, the most recently
-/// modified one (ties: the greater name). Gives its version and the golden's path.
-fn previous_golden(dir: &Path, name: &str, current: &str) -> Option<(String, PathBuf)> {
-    let parent = dir.parent()?;
+/// like an install version other than `current` that hold `<name>.png` (and, with a
+/// `subject`, showed the same subject), the most recently modified one (ties: the greater
+/// name).
+fn previous_golden(
+    dir: &Path,
+    name: &str,
+    current: &str,
+    subject: Option<&Subject<'_>>,
+) -> Previous {
+    let mut out = Previous::default();
+    let Some(parent) = dir.parent() else {
+        return out;
+    };
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return out;
+    };
     let file = format!("{name}.png");
     let mut best: Option<(std::time::SystemTime, String, PathBuf)> = None;
-    for entry in std::fs::read_dir(parent).ok()?.flatten() {
+    let mut other: Option<(std::time::SystemTime, String, String)> = None;
+    for entry in entries.flatten() {
         let Ok(version) = entry.file_name().into_string() else {
             continue;
         };
@@ -683,6 +803,18 @@ fn previous_golden(dir: &Path, name: &str, current: &str) -> Option<(String, Pat
             continue;
         }
         let at = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+        if let Some(s) = subject {
+            let was = (s.previous)(&entry.path());
+            if was.as_deref() != Some(s.id) {
+                let newer = other
+                    .as_ref()
+                    .is_none_or(|(t, v, _)| (at, version.as_str()) > (*t, v.as_str()));
+                if newer {
+                    other = Some((at, version, was.unwrap_or_else(|| "unknown".to_owned())));
+                }
+                continue;
+            }
+        }
         let better = best
             .as_ref()
             .is_none_or(|(t, v, _)| (at, version.as_str()) > (*t, v.as_str()));
@@ -690,7 +822,11 @@ fn previous_golden(dir: &Path, name: &str, current: &str) -> Option<(String, Pat
             best = Some((at, version, golden));
         }
     }
-    best.map(|(_, v, p)| (v, p))
+    out.found = best.map(|(_, v, p)| (v, p));
+    if out.found.is_none() {
+        out.other = other.map(|(_, v, s)| (v, s));
+    }
+    out
 }
 
 /// A path for a log line or a TSV field (tabs and line breaks become spaces).
@@ -837,6 +973,69 @@ impl Place {
         }
         eprintln!("golden review: cleared {}", path.display());
         self.remove(Kind::Changed, name);
+    }
+}
+
+/// Removes the review records of golden directory `dir` (under `base`) for pictures not
+/// checked in this process (since the last [`Pending::for_dir`] of `dir`), with the actual and diff images a `changed` record names in
+/// `dir`. Nothing is removed when no picture of `dir` was checked. Failures are logged.
+pub fn prune_unchecked(base: &Path, dir: &Path) {
+    let Some(place) = Place::of(base, dir) else {
+        return;
+    };
+    let checked: BTreeSet<String> = match CHECKED.lock() {
+        Ok(m) => match m.get(dir) {
+            Some(names) if !names.is_empty() => names.iter().map(|n| field(n)).collect(),
+            _ => return,
+        },
+        Err(_) => return,
+    };
+    let own = [
+        field(&place.package),
+        field(&place.test),
+        field(&place.function),
+    ];
+    for kind in [Kind::Changed, Kind::Carried, Kind::New] {
+        let kdir = place.review_dir().join(&place.version).join(kind.dir());
+        let Ok(entries) = std::fs::read_dir(&kdir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "tsv") {
+                continue;
+            }
+            // A record is one short line; anything larger is not ours.
+            if !entry.metadata().is_ok_and(|m| m.len() <= 64 * 1024) {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let cols: Vec<&str> = text.lines().next().unwrap_or("").split('\t').collect();
+            let (Some(head), Some(name)) = (cols.get(..3), cols.get(3)) else {
+                continue;
+            };
+            let same = head.iter().zip(&own).all(|(a, b)| *a == b.as_str());
+            if !same || checked.contains(*name) {
+                continue;
+            }
+            // The images are removed only for a plain picture name inside `dir`.
+            let plain = !name.is_empty() && !name.contains(['/', '\\']) && !name.starts_with('.');
+            if kind == Kind::Changed && plain {
+                for f in [format!("{name}.actual.png"), format!("{name}.diff.png")] {
+                    let _ = std::fs::remove_file(dir.join(f));
+                }
+            }
+            match std::fs::remove_file(&path) {
+                Ok(()) => eprintln!(
+                    "golden review: removed {} (picture not taken in this run)",
+                    path.display()
+                ),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => eprintln!("golden review: {}: {e}", path.display()),
+            }
+        }
     }
 }
 

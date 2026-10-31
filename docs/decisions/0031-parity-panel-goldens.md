@@ -168,6 +168,9 @@ the previous install version automatically; a changed one is never blessed witho
   `<base>/review/<install version>/` (`docs/DEVELOPMENT.md`, "Local goldens after a game
   update").
 - Without a previous golden the first-run rule above applies unchanged.
+- A picture whose name is not its identity (the parity tooltips' sample ordinals) is
+  compared only with a previous golden of the same record, as that version's `index.txt`
+  gives it; another record in the slot makes it a new picture, not a changed one.
 
 ## Open
 - `tools/check-content.sh` accepts any PNG under 1 MiB. Nothing but the location rule above

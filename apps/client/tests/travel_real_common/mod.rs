@@ -301,12 +301,14 @@ impl Pictures {
             .unwrap_or_else(|e| panic!("{e}"));
         let mut flags = goldens::Flags::from_env();
         flags.sheet = flags.sheet.map(|s| s.join(test));
+        // The review records of pictures this run does not take go when it ends.
+        let pending = goldens::Pending::for_dir(&dir, &flags);
         Self {
             dir,
             flags,
             seq: 0,
             results: Vec::new(),
-            pending: goldens::Pending::default(),
+            pending,
         }
     }
 

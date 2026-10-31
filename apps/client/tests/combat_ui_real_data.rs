@@ -211,11 +211,13 @@ fn combat_screens_with_the_install() {
     );
     assert!(missing.is_empty(), "elements not shown: {missing:?}");
 
-    // Local-only goldens (decision 0031 tier 2): blessed when missing, else compared.
+    // Local-only goldens (decision 0031 tier 2 and its 2026-10-31 amendment, rules in
+    // `ui_common/goldens.rs`): compared, carried over from a previous install version, listed
+    // as changed for the owner's review, or blessed on a first run.
     let mut blessed = 0;
     let mut matched = 0;
     let mut carried = 0;
-    let mut pending = goldens::Pending::default();
+    let mut pending = goldens::Pending::for_dir(&golden_dir, &flags);
     for (at, img) in images {
         let name = format!("checkpoint-{at:05}ms");
         let pic = goldens::Rgba {

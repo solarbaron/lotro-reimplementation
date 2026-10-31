@@ -1131,7 +1131,9 @@ runs compare with them, and `TESSERA_GOLDEN_REQUIRE=1` and `TESSERA_GOLDEN_BLESS
 as in §3.14. **Never commit the images or the index**: the index holds the game's names. A
 patch of the install can change the sample and gives a new `<install version>` folder; compare
 the sample of the folder you name in your notes. Unchanged images are carried over from the
-previous folder and changed ones are listed for review (§3.14); `index.txt` is written anew.
+previous folder and changed ones are listed for review (§3.14), but only for a slot that
+holds the same record in both folders' `index.txt`; a slot that now holds another record is
+a new image. `index.txt` is written anew.
 
 <a id="parity-checklist"></a>
 **The parity checklist.** [`docs/checklists/parity.md`](checklists/parity.md) is the one

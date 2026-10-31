@@ -11,9 +11,10 @@ use std::time::{Duration, SystemTime};
 
 use goldens::{Flags, Outcome, Rgba};
 
-const OLD: &str = "a07cfdb844a341ab";
-const OLDER: &str = "3905db5e60168527";
-const NEW: &str = "98aea64fbc78f744";
+// Invented install versions (no real install's).
+const OLD: &str = "0123456789abcdef";
+const OLDER: &str = "fedcba9876543210";
+const NEW: &str = "00112233445566ff";
 
 /// A synthetic 4 × 3 picture whose pixels follow `seed`.
 fn picture(seed: u8) -> Rgba {
@@ -170,6 +171,7 @@ fn a_mismatch_with_the_previous_version_is_never_blessed() {
                 dir.join("pic.actual.png").display().to_string().as_str(),
                 dir.join("pic.diff.png").display().to_string().as_str(),
                 "12",
+                "-",
             ]
         );
         // A second run fails the same way and keeps one entry.
@@ -272,17 +274,17 @@ fn the_most_recently_modified_previous_version_is_chosen() {
 #[test]
 fn siblings_not_named_like_a_version_are_ignored() {
     let b = Base::new();
-    for odd in ["unknown", "backup", "A07CFDB844A341AB", "a07cfdb844a341a"] {
+    for odd in ["unknown", "backup", "0123456789ABCDEF", "0123456789abcde"] {
         b.plant(odd, "pic", &picture(9));
     }
-    let schema = "schema-0123456789abcdef";
+    let schema = "schema-0000111122223333";
     assert!(goldens::is_version_name(schema));
     assert!(goldens::is_version_name(OLD));
     for odd in [
         "unknown",
         "backup",
-        "A07CFDB844A341AB",
-        "a07cfdb844a341a",
+        "0123456789ABCDEF",
+        "0123456789abcde",
         "review",
     ] {
         assert!(!goldens::is_version_name(odd), "{odd}");
@@ -317,7 +319,7 @@ fn the_cpu_and_custom_comparisons_judge_the_carry_over() {
         "{e}"
     );
     let line = std::fs::read_to_string(&b.entries(NEW, "changed")[0]).expect("entry");
-    assert_eq!(line.trim_end().rsplit('\t').next(), Some("0"));
+    assert_eq!(line.trim_end().split('\t').nth(8), Some("0"));
 }
 
 #[test]
@@ -365,4 +367,152 @@ fn side_files_are_written_atomically_and_refused_in_work_trees() {
     let inside = Path::new(env!("CARGO_MANIFEST_DIR")).join("target-golden-test");
     assert!(goldens::write_side_file(&inside, "index.txt", b"x").is_err());
     assert!(!inside.exists());
+}
+
+/// A subject read from a previous version's directory: its `subject.txt`.
+fn read_subject(dir: &Path) -> Option<String> {
+    std::fs::read_to_string(dir.join("subject.txt"))
+        .ok()
+        .map(|s| s.trim_end().to_owned())
+}
+
+fn note_subject(b: &Base, version: &str, subject: &str) {
+    std::fs::write(b.dir(version).join("subject.txt"), subject).expect("subject");
+}
+
+fn check_subject(
+    b: &Base,
+    name: &str,
+    img: &Rgba,
+    id: &str,
+    flags: &Flags,
+) -> Result<Outcome, String> {
+    let previous = |d: &Path| read_subject(d);
+    let subject = goldens::Subject {
+        id,
+        previous: &previous,
+    };
+    goldens::check_with_subject(
+        &b.dir(NEW),
+        name,
+        img,
+        flags,
+        |w, g| {
+            let same = w == g;
+            (same, String::new(), w.clone())
+        },
+        Some(&subject),
+    )
+}
+
+#[test]
+fn a_previous_golden_of_another_subject_is_not_compared() {
+    let b = Base::new();
+    b.plant(OLD, "slot", &picture(7));
+    note_subject(&b, OLD, "item 1");
+    // Another record in the slot: a new picture (blessed), never "changed".
+    let out = check_subject(&b, "slot", &picture(90), "item 2", &b.flags()).expect("new");
+    assert!(matches!(out, Outcome::Blessed(_)), "{out:?}");
+    assert!(b.entries(NEW, "changed").is_empty());
+    assert!(!b.dir(NEW).join("slot.actual.png").exists());
+    let line = std::fs::read_to_string(&b.entries(NEW, "new")[0]).expect("entry");
+    let cols: Vec<&str> = line.trim_end().split('\t').collect();
+    assert_eq!(cols.get(5), Some(&"blessed"));
+    assert_eq!(
+        cols.get(7),
+        Some(&format!("now item 2; {OLD} showed item 1").as_str())
+    );
+    // Under REQUIRE it is missing, as on a first run.
+    let _ = std::fs::remove_dir_all(b.dir(NEW));
+    let e = check_subject(&b, "slot", &picture(90), "item 2", &b.require()).expect_err("missing");
+    assert!(e.contains("missing and TESSERA_GOLDEN_REQUIRE=1"), "{e}");
+    // A subject that cannot be read there is not the same subject.
+    b.plant(OLD, "unread", &picture(7));
+    std::fs::remove_file(b.dir(OLD).join("subject.txt")).expect("removed");
+    let out = check_subject(&b, "unread", &picture(7), "item 1", &b.flags()).expect("new");
+    assert!(matches!(out, Outcome::Blessed(_)), "{out:?}");
+}
+
+#[test]
+fn the_same_subject_is_carried_over_or_listed_with_it() {
+    let b = Base::new();
+    b.plant(OLDER, "slot", &picture(7));
+    note_subject(&b, OLDER, "item 1");
+    b.plant(OLD, "slot", &picture(50));
+    note_subject(&b, OLD, "item 9");
+    let now = SystemTime::now();
+    set_mtime(&b.dir(OLDER), now - Duration::from_secs(3600));
+    set_mtime(&b.dir(OLD), now - Duration::from_secs(60));
+    // OLD is newer but shows another record: OLDER, of the same record, is compared.
+    let out = check_subject(&b, "slot", &picture(7), "item 1", &b.require()).expect("carried");
+    assert!(
+        matches!(&out, Outcome::CarriedOver { from_version, .. } if from_version == OLDER),
+        "{out:?}"
+    );
+    let line = std::fs::read_to_string(&b.entries(NEW, "carried")[0]).expect("entry");
+    assert_eq!(line.trim_end().split('\t').nth(7), Some("item 1"));
+    // A change of the same record is listed with its subject.
+    let _ = std::fs::remove_dir_all(b.dir(NEW));
+    let e = check_subject(&b, "slot", &picture(8), "item 1", &b.flags()).expect_err("changed");
+    assert!(e.contains(&format!("changed since install {OLDER}")), "{e}");
+    let line = std::fs::read_to_string(&b.entries(NEW, "changed")[0]).expect("entry");
+    assert_eq!(line.trim_end().split('\t').nth(9), Some("item 1"));
+}
+
+#[test]
+fn a_finished_run_removes_the_records_of_pictures_it_did_not_take() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    let b = Base::new();
+    let dir = b.dir(NEW);
+    b.plant(OLD, "a", &picture(7));
+    b.plant(OLD, "b", &picture(7));
+    b.plant(OLD, "c", &picture(7));
+    let flags = b.flags();
+    // Run 1 takes a and b (both changed) and c (carried over).
+    let r = catch_unwind(AssertUnwindSafe(|| {
+        let mut p = goldens::Pending::for_dir(&dir, &flags);
+        for n in ["a", "b"] {
+            if let Err(e) = goldens::check_with(&dir, n, &picture(90), &flags) {
+                p.push(e);
+            }
+        }
+        assert!(goldens::check_with(&dir, "c", &picture(7), &flags).is_ok());
+        p.finish();
+    }));
+    assert!(r.is_err(), "two changed pictures fail");
+    assert_eq!(b.entries(NEW, "changed").len(), 2);
+    assert_eq!(b.entries(NEW, "carried").len(), 1);
+    // A run that panics before its end removes nothing.
+    let r = catch_unwind(AssertUnwindSafe(|| {
+        let _p = goldens::Pending::for_dir(&dir, &flags);
+        let _ = goldens::check_with(&dir, "a", &picture(90), &flags);
+        panic!("the test failed for another reason");
+    }));
+    assert!(r.is_err());
+    assert_eq!(b.entries(NEW, "changed").len(), 2);
+    // A run without any picture removes nothing.
+    goldens::Pending::for_dir(&dir, &flags).finish();
+    assert_eq!(b.entries(NEW, "changed").len(), 2);
+    // Run 2 takes only a: the records of b and c and b's images go.
+    let r = catch_unwind(AssertUnwindSafe(|| {
+        let mut p = goldens::Pending::for_dir(&dir, &flags);
+        if let Err(e) = goldens::check_with(&dir, "a", &picture(90), &flags) {
+            p.push(e);
+        }
+        // Dropped, not finished: the same rule.
+        drop(p);
+    }));
+    assert!(r.is_err(), "a is still changed");
+    let changed = b.entries(NEW, "changed");
+    assert_eq!(changed.len(), 1);
+    assert!(
+        std::fs::read_to_string(&changed[0])
+            .expect("entry")
+            .contains("\ta\t")
+    );
+    assert!(b.entries(NEW, "carried").is_empty());
+    assert!(dir.join("a.actual.png").is_file());
+    assert!(!dir.join("b.actual.png").exists());
+    assert!(!dir.join("b.diff.png").exists());
+    assert!(dir.join("c.png").is_file(), "goldens are kept");
 }

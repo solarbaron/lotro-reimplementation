@@ -374,9 +374,9 @@ Tier-2 goldens ([decision 0031](decisions/0031-parity-panel-goldens.md)) live un
 `${TESSERA_GOLDEN_DIR:-${XDG_CACHE_HOME:-~/.cache}/tessera/goldens}/<package>/<test>/<function>/<install version>/<name>.png`.
 A game update changes the install version, so every golden of the new version starts
 missing. The shared helper (`apps/client/tests/ui_common/goldens.rs`, used by every tier-2
-test) then looks for the golden of the same name in the most recently modified sibling
-directory named like an install version (16 hex digits, or `schema-` and 16), and compares
-the new picture with it by the test's own comparison:
+test) then takes, among the sibling directories named like an install version (16 hex
+digits, or `schema-` and 16) that hold a golden of the same name, the most recently modified
+one, and compares the new picture with that golden by the test's own comparison:
 
 - **Match:** the previous golden is copied as the current one (atomically), the test logs
   `golden: carried over from <version> <old path> -> <new path>` and counts it as a pass,
@@ -390,8 +390,16 @@ the new picture with it by the test's own comparison:
 - **No previous golden:** the first-run rules (blessed, or a failure under
   `TESSERA_GOLDEN_REQUIRE=1`).
 
+A name that does not say what the picture shows has a subject: the parity tooltips' `item-07`
+is the seventh record of a sample that an update can change, so a previous version's
+`item-07` counts only when that version's `index.txt` gives the same family and DID for the
+ordinal. Another record there makes the picture new (first-run rules; its `new` record and
+the tool name both subjects), never "changed".
+
 A later pass, carry-over or blessing of a picture removes its review entry and its actual and
-diff images. `TESSERA_GOLDEN_BLESS_LOCAL=1` is the owner's approval: it blesses a changed
+diff images. When a test ends without a panic, the records of pictures of its directory that
+it did not take (a renamed or dropped shot) are removed too, with their actual and diff
+images. `TESSERA_GOLDEN_BLESS_LOCAL=1` is the owner's approval: it blesses a changed
 picture as before.
 
 `tools/golden-review.sh` reads the records of one install version (from `TESSERA_GAME_DIR`
@@ -399,7 +407,7 @@ through `tessera-dattool` on `PATH` or `$TESSERA_DATTOOL`, from `--version V`, o
 version of the latest check in `<base>/review/last-version`), prints the counts (carried
 over, changed, new) and the review list, and writes the list to
 `<base>/review/<install version>.tsv` (package, test, function, name, old version, old
-golden, actual, diff, differing pixels). `--html FILE` writes one local page with old | new |
+golden, actual, diff, differing pixels, subject). `--html FILE` writes one local page with old | new |
 diff side by side through `file://` links; it refuses a file inside a git work tree. No
 picture is copied into the repository. `--self-test` checks the tool.
 

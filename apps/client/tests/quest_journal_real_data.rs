@@ -378,6 +378,8 @@ struct Pictures {
     dir: PathBuf,
     flags: goldens::Flags,
     results: Vec<(String, &'static str)>,
+    /// Golden failures, reported when the pictures are dropped (every picture is checked).
+    pending: goldens::Pending,
 }
 
 impl Pictures {
@@ -386,10 +388,13 @@ impl Pictures {
             .unwrap_or_else(|e| panic!("{e}"));
         let mut flags = goldens::Flags::from_env();
         flags.sheet = flags.sheet.map(|s| s.join(test));
+        // The review records of pictures this run does not take go when it ends.
+        let pending = goldens::Pending::for_dir(&dir, &flags);
         Self {
             dir,
             flags,
             results: Vec::new(),
+            pending,
         }
     }
 
@@ -420,7 +425,10 @@ impl Pictures {
                 println!("{name}: {} ({w}x{h})", o.word());
                 self.results.push((name.to_owned(), o.word()));
             }
-            Err(e) => panic!("{e}"),
+            Err(e) => {
+                self.results.push((name.to_owned(), "failed"));
+                self.pending.push(e);
+            }
         }
     }
 }

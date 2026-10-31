@@ -152,6 +152,26 @@ and is not part of this criterion.
 - `docs/DEVELOPMENT.md`'s environment table should list `TESSERA_GOLDEN_DIR`,
   `TESSERA_GOLDEN_REQUIRE` and `TESSERA_GOLDEN_BLESS_LOCAL` once a test uses them.
 
+## Amendment 2026-10-31: carry-over after an install update
+Owner decision 2026-10-31: after an install update, an unchanged picture is carried over from
+the previous install version automatically; a changed one is never blessed without the owner
+(`TESSERA_GOLDEN_BLESS_LOCAL=1`) and is listed by `tools/golden-review.sh`.
+
+- "Previous version" is the most recently modified sibling directory of the same
+  `<package>/<test binary>/<function>` that is named like an install version and holds a
+  golden of the same name. The comparison is the test's own (the tolerance of its painter).
+- A carried-over picture copies the previous golden into the new version's directory and
+  counts as a pass, also under `TESSERA_GOLDEN_REQUIRE=1`. Step 2 of §3 still asks for a fresh
+  golden directory, so an exit verification never carries over.
+- A changed picture fails the test with and without `TESSERA_GOLDEN_REQUIRE`; its actual and
+  diff images go into the new version's directory and one review record into
+  `<base>/review/<install version>/` (`docs/DEVELOPMENT.md`, "Local goldens after a game
+  update").
+- Without a previous golden the first-run rule above applies unchanged.
+- A picture whose name is not its identity (the parity tooltips' sample ordinals) is
+  compared only with a previous golden of the same record, as that version's `index.txt`
+  gives it; another record in the slot makes it a new picture, not a changed one.
+
 ## Open
 - `tools/check-content.sh` accepts any PNG under 1 MiB. Nothing but the location rule above
   keeps an install-derived golden out of a commit. A follow-up for the owner of `tools/` is a

@@ -687,7 +687,18 @@ TESSERA_GOLDEN_REQUIRE=1 cargo test --release -p tessera-client \
 `TESSERA_GOLDEN_BLESS_LOCAL=1` rewrites existing local pictures (it cannot be combined with
 `TESSERA_GOLDEN_REQUIRE`), and `TESSERA_SHEET_DIR=DIR` also copies every picture to DIR for
 viewing. On a mismatch the new picture and a difference picture are written next to the
-golden. `TESSERA_BLESS=1` belongs to the committed synthetic goldens only
+golden.
+
+After a game update the install version changes. A picture that still matches the golden of
+the previous version is carried over by itself (`golden: carried over from <version>`, a pass
+also with `TESSERA_GOLDEN_REQUIRE=1`). A changed picture is never blessed by itself: the test
+fails with `changed since install <old>: needs the owner's review` and lists it for review.
+`tools/golden-review.sh` prints the counts (carried over, changed, new) and the list, and
+`tools/golden-review.sh --html ~/.cache/tessera/scratch/golden-review.html` writes a local page
+with the old, new and difference pictures side by side. Bless the pictures you approve with
+`TESSERA_GOLDEN_BLESS_LOCAL=1` (`docs/DEVELOPMENT.md`, "Local goldens after a game update").
+
+`TESSERA_BLESS=1` belongs to the committed synthetic goldens only
 (`cargo test -p tessera-ui --test p3_goldens`, images in `crates/ui/tests/golden/`); it never
 touches the local ones. Never commit a local picture: it shows your install's text and art.
 
@@ -1119,7 +1130,10 @@ index with its category and has no image. The first run writes the images (`bles
 runs compare with them, and `TESSERA_GOLDEN_REQUIRE=1` and `TESSERA_GOLDEN_BLESS_LOCAL=1` work
 as in §3.14. **Never commit the images or the index**: the index holds the game's names. A
 patch of the install can change the sample and gives a new `<install version>` folder; compare
-the sample of the folder you name in your notes.
+the sample of the folder you name in your notes. Unchanged images are carried over from the
+previous folder and changed ones are listed for review (§3.14), but only for a slot that
+holds the same record in both folders' `index.txt`; a slot that now holds another record is
+a new image. `index.txt` is written anew.
 
 <a id="parity-checklist"></a>
 **The parity checklist.** [`docs/checklists/parity.md`](checklists/parity.md) is the one

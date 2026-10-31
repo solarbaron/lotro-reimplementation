@@ -46,7 +46,10 @@
 //! parity_tooltips_real_data/<function>/<install version>/`, never in a work tree and never
 //! in the install. A missing picture is written (`blessed`), an existing one compared with
 //! the render crate's tolerance; `TESSERA_GOLDEN_REQUIRE=1` and
-//! `TESSERA_GOLDEN_BLESS_LOCAL=1` work as for every tier-2 golden.
+//! `TESSERA_GOLDEN_BLESS_LOCAL=1` work as for every tier-2 golden. After an install update
+//! a picture is compared with a previous version's golden of the same name only when that
+//! version's `index.txt` gives the same family and DID for its ordinal (the sample can put
+//! another record in the slot); otherwise it is a new picture (`goldens::Subject`).
 //!
 //! A failure is: a shortfall of records, a classification error that escapes the
 //! categories, a model that does not build or convert, a panel with template failures or an
@@ -689,9 +692,8 @@ fn fifty_item_and_fifty_skill_tooltips_are_painted() {
     for u in &unpainted {
         eprintln!("  not painted: {u}");
     }
-    let index_path = golden_dir.join("index.txt");
-    std::fs::create_dir_all(&golden_dir).expect("golden directory");
-    std::fs::write(&index_path, index).expect("index written");
+    let index_path = goldens::write_side_file(&golden_dir, "index.txt", index.as_bytes())
+        .unwrap_or_else(|e| panic!("index: {e}"));
     eprintln!("index: {}", index_path.display());
 
     // 3. The game UI from the install at UI scale 1, painted by the GPU UI pass.
@@ -737,7 +739,10 @@ fn fifty_item_and_fifty_skill_tooltips_are_painted() {
     );
 
     let t1 = Instant::now();
-    let (mut blessed, mut matched, mut clipped, mut defective) = (0, 0, 0, 0);
+    let (mut blessed, mut matched, mut carried, mut clipped, mut defective) = (0, 0, 0, 0, 0);
+    // Golden failures (every picture is checked first); the review records of pictures this
+    // run did not take are removed when the test ends without a panic.
+    let mut pending = goldens::Pending::for_dir(&golden_dir, &flags);
     // Tooltips built again after their fonts arrived (module docs).
     let mut rebuilt = 0;
     for shot in &shots {
@@ -819,18 +824,39 @@ fn fifty_item_and_fifty_skill_tooltips_are_painted() {
         };
         host.ui_mut().destroy(built.frame);
         let Some(pic) = picture else { continue };
-        match goldens::check_with_compare(&golden_dir, &shot.name, &pic, &flags, gpu_compare) {
+        // A picture name is a sample ordinal; an update can put another record there, so a
+        // previous version's golden counts only for the same record (its `index.txt`).
+        let id = subject_of(&shot.name, &shot.did.to_string());
+        let previous = |d: &Path| previous_subject(d, &shot.name);
+        let subject = goldens::Subject {
+            id: &id,
+            previous: &previous,
+        };
+        match goldens::check_with_subject(
+            &golden_dir,
+            &shot.name,
+            &pic,
+            &flags,
+            gpu_compare,
+            Some(&subject),
+        ) {
             Ok(goldens::Outcome::Blessed(_)) => blessed += 1,
             Ok(goldens::Outcome::Passed(_)) => matched += 1,
-            Err(e) => failures.push(e),
+            Ok(goldens::Outcome::CarriedOver { .. }) => {
+                matched += 1;
+                carried += 1;
+            }
+            Err(e) => pending.push(e),
         }
     }
     eprintln!(
-        "painted {} tooltips in {:?}: {blessed} blessed, {matched} passed, {defective} failed \
-         the panel audit (not painted), {clipped} taller or wider than the screen, {rebuilt} \
-         built again after their fonts arrived; goldens in {}",
+        "painted {} tooltips in {:?}: {blessed} blessed, {matched} passed ({carried} of them \
+         carried over), {} golden failures, {defective} failed the panel audit (not painted), \
+         {clipped} taller or wider than the screen, {rebuilt} built again after their fonts \
+         arrived; goldens in {}",
         blessed + matched,
         t1.elapsed(),
+        pending.len(),
         golden_dir.display()
     );
     assert!(
@@ -838,12 +864,48 @@ fn fifty_item_and_fifty_skill_tooltips_are_painted() {
         "{} failures: {failures:?}",
         failures.len()
     );
+    // Every picture was taken and checked: the golden failures, after pruning the review
+    // records of pictures this run did not take.
+    pending.finish();
     assert_eq!(clipped, 0, "tooltips cut by the screen");
     assert_eq!(
         blessed + matched + unpainted.len(),
         2 * PER_FAMILY,
         "every record painted or noted with its category"
     );
+}
+
+/// The subject of picture `name` (`item-07`) showing record `did`: `item <did>`, as the
+/// index's family and DID columns.
+fn subject_of(name: &str, did: &str) -> String {
+    let family = name.split_once('-').map_or(name, |(f, _)| f);
+    format!("{family} {did}")
+}
+
+/// Most bytes of a previous version's `index.txt` read.
+const MAX_INDEX_BYTES: u64 = 1 << 20;
+
+/// The subject the picture `name` showed in the golden directory `dir` of another install
+/// version: the family and DID columns of its ordinal's line in that directory's
+/// `index.txt`, or `None` without one.
+fn previous_subject(dir: &Path, name: &str) -> Option<String> {
+    let (family, ordinal) = name.split_once('-')?;
+    let path = dir.join("index.txt");
+    if std::fs::metadata(&path).ok()?.len() > MAX_INDEX_BYTES {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    index_subject(&text, family, ordinal)
+}
+
+/// The family and DID columns of the line of `family` and `ordinal` in an index.
+fn index_subject(index: &str, family: &str, ordinal: &str) -> Option<String> {
+    index
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(|l| l.split('\t').collect::<Vec<_>>())
+        .find(|c| c.first() == Some(&ordinal) && c.get(1) == Some(&family))
+        .and_then(|c| c.get(2).map(|did| format!("{family} {did}")))
 }
 
 // Synthetic tests of the panel audit and the index columns (no install needed).
@@ -1036,4 +1098,29 @@ fn index_categories_name_row_failures_misses_and_no_name() {
         quickslot_icon: None,
     };
     assert_eq!(skill_category(&o), "NoName misses=2");
+}
+
+#[test]
+fn a_previous_golden_counts_only_for_the_same_record_of_its_slot() {
+    let index = "# ordinal\tfamily\tDID\tcategory\tname\n\
+                 07\titem\t0x00000011\tRendered\tA\n\
+                 07\tskill\t0x00000022\tRendered\tB\n";
+    assert_eq!(subject_of("item-07", "0x00000011"), "item 0x00000011");
+    assert_eq!(
+        index_subject(index, "item", "07").as_deref(),
+        Some("item 0x00000011")
+    );
+    assert_eq!(
+        index_subject(index, "skill", "07").as_deref(),
+        Some("skill 0x00000022")
+    );
+    assert_eq!(index_subject(index, "item", "08"), None);
+    let dir = tempfile::tempdir().expect("tempdir");
+    assert_eq!(previous_subject(dir.path(), "item-07"), None, "no index");
+    std::fs::write(dir.path().join("index.txt"), index).expect("index");
+    assert_eq!(
+        previous_subject(dir.path(), "item-07").as_deref(),
+        Some("item 0x00000011")
+    );
+    assert_eq!(previous_subject(dir.path(), "noordinal"), None);
 }

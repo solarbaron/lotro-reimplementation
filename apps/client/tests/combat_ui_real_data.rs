@@ -211,9 +211,13 @@ fn combat_screens_with_the_install() {
     );
     assert!(missing.is_empty(), "elements not shown: {missing:?}");
 
-    // Local-only goldens (decision 0031 tier 2): blessed when missing, else compared.
+    // Local-only goldens (decision 0031 tier 2 and its 2026-10-31 amendment, rules in
+    // `ui_common/goldens.rs`): compared, carried over from a previous install version, listed
+    // as changed for the owner's review, or blessed on a first run.
     let mut blessed = 0;
     let mut matched = 0;
+    let mut carried = 0;
+    let mut pending = goldens::Pending::for_dir(&golden_dir, &flags);
     for (at, img) in images {
         let name = format!("checkpoint-{at:05}ms");
         let pic = goldens::Rgba {
@@ -224,11 +228,14 @@ fn combat_screens_with_the_install() {
         match goldens::check_with_compare(&golden_dir, &name, &pic, &flags, gpu_compare) {
             Ok(goldens::Outcome::Blessed(_)) => blessed += 1,
             Ok(goldens::Outcome::Passed(_)) => matched += 1,
-            Err(e) => panic!("{e}"),
+            Ok(goldens::Outcome::CarriedOver { .. }) => carried += 1,
+            Err(e) => pending.push(e),
         }
     }
     eprintln!(
-        "goldens in {}: {blessed} blessed, {matched} passed",
-        golden_dir.display()
+        "goldens in {}: {blessed} blessed, {matched} passed, {carried} carried over, {} failed",
+        golden_dir.display(),
+        pending.len()
     );
+    pending.finish();
 }

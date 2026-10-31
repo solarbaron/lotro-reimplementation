@@ -289,6 +289,8 @@ pub struct Pictures {
     seq: usize,
     /// (name, outcome word) per picture.
     pub results: Vec<(String, &'static str)>,
+    /// Golden failures, reported when the pictures are dropped (every picture is checked).
+    pending: goldens::Pending,
 }
 
 impl Pictures {
@@ -299,11 +301,14 @@ impl Pictures {
             .unwrap_or_else(|e| panic!("{e}"));
         let mut flags = goldens::Flags::from_env();
         flags.sheet = flags.sheet.map(|s| s.join(test));
+        // The review records of pictures this run does not take go when it ends.
+        let pending = goldens::Pending::for_dir(&dir, &flags);
         Self {
             dir,
             flags,
             seq: 0,
             results: Vec::new(),
+            pending,
         }
     }
 
@@ -368,9 +373,12 @@ impl Pictures {
         match goldens::check_with(&self.dir, &name, &img, &self.flags) {
             Ok(o) => {
                 println!("{name}: {} ({}x{})", o.word(), img.width, img.height);
-                self.results.push((name, o.word()));
+                self.results.push((name.clone(), o.word()));
             }
-            Err(e) => panic!("{e}"),
+            Err(e) => {
+                self.results.push((name, "failed"));
+                self.pending.push(e);
+            }
         }
     }
 
@@ -408,9 +416,12 @@ impl Pictures {
                     report.drawn,
                     report.rotated
                 );
-                self.results.push((name, o.word()));
+                self.results.push((name.clone(), o.word()));
             }
-            Err(e) => panic!("{e}"),
+            Err(e) => {
+                self.results.push((name, "failed"));
+                self.pending.push(e);
+            }
         }
     }
 
@@ -433,9 +444,12 @@ impl Pictures {
         match goldens::check_with(&self.dir, &name, &img, &self.flags) {
             Ok(o) => {
                 println!("{name}: {} ({w}x{h})", o.word());
-                self.results.push((name, o.word()));
+                self.results.push((name.clone(), o.word()));
             }
-            Err(e) => panic!("{e}"),
+            Err(e) => {
+                self.results.push((name, "failed"));
+                self.pending.push(e);
+            }
         }
     }
 }

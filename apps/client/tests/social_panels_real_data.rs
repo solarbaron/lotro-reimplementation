@@ -823,7 +823,8 @@ fn social_scenarios_render_on_the_install() {
     rig.shutdown();
 
     // Local-only goldens of the fellowship and trade pictures (decision 0031 tier 2).
-    let (mut blessed, mut matched) = (0, 0);
+    let (mut blessed, mut matched, mut carried) = (0, 0, 0);
+    let mut pending = goldens::Pending::for_dir(&golden_dir, &flags);
     for (name, (width, height, data)) in shots {
         let pic = goldens::Rgba {
             width,
@@ -833,13 +834,16 @@ fn social_scenarios_render_on_the_install() {
         match goldens::check_with_compare(&golden_dir, &name, &pic, &flags, gpu_compare) {
             Ok(goldens::Outcome::Blessed(_)) => blessed += 1,
             Ok(goldens::Outcome::Passed(_)) => matched += 1,
-            Err(e) => panic!("{e}"),
+            Ok(goldens::Outcome::CarriedOver { .. }) => carried += 1,
+            Err(e) => pending.push(e),
         }
     }
     eprintln!(
-        "goldens in {}: {blessed} blessed, {matched} passed",
-        golden_dir.display()
+        "goldens in {}: {blessed} blessed, {matched} passed, {carried} carried over, {} failed",
+        golden_dir.display(),
+        pending.len()
     );
+    pending.finish();
 }
 
 /// A fellowship whose members carry effects (invented names; the effect records are chosen

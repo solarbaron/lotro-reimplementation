@@ -14,11 +14,10 @@
 //!   values the client uses (§5.3.2, §5.7, §8.1); every property name the views use is
 //!   in the install's dictionary with the expected type.
 //!
-//! Install-specific counts are compared because the spec's install and the test install
-//! are the same data (§10, last paragraph). Counts that every content patch moves (the
-//! mount groups, the object and property-set totals, the scope's byte total) are floors or
-//! printed only; the 2026-10-27 patch moved them. Run with `TESSERA_GAME_DIR=… cargo test
-
+//! Install-specific counts are checked against the local baseline of the install version
+//! (decision 0045, `tessera-testkit`), with the spec's figures beside them (§10, last
+//! paragraph; drift reports, `TESSERA_CENSUS_STRICT=1`); the invariants and the values the
+//! client uses stay assertions. Run with `TESSERA_GAME_DIR=… cargo test
 //! --release -p tessera-wstate --test game_controls_real_data -- --nocapture`. Only counts,
 //! class indices, keys and DIDs are printed; no game text leaves the install.
 
@@ -52,6 +51,14 @@ fn game_dir() -> Option<PathBuf> {
             None
         }
     }
+}
+
+type Census = tessera_testkit::Census;
+
+/// The census of one test function (decision 0045).
+fn census(function: &str) -> Census {
+    let dir = game_dir().expect("install");
+    tessera_testkit::census!(function, &dir).expect("census")
 }
 
 struct Fixture {
@@ -331,6 +338,7 @@ fn sweep() -> Option<&'static Sweep> {
 #[test]
 fn entry_kinds_and_scope() {
     let Some(f) = fixture() else { return };
+    let mut census = census("entry_kinds_and_scope");
     let idx = ClassIndices::OBSERVED;
     let lib = f.store.library().expect("library");
     let problems = idx.check(&lib);
@@ -350,13 +358,13 @@ fn entry_kinds_and_scope() {
             e.label, e.did, e.root_class
         );
     }
-    assert_eq!(index.entries.len(), 316, "GC1: 316 entries");
+    census.count_vs_spec("GC1 entries", index.entries.len(), 316);
     let expected = [1, 1, 6, 38, 14, 23, 12, 14, 14, 193];
     for (kind, n) in EntryKind::ALL.iter().zip(expected) {
-        assert_eq!(
+        census.count_vs_spec(
+            &format!("GCI15 entries of kind {kind:?}"),
             counts.get(&Some(*kind)).copied().unwrap_or(0),
             n,
-            "GCI15 {kind:?}"
         );
     }
     assert_eq!(counts.get(&None), None, "GCI15: every entry matches a row");
@@ -374,7 +382,7 @@ fn entry_kinds_and_scope() {
         .iter()
         .filter(|e| e.root_class.is_some())
         .count();
-    assert_eq!(objects, 314, "314 object entries");
+    census.count_vs_spec("object entries", objects, 314);
 
     // GCI1 and §2.2: the 119 labels resolve, decode completely, 97 root classes.
     let mut classes = BTreeSet::new();
@@ -408,10 +416,8 @@ fn entry_kinds_and_scope() {
         "scope: 119 labels, {} root classes, {bytes} bytes",
         classes.len()
     );
-    assert_eq!(classes.len(), 97, "GC2: 97 root classes");
-    // The byte total moves with any content change to the 119 objects (338,903 in the
-    // spec's install, 338,927 after the 2026-10-27 patch); it is printed above, not pinned.
-    assert!(bytes > 0, "GC2: bytes of object state and property set");
+    census.count_vs_spec("GC2 root classes", classes.len(), 97);
+    census.count_vs_spec("GC2 bytes of object state and property set", bytes, 338_903);
 
     // Kinds of the spec's groups.
     let kind = |l: &str| index.get(l).and_then(|e| e.kind);
@@ -455,7 +461,7 @@ fn entry_kinds_and_scope() {
         .of_kind(EntryKind::DialogMarker)
         .chain(index.of_kind(EntryKind::EmptyMarker))
         .collect();
-    assert_eq!(markers.len(), 52);
+    census.count_vs_spec("GCI2 empty markers", markers.len(), 52);
     let mut marker_classes = BTreeSet::new();
     let mut dialog_parents = BTreeSet::new();
     for e in &markers {
@@ -477,13 +483,19 @@ fn entry_kinds_and_scope() {
             dialog_parents.insert(lib.parent(state.root_class));
         }
     }
-    assert_eq!(marker_classes.len(), 52, "GCI2: distinct root classes");
-    assert_eq!(dialog_parents.len(), 1, "GCI2: one dialog parent");
+    assert_eq!(
+        marker_classes.len(),
+        markers.len(),
+        "GCI2: distinct root classes"
+    );
+    census.count_vs_spec("GCI2 dialog parents", dialog_parents.len(), 1);
+    census.finish();
 }
 
 #[test]
 fn did_sets_and_managers() {
     let Some(f) = fixture() else { return };
+    let mut census = census("did_sets_and_managers");
     let objects: HashSet<Did> = object_dids(&f.set).expect("dids").into_iter().collect();
     // GCI3.
     let sizes = [1_767usize, 767, 2, 14, 2, 0];
@@ -494,7 +506,7 @@ fn did_sets_and_managers() {
         assert_eq!(s.item_count, 2, "GCI3 {label}: two items");
         assert_eq!(s.attribute, DID_SET_ATTRIBUTE, "{label}");
         assert_eq!(s.duplicates, 0, "{label}");
-        assert_eq!(s.len(), n, "{label}: set size");
+        census.count_vs_spec(&format!("GCI3 {label}: set size"), s.len(), n);
         assert!(f.props(did).is_empty(), "GCI3 {label}: empty property set");
         let missing = s.members.iter().filter(|d| !objects.contains(d)).count();
         assert_eq!(missing, 0, "GCI3 {label}: members exist");
@@ -510,7 +522,7 @@ fn did_sets_and_managers() {
         .iter()
         .find(|(l, _)| *l != "RepositoryManager")
         .expect("a manager");
-    assert_eq!(reference.len(), 36, "GC8: 36-property template");
+    census.count_vs_spec("GC8 template properties", reference.len(), 36);
     let mut differing = BTreeSet::new();
     for (label, s) in &sets {
         assert_eq!(
@@ -521,7 +533,11 @@ fn did_sets_and_managers() {
         let d = TemplateDiff::between(reference, s);
         assert!(d.only_first.is_empty(), "GCI4 {label}: {d:?}");
         if *label == "RepositoryManager" {
-            assert_eq!(d.only_second.len(), 12, "GCI4: 12 version properties");
+            census.count_vs_spec(
+                "GCI4 RepositoryManager version properties",
+                d.only_second.len(),
+                12,
+            );
             for pid in &d.only_second {
                 assert!(
                     matches!(s.get(*pid), Some(Value::Int(_))),
@@ -571,9 +587,9 @@ fn did_sets_and_managers() {
             .read(f.weenie(label))
             .expect("r")
             .expect("p");
-        assert_eq!(b.len(), 63, "GC8: 63-byte object state");
+        census.count_vs_spec(&format!("GC8 {label}: object-state bytes"), b.len(), 63);
     }
-    assert_eq!(server_parents.len(), 1, "the three share one parent");
+    census.count_vs_spec("parents of the three servers", server_parents.len(), 1);
     // §3.4: each of the 17 entities holds exactly one textual property, `Name`.
     for label in MANAGER_LABELS.iter().copied().chain([
         "WorldEventServer",
@@ -604,7 +620,7 @@ fn did_sets_and_managers() {
     for label in MANAGER_LABELS {
         let did = f.weenie(label);
         let b = f.store.game_data().read(did).expect("r").expect("p");
-        assert_eq!(b.len(), 63, "GC8 {label}: 63-byte object state");
+        census.count_vs_spec(&format!("GC8 {label}: object-state bytes"), b.len(), 63);
         let state = f.store.state(did).expect("state").expect("present");
         let root = state.root_object().expect("root");
         assert_eq!(root.len(), 3, "{label}: three attributes");
@@ -616,6 +632,7 @@ fn did_sets_and_managers() {
             "{label}: three null references"
         );
     }
+    census.finish();
 }
 
 // --- The sweep's invariants ---------------------------------------------------------
@@ -624,31 +641,29 @@ fn did_sets_and_managers() {
 fn compiled_tables_traits_unlocks_and_families() {
     let Some(f) = fixture() else { return };
     let Some(s) = sweep() else { return };
+    let mut census = census("compiled_tables_traits_unlocks_and_families");
     assert_eq!(s.bad_headers, 0, "every object header parses");
-    // Content patches add objects: the record counts are floors (383,343 object records
-    // and 383,332 object property sets in the spec's install; 383,384 and 383,373 after
-    // the 2026-10-27 patch). Every 0x70 object has its 0x79 set (object prefix + 9,
-    // `property-system.md` §6.2).
+    // Every 0x70 object has its 0x79 set (object prefix + 9, `property-system.md` §6.2).
     let objects_0x70 = s.classes.keys().filter(|d| d.prefix() == 0x70).count();
     eprintln!(
         "sweep: {} object records ({objects_0x70} of prefix 0x70); property sets by prefix {:?}",
         s.classes.len(),
         s.sets_by_prefix
     );
-    assert!(s.classes.len() >= 383_343, "OBS: object records");
+    census.count_vs_spec("object records", s.classes.len(), 383_343);
     assert!(
         s.failed_sets.is_empty(),
         "property sets fail: {:?}",
         &s.failed_sets[..s.failed_sets.len().min(5)]
     );
     let sets_0x79 = s.sets_by_prefix.get(&0x79).copied().unwrap_or(0);
-    assert!(sets_0x79 >= 383_332, "OBS: object property sets");
+    census.count_vs_spec("object property sets", sets_0x79, 383_332);
     assert_eq!(sets_0x79, objects_0x70, "one 0x79 set per 0x70 object");
 
-    assert_eq!(
-        s.sets_by_prefix.get(&0x78),
-        Some(&1_618),
-        "OBS: bare property sets"
+    census.count_vs_spec(
+        "bare property sets",
+        s.sets_by_prefix.get(&0x78).copied().unwrap_or(0),
+        1_618,
     );
     assert_eq!(s.sets_by_prefix.len(), 2, "no other prefix of 0x78-0x7F");
 
@@ -668,8 +683,8 @@ fn compiled_tables_traits_unlocks_and_families() {
         adv.len(),
         mods.len()
     );
-    assert_eq!(adv.len(), 29, "GC11: 29 advancement tables");
-    assert_eq!(mods.len(), 3, "GC11: 3 modifier tables");
+    census.count_vs_spec("GC11 advancement tables", adv.len(), 29);
+    census.count_vs_spec("GC11 modifier tables", mods.len(), 3);
     let mut lens = (usize::MAX, 0usize);
     for &d in &adv {
         let st = f.store.state(d).expect("state").expect("present");
@@ -679,23 +694,33 @@ fn compiled_tables_traits_unlocks_and_families() {
         assert!(f.props(d).is_empty(), "{d}: empty property set");
         lens = (lens.0.min(t.values.len()), lens.1.max(t.values.len()));
     }
-    assert_eq!(lens, (11, 201), "§4.10: 11 to 201 values");
+    census.count_vs_spec("§4.10 shortest advancement table", lens.0, 11);
+    census.count_vs_spec("§4.10 longest advancement table", lens.1, 201);
+    let (mut keys, mut lowest, mut highest) = ((usize::MAX, 0usize), f64::MAX, f64::MIN);
     for &d in &mods {
         let st = f.store.state(d).expect("state").expect("present");
         let t = ModifierTable::from_state(&st).unwrap_or_else(|e| panic!("{d}: {e}"));
         assert_eq!(t.attribute, MODIFIER_ATTRIBUTE);
         assert!(t.all_finite(), "GCI5 {d}");
-        assert_eq!(t.entries.len(), 24, "§4.10: 24 keys");
+        keys = (keys.0.min(t.entries.len()), keys.1.max(t.entries.len()));
         for &(_, v) in &t.entries {
-            assert!((0.28..=24.0).contains(&v), "§4.10 range: {v}");
+            lowest = lowest.min(f64::from(v));
+            highest = highest.max(f64::from(v));
         }
     }
+    census.count_vs_spec("§4.10 fewest modifier keys", keys.0, 24);
+    census.count_vs_spec("§4.10 most modifier keys", keys.1, 24);
+    // The §4.10 range 0.28–24.0, in thousandths.
+    #[allow(clippy::cast_possible_truncation)]
+    let milli = |v: f64| (v * 1000.0).round() as i64;
+    census.count_vs_spec("§4.10 lowest modifier (1/1000)", milli(lowest), 280i64);
+    census.count_vs_spec("§4.10 highest modifier (1/1000)", milli(highest), 24_000i64);
 
     // §4.2: slot schedules.
     let virtue = f.control("PVPVirtueControl");
     let pvp_schedule = f.did_of(&virtue, "PVPVirtueControl_PVPVirtueSlotSchedule");
     let schedules = s.of_class(f.class_of(pvp_schedule));
-    assert_eq!(schedules.len(), 15, "§4.2: 15 slot schedules");
+    census.count_vs_spec("§4.2 slot schedules", schedules.len(), 15);
     for &d in &schedules {
         let st = f.store.state(d).expect("state").expect("present");
         SlotSchedule::from_state(&st).unwrap_or_else(|e| panic!("{d}: {e}"));
@@ -709,7 +734,14 @@ fn compiled_tables_traits_unlocks_and_families() {
     let pvp = SlotSchedule::from_state(&st).expect("PvP schedule");
     let mut l = pvp.lengths();
     l.sort_unstable();
-    assert_eq!(l, vec![0, 6, 6], "§4.2: PvP schedule lists");
+    census.count_vs_spec("§4.2 PvP schedule lists", l.len(), 3);
+    for (i, &n) in l.iter().enumerate() {
+        let name = format!("§4.2 PvP schedule list {i} (by length)");
+        match [0, 6, 6].get(i) {
+            Some(&spec) => census.count_vs_spec(&name, n, spec),
+            None => census.count(&name, n),
+        }
+    }
     assert!(pvp.lists.iter().all(|(_, v)| v.iter().all(|&x| x == 1)));
 
     // GCI6 second half and GCI16: the mount traits.
@@ -736,8 +768,9 @@ fn compiled_tables_traits_unlocks_and_families() {
         .iter()
         .filter_map(|(k, _)| *k)
         .collect();
-    assert_eq!(hash_keys.len(), 7);
+    census.count_vs_spec("§5.2 slot-material hash keys", hash_keys.len(), 7);
     let mut per_slot: BTreeMap<u32, [usize; 3]> = BTreeMap::new();
+    let mut other_tier_or_cost = 0usize;
     for &d in &traits.members {
         let t =
             MountTrait::from_properties(&f.props(d), &f.reg).unwrap_or_else(|e| panic!("{d}: {e}"));
@@ -764,7 +797,7 @@ fn compiled_tables_traits_unlocks_and_families() {
                 "§5.2 {d}: APR prefix"
             );
         }
-        assert_eq!((t.tier, t.cost_to_slot), (Some(1), Some(0)), "§5.2 {d}");
+        other_tier_or_cost += usize::from((t.tier, t.cost_to_slot) != (Some(1), Some(0)));
         let e = per_slot.entry(slot).or_default();
         e[0] += 1;
         e[1] += usize::from(t.is_dyable == Some(true));
@@ -782,7 +815,26 @@ fn compiled_tables_traits_unlocks_and_families() {
     ]
     .into_iter()
     .collect();
-    assert_eq!(per_slot, expected, "GCI16 / §5.2 per-slot counts");
+    census.count_vs_spec(
+        "§5.2 traits not of tier 1 and cost 0",
+        other_tier_or_cost,
+        0,
+    );
+    let slots: BTreeSet<u32> = expected.keys().chain(per_slot.keys()).copied().collect();
+    for slot in slots {
+        let got = per_slot.get(&slot).copied().unwrap_or_default();
+        let spec = expected.get(&slot);
+        for (i, what) in ["traits", "dyable", "with a material"]
+            .into_iter()
+            .enumerate()
+        {
+            let name = format!("GCI16 slot {slot}: {what}");
+            match spec {
+                Some(e) => census.count_vs_spec(&name, got[i], e[i]),
+                None => census.count(&name, got[i]),
+            }
+        }
+    }
     // §5.2: the slot-material properties named by the hash occur in no set.
     for (_, pid) in &control.material_properties {
         let pid = pid.expect("material PID");
@@ -824,8 +876,8 @@ fn compiled_tables_traits_unlocks_and_families() {
         .map(|&(d, k)| k.unwrap_or_else(|| panic!("GCI10 {d}: one bit")))
         .collect();
     let unlock_set: BTreeSet<u32> = unlock_keys.iter().copied().collect();
-    assert_eq!(unlock_keys.len(), 111, "GC23: 111 unlocking items");
-    assert_eq!(unlock_set.len(), 111, "GC23: distinct keys");
+    census.count_vs_spec("GC23 unlocking items", unlock_keys.len(), 111);
+    assert_eq!(unlock_set.len(), unlock_keys.len(), "GC23: distinct keys");
     assert!(
         unlock_set.is_subset(&keys),
         "GCI10: every unlock names an override"
@@ -843,10 +895,10 @@ fn compiled_tables_traits_unlocks_and_families() {
         "VDO unlocks: {} items of classes {unlock_classes:?}",
         unlock_keys.len()
     );
-    assert_eq!(
+    census.count_vs_spec(
+        "§7.1 classes of the unlocking items",
         unlock_classes.len(),
         1,
-        "§7.1: the unlocking items share one class"
     );
     // GCI17: each unlock is the single element of the item's top-level usage array; the
     // client's way of finding it (`item_vdo_unlocks`) finds every value of the install.
@@ -879,10 +931,7 @@ fn compiled_tables_traits_unlocks_and_families() {
         s.usage_array_nested, 0,
         "§7.1: the usage array is top-level only"
     );
-    assert_eq!(
-        s.usage_array_top, 112,
-        "§7.1: 112 sets hold the usage array"
-    );
+    census.count_vs_spec("§7.1 sets holding the usage array", s.usage_array_top, 112);
 
     // GCI14 and the family counts of §4.9, §5.10, §8.5.
     let families: [(&str, usize, Option<usize>); 12] = [
@@ -899,7 +948,6 @@ fn compiled_tables_traits_unlocks_and_families() {
         ("MountedCombat_", 18, Some(13)),
         ("MountPower_", 7, None),
     ];
-    let mut mismatches = Vec::new();
     for (prefix, defined, used) in families {
         let pids: Vec<u32> = f
             .reg
@@ -913,17 +961,14 @@ fn compiled_tables_traits_unlocks_and_families() {
             "family {prefix}: {} defined, {nested} used (nested), {top} at top level",
             pids.len()
         );
-        assert_eq!(pids.len(), defined, "GC30 {prefix}: defined");
-        if let Some(u) = used
-            && nested != u
-        {
-            mismatches.push((prefix, u, nested, top));
+        census.count_vs_spec(&format!("GC30 {prefix}: defined"), pids.len(), defined);
+        match used {
+            Some(u) => census.count_vs_spec(&format!("GC30 {prefix}: used (nested)"), nested, u),
+            None => census.count(&format!("GC30 {prefix}: used (nested)"), nested),
         }
+        census.count(&format!("GC30 {prefix}: used at the top level"), top);
     }
-    assert!(
-        mismatches.is_empty(),
-        "GC30 used counts (spec, nested, top): {mismatches:?}"
-    );
+    census.finish();
 }
 
 // --- Typed views ----------------------------------------------------------------------
@@ -961,20 +1006,19 @@ fn view_names_exist_with_their_types() {
 #[test]
 fn mount_and_combat_views() {
     let Some(f) = fixture() else { return };
+    let mut census = census("mount_and_combat_views");
     let idx = ClassIndices::OBSERVED;
     // GCI6 first half.
     let dir =
         MountDirectory::from_properties(&f.control("MountDirectory"), &f.reg).expect("directory");
-    // Content patches add mounts: the group sizes are floors (347 tall and 329 short in
-    // the spec's install, 348 and 330 after the 2026-10-27 patch); the rest is exact.
     eprintln!(
         "mount skills: {} tall, {} short, {} other",
         dir.tall.len(),
         dir.short.len(),
         dir.other
     );
-    assert!(dir.tall.len() >= 347, "GC12: tall mount skills");
-    assert!(dir.short.len() >= 329, "GC12: short mount skills");
+    census.count_vs_spec("GC12 tall mount skills", dir.tall.len(), 347);
+    census.count_vs_spec("GC12 short mount skills", dir.short.len(), 329);
     assert_eq!(dir.other, 0, "GC12: no other size");
     assert!(dir.is_disjoint(), "GCI6: disjoint");
     let all: BTreeSet<Did> = dir.skills().collect();
@@ -997,9 +1041,13 @@ fn mount_and_combat_views() {
         races.len(),
         s.tall_nested
     );
-    assert_eq!(s.tall_flags.len(), 8, "GC12: eight species objects");
-    assert_eq!(races.len(), 8, "GC12: eight distinct species");
-    assert_eq!(tall, 4, "GC12: four tall species");
+    census.count_vs_spec(
+        "GC12 species objects with the tall flag",
+        s.tall_flags.len(),
+        8,
+    );
+    assert_eq!(races.len(), s.tall_flags.len(), "GC12: distinct species");
+    census.count_vs_spec("GC12 tall species", tall, 4);
     assert_eq!(s.tall_nested, 0, "GC12: top level only");
     assert_eq!(dir.skills_for_size(true), dir.tall.as_slice());
     assert_eq!(dir.skills_for_size(false), dir.short.as_slice());
@@ -1033,8 +1081,8 @@ fn mount_and_combat_views() {
         (c.steed_xp_mounted, c.steed_xp_unmounted),
         (Some(1.0), Some(0.3))
     );
-    assert_eq!(c.trees.len(), 3);
-    assert_eq!(c.tree_skills.len(), 3);
+    census.count_vs_spec("§5.3.1 trees", c.trees.len(), 3);
+    census.count_vs_spec("§5.3.1 tree skill hashes", c.tree_skills.len(), 3);
     let trees: BTreeSet<u32> = c.trees.iter().filter_map(|t| t.tree).collect();
     let skill_trees: BTreeSet<u32> = c.tree_skills.iter().filter_map(|t| t.tree).collect();
     eprintln!(
@@ -1042,7 +1090,11 @@ fn mount_and_combat_views() {
         trees.len(),
         skill_trees.len()
     );
-    assert_eq!(trees.len(), 3, "§5.3.1: one tree entry per trait tree");
+    assert_eq!(
+        trees.len(),
+        c.trees.len(),
+        "§5.3.1: one tree entry per trait tree"
+    );
     assert_eq!(skill_trees, trees, "§5.3.1: one skill hash per trait tree");
     assert!(
         c.trees.iter().all(|t| t.effect.is_some()),
@@ -1057,13 +1109,13 @@ fn mount_and_combat_views() {
         .iter()
         .flat_map(|t| t.skills.iter().filter_map(|s| s.1))
         .collect();
-    assert_eq!(skills.len(), 24, "§5.3.1: 24 entries");
-    assert_eq!(
+    census.count_vs_spec("§5.3.1 tree skill entries", skills.len(), 24);
+    census.count_vs_spec(
+        "§5.3.1 distinct tree skills",
         skills.iter().collect::<BTreeSet<_>>().len(),
         12,
-        "§5.3.1: 12 skills"
     );
-    assert_eq!(c.flanks.len(), 10);
+    census.count_vs_spec("§5.3.1 flanks", c.flanks.len(), 10);
     // GCI18: the view reads the flank angles only as floats, so all thirty being present
     // means all are floats; the tree keys agree between the two arrays.
     assert!(
@@ -1074,7 +1126,7 @@ fn mount_and_combat_views() {
         "GCI18: flank fields present as floats"
     );
     assert!(c.tree_keys_consistent(), "GCI18: tree keys");
-    assert_eq!(c.dye_slots.len(), 5);
+    census.count_vs_spec("§5.2 dye slots", c.dye_slots.len(), 5);
     let dye: BTreeSet<u32> = c.dye_slots.iter().filter_map(|d| d.slot).collect();
     assert_eq!(
         dye,
@@ -1107,20 +1159,22 @@ fn mount_and_combat_views() {
         (Some(10.0), Some(600.0)),
         "§5.7"
     );
+    census.finish();
 }
 
 #[test]
 fn account_views() {
     let Some(f) = fixture() else { return };
     let Some(s) = sweep() else { return };
+    let mut census = census("account_views");
     // GCI8.
     let pc = PerkControl::from_properties(&f.control("PerkControl"), &f.reg).expect("perk control");
-    assert_eq!(pc.channels.len(), 28);
+    census.count_vs_spec("GCI8 perk channels", pc.channels.len(), 28);
     assert!(pc.keys_are_distinct(), "GCI8");
-    assert_eq!(pc.available.len(), 2);
+    census.count_vs_spec("GCI8 available perks", pc.available.len(), 2);
     let perk_class = f.class_of(*pc.available.first().expect("perk"));
     let perks = s.of_class(perk_class);
-    assert_eq!(perks.len(), 47, "GC19: 47 perks");
+    census.count_vs_spec("GC19 perks", perks.len(), 47);
     for &d in &perks {
         let p = Perk::from_properties(&f.props(d), &f.reg).expect("perk");
         assert!(pc.admits(&p), "GCI8 {d}");
@@ -1132,7 +1186,7 @@ fn account_views() {
     // §6.2.
     let cc = CollectionControl::from_properties(&f.control("CollectionControl"), &f.reg)
         .expect("collections");
-    assert_eq!(cc.collections.len(), 29);
+    census.count_vs_spec("§6.2 collections", cc.collections.len(), 29);
     let coll_class = f.class_of(*cc.collections.first().expect("one"));
     assert_eq!(
         s.of_class(coll_class),
@@ -1146,11 +1200,12 @@ fn account_views() {
         n += c.pieces.len();
         pieces.extend(c.pieces);
     }
-    assert_eq!((n, pieces.len()), (131, 131), "§6.2 pieces");
+    census.count_vs_spec("§6.2 pieces", n, 131);
+    census.count_vs_spec("§6.2 distinct pieces", pieces.len(), 131);
     // GCI9.
     let pi = PaperItemServices::from_properties(&f.control("PaperItemControl"), &f.reg)
         .expect("services");
-    assert_eq!(pi.services.len(), 35);
+    census.count_vs_spec("GCI9 paper-item services", pi.services.len(), 35);
     let mut types = BTreeSet::new();
     for &d in &pi.services {
         let e = PaperItemService::from_properties(&f.props(d), &f.reg).expect("service");
@@ -1163,7 +1218,7 @@ fn account_views() {
     let rc =
         RandomItemRewardControl::from_properties(&f.control("RandomItemRewardControl"), &f.reg)
             .expect("rewards");
-    assert_eq!(rc.categories.len(), 2);
+    census.count_vs_spec("§6.6 reward categories", rc.categories.len(), 2);
     assert!(
         rc.categories.iter().all(|(_, t)| t.len() == 5),
         "§6.6: 5 tiers each"
@@ -1185,44 +1240,52 @@ fn account_views() {
         );
         assert_eq!(l.treasure_tables.len(), 3, "§6.7");
     }
+    census.count("§6.7 login rewards", logins.members.len());
+    census.finish();
 }
 
 #[test]
 fn ui_and_social_views() {
     let Some(f) = fixture() else { return };
     let Some(s) = sweep() else { return };
+    let mut census = census("ui_and_social_views");
     // GCI10 control half.
     let vdo = VitalDisplayOverrideControl::from_properties(
         &f.control("gmVitalDisplayOverrideControl"),
         &f.reg,
     )
     .expect("control");
-    assert_eq!(vdo.overrides.len(), 113);
+    census.count_vs_spec("GCI10 overrides", vdo.overrides.len(), 113);
     let class = f.class_of(*vdo.overrides.first().expect("one"));
     assert_eq!(
         s.of_class(class),
         vdo.overrides.iter().copied().collect(),
         "GCI10: every override listed once"
     );
-    assert_eq!(vdo.overrides.iter().collect::<BTreeSet<_>>().len(), 113);
+    assert_eq!(
+        vdo.overrides.iter().collect::<BTreeSet<_>>().len(),
+        vdo.overrides.len(),
+        "GCI10: overrides distinct"
+    );
     // GCI11.
     let a = AlertsControl::from_properties(&f.control("AlertsControl"), &f.reg).expect("alerts");
     assert_eq!(a.max_big_alerts, Some(5));
-    assert_eq!(a.overflow.len(), 64);
+    census.count_vs_spec("GCI11 alert types", a.overflow.len(), 64);
     assert!(a.types_are_distinct_and_non_zero(), "GCI11");
     assert_eq!(
         f.enum_non_zero_keys("Alert_Type"),
-        Some(64),
+        Some(a.overflow.len()),
         "GC24: every non-zero key"
     );
-    assert_eq!(
+    census.count_vs_spec(
+        "GCI11 alert types that overflow",
         a.overflow.iter().filter(|(_, o)| *o == Some(true)).count(),
-        59
+        59,
     );
     // §7.4.
     let r = ResetScheduleControl::from_properties(&f.control("ResetScheduleControl"), &f.reg)
         .expect("reset");
-    assert_eq!(r.schedules.len(), 3);
+    census.count_vs_spec("§7.4 reset schedules", r.schedules.len(), 3);
     for (label, days) in [
         ("Daily", vec![1, 2, 3, 4, 5, 6, 7]),
         ("BiWeekly", vec![2, 5]),
@@ -1239,18 +1302,27 @@ fn ui_and_social_views() {
     let even = f
         .enum_key("ConsiderationTable_ConsiderRank", "Even")
         .expect("Even key");
-    assert_eq!(cc.rank_to_ui_state.len(), 9);
-    assert_eq!(cc.combat_tables.len(), 6);
+    census.count_vs_spec("GCI12 rank-to-UI states", cc.rank_to_ui_state.len(), 9);
+    census.count_vs_spec("GCI12 combat consider types", cc.combat_tables.len(), 6);
     let types: BTreeSet<u32> = cc.combat_tables.iter().filter_map(|(t, _)| *t).collect();
-    assert_eq!(types.len(), 6, "GCI12: distinct consider types");
+    assert_eq!(
+        types.len(),
+        cc.combat_tables.len(),
+        "GCI12: distinct consider types"
+    );
     let mut combat = BTreeSet::new();
     for (_, list) in &cc.combat_tables {
-        assert_eq!(list.len(), 120, "GCI12");
+        assert_eq!(
+            list.len(),
+            cc.quest_tables.len(),
+            "GCI12: one table per level"
+        );
         combat.extend(list.iter().copied());
     }
-    assert_eq!(cc.quest_tables.len(), 120, "GCI12");
+    census.count_vs_spec("GCI12 levels", cc.quest_tables.len(), 120);
     let quest: BTreeSet<Did> = cc.quest_tables.iter().copied().collect();
-    assert_eq!((combat.len(), quest.len()), (6, 2), "GC26: 6 + 2 tables");
+    census.count_vs_spec("GC26 distinct combat tables", combat.len(), 6);
+    census.count_vs_spec("GC26 distinct quest tables", quest.len(), 2);
     for &d in combat.iter().chain(&quest) {
         let t = ConsiderationTable::from_properties(&f.props(d), &f.reg).expect("table");
         assert!(t.is_well_formed(even), "GCI12 {d}");
@@ -1258,7 +1330,7 @@ fn ui_and_social_views() {
     // GCI13.
     let t = TrackingStateControl::from_properties(&f.control("TrackingStateControl"), &f.reg)
         .expect("tracking");
-    assert_eq!(t.entries.len(), 17);
+    census.count_vs_spec("GCI13 tracking states", t.entries.len(), 17);
     assert!(t.states_are_distinct(), "GCI13");
     // §7.7–§7.9, §7.15.
     let dd =
@@ -1291,10 +1363,11 @@ fn ui_and_social_views() {
         (g.name_max_length, g.rank_name_max_length, g.motd_max_length),
         (Some(32), Some(32), Some(250))
     );
-    assert_eq!(g.ranks.len(), 4);
+    census.count_vs_spec("§8.1 guild ranks", g.ranks.len(), 4);
     assert_eq!(
         g.player_note_max_length, None,
         "§8.1: absent in the install"
     );
     assert_eq!(g.player_note_limit(), 48, "§8.1: the client default");
+    census.finish();
 }

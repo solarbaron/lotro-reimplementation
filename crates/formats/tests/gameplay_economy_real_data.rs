@@ -12,12 +12,10 @@
 //!   (class-175 tables and class-1942 barter entries, with the look-up quantities of §6.2);
 //! - the cross-links of §10.
 //!
-//! The census figures are observations of one install (§1): here the owner's install as
-//! patched on 2026-10-27 (`economy.md` states the figures of the install before that patch
-//! until it is re-measured). After a game update they may
-//! change: `TESSERA_ECONOMY_CENSUS=report` prints census differences instead of failing
-
-//! (invariants still fail). Only counts and error kinds are printed; no game data leaves the
+//! The census figures are observations of one install (§1). They are checked against the
+//! local baseline of the install version (decision 0045, `tessera-testkit`); the figures
+//! `economy.md` states stay beside them (drift reports, `TESSERA_CENSUS_STRICT=1`). The
+//! invariants always fail. Only counts and error kinds are printed; no game data leaves the
 //! install. Run with
 //! `cargo test --release -p tessera-formats --test gameplay_economy_real_data -- --nocapture`.
 
@@ -42,37 +40,17 @@ fn game_dir() -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
-fn census_is_strict() -> bool {
-    std::env::var_os("TESSERA_ECONOMY_CENSUS").is_none_or(|v| v != "report")
-}
-
-/// Census differences, collected so that one run reports all of them.
-#[derive(Default)]
-struct Census {
-    diffs: Vec<String>,
-    checked: usize,
-}
+/// The census figures: checked against the local baseline of the install version (decision
+/// 0045, `tessera-testkit`), with the figure `economy.md` states beside each.
+struct Census(tessera_testkit::Census);
 
 impl Census {
     fn eq(&mut self, what: &str, got: usize, expected: usize) {
-        self.checked += 1;
-        if got != expected {
-            self.diffs.push(format!("{what}: {got} (spec {expected})"));
-        }
+        self.0.count_vs_spec(what, got, expected);
     }
 
     fn finish(self) {
-        eprintln!(
-            "economy census: {} figures checked, {} differ",
-            self.checked,
-            self.diffs.len()
-        );
-        for d in &self.diffs {
-            eprintln!("  census: {d}");
-        }
-        if census_is_strict() {
-            assert!(self.diffs.is_empty(), "census differs from economy.md");
-        }
+        self.0.finish();
     }
 }
 
@@ -187,7 +165,7 @@ fn first_pass(
 const CENSUS: &[(EconomyKind, &[(u32, usize)])] = &[
     (
         EconomyKind::TrophyList,
-        &[(1237, 15_227), (1917, 179), (1918, 47)],
+        &[(1237, 15_224), (1917, 179), (1918, 47)],
     ),
     (
         EconomyKind::TreasureGroupProfile,
@@ -330,7 +308,7 @@ const ATTACHED: &[AttachedRow] = &[
         &[
             (1723, 1_949),
             (794, 1_300),
-            (2814, 3_393),
+            (2814, 3_390),
             (795, 600),
             (802, 246),
             (799, 126),
@@ -345,7 +323,7 @@ const ATTACHED: &[AttachedRow] = &[
             (2227, 1_200),
             (2728, 8_326),
         ],
-        49_760,
+        49_757,
     ),
     (
         1917,
@@ -398,10 +376,10 @@ const FIELD_TARGETS: &[FieldCensus] = &[
         None,
         Some("LootGen_TrophyList_ItemOrProfile"),
         &[
-            (796, 41_767),
-            (795, 5_663),
+            (796, 41_762),
+            (795, 5_658),
             (802, 3_088),
-            (2814, 2_175),
+            (2814, 2_173),
             (799, 1_727),
             (797, 299),
             (805, 273),
@@ -692,7 +670,7 @@ const FIELD_TARGETS: &[FieldCensus] = &[
         Some("Barter_ItemStruct"),
         Some("Barter_Item"),
         &[
-            (796, 54_862),
+            (796, 54_827),
             (795, 3_589),
             (802, 123),
             (799, 8),
@@ -706,12 +684,12 @@ const FIELD_TARGETS: &[FieldCensus] = &[
         Some("Barter_RewardItemStruct"),
         Some("Barter_Item"),
         &[
-            (796, 20_844),
-            (795, 13_589),
+            (796, 20_818),
+            (795, 13_583),
             (802, 3_742),
             (805, 1_524),
             (799, 1_307),
-            (2814, 841),
+            (2814, 838),
             (797, 354),
             (4178, 21),
             (803, 20),
@@ -768,8 +746,17 @@ fn target_table(
         .collect()
 }
 
+/// The E-I2 references outside a field's class list that the `economy.md` §12 OPEN records
+/// (install of 2026-10-31): class-3924 items (`items.md` §2.1) in an item field, and
+/// recipes (1024) named as ingredients. Counted, not failed.
+fn open_e_i2_exception(label: &str, class: u32, classes: &[u32]) -> bool {
+    (class == 3924 && classes.contains(&796))
+        || (label == "CraftRecipe_Ingredient" && class == 1024)
+}
+
 /// E-I2 over one set: dangling references and references to a class the table does not
-/// list for the field (by label). `skip_top` subtrees are checked for existence only.
+/// list for the field (by label), apart from the exceptions of `open_e_i2_exception`
+/// (counted in `excepted`). `skip_top` subtrees are checked for existence only.
 #[allow(clippy::too_many_arguments)]
 fn check_targets(
     set: &PropertySet,
@@ -777,7 +764,8 @@ fn check_targets(
     skip_top: Option<u32>,
     class_of: &HashMap<Did, u32>,
     dangling: &mut usize,
-    wrong: &mut BTreeMap<&'static str, usize>,
+    wrong: &mut BTreeMap<(&'static str, u32), usize>,
+    excepted: &mut BTreeMap<(&'static str, u32), usize>,
     classified: &mut usize,
 ) {
     for r in did_references(set) {
@@ -796,8 +784,10 @@ fn check_targets(
             .or_else(|| r.parent.and_then(|p| table.get(&p)));
         if let Some(&(label, classes)) = rule {
             *classified += 1;
-            if !classes.contains(&class) {
-                *wrong.entry(label).or_default() += 1;
+            if open_e_i2_exception(label, class, classes) {
+                *excepted.entry((label, class)).or_default() += 1;
+            } else if !classes.contains(&class) {
+                *wrong.entry((label, class)).or_default() += 1;
             }
         }
     }
@@ -834,7 +824,9 @@ fn economy_family_census_and_invariants() {
         recs.len(),
         started.elapsed()
     );
-    let mut census = Census::default();
+    let mut census = Census(
+        tessera_testkit::census!("economy_family_census_and_invariants", &dir).expect("census"),
+    );
     let mut broken: BTreeMap<&'static str, usize> = BTreeMap::new();
 
     // §3.4: a set holds at most one characteristic property.
@@ -919,7 +911,8 @@ fn economy_family_census_and_invariants() {
     let vendor_targets = target_table(&dict, VENDOR_TARGETS);
     let permissions = dict.pid("DefaultPermissionBlobStruct");
     let (mut dangling, mut classified) = (0usize, 0usize);
-    let mut wrong_class: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut wrong_class: BTreeMap<(&'static str, u32), usize> = BTreeMap::new();
+    let mut excepted: BTreeMap<(&'static str, u32), usize> = BTreeMap::new();
     let mut drop_keys = BTreeSet::new();
     for r in &economy {
         let rec = r.record.as_ref().expect("decoded");
@@ -934,6 +927,7 @@ fn economy_family_census_and_invariants() {
                 &class_of,
                 &mut dangling,
                 &mut wrong_class,
+                &mut excepted,
                 &mut classified,
             );
         }
@@ -1049,12 +1043,12 @@ fn economy_family_census_and_invariants() {
                 .count();
         }
     }
-    census.eq(
-        "0x78 sets with a characteristic property",
-        bare_characteristic,
-        0,
+    // Rules, not counts: no bare 0x78 set is an economy record or points into the family.
+    assert_eq!(
+        bare_characteristic, 0,
+        "0x78 sets with a characteristic property"
     );
-    census.eq("0x78 references into the loot family", bare_loot_refs, 0);
+    assert_eq!(bare_loot_refs, 0, "0x78 references into the loot family");
 
     // --- Entry census (§4) -------------------------------------------------------------
     let mut trophy_entries: BTreeMap<u32, (usize, usize, usize)> = BTreeMap::new();
@@ -1157,7 +1151,7 @@ fn economy_family_census_and_invariants() {
     }
     for (class, (entries, quantity, group)) in &trophy_entries {
         let expected = match class {
-            1237 => (77_200, 72_016, 170),
+            1237 => (77_188, 72_004, 170),
             1917 => (436, 121, 73),
             _ => (121, 0, 0),
         };
@@ -1226,9 +1220,10 @@ fn economy_family_census_and_invariants() {
     // E-I6 for the directory union (§9.1, 1674: no key in two tables).
     let mut union_keys = HashSet::new();
     let mut union_conflicts = 0usize;
+    let mut species_tables = 0usize;
     for r in of_kind(EconomyKind::LootDirectoryControl) {
         if let Some(EconomyRecord::LootDirectoryControl(d)) = &r.record {
-            census.eq("directory species tables", d.species_tables.len(), 4);
+            species_tables += d.species_tables.len();
             assert!(d.pvp_table.is_some());
             for t in &d.species_tables {
                 if let Some(EconomyRecord::SpeciesLevelLootTable(s)) =
@@ -1241,6 +1236,7 @@ fn economy_family_census_and_invariants() {
             }
         }
     }
+    census.eq("directory species tables", species_tables, 4);
     census.eq("directory union keys", union_keys.len(), 135);
     assert_eq!(union_conflicts, 0, "§9.1 union without conflicts");
 
@@ -1373,7 +1369,7 @@ fn economy_family_census_and_invariants() {
         lookup_profiles += usize::from(has_lookup);
     }
     for (shape, expected) in [
-        (BarterShape::Item { costs: 1 }, 27_711),
+        (BarterShape::Item { costs: 1 }, 27_676),
         (BarterShape::Item { costs: 2 }, 12_720),
         (BarterShape::Item { costs: 3 }, 1_811),
         (
@@ -1397,12 +1393,12 @@ fn economy_family_census_and_invariants() {
             expected,
         );
     }
-    census.eq("barter lists", shapes.values().sum(), 42_249);
-    census.eq("barter costs", costs, 58_591);
-    census.eq("barter cost items", cost_items, 58_589);
+    census.eq("barter lists", shapes.values().sum(), 42_214);
+    census.eq("barter costs", costs, 58_556);
+    census.eq("barter cost items", cost_items, 58_554);
     census.eq("barter look-up costs", lookups, 5_565);
     census.eq("barter look-up profiles", lookup_profiles, 342);
-    census.eq("barter reward items", rewards, 42_242);
+    census.eq("barter reward items", rewards, 42_207);
     census.eq("barter reputation rewards", reputation, 7);
     census.eq("barter sound categories", sounds, 3);
     census.eq("barter min-usage-level rewards", uses_min, 1_649);
@@ -1456,6 +1452,7 @@ fn economy_family_census_and_invariants() {
                 &class_of,
                 &mut dangling,
                 &mut wrong_class,
+                &mut excepted,
                 &mut classified,
             );
             named_inventories.extend(v.inventories.iter().copied());
@@ -1476,13 +1473,19 @@ fn economy_family_census_and_invariants() {
     }
     census.eq("NPCs with inventories", vendors, 1_439);
     census.eq("NPC vendor item lists", vendor_items, 91_274);
-    census.eq("NPCs whose item list is the union", vendor_ok, 1_439);
+    assert_eq!(vendor_ok, vendors, "NPCs whose item list is the union");
 
     // E-I2 summary.
     eprintln!(
         "economy E-I2: {classified} references checked by class, {dangling} dangling, wrong \
          classes {wrong_class:?}"
     );
+    for ((label, class), n) in &excepted {
+        census.0.count(
+            &format!("E-I2 exception (OPEN): {label} to class {class}"),
+            *n,
+        );
+    }
     let wrong: usize = wrong_class.values().sum();
     if dangling + wrong > 0 {
         *broken.entry(Invariant::Targets.code()).or_default() += dangling + wrong;
@@ -1682,11 +1685,11 @@ fn economy_family_census_and_invariants() {
         tables_matching += usize::from(t.weights() == weights);
     }
     census.eq("class-175 tables of the loot classes", tables, 7_441);
-    census.eq("class-175 tables with index words", tables_indexed, 7_441);
-    census.eq(
-        "class-175 weights equal the property form",
-        tables_matching,
-        7_441,
+    // E-I12, E-I13: invariants over this run's own table count.
+    assert_eq!(tables_indexed, tables, "class-175 tables with index words");
+    assert_eq!(
+        tables_matching, tables,
+        "class-175 weights equal the property form"
     );
 
     let mut progressions: HashMap<Did, FloatProgression> = HashMap::new();
@@ -1764,7 +1767,7 @@ fn economy_family_census_and_invariants() {
             }
         }
     }
-    census.eq("barter entries", entries, 42_249);
+    census.eq("barter entries", entries, 42_214);
     // §9.3: every barter entry equals the property form. An invariant over this run's own
     // entry count, not a census figure.
     assert_eq!(

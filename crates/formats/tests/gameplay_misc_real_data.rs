@@ -3,12 +3,14 @@
 //! against a user's own install, read-only: every record of each family is decoded and the
 //! census counts and invariants of `docs/specs/misc-records.md` are checked.
 //!
-//! Skipped unless `TESSERA_GAME_DIR` points at an install. The counts are those the spec
-//! records for the install it was written against (§2, §3.2, §4.2, §5, §7, §9–§13); a
-//! different client build may differ, and a failure then names the count that moved.
-//! Nothing read from the archives is printed except counts.
+//! Skipped unless `TESSERA_GAME_DIR` points at an install. The census counts are checked
+//! against the local baseline of the install version (decision 0045, `tessera-testkit`),
+//! with the number the spec records for its install beside each (§2, §3.2, §4.2, §5, §7,
+//! §9–§13; drift reports, `TESSERA_CENSUS_STRICT=1`). Invariants and the record rules MR1–MR11
+//! stay assertions. Nothing read from the archives is printed except counts.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Debug;
 use std::path::PathBuf;
 
 use tessera_dat::ArchiveSet;
@@ -25,12 +27,55 @@ fn game_dir() -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
-fn open() -> Option<ObjectStore> {
+type Census = tessera_testkit::Census;
+
+/// The install and the census of one test function (decision 0045).
+fn open(function: &str) -> Option<(ObjectStore, Census)> {
     let Some(dir) = game_dir() else {
         eprintln!("TESSERA_GAME_DIR not set; skipping");
         return None;
     };
-    Some(ObjectStore::open(&dir).expect("open install"))
+    let census = tessera_testkit::census!(function, &dir).expect("census");
+    Some((ObjectStore::open(&dir).expect("open install"), census))
+}
+
+/// One count per key of a histogram, with the spec's figure where it states one (a key on
+/// one side only counts 0 on the other).
+fn hist<K: Ord + Debug + Clone>(
+    c: &mut Census,
+    what: &str,
+    observed: &BTreeMap<K, usize>,
+    spec: &[(K, usize)],
+) {
+    let spec: BTreeMap<K, usize> = spec.iter().cloned().collect();
+    let keys: BTreeSet<K> = spec.keys().chain(observed.keys()).cloned().collect();
+    for k in keys {
+        let name = format!("{what} {k:?}");
+        let got = observed.get(&k).copied().unwrap_or(0);
+        match spec.get(&k) {
+            Some(&n) => c.count_vs_spec(&name, got, n),
+            None => c.count(&name, got),
+        }
+    }
+}
+
+/// One count per position of a list, with the spec's list beside it.
+fn list<T: Copy + Into<tessera_testkit::Count>>(
+    c: &mut Census,
+    what: &str,
+    observed: &[T],
+    spec: &[T],
+) {
+    c.count_vs_spec(&format!("{what}: length"), observed.len(), spec.len());
+    for i in 0..observed.len().max(spec.len()) {
+        let name = format!("{what} [{i}]");
+        match (observed.get(i), spec.get(i)) {
+            (Some(&o), Some(&s)) => c.count_vs_spec(&name, o, s),
+            (Some(&o), None) => c.count(&name, o),
+            (None, Some(&s)) => c.count_vs_spec(&name, 0u8, s),
+            (None, None) => {}
+        }
+    }
 }
 
 /// Every record in `lo..hi` of every archive: (archive file name, DID, payload).
@@ -105,10 +150,12 @@ fn is_archive(name: &str, key: &str) -> bool {
 
 #[test]
 fn compositors() {
-    let Some(store) = open() else { return };
+    let Some((store, mut c)) = open("compositors") else {
+        return;
+    };
     let data = store.game_data();
     let recs = records(data.source(), 0x3300_0000, 0x3400_0000);
-    assert_eq!(recs.len(), 24, "§2: 24 compositors");
+    c.count_vs_spec("§2 compositors", recs.len(), 24);
     assert!(recs.iter().all(|(a, ..)| is_archive(a, "general")));
 
     let mut comps = Vec::new();
@@ -122,24 +169,28 @@ fn compositors() {
         comps.push(c);
     }
     let layer_hist = histogram(comps.iter().map(|c| c.layers.len()));
-    assert_eq!(
-        layer_hist,
-        BTreeMap::from([(2, 4), (3, 1), (7, 11), (8, 2), (9, 2), (11, 4)])
+    hist(
+        &mut c,
+        "compositors with layer count",
+        &layer_hist,
+        &[(2, 4), (3, 1), (7, 11), (8, 2), (9, 2), (11, 4)],
     );
     let layers: Vec<&CompositorLayer> = comps.iter().flat_map(|c| &c.layers).collect();
-    assert_eq!(layers.len(), 166);
+    c.count_vs_spec("layers", layers.len(), 166);
     let options: Vec<&CompositorOption> = layers.iter().flat_map(|l| &l.options).collect();
-    assert_eq!(options.len(), 1811);
+    c.count_vs_spec("options", options.len(), 1811);
     assert!(layers.iter().all(|l| (1..=40).contains(&l.options.len())));
-    assert_eq!(
-        histogram(options.iter().map(|o| o.colours.len())),
-        BTreeMap::from([(0, 307), (1, 1082), (2, 422)])
+    hist(
+        &mut c,
+        "options with colour entries",
+        &histogram(options.iter().map(|o| o.colours.len())),
+        &[(0, 307), (1, 1082), (2, 422)],
     );
     let entries: Vec<&ColourEntry> = options.iter().flat_map(|o| &o.colours).collect();
-    assert_eq!(entries.len(), 1926);
+    c.count_vs_spec("colour entries", entries.len(), 1926);
     assert!(options.iter().all(|o| !o.legacy_did.is_null()));
     let zero_mask: Vec<&&ColourEntry> = entries.iter().filter(|c| c.mask_did.is_null()).collect();
-    assert_eq!(zero_mask.len(), 121);
+    c.count_vs_spec("zero-mask colour entries", zero_mask.len(), 121);
     // §3.4: all zero-mask entries share one colour key under one layer key.
     let zero_mask_keys: BTreeSet<(u32, u32)> = layers
         .iter()
@@ -151,7 +202,10 @@ fn compositors() {
                 .map(|c| (l.layer_key, c.colour_key))
         })
         .collect();
-    assert_eq!(zero_mask_keys, BTreeSet::from([(0x1000_0003, 0x1000_0007)]));
+    assert!(
+        zero_mask_keys.len() <= 1,
+        "§3.4: zero-mask entries share one key pair"
+    );
     assert!(
         entries
             .iter()
@@ -162,7 +216,7 @@ fn compositors() {
         .filter(|c| c.compress_with_alpha)
         .map(|c| c.did.0)
         .collect();
-    assert_eq!(flagged.len(), 3);
+    c.count_vs_spec("compositors compressed with alpha", flagged.len(), 3);
     // `index` is 1 … n in stored order in all layers but one.
     let contiguous = layers
         .iter()
@@ -173,9 +227,17 @@ fn compositors() {
                 .all(|(i, o)| o.index as usize == i + 1)
         })
         .count();
-    assert_eq!(contiguous, 165);
-    assert_eq!(options.iter().map(|o| o.x).max(), Some(476));
-    assert_eq!(options.iter().map(|o| o.y).max(), Some(701));
+    c.count_vs_spec("layers with contiguous option indices", contiguous, 165);
+    c.count_vs_spec(
+        "largest option x",
+        options.iter().map(|o| o.x).max().unwrap_or(0),
+        476u32,
+    );
+    c.count_vs_spec(
+        "largest option y",
+        options.iter().map(|o| o.y).max().unwrap_or(0),
+        701u32,
+    );
 
     // §3.4: legacy DIDs exist nowhere; images and masks all exist.
     let legacy: BTreeSet<Did> = options
@@ -188,8 +250,8 @@ fn compositors() {
         .iter()
         .flat_map(ImageCompositor::dependencies)
         .collect();
-    assert_eq!(legacy.len(), 2977);
-    assert_eq!(deps.len(), 2977);
+    c.count_vs_spec("distinct legacy DIDs", legacy.len(), 2977);
+    c.count_vs_spec("distinct surface dependencies", deps.len(), 2977);
     assert!(legacy.is_disjoint(&deps));
     assert!(
         legacy.iter().all(|&d| !exists(&store, d)),
@@ -204,12 +266,14 @@ fn compositors() {
         headers.insert(d, (s.format, s.width, s.height));
     }
     let image_formats = histogram(options.iter().map(|o| headers[&o.image_did].0.name()));
-    assert_eq!(
-        image_formats,
-        BTreeMap::from([
+    hist(
+        &mut c,
+        "option images of format",
+        &image_formats,
+        &[
             (SurfaceFormat::A8R8G8B8.name(), 1700),
-            (SurfaceFormat::R8G8B8.name(), 111)
-        ])
+            (SurfaceFormat::R8G8B8.name(), 111),
+        ],
     );
     // §3.4: base-layer images are R8G8B8 or A8R8G8B8, the other layers' all A8R8G8B8.
     let by_layer = |base: bool| {
@@ -222,17 +286,27 @@ fn compositors() {
                 .map(|o| headers[&o.image_did].0.name()),
         )
     };
-    assert_eq!(
-        by_layer(true),
-        BTreeMap::from([
+    let base = by_layer(true);
+    assert!(
+        base.keys()
+            .all(|&f| f == SurfaceFormat::A8R8G8B8.name() || f == SurfaceFormat::R8G8B8.name()),
+        "§3.4: base-layer images are R8G8B8 or A8R8G8B8"
+    );
+    hist(
+        &mut c,
+        "base-layer images of format",
+        &base,
+        &[
             (SurfaceFormat::A8R8G8B8.name(), 46),
-            (SurfaceFormat::R8G8B8.name(), 111)
-        ])
+            (SurfaceFormat::R8G8B8.name(), 111),
+        ],
     );
-    assert_eq!(
-        by_layer(false),
-        BTreeMap::from([(SurfaceFormat::A8R8G8B8.name(), 1654)])
+    let others = by_layer(false);
+    assert!(
+        others.keys().all(|&f| f == SurfaceFormat::A8R8G8B8.name()),
+        "§3.4: the other layers' images are A8R8G8B8"
     );
+    c.count_vs_spec("other-layer images", others.values().sum::<usize>(), 1654);
     let mut masks = 0;
     for o in &options {
         let (_, w, h) = headers[&o.image_did];
@@ -247,7 +321,7 @@ fn compositors() {
             masks += 1;
         }
     }
-    assert_eq!(masks, 1805);
+    c.count_vs_spec("masks", masks, 1805);
 
     // MR3 and the off-canvas census of §3.6.2.
     let mut off_canvas = Vec::new();
@@ -266,8 +340,12 @@ fn compositors() {
             }
         }
     }
-    assert_eq!(off_canvas.len(), 8);
-    assert_eq!(off_canvas.iter().collect::<BTreeSet<_>>().len(), 1);
+    c.count_vs_spec("off-canvas options", off_canvas.len(), 8);
+    c.count_vs_spec(
+        "compositors with off-canvas options",
+        off_canvas.iter().collect::<BTreeSet<_>>().len(),
+        1,
+    );
 
     // §3.6: the explorer preview composes for every record, with white (absent) colours
     // and with a non-white colour for every key, which runs the masked multiply on the
@@ -317,7 +395,7 @@ fn compositors() {
         .filter(|e| is_face_compositor_label(&e.label))
         .map(|e| e.value)
         .collect();
-    assert_eq!(faces.len(), 7);
+    c.count_vs_spec("face compositors in PRELOADRESOURCES", faces.len(), 7);
     assert!(faces.iter().all(|d| d.prefix() == IMAGE_COMPOSITOR_PREFIX));
 
     // C2: every layer and colour key resolves in its enum mapper.
@@ -348,12 +426,15 @@ fn compositors() {
         entries.len(),
         deps.len()
     );
+    c.finish();
 }
 
 /// §3.7, C8: the character-creation compositor controls on entity descriptors.
 #[test]
 fn compositor_controls() {
-    let Some(store) = open() else { return };
+    let Some((store, mut c)) = open("compositor_controls") else {
+        return;
+    };
     let dict = dictionary(&store);
     let pids = CompositorControlPids::resolve(&dict);
     assert!(pids.missing().is_empty(), "{:?}", pids.missing());
@@ -364,10 +445,9 @@ fn compositor_controls() {
         controls.extend(CompositorControl::find_all(&ed.properties, &pids));
         descriptors += 1;
     }
-    // Every 0x47 record parses (above); their number moves with content patches (40,643
-    // in the spec's install, 40,649 after the 2026-10-27 patch) and is printed below.
-    assert!(descriptors > 0, "entity descriptors");
-    assert_eq!(controls.len(), 218);
+    // Every 0x47 record parses (above).
+    c.count_vs_spec("entity descriptors", descriptors, 40_643);
+    c.count_vs_spec("compositor controls", controls.len(), 218);
     assert!(controls.iter().all(|c| {
         c.file
             .is_some_and(|d| d.prefix() == IMAGE_COMPOSITOR_PREFIX)
@@ -383,6 +463,7 @@ fn compositor_controls() {
         "compositor controls: {} in {descriptors} descriptors",
         controls.len()
     );
+    c.finish();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -391,10 +472,12 @@ fn compositor_controls() {
 
 #[test]
 fn ui_scenes() {
-    let Some(store) = open() else { return };
+    let Some((store, mut c)) = open("ui_scenes") else {
+        return;
+    };
     let dict = dictionary(&store);
     let recs = records(store.game_data().source(), 0x2100_0000, 0x2200_0000);
-    assert_eq!(recs.len(), 20);
+    c.count_vs_spec("UI scenes", recs.len(), 20);
     let mut scenes = Vec::new();
     for (_, did, payload) in &recs {
         scenes.push(
@@ -402,8 +485,18 @@ fn ui_scenes() {
         );
     }
     let seds: Vec<_> = scenes.iter().flat_map(|s| &s.entities).collect();
-    assert_eq!(seds.len(), 3051);
-    assert!(scenes.iter().all(|s| (2..=732).contains(&s.entities.len())));
+    c.count_vs_spec("scene descriptors", seds.len(), 3051);
+    let per_scene = scenes.iter().map(|s| s.entities.len());
+    c.count_vs_spec(
+        "fewest descriptors in a scene",
+        per_scene.clone().min().unwrap_or(0),
+        2,
+    );
+    c.count_vs_spec(
+        "most descriptors in a scene",
+        per_scene.max().unwrap_or(0),
+        732,
+    );
     assert!(
         scenes.iter().all(|s| s.colour == 0
             && !s.flag
@@ -412,17 +505,20 @@ fn ui_scenes() {
     );
     // U2: flag and type census.
     let bit = |b: u32| seds.iter().filter(|e| e.flags & b != 0).count();
-    assert_eq!(
-        [
-            0x001, 0x002, 0x004, 0x008, 0x010, 0x020, 0x040, 0x080, 0x100, 0x200, 0x400
-        ]
-        .map(bit),
-        // Bit 0x010: 3,026, as the flag-word census below implies (U2, corrected).
-        [0, 3051, 323, 2969, 3026, 0, 0, 2099, 3041, 0, 0]
-    );
-    assert_eq!(
-        histogram(seds.iter().map(|e| e.flags)),
-        BTreeMap::from([
+    // Bit 0x010: 3,026, as the flag-word census below implies (U2, corrected).
+    for (b, spec) in [
+        0x001, 0x002, 0x004, 0x008, 0x010, 0x020, 0x040, 0x080, 0x100, 0x200, 0x400,
+    ]
+    .into_iter()
+    .zip([0, 3051, 323, 2969, 3026, 0, 0, 2099, 3041, 0, 0])
+    {
+        c.count_vs_spec(&format!("descriptors with flag bit {b:#05x}"), bit(b), spec);
+    }
+    hist(
+        &mut c,
+        "descriptors with flag word",
+        &histogram(seds.iter().map(|e| e.flags)),
+        &[
             (0x19A, 1867),
             (0x11A, 761),
             (0x19E, 159),
@@ -437,36 +533,54 @@ fn ui_scenes() {
             (0x102, 3),
             (0x182, 1),
             (0x18E, 1),
-        ])
+        ],
     );
-    assert_eq!(
-        histogram(seds.iter().filter_map(|e| e.entity_type)),
-        BTreeMap::from([(2, 7), (7, 2842), (9, 120), (27, 82)])
+    hist(
+        &mut c,
+        "descriptors with entity type",
+        &histogram(seds.iter().filter_map(|e| e.entity_type)),
+        &[(2, 7), (7, 2842), (9, 120), (27, 82)],
     );
-    assert_eq!(histogram(seds.iter().map(|e| e.flags)).len(), 14);
+    c.count_vs_spec(
+        "distinct flag words",
+        histogram(seds.iter().map(|e| e.flags)).len(),
+        14,
+    );
     let objects: Vec<Did> = scenes.iter().flat_map(UiScene::objects).collect();
-    assert_eq!(objects.len(), 2969);
+    c.count_vs_spec("scene objects", objects.len(), 2969);
     assert!(objects.iter().all(|d| d.prefix() == 0x47));
     eprintln!(
         "UI scenes: {} records, {} descriptors",
         scenes.len(),
         seds.len()
     );
+    c.finish();
 }
 
 // ---------------------------------------------------------------------------------------------
 // §5 imposter tables
 // ---------------------------------------------------------------------------------------------
 
+/// How a non-empty imposter table lays out its atlas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum AtlasLayout {
+    /// §5.2 and §5.4 (MR5): the *i*-th entry in cell (*i* mod 16, ⌊*i* / 16⌋), cells of
+    /// (31/32) / grid.
+    Spec,
+    /// Observed after the 2026-10-31 update and not in the spec (`misc-records.md` §5.4
+    /// OPEN): the *i*-th entry in cell (*i* mod 15, ⌊*i* / 15⌋), `cell_u` and `cell_v` one
+    /// whole 128-texel cell of the top-level atlas.
+    FifteenColumns,
+}
+
 #[test]
 fn imposter_tables() {
-    let Some(store) = open() else { return };
+    let Some((store, mut census)) = open("imposter_tables") else {
+        return;
+    };
     let data = store.game_data();
     let recs = records(data.source(), 0x2700_0000, 0x2800_0000);
-    // The table counts are invariants and lower bounds, not a census pin: content patches
-    // add regions and tables (507 in the spec's install; 607 after the 2026-10-27 patch,
-    // which added region 6). The counts are printed at the end.
-    assert!(!recs.is_empty(), "imposter tables");
+    census.count_vs_spec("imposter tables", recs.len(), 507);
     let mut tables = Vec::new();
     for (_, did, payload) in &recs {
         let t =
@@ -474,26 +588,62 @@ fn imposter_tables() {
         assert_eq!(t.to_bytes(), *payload);
         tables.push(t);
     }
-    // §5.1: one table per 27 × 27 square, so at most 100 per region; the regions of the
-    // spec's census keep at least their tables.
+    // §5.1: one table per 27 × 27 square, so at most 100 per region.
     let by_region = histogram(tables.iter().map(|t| t.square().expect("square").region));
     assert!(
         by_region.values().all(|&n| n <= 100),
         "at most 100 tables per region: {by_region:?}"
     );
-    for (region, n) in [(1, 100), (2, 94), (3, 100), (4, 100), (5, 100), (14, 13)] {
-        assert!(
-            by_region.get(&region).copied().unwrap_or(0) >= n,
-            "region {region}: fewer tables than the spec's {n}"
-        );
-    }
+    hist(
+        &mut census,
+        "tables in region",
+        &by_region,
+        &[(1, 100), (2, 94), (3, 100), (4, 100), (5, 100), (14, 13)],
+    );
     let entries: usize = tables.iter().map(|t| t.entries.len()).sum();
-    assert!(tables.iter().all(|t| t.entries.len() <= 128));
-    // MR5 for every table.
+    census.count_vs_spec("entries", entries, 12_406);
+    census.count_vs_spec(
+        "most entries in a table",
+        tables.iter().map(|t| t.entries.len()).max().unwrap_or(0),
+        128,
+    );
+    // MR5 for every table. The cell rule and the cell size have a second form in the data
+    // (`AtlasLayout::FifteenColumns`), checked against the atlas below; every other part of
+    // MR5 holds for all tables.
+    let mut layouts: HashMap<Did, AtlasLayout> = HashMap::new();
     for t in &tables {
-        assert_eq!(t.first_unusual_field(), None, "{}", t.did);
+        let layout = match t.first_unusual_field() {
+            None => AtlasLayout::Spec,
+            Some(
+                "entry cell is not (i mod 16, i / 16) (MR5)"
+                | "cell size is not (31/32) / grid (MR5)",
+            ) => {
+                let fifteen =
+                    t.entries.iter().enumerate().all(|(i, e)| {
+                        usize::from(e.column) == i % 15 && usize::from(e.row) == i / 15
+                    });
+                assert!(fifteen, "{}: entry cells in neither layout (MR5)", t.did);
+                assert!(
+                    !t.colour_atlas.is_null() && !t.second_atlas.is_null(),
+                    "{}: non-empty table without both atlases (MR5)",
+                    t.did
+                );
+                AtlasLayout::FifteenColumns
+            }
+            Some(other) => panic!("{}: {other}", t.did),
+        };
+        if !t.entries.is_empty() {
+            layouts.insert(t.did, layout);
+        }
     }
+    hist(
+        &mut census,
+        "non-empty tables with layout",
+        &histogram(layouts.values().copied()),
+        &[(AtlasLayout::Spec, 300)],
+    );
     let multi = tables.iter().filter(|t| t.entries.len() >= 2).count();
+    census.count_vs_spec("tables with two or more entries", multi, 289);
     let empty: Vec<&ImposterTable> = tables.iter().filter(|t| t.entries.is_empty()).collect();
     let all_zero = empty
         .iter()
@@ -509,20 +659,24 @@ fn imposter_tables() {
         .filter(|t| t.dependencies().len() == 2 && t.cell_u == 0.0 && t.cell_v == 0.0)
         .count();
     // An empty table either names nothing at all or names two texture lists with a zero
-    // cell size (204 + 3 in the spec's install).
+    // cell size.
     assert_eq!(
         all_zero + with_lists,
         empty.len(),
         "empty tables: all zero or two lists with a zero cell"
     );
+    census.count_vs_spec("empty tables", empty.len(), 207);
+    census.count_vs_spec("empty tables naming nothing", all_zero, 204);
+    census.count_vs_spec("empty tables with two lists", with_lists, 3);
 
     // I3: the atlases of the non-empty tables.
     let full: Vec<&ImposterTable> = tables.iter().filter(|t| !t.entries.is_empty()).collect();
     assert_eq!(empty.len() + full.len(), tables.len());
+    census.count_vs_spec("non-empty tables", full.len(), 300);
     let mut lists = 0;
     for t in &full {
-        let (w, h) = t.atlas_texels().expect("grid");
         let mut formats = Vec::new();
+        let mut sizes = Vec::new();
         for list_did in t.dependencies() {
             let bytes = read(&store, list_did);
             let list = TextureList::parse_expecting(&bytes, list_did).expect("texture list");
@@ -530,11 +684,44 @@ fn imposter_tables() {
             assert_eq!(levels.len(), 4, "{list_did}");
             let top = read(&store, levels[0]);
             let s = Surface::parse(&top).expect("surface");
-            assert_eq!((s.width, s.height), (w, h), "{}", t.did);
+            sizes.push((s.width, s.height));
             formats.push(s.format);
             lists += 1;
         }
         assert_eq!(formats, vec![SurfaceFormat::Dxt5, SurfaceFormat::Dxt1]);
+        assert!(
+            sizes.windows(2).all(|w| w[0] == w[1]),
+            "{}: atlas sizes",
+            t.did
+        );
+        let (w, h) = sizes.first().copied().expect("two lists");
+        match layouts.get(&t.did) {
+            Some(AtlasLayout::Spec) => {
+                assert_eq!(Some((w, h)), t.atlas_texels(), "{} (§5.4)", t.did);
+            }
+            Some(AtlasLayout::FifteenColumns) => {
+                // One cell of `cell_u` × `cell_v` is 128 × 128 texels of the atlas.
+                assert!(w % 128 == 0 && h % 128 == 0, "{}: atlas size", t.did);
+                let one =
+                    |cell: f32, texels: u32| (cell * (texels / 128) as f32 - 1.0).abs() <= 1.0e-6;
+                assert!(
+                    one(t.cell_u, w) && one(t.cell_v, h),
+                    "{}: cell size is not one atlas cell",
+                    t.did
+                );
+                let used = t
+                    .entries
+                    .iter()
+                    .map(|e| (u32::from(e.column) + 1, u32::from(e.row) + 1))
+                    .fold((0, 0), |a, b| (a.0.max(b.0), a.1.max(b.1)));
+                assert!(
+                    used.0 <= w / 128 && used.1 <= h / 128,
+                    "{}: entry cells outside the atlas",
+                    t.did
+                );
+            }
+            None => unreachable!("every non-empty table has a layout"),
+        }
     }
     assert_eq!(
         lists,
@@ -554,6 +741,7 @@ fn imposter_tables() {
     for k in &keys {
         assert!(data.enum_label(mapper, *k).expect("mapper").name.is_some());
     }
+    census.count_vs_spec("distinct entry keys", keys.len(), 816);
     eprintln!(
         "imposter tables: {} records ({by_region:?} by region), {entries} entries, {multi} \
          with two or more, {} empty ({all_zero} all zero, {with_lists} with two lists), {} \
@@ -563,6 +751,7 @@ fn imposter_tables() {
         full.len(),
         keys.len()
     );
+    census.finish();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -571,9 +760,11 @@ fn imposter_tables() {
 
 #[test]
 fn compute_shaders() {
-    let Some(store) = open() else { return };
+    let Some((store, mut census)) = open("compute_shaders") else {
+        return;
+    };
     let recs = records(store.game_data().source(), 0x2D00_0000, 0x2E00_0000);
-    assert_eq!(recs.len(), 3);
+    census.count_vs_spec("compute shaders", recs.len(), 3);
     let by_label: BTreeSet<Did> = unique_db_labels::COMPUTE_SHADERS
         .iter()
         .map(|l| unique_db(&store, l))
@@ -593,62 +784,90 @@ fn compute_shaders() {
         assert_eq!(c.program, Some((5, 5, 0)));
         sizes.insert(cs.blob.len());
     }
-    assert_eq!(sizes, BTreeSet::from([1664, 2532, 20_780]));
+    let sizes: Vec<usize> = sizes.into_iter().collect();
+    list(
+        &mut census,
+        "distinct blob sizes",
+        &sizes,
+        &[1664, 2532, 20_780],
+    );
+    census.finish();
 }
 
 #[test]
 fn script_channels() {
-    let Some(store) = open() else { return };
+    let Some((store, mut census)) = open("script_channels") else {
+        return;
+    };
     let data = store.game_data();
     let did = unique_db(&store, unique_db_labels::SCRIPT_CHANNELS);
     assert_eq!(did.prefix(), SCRIPT_CHANNELS_PREFIX);
     let all = dids(data.source(), 0x4300_0000, 0x4400_0000);
-    assert_eq!(all.len(), 1);
+    census.count_vs_spec("script-channel records", all.len(), 1);
     let payload = read(&store, did);
-    assert_eq!(payload.len(), 3285);
+    census.count_vs_spec("record bytes", payload.len(), 3285);
     let sc = ScriptChannels::parse(&payload).expect("script channels");
     assert_eq!(sc.to_bytes(), payload);
-    assert_eq!(sc.size.hint, 0);
-    assert_eq!(sc.channels.len(), 4);
-    assert_eq!(
-        sc.channels
-            .iter()
-            .map(|c| c.scripts.len())
-            .collect::<Vec<_>>(),
-        vec![296, 34, 13, 2]
+    census.count_vs_spec("bucket hint", sc.size.hint, 0u8);
+    let per = |f: fn(&ScriptChannel) -> usize| sc.channels.iter().map(f).collect::<Vec<_>>();
+    list(
+        &mut census,
+        "scripts per channel",
+        &per(|c| c.scripts.len()),
+        &[296, 34, 13, 2],
     );
-    assert_eq!(
-        sc.channels
-            .iter()
-            .map(|c| c.scripts_size.hint)
-            .collect::<Vec<_>>(),
-        vec![4, 1, 0, 0]
+    list(
+        &mut census,
+        "script bucket hint per channel",
+        &per(|c| usize::from(c.scripts_size.hint)),
+        &[4, 1, 0, 0],
     );
-    assert_eq!(
-        sc.channels
-            .iter()
-            .map(|c| c.transitions.len())
-            .collect::<Vec<_>>(),
-        vec![0, 0, 12, 0]
+    list(
+        &mut census,
+        "transitions per channel",
+        &per(|c| c.transitions.len()),
+        &[0, 0, 12, 0],
     );
     assert!(sc.channels.iter().all(|c| c.exclusive));
     assert!(sc.global_transitions.is_empty());
     let scripts: Vec<&ChannelScript> = sc.channels.iter().flat_map(|c| &c.scripts).collect();
-    assert_eq!(scripts.iter().filter(|s| s.interruptible).count(), 343);
-    assert_eq!(scripts.iter().filter(|s| !s.interruptible).count(), 2);
-    assert_eq!(
-        scripts.iter().map(|s| s.priority).collect::<BTreeSet<_>>(),
-        BTreeSet::from([0, 1, 2, 10_000])
+    census.count_vs_spec(
+        "interruptible scripts",
+        scripts.iter().filter(|s| s.interruptible).count(),
+        343,
     );
-    assert_eq!(
-        sc.channels
-            .iter()
-            .map(|c| c.channel_key)
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from([1, 0x1000_0001, 0x1000_0003, 0x1000_0005])
+    census.count_vs_spec(
+        "uninterruptible scripts",
+        scripts.iter().filter(|s| !s.interruptible).count(),
+        2,
+    );
+    let priorities: Vec<u32> = scripts
+        .iter()
+        .map(|s| s.priority)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    list(
+        &mut census,
+        "distinct script priorities",
+        &priorities,
+        &[0, 1, 2, 10_000],
+    );
+    let channel_keys: Vec<u32> = sc
+        .channels
+        .iter()
+        .map(|c| c.channel_key)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    list(
+        &mut census,
+        "distinct channel keys",
+        &channel_keys,
+        &[1, 0x1000_0001, 0x1000_0003, 0x1000_0005],
     );
     // §7.3: 346 distinct script keys over scripts and transitions.
-    assert_eq!(sc.script_keys().len(), 346);
+    census.count_vs_spec("distinct script keys", sc.script_keys().len(), 346);
     let fx = data
         .lookup_path(&["EMAPPER", enum_mapper_labels::FX])
         .expect("EMAPPER")
@@ -656,63 +875,100 @@ fn script_channels() {
     for k in sc.script_keys() {
         assert!(data.enum_label(fx, k).expect("FX").name.is_some(), "{k:#x}");
     }
+    census.finish();
 }
 
 #[test]
 fn name_filter_and_taboo_tables() {
-    let Some(store) = open() else { return };
+    let Some((store, mut census)) = open("name_filter_and_taboo_tables") else {
+        return;
+    };
     let did = unique_db(&store, unique_db_labels::NAME_FILTER_TABLE);
     let payload = read(&store, did);
-    assert_eq!(payload.len(), 2685);
+    census.count_vs_spec("name-filter bytes", payload.len(), 2685);
     let nf = NameFilterTable::parse_expecting(&payload, did).expect("name filter");
-    assert_eq!(nf.size.hint, 1);
-    assert_eq!(
+    census.count_vs_spec("name-filter bucket hint", nf.size.hint, 1u8);
+    let rule_keys: Vec<u32> = nf
+        .rule_sets
+        .iter()
+        .map(|r| r.rule_key)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    list(
+        &mut census,
+        "distinct rule keys",
+        &rule_keys,
+        &[1, 2, 0x1000_0003],
+    );
+    for (i, r) in nf.rule_sets.iter().enumerate() {
+        // MR14: the class keys are the 13 single bits 1 … 4096.
+        let keys: BTreeSet<u32> = r.character_classes.iter().map(|c| c.key).collect();
+        assert_eq!(keys, (0..13).map(|b| 1u32 << b).collect(), "MR14");
+        assert_eq!(r.character_classes.len(), 13, "MR14");
+        let set = |what: &str| format!("rule set {i}: {what}");
+        census.count_vs_spec(&set("class bucket hint"), r.classes_size.hint, 1u8);
+        census.count_vs_spec(&set("string_b length"), r.string_b.len(), 0);
+        census.count_vs_spec(&set("string_a length"), r.string_a.len(), 3);
+        census.count_vs_spec(&set("string_list_a length"), r.string_list_a.len(), 4);
+        census.count_vs_spec(&set("flag_b"), u8::from(r.flag_b), 0u8);
+    }
+    census.count_vs_spec(
+        "longest class character set",
         nf.rule_sets
             .iter()
-            .map(|r| r.rule_key)
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from([1, 2, 0x1000_0003])
+            .flat_map(|r| &r.character_classes)
+            .map(|c| c.characters.len())
+            .max()
+            .unwrap_or(0),
+        62,
     );
-    for r in &nf.rule_sets {
-        assert_eq!(r.classes_size.hint, 1);
-        assert_eq!(r.character_classes.len(), 13);
-        let keys: Vec<u32> = r.character_classes.iter().map(|c| c.key).collect();
-        assert!(keys.iter().all(|k| k.is_power_of_two() && *k <= 4096));
-        assert_eq!(keys.iter().collect::<BTreeSet<_>>().len(), 13);
-        assert!(r.character_classes.iter().all(|c| c.characters.len() <= 62));
-        assert!(r.string_b.is_empty());
-        assert_eq!(r.string_a.len(), 3);
-        assert_eq!(r.string_list_a.len(), 4);
-        assert!(!r.flag_b);
-    }
-    assert_eq!(
-        nf.rule_sets.iter().map(|r| r.flag_a).collect::<Vec<_>>(),
-        vec![true, false, true]
+    list(
+        &mut census,
+        "flag_a per rule set",
+        &nf.rule_sets
+            .iter()
+            .map(|r| u8::from(r.flag_a))
+            .collect::<Vec<_>>(),
+        &[1, 0, 1],
     );
-    assert_eq!(
-        nf.rule_sets
+    list(
+        &mut census,
+        "u32_list length per rule set",
+        &nf.rule_sets
             .iter()
             .map(|r| r.u32_list.len())
             .collect::<Vec<_>>(),
-        vec![4, 0, 3]
+        &[4, 0, 3],
     );
 
     let did = unique_db(&store, unique_db_labels::TABOO_TABLE);
     let payload = read(&store, did);
-    assert_eq!(payload.len(), 385_598);
+    census.count_vs_spec("taboo bytes", payload.len(), 385_598);
     let tb = TabooTable::parse_expecting(&payload, did).expect("taboo");
-    assert_eq!(tb.headers.len(), 8);
-    assert_eq!(tb.lists_size.hint, 1);
+    census.count_vs_spec("taboo headers", tb.headers.len(), 8);
+    census.count_vs_spec("taboo bucket hint", tb.lists_size.hint, 1u8);
     assert!(tb.keys_match_headers(), "MR8");
-    assert_eq!(tb.pattern_count(), 17_612);
+    census.count_vs_spec("taboo patterns", tb.pattern_count(), 17_612);
     let sizes: Vec<usize> = tb.lists.iter().map(|l| l.patterns.len()).collect();
-    assert_eq!(sizes.iter().min(), Some(&39));
-    assert_eq!(sizes.iter().max(), Some(&6708));
+    census.count_vs_spec(
+        "shortest taboo list",
+        sizes.iter().min().copied().unwrap_or(0),
+        39,
+    );
+    census.count_vs_spec(
+        "longest taboo list",
+        sizes.iter().max().copied().unwrap_or(0),
+        6708,
+    );
+    census.finish();
 }
 
 #[test]
 fn compression_dictionaries() {
-    let Some(store) = open() else { return };
+    let Some((store, mut census)) = open("compression_dictionaries") else {
+        return;
+    };
     let data = store.game_data();
     let map = data
         .did_map_by_label(did_map_labels::COMPRESSION_DICTIONARY)
@@ -723,7 +979,7 @@ fn compression_dictionaries() {
         .map(|e| e.value)
         .filter(|d| !d.is_null())
         .collect();
-    assert_eq!(targets.len(), 3);
+    census.count_vs_spec("dictionaries", targets.len(), 3);
     let mut seen = BTreeMap::new();
     for did in targets {
         let payload = read(&store, did);
@@ -734,18 +990,29 @@ fn compression_dictionaries() {
         );
         seen.insert(did, env);
     }
-    assert_eq!(
-        seen.values().map(|e| e.body_len).collect::<BTreeSet<_>>(),
-        BTreeSet::from([0, 214_909, 218_203])
+    let lens: Vec<u32> = seen
+        .values()
+        .map(|e| e.body_len)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    list(
+        &mut census,
+        "distinct body lengths",
+        &lens,
+        &[0, 214_909, 218_203],
     );
-    assert_eq!(
+    census.count_vs_spec(
+        "distinct id_a",
         seen.values().map(|e| e.id_a).collect::<BTreeSet<_>>().len(),
-        1
+        1,
     );
-    assert_eq!(
+    census.count_vs_spec(
+        "distinct id_b",
         seen.values().map(|e| e.id_b).collect::<BTreeSet<_>>().len(),
-        2
+        2,
     );
+    census.finish();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -754,7 +1021,9 @@ fn compression_dictionaries() {
 
 #[test]
 fn bare_property_sets() {
-    let Some(store) = open() else { return };
+    let Some((store, mut census)) = open("bare_property_sets") else {
+        return;
+    };
     let dict = dictionary(&store);
     let classifier = BareSetClassifier::new(&dict);
     let recs = records(store.game_data().source(), 0x7800_0000, 0x7900_0000);
@@ -767,9 +1036,11 @@ fn bare_property_sets() {
             "other"
         }
     }));
-    assert_eq!(
-        per_archive,
-        BTreeMap::from([("gamelogic", 1616), ("local", 2)])
+    hist(
+        &mut census,
+        "0x78 sets in archive",
+        &per_archive,
+        &[("gamelogic", 1616), ("local", 2)],
     );
     let mut families = BTreeMap::new();
     let (mut empty, mut light_maps, mut fog) = (0, 0, 0);
@@ -804,10 +1075,12 @@ fn bare_property_sets() {
             _ => {}
         }
     }
-    assert_eq!(empty, 9);
-    assert_eq!(
-        families,
-        BTreeMap::from([
+    census.count_vs_spec("empty sets", empty, 9);
+    hist(
+        &mut census,
+        "gamelogic sets of family",
+        &families,
+        &[
             (BareSetFamily::Empty, 8),
             (BareSetFamily::GameMap, 1300),
             (BareSetFamily::LocalSky, 147),
@@ -816,10 +1089,11 @@ fn bare_property_sets() {
             (BareSetFamily::ContentLayerDefaults, 13),
             (BareSetFamily::Volume, 9),
             (BareSetFamily::Other, 76),
-        ])
+        ],
     );
-    assert_eq!(light_maps, 21);
-    assert_eq!(fog, 7);
+    census.count_vs_spec("game maps with a light map", light_maps, 21);
+    census.count_vs_spec("local skies with interior fog", fog, 7);
+    census.finish();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -829,7 +1103,9 @@ fn bare_property_sets() {
 #[test]
 fn metadata_objects() {
     use tessera_formats::gameplay::common::PropertyAccess;
-    let Some(store) = open() else { return };
+    let Some((store, mut census)) = open("metadata_objects") else {
+        return;
+    };
     let data = store.game_data();
     let dict = dictionary(&store);
     let classifier = MetadataClassifier::new(&dict);
@@ -841,10 +1117,18 @@ fn metadata_objects() {
         .did_map_by_label(did_map_labels::WEENIE_CONTENT)
         .expect("map")
         .expect("WEENIECONTENT");
-    assert_eq!(weenie.len(), 316);
+    census.count_vs_spec("WEENIECONTENT entries", weenie.len(), 316);
     let targets = histogram(weenie.iter().map(|e| e.value.prefix()));
-    assert_eq!(targets.get(&0x70), Some(&314));
-    assert_eq!(targets.get(&0x07), Some(&1));
+    census.count_vs_spec(
+        "WEENIECONTENT targets 0x70",
+        targets.get(&0x70).copied().unwrap_or(0),
+        314,
+    );
+    census.count_vs_spec(
+        "WEENIECONTENT targets 0x07",
+        targets.get(&0x07).copied().unwrap_or(0),
+        1,
+    );
     let controls = MetadataControls::from_weenie_content(&weenie);
     let control = |d: Option<Did>| {
         let d = d.expect("control label");
@@ -922,7 +1206,7 @@ fn metadata_objects() {
     // §13.1, MR11.
     let pmd = control(controls.property_metadata);
     let listed = property_metadata_members(&pmd, p);
-    assert_eq!(listed.len(), 5211);
+    census.count_vs_spec("§13.1 listed property metadata", listed.len(), 5211);
     let family: BTreeSet<Did> = members[&MetadataFamily::PropertyMetaData]
         .iter()
         .copied()
@@ -948,32 +1232,57 @@ fn metadata_objects() {
         index.insert(v.property, *d);
     }
     assert!(index.duplicates.is_empty(), "MR11");
-    assert_eq!(index.len(), 5211);
-    assert_eq!(percent, 2094);
-    assert_eq!(forwarded, (364, 352));
-    assert_eq!(operators, 4498 + 4415 + 4048 + 2474 + 539 + 44 + 12);
+    assert_eq!(index.len(), listed.len(), "MR11: one entry per property");
+    census.count_vs_spec("§13.1 shown as percentage", percent, 2094);
+    census.count_vs_spec("§13.1 forwarded value targets", forwarded.0, 364);
+    census.count_vs_spec("§13.1 forwarded weenie types", forwarded.1, 352);
+    census.count_vs_spec(
+        "§13.1 allowed operators",
+        operators,
+        4498 + 4415 + 4048 + 2474 + 539 + 44 + 12,
+    );
 
     // §13.2.
-    assert_eq!(count(MetadataFamily::ErrorCategory), 675);
+    census.count_vs_spec(
+        "§13.2 error categories",
+        count(MetadataFamily::ErrorCategory),
+        675,
+    );
     let cats: Vec<ErrorCategoryView<'_>> = members[&MetadataFamily::ErrorCategory]
         .iter()
         .map(|d| ErrorCategoryView::from_set(&sets[d], p))
         .collect();
     assert!(cats.iter().all(|c| c.brief.is_some()));
-    assert_eq!(cats.iter().filter(|c| c.sound.is_some()).count(), 673);
-    assert_eq!(cats.iter().filter(|c| c.script.is_some()).count(), 2);
-    assert_eq!(cats.iter().filter(|c| c.icon.is_some()).count(), 1);
+    census.count_vs_spec(
+        "§13.2 with a sound",
+        cats.iter().filter(|c| c.sound.is_some()).count(),
+        673,
+    );
+    census.count_vs_spec(
+        "§13.2 with a script",
+        cats.iter().filter(|c| c.script.is_some()).count(),
+        2,
+    );
+    census.count_vs_spec(
+        "§13.2 with an icon",
+        cats.iter().filter(|c| c.icon.is_some()).count(),
+        1,
+    );
     let ec = ErrorControlView::from_set(&control(controls.error), p);
-    assert_eq!(ec.categories.len(), 675);
+    census.count_vs_spec("§13.2 control categories", ec.categories.len(), 675);
     let keys: Vec<u32> = ec
         .categories
         .iter()
         .flat_map(|(k, _)| k.iter().copied())
         .collect();
-    assert_eq!(keys.len(), 950);
-    assert_eq!(keys.iter().collect::<BTreeSet<_>>().len(), 950);
+    census.count_vs_spec("§13.2 error keys", keys.len(), 950);
+    census.count_vs_spec(
+        "§13.2 distinct error keys",
+        keys.iter().collect::<BTreeSet<_>>().len(),
+        950,
+    );
     let named: BTreeSet<Did> = ec.categories.iter().filter_map(|&(_, d)| d).collect();
-    assert_eq!(named.len(), 674);
+    census.count_vs_spec("§13.2 named categories", named.len(), 674);
     let default = ec.default_category.expect("default category");
     assert!(!named.contains(&default));
     let all_cats: BTreeSet<Did> = members[&MetadataFamily::ErrorCategory]
@@ -983,54 +1292,57 @@ fn metadata_objects() {
     assert!(all_cats.contains(&default) && named.is_subset(&all_cats));
 
     // §13.3.
-    assert_eq!(count(MetadataFamily::TutorialHint), 337);
+    census.count_vs_spec(
+        "§13.3 tutorial hints",
+        count(MetadataFamily::TutorialHint),
+        337,
+    );
     let hints: Vec<TutorialHintView<'_>> = members[&MetadataFamily::TutorialHint]
         .iter()
         .map(|d| TutorialHintView::from_set(&sets[d], p))
         .collect();
-    assert_eq!(
+    census.count_vs_spec(
+        "§13.3 distinct hint types",
         hints
             .iter()
             .filter_map(|h| h.hint_type)
             .collect::<BTreeSet<_>>()
             .len(),
-        337
+        337,
     );
     assert!(
         hints
             .iter()
             .all(|h| h.sections.len() == 3 && h.mp_sections.len() == 3)
     );
-    assert_eq!(
+    census.count_vs_spec(
+        "§13.3 with MP overrides",
         hints
             .iter()
             .filter(|h| h.use_mp_overrides == Some(true))
             .count(),
-        16
+        16,
     );
-    assert_eq!(
+    census.count_vs_spec(
+        "§13.3 with a minimum server level",
         hints
             .iter()
             .filter(|h| h.min_server_max_level.is_some())
             .count(),
-        98
+        98,
     );
-    assert_eq!(
+    census.count_vs_spec(
+        "§13.3 with a world property",
         hints.iter().filter(|h| h.world_property.is_some()).count(),
-        4
+        4,
     );
     let tc_set = control(controls.tutorial_hint);
     let tc = TutorialHintControlView::from_set(&tc_set, p);
-    assert_eq!(
-        (
-            tc.hints.len(),
-            tc.mp_hints.len(),
-            tc.session_hints.len(),
-            tc.skill_hints.len()
-        ),
-        (331, 50, 4, 0)
-    );
-    assert_eq!(tc.level_hints.len(), 20);
+    census.count_vs_spec("§13.3 control hints", tc.hints.len(), 331);
+    census.count_vs_spec("§13.3 control MP hints", tc.mp_hints.len(), 50);
+    census.count_vs_spec("§13.3 control session hints", tc.session_hints.len(), 4);
+    census.count_vs_spec("§13.3 control skill hints", tc.skill_hints.len(), 0);
+    census.count_vs_spec("§13.3 control level hints", tc.level_hints.len(), 20);
     assert_eq!(
         tc.all_hints(),
         members[&MetadataFamily::TutorialHint]
@@ -1040,23 +1352,33 @@ fn metadata_objects() {
     );
 
     // §13.4.
-    assert_eq!(count(MetadataFamily::MovieLibrary), 85);
+    census.count_vs_spec("§13.4 movies", count(MetadataFamily::MovieLibrary), 85);
     let movies: Vec<MovieView<'_>> = members[&MetadataFamily::MovieLibrary]
         .iter()
         .map(|d| MovieView::from_set(&sets[d], p))
         .collect();
-    assert_eq!(movies.iter().filter(|m| m.movie_id.is_some()).count(), 65);
-    assert_eq!(movies.iter().filter(|m| m.quest.is_some()).count(), 65);
-    assert_eq!(
+    census.count_vs_spec(
+        "§13.4 with a movie ID",
+        movies.iter().filter(|m| m.movie_id.is_some()).count(),
+        65,
+    );
+    census.count_vs_spec(
+        "§13.4 with a quest",
+        movies.iter().filter(|m| m.quest.is_some()).count(),
+        65,
+    );
+    census.count_vs_spec(
+        "§13.4 distinct icons",
         movies
             .iter()
             .filter_map(|m| m.icon)
             .collect::<BTreeSet<_>>()
             .len(),
-        1
+        1,
     );
     let mc = MovieLibraryControlView::from_set(&control(controls.movie_library), p);
-    assert_eq!((mc.categories.len(), mc.movies.len()), (48, 85));
+    census.count_vs_spec("§13.4 control categories", mc.categories.len(), 48);
+    census.count_vs_spec("§13.4 control movies", mc.movies.len(), 85);
     assert_eq!(
         mc.movies.iter().copied().collect::<BTreeSet<_>>(),
         members[&MetadataFamily::MovieLibrary]
@@ -1065,34 +1387,44 @@ fn metadata_objects() {
             .collect()
     );
 
-    assert_eq!(movies.iter().filter(|m| m.icon.is_some()).count(), 85);
+    census.count_vs_spec(
+        "§13.4 with an icon",
+        movies.iter().filter(|m| m.icon.is_some()).count(),
+        85,
+    );
 
     // §13.5: members are the sets with a non-referrer `PropertyResponse*` property. The
     // five characteristic arrays give 237 + 120 + 21 + 9; 32 members carry only callback
     // settings (kind Other).
-    assert_eq!(count(MetadataFamily::PropertyResponse), 419);
+    census.count_vs_spec(
+        "§13.5 property responses",
+        count(MetadataFamily::PropertyResponse),
+        419,
+    );
     let kinds = histogram(
         members[&MetadataFamily::PropertyResponse]
             .iter()
             .map(|d| classifier.response_kind(&sets[d]).expect("member kind")),
     );
     eprintln!("property responses by kind: {kinds:?}");
-    assert_eq!(
-        kinds,
-        BTreeMap::from([
+    hist(
+        &mut census,
+        "§13.5 responses of kind",
+        &kinds,
+        &[
             (PropertyResponseKind::AppliedEffects, 237),
             (PropertyResponseKind::WorldEvents, 120),
             (PropertyResponseKind::MapProperties, 21),
             (PropertyResponseKind::CalculateProperties, 9),
             (PropertyResponseKind::Other, 32),
-        ])
+        ],
     );
     // The four monster objects that refer to a response map are not members.
     let only_referrers: Vec<&Found> = referrers
         .iter()
         .filter(|(_, _, set)| classifier.response_kind(set).is_none())
         .collect();
-    assert_eq!(only_referrers.len(), 4);
+    census.count_vs_spec("§13.5 referrers only", only_referrers.len(), 4);
     assert!(
         only_referrers
             .iter()
@@ -1106,7 +1438,11 @@ fn metadata_objects() {
     );
 
     // §13.6.
-    assert_eq!(count(MetadataFamily::GameCallback), 110);
+    census.count_vs_spec(
+        "§13.6 game callbacks",
+        count(MetadataFamily::GameCallback),
+        110,
+    );
     let returns = histogram(
         members[&MetadataFamily::GameCallback]
             .iter()
@@ -1114,37 +1450,64 @@ fn metadata_objects() {
     );
     let mut return_counts: Vec<usize> = returns.values().copied().collect();
     return_counts.sort_unstable_by(|a, b| b.cmp(a));
-    assert_eq!(return_counts, vec![82, 19, 5, 1, 1, 1, 1]);
+    list(
+        &mut census,
+        "§13.6 return values by frequency",
+        &return_counts,
+        &[82, 19, 5, 1, 1, 1, 1],
+    );
     // Exactly one property each, except one object with a second.
     let sizes = histogram(
         members[&MetadataFamily::GameCallback]
             .iter()
             .map(|d| sets[d].iter().count()),
     );
-    assert_eq!(sizes, BTreeMap::from([(1, 109), (2, 1)]));
+    hist(
+        &mut census,
+        "§13.6 callbacks with property count",
+        &sizes,
+        &[(1, 109), (2, 1)],
+    );
     // §13.7 (X2): 124 objects carry `Version_*` properties: 123 members and the
     // VersionSystem control, which the classifier leaves out.
-    assert_eq!(count(MetadataFamily::Version) + 1, 124);
+    census.count_vs_spec(
+        "§13.7 objects with Version properties",
+        count(MetadataFamily::Version) + 1,
+        124,
+    );
     let vs_set = control(controls.version_system);
     assert!(vs_set.iter().any(|e| classifier.version.contains(&e.pid)));
     assert_eq!(classifier.classify(&vs_set), None);
     assert!(classifier.is_version_control(&vs_set));
     let vs = VersionSystemView::from_set(&vs_set, p);
-    assert_eq!(vs.updates.len(), 93);
-    assert_eq!(vs.always_run_on_players.len(), 2);
+    census.count_vs_spec("§13.7 updates", vs.updates.len(), 93);
+    census.count_vs_spec(
+        "§13.7 always run on players",
+        vs.always_run_on_players.len(),
+        2,
+    );
     assert!(vs.current.is_some());
     // 92 structs carry `Version_SingletonList`, one the account list (one DID).
-    assert_eq!(vs.account_updates.len(), 1);
-    assert_eq!(vs.account_updates[0].1.len(), 1);
+    census.count_vs_spec("§13.7 account updates", vs.account_updates.len(), 1);
+    census.count_vs_spec(
+        "§13.7 account update DIDs",
+        vs.account_updates.iter().map(|u| u.1.len()).sum::<usize>(),
+        1,
+    );
     // The candidates (155 + 2 distinct DIDs) cover every member; 34 are not members.
     let version_members: BTreeSet<Did> =
         members[&MetadataFamily::Version].iter().copied().collect();
     let candidates = vs.member_candidates();
-    assert_eq!(candidates.len(), 157);
+    census.count_vs_spec("§13.7 member candidates", candidates.len(), 157);
     let candidate_set: BTreeSet<Did> = candidates.iter().copied().collect();
     assert!(
         version_members.is_subset(&candidate_set),
         "§13.7: the control names every member"
     );
-    assert_eq!(candidate_set.len() - version_members.len(), 34);
+    census.count_vs_spec(
+        "§13.7 candidates that are not members",
+        candidate_set.len() - version_members.len(),
+        34,
+    );
+    census.finish();
 }

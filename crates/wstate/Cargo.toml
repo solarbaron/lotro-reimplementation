@@ -16,5 +16,9 @@ tessera-text.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+# Census counts of the real-data tests against local per-install baselines (decision 0045).
+tessera-testkit.workspace = true
+
 [lints]
 workspace = true

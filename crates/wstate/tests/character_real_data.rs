@@ -6,8 +6,9 @@
 //! WEENIECONTENT labels, the rest by following references; the class of each found record
 //! then names its family, and a header scan of every 0x70 record counts **all** records of
 //! those classes. Every record of the families is decoded on both halves (PC1) and the
-//! invariants PC2 (race-table pairs), PC3–PC16 are checked. The counts asserted are the
-//! spec's observations of the install it was written against (§2.1).
+//! invariants PC2 (race-table pairs), PC3–PC16 are checked. The counts are checked against
+//! the local baseline of the install version (decision 0045, `tessera-testkit`), with the
+//! spec's observations of the install it was written against beside them (§2.1).
 //!
 //! Heavy (reads every object record once): run with
 //! `TESSERA_GAME_DIR=… cargo test --release -p tessera-wstate --test character_real_data
@@ -107,6 +108,7 @@ fn player_character_census() {
     let store: Store = ObjectStore::new(Arc::clone(&set));
     let reg = store.game_data().registry().expect("registry").clone();
     let strings = Strings::open_install(&dir, Some("English")).expect("language archive");
+    let mut census = tessera_testkit::census!("player_character_census", &dir).expect("census");
 
     // §2.2, §2.3: labels and references.
     let recs = CharacterRecords::collect(&store).expect("collect");
@@ -177,9 +179,9 @@ fn player_character_census() {
         let cs = role_class(role);
         let n: usize = cs.iter().map(|&c| all_of(c).len()).sum();
         eprintln!("{what}: classes {cs:?}, {n} records");
-        assert_eq!(n, want, "{what}: records of the family (§2.1)");
+        census.count_vs_spec(&format!("§2.1 {what}"), n, want);
         if role == Role::StatObject {
-            assert_eq!(cs.len(), 7, "seven stat classes");
+            census.count_vs_spec("§2.1 stat-object classes", cs.len(), 7);
         } else {
             assert_eq!(cs.len(), 1, "{what}: one class");
         }
@@ -188,10 +190,10 @@ fn player_character_census() {
         }
     }
     let class_tables: Vec<Did> = recs.with_role(Role::ClassTable).collect();
-    assert_eq!(class_tables.len(), 12, "class tables (§7)");
+    census.count_vs_spec("§7 class tables", class_tables.len(), 12);
 
-    // PC1: every record of the 52 classes decodes completely on both halves.
-    assert_eq!(family.len(), 52, "§2.1: 33 + 19 classes");
+    // PC1: every record of the family's classes decodes completely on both halves.
+    census.count_vs_spec("§2.1 classes", family.len(), 33 + 19);
     let (mut n, mut b70, mut b79) = (0usize, 0usize, 0usize);
     for &c in family.keys() {
         for d in all_of(c) {
@@ -220,9 +222,9 @@ fn player_character_census() {
         }
     }
     eprintln!("PC1: {n} records, {b70} bytes (0x70), {b79} bytes (0x79)");
-    assert_eq!(n, 224 + 81, "§2.1 record total");
-    assert_eq!(b70, 784_978 + 71_649, "§2.1 0x70 bytes");
-    assert_eq!(b79, 1_560_674 + 36_773, "§2.1 0x79 bytes");
+    census.count_vs_spec("§2.1 records", n, 224 + 81);
+    census.count_vs_spec("§2.1 0x70 bytes", b70, 784_978 + 71_649);
+    census.count_vs_spec("§2.1 0x79 bytes", b79, 1_560_674 + 36_773);
 
     // §5: race directory and tables.
     let dir_set = props(&store, recs.control("RaceTableDirectory").expect("label"));
@@ -239,28 +241,38 @@ fn player_character_census() {
         .iter()
         .flat_map(|r| r.genders.iter().map(move |g| (r.race, g)))
         .collect();
-    assert_eq!(entries.len(), 15, "§5.3: 15 gender entries");
+    census.count_vs_spec("§5.3 gender entries", entries.len(), 15);
     let mut per_sex: BTreeMap<u32, usize> = BTreeMap::new();
     for (_, g) in &entries {
         *per_sex.entry(g.gender).or_default() += 1;
     }
     let mut sex_counts: Vec<usize> = per_sex.values().copied().collect();
     sex_counts.sort_unstable();
-    assert_eq!(sex_counts, vec![7, 8], "§5.3: 8 and 7 entries per sex");
-    assert_eq!(
+    census.count_vs_spec("§5.3 sexes", sex_counts.len(), 2);
+    census.count_vs_spec(
+        "§5.3 entries of the smaller sex",
+        sex_counts.first().copied().unwrap_or(0),
+        7,
+    );
+    census.count_vs_spec(
+        "§5.3 entries of the larger sex",
+        sex_counts.last().copied().unwrap_or(0),
+        8,
+    );
+    census.count_vs_spec(
+        "§5.2 class lists",
         races.iter().map(|r| r.classes.len()).sum::<usize>(),
         69,
-        "§5.2 class lists"
     );
-    assert_eq!(
+    census.count_vs_spec(
+        "§5.2 nationality lists",
         races.iter().map(|r| r.nationalities.len()).sum::<usize>(),
         28,
-        "§5.2 nationality lists"
     );
-    assert_eq!(
+    census.count_vs_spec(
+        "§5.2 characteristics",
         races.iter().map(|r| r.characteristics.len()).sum::<usize>(),
         66,
-        "§5.2 characteristics"
     );
 
     // PC5 and PC2 (race-table pairs), PC4.
@@ -318,12 +330,9 @@ fn player_character_census() {
         player_avatars.insert(pa, ps);
         admin_avatars.insert(aa);
     }
-    assert_eq!(
-        sex_matches, 14,
-        "PC5: Sex equals the gender in 14 of 15 entries"
-    );
-    assert_eq!(player_avatars.len(), 14, "§5.3: 14 player avatars");
-    assert_eq!(admin_avatars.len(), 14, "§5.3: 14 administrator avatars");
+    census.count_vs_spec("PC5 entries whose Sex equals the gender", sex_matches, 14);
+    census.count_vs_spec("§5.3 player avatars", player_avatars.len(), 14);
+    census.count_vs_spec("§5.3 administrator avatars", admin_avatars.len(), 14);
     let six: BTreeSet<&str> = [
         "Agent_Species",
         "Sex",
@@ -354,6 +363,7 @@ fn player_character_census() {
         "PC4: race avatars vary in {} properties; sizes {sizes:?}",
         varying.len()
     );
+    census.count("PC4 properties the race avatars vary in", varying.len());
 
     // PC3: mirrors in all 138 avatar templates.
     let mut mirror_names: Option<BTreeSet<u32>> = None;
@@ -390,13 +400,10 @@ fn player_character_census() {
             }
         }
     }
-    assert_eq!(avatar_count, 138);
-    assert_eq!(
-        mirror_names.map(|m| m.len()),
-        Some(355),
-        "PC3: 355 mirror names"
-    );
-    assert_eq!((equal, no_base), (47_886, 1_104), "§4.3 mirror values");
+    census.count_vs_spec("PC3 avatar templates", avatar_count, 138);
+    census.count_vs_spec("PC3 mirror names", mirror_names.map_or(0, |m| m.len()), 355);
+    census.count_vs_spec("§4.3 mirror values equal to the base", equal, 47_886);
+    census.count_vs_spec("§4.3 mirror values without a base", no_base, 1_104);
 
     // §6, PC6, PC7: nationalities.
     let nat_dir = props(
@@ -410,9 +417,9 @@ fn player_character_census() {
         .iter()
         .map(|&d| NationalityRecord::from_properties(&props(&store, d), &reg).expect("nationality"))
         .collect();
-    assert_eq!(nats.len(), 29);
+    census.count_vs_spec("§6 nationalities", nats.len(), 29);
     let nat_keys: BTreeSet<u32> = nats.iter().map(|n| n.nationality).collect();
-    assert_eq!(nat_keys.len(), 29, "nationality keys unique");
+    assert_eq!(nat_keys.len(), nats.len(), "PC6: nationality keys unique");
     let mut listed: BTreeMap<u32, usize> = BTreeMap::new();
     for r in &races {
         let genders: BTreeSet<u32> = r.genders.iter().map(|g| g.gender).collect();
@@ -430,17 +437,17 @@ fn player_character_census() {
         listed.values().all(|&c| c == 1),
         "PC6: no nationality listed by two races"
     );
-    assert_eq!(
+    census.count_vs_spec(
+        "§6.2 nationalities named by no race",
         nat_keys.len() - listed.len(),
         1,
-        "§6.2: one nationality named by no race"
     );
-    assert_eq!(
+    census.count_vs_spec(
+        "§6.2 naming guidelines",
         nats.iter()
             .map(|n| n.naming_guidelines.len())
             .sum::<usize>(),
         53,
-        "§6.2 naming guidelines"
     );
 
     // §7, PC6: class tables.
@@ -449,7 +456,7 @@ fn player_character_census() {
         .map(|&d| ClassCreationInfo::from_properties(&props(&store, d), &reg).expect("class"))
         .collect();
     let class_keys: BTreeSet<u32> = infos.iter().filter_map(|i| i.class).collect();
-    assert_eq!(class_keys.len(), 12, "class keys");
+    census.count_vs_spec("§7 class keys", class_keys.len(), 12);
     for r in &races {
         for k in &r.classes {
             assert!(
@@ -458,19 +465,19 @@ fn player_character_census() {
             );
         }
     }
-    assert_eq!(
+    census.count_vs_spec(
+        "§7.1 starting entries",
         infos
             .iter()
             .map(|i| i.starting_inventory.len())
             .sum::<usize>(),
         88,
-        "§7.1 starting entries"
     );
     let kits: BTreeSet<Did> = infos
         .iter()
         .flat_map(|i| i.advanced_starts.iter().filter_map(|a| a.kit))
         .collect();
-    assert_eq!(kits.len(), 9, "§7.2 kits");
+    census.count_vs_spec("§7.2 kits", kits.len(), 9);
 
     // §8, PC8–PC11: names.
     let rules = NameRuleControl::from_properties(
@@ -481,7 +488,7 @@ fn player_character_census() {
         &reg,
     )
     .expect("name rules");
-    assert_eq!(rules.rules.len(), 4, "§8.1 rule keys");
+    census.count_vs_spec("§8.1 rule keys", rules.rules.len(), 4);
     let gen_did = recs
         .control("RandomNameGenerationDirectory")
         .expect("label");
@@ -493,7 +500,11 @@ fn player_character_census() {
         .map(|e| (e.species, e.sex))
         .collect();
     let race_pairs: BTreeSet<(u32, u32)> = entries.iter().map(|(r, g)| (*r, g.gender)).collect();
-    assert_eq!(generator.race_categories.len(), 15);
+    census.count_vs_spec(
+        "§8 generator race categories",
+        generator.race_categories.len(),
+        15,
+    );
     assert_eq!(
         pairs, race_pairs,
         "PC8: generator pairs equal the gender entries"
@@ -504,16 +515,17 @@ fn player_character_census() {
             "PC8: category has rules"
         );
     }
-    assert_eq!(generator.categories.len(), 21);
-    assert_eq!(
+    census.count_vs_spec("§8 generator categories", generator.categories.len(), 21);
+    census.count_vs_spec(
+        "§8 generator options",
         generator
             .categories
             .iter()
             .map(|c| c.options.len())
             .sum::<usize>(),
-        64
+        64,
     );
-    assert_eq!(generator.syllable_tables.len(), 56);
+    census.count_vs_spec("§8 syllable tables", generator.syllable_tables.len(), 56);
     let used: BTreeSet<u32> = generator
         .categories
         .iter()
@@ -525,24 +537,26 @@ fn player_character_census() {
         used, defined,
         "PC8: every syllable key used is defined and vice versa"
     );
-    assert_eq!(
+    census.count_vs_spec(
+        "§8 syllables",
         generator
             .syllable_tables
             .iter()
             .map(|t| t.strings.len())
             .sum::<usize>(),
-        8_797
+        8_797,
     );
-    assert_eq!(generator.shift_tables.len(), 13);
-    assert_eq!(
+    census.count_vs_spec("§8 shift tables", generator.shift_tables.len(), 13);
+    census.count_vs_spec(
+        "§8 shift entries",
         generator
             .shift_tables
             .iter()
             .map(|t| t.entries.len())
             .sum::<usize>(),
-        1_289
+        1_289,
     );
-    assert_eq!(generator.valid_rules.len(), 3);
+    census.count_vs_spec("§8 valid rules", generator.valid_rules.len(), 3);
     for r in &generator.valid_rules {
         assert!(
             rules.rules.contains(r),
@@ -591,7 +605,7 @@ fn player_character_census() {
         .filter_map(|i| i.as_native().and_then(|n| n.as_nested_string_table()))
         .map(ShiftTable::from_native)
         .collect();
-    assert_eq!(compiled.len(), 13, "§8.2: 13 compiled shift tables");
+    census.count_vs_spec("§8.2 compiled shift tables", compiled.len(), 13);
     let mut unmatched: Vec<Vec<_>> = names_text
         .shifts
         .values()
@@ -757,7 +771,7 @@ fn player_character_census() {
     .expect("pip control");
     let pip_set: BTreeSet<Did> = pip_ctl.pips.iter().copied().collect();
     assert_eq!(pip_set.len(), pip_ctl.pips.len(), "PC14: each pip once");
-    assert_eq!(pip_set.len(), 25);
+    census.count_vs_spec("§10 pips", pip_set.len(), 25);
     let pips: Vec<Pip> = pip_ctl
         .pips
         .iter()
@@ -767,7 +781,7 @@ fn player_character_census() {
     let values: BTreeSet<u32> = pips.iter().filter_map(|p| p.value_property).collect();
     assert_eq!(
         (types.len(), values.len()),
-        (25, 25),
+        (pips.len(), pips.len()),
         "PC13: types and value properties unique"
     );
     let mut policies = 0;
@@ -787,7 +801,7 @@ fn player_character_census() {
             );
         }
     }
-    assert_eq!(policies, 18, "§10.3: 18 threshold policies");
+    census.count_vs_spec("§10.3 threshold policies", policies, 18);
     for i in &infos {
         for k in i.pips.iter().chain(&i.own_pip) {
             assert!(types.contains(k), "PC14: class pip {k:#x} has a record");
@@ -814,7 +828,14 @@ fn player_character_census() {
         }
     }
     step_counts.sort_unstable();
-    assert_eq!(step_counts, vec![13, 17, 23], "§11.3 schedule lengths");
+    census.count_vs_spec("§11.3 schedules", step_counts.len(), 3);
+    for (i, &n) in step_counts.iter().enumerate() {
+        let name = format!("§11.3 schedule {i} (by length) steps");
+        match [13, 17, 23].get(i) {
+            Some(&spec) => census.count_vs_spec(&name, n, spec),
+            None => census.count(&name, n),
+        }
+    }
 
     // §12.4, PC16.
     let control = AllegianceControl::from_properties(
@@ -831,10 +852,11 @@ fn player_character_census() {
             )
         })
         .collect();
-    assert_eq!(allegiances.len(), 7);
-    assert_eq!(control.groups.len(), 3);
+    census.count_vs_spec("§12.4 allegiances", allegiances.len(), 7);
+    census.count_vs_spec("§12.4 allegiance groups", control.groups.len(), 3);
     let problems = allegiance_problems(&control, &allegiances);
     assert!(problems.is_empty(), "PC16: {problems:?}");
 
+    census.finish();
     eprintln!("player-character census passed in {:?}", t0.elapsed());
 }

@@ -4,9 +4,9 @@
 //! Decodes **every** record with prefix 0x22 and reports the counts per §13 failure
 //! category, the §11 census, the §7.1 base-chain census, the §10 reference census and the
 //! §3.3 label resolution, and checks the invariants of §12 that need no run-time layout
-//! (UL1–UL14). The exact §3.2 / §11 / §10 / §13 numbers of the spec and UL21 are asserted
-//! when the install is the build the spec was measured on (same record count and total
-//! size); otherwise the numbers are only printed and the invariants still apply.
+//! (UL1–UL14) and UL21. The §3.2 / §11 / §10 / §13 numbers are checked against the local
+//! baseline of the install version (decision 0045, `tessera-testkit`), with the spec's
+//! figures beside them (drift reports, `TESSERA_CENSUS_STRICT=1`).
 //!
 //! Not here: UL15 (override pairs), UL16–UL20 and UL22 need the §7 merge, the §8–§9
 //! arithmetic or the §17 panels, so they are tested by `tessera-ui`.
@@ -28,7 +28,8 @@ use tessera_formats::{
 
 const PROPERTY_DICTIONARY: u32 = 0x3400_0000;
 const ROOT_DID_MAP: u32 = 0x2800_0000;
-/// Record count and total payload size of the install the spec's census was taken on (§11).
+/// Record count and total payload size of the install the spec's census was taken on (§11),
+/// shown beside the observed ones.
 const SPEC_RECORDS: u64 = 302;
 const SPEC_BYTES: u64 = 2_610_590;
 
@@ -377,54 +378,76 @@ fn every_ui_layout_decodes_with_the_census() {
         "UL13: {failed} of {based} base references fail"
     );
 
-    if records != SPEC_RECORDS || census.bytes != SPEC_BYTES {
-        println!("install differs from the spec's census build; exact counts not asserted");
-        return;
-    }
-    // §11.
+    // The counts of §3.2, §7.1, §10, §11 and §13, against the local baseline of the install
+    // version (decision 0045), with the spec's figures beside them.
+    let dir = PathBuf::from(std::env::var_os("TESSERA_GAME_DIR").expect("install"));
+    let mut c =
+        tessera_testkit::census!("every_ui_layout_decodes_with_the_census", &dir).expect("census");
+    c.count_vs_spec("§11 records", records, SPEC_RECORDS);
+    c.count_vs_spec("§11 bytes", census.bytes, SPEC_BYTES);
     census.records = records;
-    assert_eq!(census.top_level, 3_144);
-    assert_eq!(census.max_top_level, 450);
-    assert_eq!(census.single_top_level, 111);
-    assert_eq!(census.elements, 16_421);
-    assert_eq!(census.max_elements_per_record, 1_533);
-    assert_eq!(census.max_depth, 7);
-    assert_eq!(census.max_children, 339);
-    assert_eq!((census.typed, census.based), (7_804, 8_617));
-    assert_eq!(census.states, 12_977);
-    assert_eq!(census.max_states, 139);
-    assert_eq!(census.elements_without_states, 13_970);
-    assert_eq!(
-        (census.media_in_elements, census.media_in_states),
-        (3_280, 9_718)
-    );
-    assert_eq!(census.media(), 12_998);
+    for (what, got, spec) in [
+        ("top-level elements", census.top_level, 3_144),
+        (
+            "most top-level elements in a record",
+            census.max_top_level,
+            450,
+        ),
+        (
+            "records with one top-level element",
+            census.single_top_level,
+            111,
+        ),
+        ("elements", census.elements, 16_421),
+        (
+            "most elements in a record",
+            census.max_elements_per_record,
+            1_533,
+        ),
+        ("deepest element", census.max_depth, 7),
+        ("most children", census.max_children, 339),
+        ("typed elements", census.typed, 7_804),
+        ("based elements", census.based, 8_617),
+        ("states", census.states, 12_977),
+        ("most states", census.max_states, 139),
+        (
+            "elements without states",
+            census.elements_without_states,
+            13_970,
+        ),
+        ("media in elements", census.media_in_elements, 3_280),
+        ("media in states", census.media_in_states, 9_718),
+        ("media", census.media(), 12_998),
+        ("element properties", census.element_properties, 35_615),
+        ("state properties", census.state_properties, 2_083),
+        ("default states", census.default_states, 1_212),
+        ("elements without a position", census.without_position, 222),
+        ("media paths", census.media_paths, 11_367),
+        ("longest media path", census.max_media_path, 48),
+    ] {
+        c.count_vs_spec(&format!("§11 {what}"), got, spec);
+    }
     let k = |kind: MediaKind| census.media_by_kind[kind.code() as usize];
-    assert_eq!(
-        [
-            k(MediaKind::Movie),
-            k(MediaKind::Jump),
-            k(MediaKind::Image),
-            k(MediaKind::Message),
-            k(MediaKind::Fade),
-            k(MediaKind::HitMask),
-            k(MediaKind::Animation),
-            k(MediaKind::ColouredImage),
-            k(MediaKind::Cursor),
-            k(MediaKind::Sound),
-            k(MediaKind::State),
-            k(MediaKind::Pause),
-        ],
-        [2, 0, 11_365, 31, 36, 0, 133, 421, 180, 692, 86, 52],
-        "§6.1"
-    );
-    assert_eq!(
-        (census.element_properties, census.state_properties),
-        (35_615, 2_083)
-    );
-    assert_eq!(census.default_states, 1_212);
-    assert_eq!(census.without_position, 222);
-    assert_eq!((census.media_paths, census.max_media_path), (11_367, 48));
+    for (kind, spec) in [
+        (MediaKind::Movie, 2),
+        (MediaKind::Jump, 0),
+        (MediaKind::Image, 11_365),
+        (MediaKind::Message, 31),
+        (MediaKind::Fade, 36),
+        (MediaKind::HitMask, 0),
+        (MediaKind::Animation, 133),
+        (MediaKind::ColouredImage, 421),
+        (MediaKind::Cursor, 180),
+        (MediaKind::Sound, 692),
+        (MediaKind::State, 86),
+        (MediaKind::Pause, 52),
+    ] {
+        c.count_vs_spec(
+            &format!("§6.1 media of kind {}", kind.name()),
+            k(kind),
+            spec,
+        );
+    }
     let expected_types = [
         ("Field", 4_796),
         ("Button", 700),
@@ -443,58 +466,86 @@ fn every_ui_layout_decodes_with_the_census() {
         ("Viewport", 1),
     ];
     for (name, n) in expected_types {
-        assert_eq!(engine_types.get(name).copied(), Some(n), "§11 type {name}");
+        c.count_vs_spec(
+            &format!("§11 elements of type {name}"),
+            engine_types.get(name).copied().unwrap_or(0),
+            n,
+        );
     }
-    assert_eq!(engine_types.len(), expected_types.len(), "§11 types used");
+    for (name, &n) in &engine_types {
+        if !expected_types.iter().any(|(t, _)| t == name) {
+            c.count(&format!("§11 elements of type {name}"), n);
+        }
+    }
     // §7.1 and §13.
-    assert_eq!(
-        depths,
-        BTreeMap::from([(1, 7_076), (2, 1_494), (3, 44)]),
-        "§7.1 chain depths"
+    let spec_depths = BTreeMap::from([(1, 7_076), (2, 1_494), (3, 44)]);
+    let all_depths: BTreeSet<usize> = spec_depths.keys().chain(depths.keys()).copied().collect();
+    for d in all_depths {
+        let name = format!("§7.1 base chains of depth {d}");
+        let got = depths.get(&d).copied().unwrap_or(0);
+        match spec_depths.get(&d) {
+            Some(&spec) => c.count_vs_spec(&name, got, spec),
+            None => c.count(&name, got),
+        }
+    }
+    c.count_vs_spec("§13 base element missing", failed, 3);
+    c.count_vs_spec(
+        "§13 records with a missing base element",
+        report.element_missing_records.len(),
+        2,
     );
-    assert_eq!(failed, 3, "§13 base element missing");
-    assert_eq!(report.element_missing_records.len(), 2, "§13 records");
-    assert_eq!(missing_pairs, 2, "§13 missing string-table tokens");
+    c.count_vs_spec("§13 missing string-table tokens", missing_pairs, 2);
     // §10.
-    assert_eq!(nonzero, 27_512, "§10 non-zero references");
-    assert_eq!(
-        by_prefix,
-        BTreeMap::from([
-            (0x21, 20),
-            (0x22, 4_043),
-            (0x25, 5_367),
-            (0x2A, 694),
-            (0x40, 2),
-            (0x41, 15_160),
-            (0x42, 1_230),
-            (0x70, 996),
-        ]),
-        "§10 references by prefix"
-    );
-    assert_eq!(
-        zero_refs,
-        BTreeMap::from([
-            ("ColouredImage", 392),
-            ("DID property", 10),
-            ("Image", 805),
-            ("Movie", 2),
-            ("StringInfo (0, 0)", 115),
-        ]),
-        "§10 zero references"
-    );
-    assert_eq!(
-        (string_values, literals),
-        (5_478, 1),
-        "§10 StringInfo values"
-    );
-    assert_eq!(pairs.len(), 3_329, "§10 distinct pairs");
-    assert_eq!(resolved_pairs, 3_326);
-    assert_eq!(font_dids.len(), 37, "FN12");
+    c.count_vs_spec("§10 non-zero references", nonzero, 27_512);
+    let spec_prefix = BTreeMap::from([
+        (0x21, 20),
+        (0x22, 4_043),
+        (0x25, 5_367),
+        (0x2A, 694),
+        (0x40, 2),
+        (0x41, 15_160),
+        (0x42, 1_230),
+        (0x70, 996),
+    ]);
+    let prefixes: BTreeSet<u8> = spec_prefix
+        .keys()
+        .chain(by_prefix.keys())
+        .copied()
+        .collect();
+    for p in prefixes {
+        let name = format!("§10 references to prefix {p:#04x}");
+        let got = by_prefix.get(&p).copied().unwrap_or(0);
+        match spec_prefix.get(&p) {
+            Some(&spec) => c.count_vs_spec(&name, got, spec),
+            None => c.count(&name, got),
+        }
+    }
+    let spec_zero = BTreeMap::from([
+        ("ColouredImage", 392),
+        ("DID property", 10),
+        ("Image", 805),
+        ("Movie", 2),
+        ("StringInfo (0, 0)", 115),
+    ]);
+    let zero_kinds: BTreeSet<&str> = spec_zero.keys().chain(zero_refs.keys()).copied().collect();
+    for z in zero_kinds {
+        let name = format!("§10 zero references of {z}");
+        let got = zero_refs.get(z).copied().unwrap_or(0);
+        match spec_zero.get(z) {
+            Some(&spec) => c.count_vs_spec(&name, got, spec),
+            None => c.count(&name, got),
+        }
+    }
+    c.count_vs_spec("§10 StringInfo values", string_values, 5_478);
+    c.count_vs_spec("§10 literal strings", literals, 1);
+    c.count_vs_spec("§10 distinct pairs", pairs.len(), 3_329);
+    c.count_vs_spec("§10 resolved pairs", resolved_pairs, 3_326);
+    c.count_vs_spec("FN12 distinct font DIDs", font_dids.len(), 37);
     // §3.3: 16,421 element IDs + 12,977 state IDs + 7,804 types + 1,212 default states +
     // 8,617 base element IDs + 11,919 draw modes + 86 State-item states + 31 messages.
-    assert_eq!(label_checks, 59_067, "§3.3 ID fields");
+    c.count_vs_spec("§3.3 ID fields", label_checks, 59_067);
 
-    // §3.2: the UILAYOUT map and how the 302 layouts are reached.
+    // §3.2: the UILAYOUT map and how the layouts are reached.
     let root = did_map(&set, Did(ROOT_DID_MAP)).expect("root DID map");
     let uilayout = root
         .by_label("UILAYOUT")
@@ -513,14 +564,11 @@ fn every_ui_layout_decodes_with_the_census() {
         base_layouts.len(),
         property_layouts.len()
     );
-    assert_eq!(uilayout.len(), 236, "§3.2 UILAYOUT entries");
-    assert_eq!(
-        (mapped_entries, mapped.len()),
-        (232, 232),
-        "§3.2 0x22 entries"
-    );
-    assert_eq!(base_layouts.len(), 177, "§3.2 / UL13 base layouts");
-    assert_eq!(property_layouts.len(), 72, "§3.2 property-named layouts");
+    c.count_vs_spec("§3.2 UILAYOUT entries", uilayout.len(), 236);
+    c.count_vs_spec("§3.2 UILAYOUT entries naming 0x22", mapped_entries, 232);
+    c.count_vs_spec("§3.2 distinct 0x22 layouts in UILAYOUT", mapped.len(), 232);
+    c.count_vs_spec("§3.2 base layouts", base_layouts.len(), 177);
+    c.count_vs_spec("§3.2 property-named layouts", property_layouts.len(), 72);
     let reached_by_none = dids
         .iter()
         .map(|&d| Did(d))
@@ -528,7 +576,8 @@ fn every_ui_layout_decodes_with_the_census() {
             !mapped.contains(d) && !base_layouts.contains(d) && !property_layouts.contains(d)
         })
         .count();
-    assert_eq!(reached_by_none, 1, "§3.2 layouts reached by none");
+    c.count_vs_spec("§3.2 layouts reached by none", reached_by_none, 1);
+    c.finish();
 
     // UL21: `containerdisplay` holds PlayerBag1..6_Template, each resolving to UIScaler and
     // none named by a base reference.

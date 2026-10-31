@@ -2,10 +2,11 @@
 //! `fonts.md` §3, §4, §10 and §12 against a user's own install (read-only).
 //!
 //! Decodes **every** record with prefix 0x42, checks FN1–FN11 (FN8–FN11 with the glyph
-//! atlases) and reports the §10 census. The exact counts and per-glyph field facts of §3.3
-//! and the counts of §4.3 and §10 are asserted when the install has the spec's 48 records
-//! with its 28,315 glyphs; otherwise they are only printed and the invariants still apply. FN12 (font DIDs named by layouts) is checked by
-//! `ui_layout_real_data.rs`.
+//! atlases) and reports the §10 census. The counts of §3.2, §3.3, §4.3 and §10 are checked
+//! against the local baseline of the install version (decision 0045, `tessera-testkit`),
+//! with the spec's figures beside them; the record identities and per-glyph facts of §3.1,
+//! §3.3 and §4.3 are asserted when the install has the spec's 48 records with its 28,315
+//! glyphs. FN12 (font DIDs named by layouts) is checked by `ui_layout_real_data.rs`.
 //!
 //! Skipped unless `TESSERA_GAME_DIR` points at an install. Run with
 //! `cargo test --release -p tessera-formats --test font_real_data -- --nocapture`.
@@ -17,6 +18,27 @@ use std::path::PathBuf;
 use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_formats::font::{AtlasIssue, QUESTION_MARK, SPACE};
 use tessera_formats::{Did, Font, Record, Surface, SurfaceFormat};
+
+/// One count per key of a histogram, with the spec's figure where it states one.
+fn keyed<K: Ord + Copy + std::fmt::Debug, V: Copy + Into<tessera_testkit::Count>>(
+    c: &mut tessera_testkit::Census,
+    what: &str,
+    observed: &BTreeMap<K, V>,
+    spec: &[(K, u64)],
+) {
+    let spec: BTreeMap<K, u64> = spec.iter().copied().collect();
+    let keys: BTreeSet<K> = spec.keys().chain(observed.keys()).copied().collect();
+    for k in keys {
+        let name = format!("{what} {k:?}");
+        let got: tessera_testkit::Count = observed
+            .get(&k)
+            .map_or(tessera_testkit::Count(0), |&v| v.into());
+        match spec.get(&k) {
+            Some(&n) => c.count_vs_spec(&name, got, n),
+            None => c.count(&name, got),
+        }
+    }
+}
 
 const SPEC_RECORDS: usize = 48;
 const SPEC_GLYPHS: usize = 28_315;
@@ -240,8 +262,106 @@ fn every_font_decodes_with_the_census() {
     assert!(not_packed.is_empty(), "FN10: {not_packed:?}");
     assert_eq!(ink_census.outside_bordered, 0, "FN11");
 
+    // The counts of §3.2, §3.3, §4.3 and §10, against the local baseline of the install
+    // version (decision 0045), with the spec's figures beside them.
+    let dir = PathBuf::from(std::env::var_os("TESSERA_GAME_DIR").expect("install"));
+    let mut c =
+        tessera_testkit::census!("every_font_decodes_with_the_census", &dir).expect("census");
+    c.count_vs_spec("§3.1 records", fonts.len(), SPEC_RECORDS);
+    c.count_vs_spec("§3.3 glyphs", glyphs, SPEC_GLYPHS);
+    keyed(
+        &mut c,
+        "§3.2 records of size",
+        &sizes,
+        &[
+            (2_137, 2),
+            (2_500, 1),
+            (5_503, 19),
+            (7_417, 17),
+            (7_516, 8),
+            (15_645, 1),
+        ],
+    );
+    keyed(
+        &mut c,
+        "§10 records with glyph count",
+        &families,
+        &[
+            (191, 2),
+            (224, 1),
+            (497, 19),
+            (671, 17),
+            (680, 8),
+            (1_419, 1),
+        ],
+    );
+    keyed(
+        &mut c,
+        "§3.3 records with border",
+        &borders,
+        &[(0, 1), (1, 4), (2, 3), (3, 8), (4, 32)],
+    );
+    c.count_vs_spec("§4.3 records without a background", no_background.len(), 1);
+    keyed(
+        &mut c,
+        "§4.3 glyphs without ink, code",
+        &ink_census.no_ink,
+        &[
+            (0x0020, 48),
+            (0x00A0, 48),
+            (0x00AF, 1),
+            (0xF000, 17),
+            (0xF00D, 8),
+        ],
+    );
+    c.count_vs_spec("§4.3 tight boxes", ink_census.tight, 27_563);
+    c.count_vs_spec(
+        "FN11 fonts that ink their border ring",
+        ink_census.outside_plain,
+        1,
+    );
+    c.count_vs_spec("§10 unwanted codes", unwanted_codes, 0);
+    let all = || fonts.iter().flat_map(|f| f.glyphs().iter());
+    let range = |v: Vec<i32>| {
+        (
+            v.iter().min().copied().unwrap_or(0),
+            v.iter().max().copied().unwrap_or(0),
+        )
+    };
+    for (what, (lo, hi), spec) in [
+        (
+            "A",
+            range(all().map(|g| i32::from(g.left_bearing)).collect()),
+            (-7, 12),
+        ),
+        (
+            "B",
+            range(all().map(|g| i32::from(g.right_bearing)).collect()),
+            (-17, 11),
+        ),
+        (
+            "H",
+            range(all().map(|g| i32::from(g.height)).collect()),
+            (1, 36),
+        ),
+        (
+            "W",
+            range(all().map(|g| i32::from(g.width)).collect()),
+            (0, 41),
+        ),
+    ] {
+        c.count_vs_spec(&format!("§3.3 smallest {what}"), lo, spec.0);
+        c.count_vs_spec(&format!("§3.3 largest {what}"), hi, spec.1);
+    }
+    let (min_advance, max_advance) = range(all().map(|g| g.advance()).collect());
+    assert!(min_advance >= 0, "§3.3 advance");
+    c.count_vs_spec("§3.3 largest advance", max_advance, 37);
+    let zero_width = all().filter(|g| g.width == 0).count();
+    c.count_vs_spec("§3.3 glyphs with W = 0", zero_width, 8);
+    c.finish();
+
     if fonts.len() != SPEC_RECORDS || glyphs != SPEC_GLYPHS {
-        println!("install differs from the spec's census build; exact counts not asserted");
+        println!("install differs from the spec's census build; record identities not asserted");
         return;
     }
     // §3.1.
@@ -251,81 +371,10 @@ fn every_font_decodes_with_the_census() {
         .flat_map(|(_, v)| v.iter().copied())
         .collect();
     assert_eq!(general, vec![0x4200_0027, 0x4200_0028, 0x4200_00FD], "§3.1");
-    // §3.2 sizes and §10 families.
-    assert_eq!(
-        sizes,
-        BTreeMap::from([
-            (2_137, 2),
-            (2_500, 1),
-            (5_503, 19),
-            (7_417, 17),
-            (7_516, 8),
-            (15_645, 1)
-        ]),
-        "§3.2 record sizes"
-    );
-    assert_eq!(
-        families,
-        BTreeMap::from([
-            (191, 2),
-            (224, 1),
-            (497, 19),
-            (671, 17),
-            (680, 8),
-            (1_419, 1)
-        ]),
-        "§10 families"
-    );
-    // §3.3 borders, §4.3.
-    assert_eq!(
-        borders,
-        BTreeMap::from([(0, 1), (1, 4), (2, 3), (3, 8), (4, 32)]),
-        "§3.3 borders"
-    );
     assert_eq!(no_background, vec![Did(0x4200_002A)], "§4.3");
-    assert_eq!(
-        ink_census.no_ink,
-        BTreeMap::from([
-            (0x0020, 48),
-            (0x00A0, 48),
-            (0x00AF, 1),
-            (0xF000, 17),
-            (0xF00D, 8)
-        ]),
-        "§4.3 glyphs without ink"
-    );
-    assert_eq!(ink_census.tight, 27_563, "§4.3 tight boxes");
-    assert_eq!(
-        ink_census.outside_plain, 1,
-        "FN11: one font inks its border ring"
-    );
-    assert_eq!(unwanted_codes, 0, "§10");
 
-    // §3.3 per-glyph field facts. A decoder that swapped A, B or T would still pass FN5.
-    let all = || fonts.iter().flat_map(|f| f.glyphs().iter());
-    let range = |v: Vec<i32>| (*v.iter().min().unwrap(), *v.iter().max().unwrap());
-    assert_eq!(
-        range(all().map(|g| i32::from(g.left_bearing)).collect()),
-        (-7, 12),
-        "§3.3 A"
-    );
-    assert_eq!(
-        range(all().map(|g| i32::from(g.right_bearing)).collect()),
-        (-17, 11),
-        "§3.3 B"
-    );
-    assert_eq!(
-        range(all().map(|g| i32::from(g.height)).collect()),
-        (1, 36),
-        "§3.3 H"
-    );
-    assert_eq!(
-        range(all().map(|g| i32::from(g.width)).collect()),
-        (0, 41),
-        "§3.3 W"
-    );
-    let (min_advance, max_advance) = range(all().map(|g| g.advance()).collect());
-    assert!(min_advance >= 0 && max_advance == 37, "§3.3 advance");
+    // §3.3 per-glyph field facts (the ranges are counts above). A decoder that swapped A, B
+    // or T would still pass FN5.
     let zero_width: Vec<(Did, u16)> = fonts
         .iter()
         .flat_map(|f| {
@@ -335,13 +384,16 @@ fn every_font_decodes_with_the_census() {
                 .map(move |g| (f.did, g.code))
         })
         .collect();
-    assert_eq!(zero_width.len(), 8, "§3.3 W = 0 in eight records");
     assert!(
         zero_width.iter().all(|&(_, code)| code == 0xF00D),
         "§3.3 W = 0 only for U+F00D: {zero_width:?}"
     );
     let zero_width_fonts: BTreeSet<Did> = zero_width.iter().map(|&(d, _)| d).collect();
-    assert_eq!(zero_width_fonts.len(), 8, "§3.3 one per Verdana record");
+    assert_eq!(
+        zero_width_fonts.len(),
+        zero_width.len(),
+        "§3.3 one per Verdana record"
+    );
     for f in &fonts {
         let space = f.glyph(SPACE).expect("FN4");
         assert_eq!(

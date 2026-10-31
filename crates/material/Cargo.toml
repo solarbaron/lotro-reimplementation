@@ -25,6 +25,8 @@ flate2.workspace = true
 # Synthetic JPEG files for the ui_image tests (encoder only; same crate and version as
 # tessera-formats' optional JPEG support).
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# Census counts of the real-data tests against local per-install baselines (decision 0045).
+tessera-testkit.workspace = true
 
 [lints]
 workspace = true

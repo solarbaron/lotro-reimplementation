@@ -36,6 +36,12 @@ const MAX_UNUSUAL_RATE: f64 = 0.001;
 /// Largest share of tables allowed in the §10.3 failure category (2 of 7,526 observed).
 const MAX_CAMERA_FAILURE_RATE: f64 = 0.001;
 
+fn game_dir() -> Option<PathBuf> {
+    std::env::var_os("TESSERA_GAME_DIR")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+}
+
 fn open_set() -> Option<&'static ArchiveSet> {
     static SET: OnceLock<Option<ArchiveSet>> = OnceLock::new();
     SET.get_or_init(|| {
@@ -296,8 +302,8 @@ fn scriptlets_decode() {
 
 /// `script-runtime.md` §30.1 and §30.5 (R43): every While node decodes to its typed fields,
 /// and the census of this install (41 nodes in 17 tables, `Names` empty, `Inverse` 0, one
-/// Default port and no other port each) is printed and compared; a census difference fails
-/// only with `TESSERA_CENSUS=strict` (a data update may change it).
+/// Default port and no other port each) is checked against the local baseline of the install
+/// version (decision 0045; a data update may change it).
 #[test]
 fn while_nodes_decode_and_follow_the_census() {
     use tessera_formats::script_table::{NodeData, PortType};
@@ -347,14 +353,21 @@ fn while_nodes_decode_and_follow_the_census() {
         sum[1], sum[0], sum[2], sum[3], sum[4], sum[5]
     );
     assert_eq!(sum[2], 0, "every While node decodes to its fields");
-    let census = [17, 41, 0, 0, 0, 0];
-    if sum != census {
-        eprintln!("census differs from script-runtime.md §30.5: {sum:?} against {census:?}");
-        assert!(
-            !std::env::var_os("TESSERA_CENSUS").is_some_and(|v| v == "strict"),
-            "census (strict)"
-        );
+    let mut census = tessera_testkit::census!(
+        "while_nodes_decode_and_follow_the_census",
+        &game_dir().expect("install")
+    )
+    .expect("census");
+    for (what, i, spec) in [
+        ("tables with a While node", 0, 17),
+        ("While nodes", 1, 41),
+        ("While nodes with names", 3, 0),
+        ("inverted While nodes", 4, 0),
+        ("While nodes with other ports than one Default", 5, 0),
+    ] {
+        census.count_vs_spec(what, sum[i], spec);
     }
+    census.finish();
 }
 
 /// The (kind, port type) pairs of every port of the decoded tables and scriptlets
@@ -396,8 +409,8 @@ const PORT_PAIRS: [(u8, u8); 32] = [
 
 /// IS13 (`instance-scripts.md` §4.5.1; a census check of this install, not an invariant):
 /// every port of every node of the decoded 0x07 and 0x0C records has a (kind, port type)
-/// pair of the §4.5.1 table. Ports outside it are counted and reported; the count fails the
-/// test only with `TESSERA_CENSUS=strict`. Decoding does not depend on the table.
+/// pair of the §4.5.1 table. Ports outside it are counted per pair against the local
+/// baseline of the install version (decision 0045). Decoding does not depend on the table.
 #[test]
 fn port_pairs_follow_the_census() {
     let Some(set) = open_set() else { return };
@@ -445,19 +458,28 @@ fn port_pairs_follow_the_census() {
     }
     let total: usize = outside.values().sum();
     eprintln!("ports: {ports}; outside the §4.5.1 census: {total} {outside:?}");
-    if total > 0 {
-        assert!(
-            !std::env::var_os("TESSERA_CENSUS").is_some_and(|v| v == "strict"),
-            "IS13 census (strict)"
+    let mut census = tessera_testkit::census!(
+        "port_pairs_follow_the_census",
+        &game_dir().expect("install")
+    )
+    .expect("census");
+    census.count("ports", ports);
+    census.count_vs_spec("ports outside the §4.5.1 table", total, 0);
+    for ((kind, port), n) in &outside {
+        census.count(
+            &format!("ports outside the table: kind {kind}, port type {port}"),
+            *n,
         );
     }
+    census.finish();
 }
 
 /// `world-logic.md` §5.2.1 over every decoded table: WL-I11 (a table whose `Startup` holds
 /// a GameCallback driven from `QuestState_QuestID` has a quest-state test built only of the
 /// parts) and WL-I14 (every Switch on `QuestState_Test` has value ports for 0, 1 and 2 and
 /// no Default port) always fail the test; the tables found (eight, two of them sharing a
-/// combination of parts) are a census compared under `TESSERA_CENSUS=strict`.
+/// combination of parts) are a census checked against the local baseline of the install
+/// version (decision 0045).
 #[test]
 fn quest_state_tables_follow_their_parts() {
     use tessera_formats::gameplay::world_logic::{QuestStateTest, WorldLogicLabels};
@@ -562,13 +584,14 @@ fn quest_state_tables_follow_their_parts() {
         tables.len()
     );
     assert!(bad.is_empty(), "{bad:?}");
-    if (tables.len(), switches) != (8, 4) {
-        eprintln!("census differs from world-logic.md §5.2.1 (8 tables, 4 override Switches)");
-        assert!(
-            !std::env::var_os("TESSERA_CENSUS").is_some_and(|v| v == "strict"),
-            "census (strict)"
-        );
-    }
+    let mut census = tessera_testkit::census!(
+        "quest_state_tables_follow_their_parts",
+        &game_dir().expect("install")
+    )
+    .expect("census");
+    census.count_vs_spec("quest-state tables", tables.len(), 8);
+    census.count_vs_spec("Switches on QuestState_Test", switches, 4);
+    census.finish();
 }
 
 /// The race table's player avatars (`skeleton-anim.md` §2.2).
@@ -973,16 +996,25 @@ fn look_nodes_decode_and_follow_the_census() {
         assert!(colour_field.is_some(), "EditMaterialScript_ColorValue");
         assert!(t[5] + s[5] > 0, "colour edits driven by AC_Color_Hair");
         assert!(t[6] + s[6] > 0, "colour edits driven by AC_Color_Skin");
-        // script-table.md §5.1 and appearance.md A21.
-        let found = [t[0], t[1], t[2], t[3], s[3], t[5] + s[5], t[6] + s[6]];
-        let census = [39, 199, 218, 2873, 13, 255, 42];
-        if found != census {
-            eprintln!("census differs from the spec: {found:?} against {census:?}");
-            assert!(
-                !std::env::var_os("TESSERA_CENSUS").is_some_and(|v| v == "strict"),
-                "census (strict)"
-            );
+        // script-table.md §5.1 and appearance.md A21, against the local baseline of the
+        // install version (decision 0045).
+        let mut census = tessera_testkit::census!(
+            "look_nodes_decode_and_follow_the_census",
+            &game_dir().expect("install")
+        )
+        .expect("census");
+        for (what, found, spec) in [
+            ("TextureCompositor nodes in tables", t[0], 39),
+            ("ModifyCompositorLayer nodes in tables", t[1], 199),
+            ("ModifyCompositorColor nodes in tables", t[2], 218),
+            ("EditMaterial nodes in tables", t[3], 2873),
+            ("EditMaterial nodes in scriptlets", s[3], 13),
+            ("colour edits driven by AC_Color_Hair", t[5] + s[5], 255),
+            ("colour edits driven by AC_Color_Skin", t[6] + s[6], 42),
+        ] {
+            census.count_vs_spec(what, found, spec);
         }
+        census.finish();
     }
 }
 
@@ -1074,7 +1106,24 @@ fn random_dye_chains_replace_the_placeholder() {
         invokers.iter().filter(|i| i.1).count(),
         invokers.iter().filter(|i| records.contains(&i.0)).count(),
     );
-    assert_eq!(fed.len(), 7, "edit nodes fed by the dye value");
+    // How many edits, records and holders the data has is a count (decision 0045); the
+    // numbers beside them are A58's.
+    let mut census = tessera_testkit::census!(
+        "random_dye_chains_replace_the_placeholder",
+        &game_dir().expect("install")
+    )
+    .expect("census");
+    census.count_vs_spec("edit nodes fed by the dye value", fed.len(), 7);
+    census.count_vs_spec("records with a fed edit", records.len(), 5);
+    for (parameter, spec) in [(2000, 1), (2003, 4), (2013, 2)] {
+        census.count_vs_spec(
+            &format!("fed edits of material parameter {parameter}"),
+            parameters.get(&parameter).copied().unwrap_or(0),
+            spec,
+        );
+    }
+    census.count_vs_spec("Scriptlet nodes holding the parameter", invokers.len(), 49);
+    census.finish();
     assert!(
         parameters.keys().all(|p| [2000, 2003, 2013].contains(p)),
         "{parameters:?}"

@@ -349,8 +349,8 @@ commit message.
 | `TESSERA_REQUIRE_GPU` | `1`: fail instead of skipping when no GPU adapter is available (CI). `0`: skip GPU tests even when an adapter exists but no device can be created |
 | `TESSERA_BLESS=1` | Regenerate golden images (check them on lavapipe/llvmpipe first) |
 | `TESSERA_GOLDEN_DIR` | Where local-only real-data goldens of panels live (decision 0031 tier 2; default `${XDG_CACHE_HOME:-~/.cache}/tessera/goldens`; never inside a work tree) |
-| `TESSERA_GOLDEN_REQUIRE=1` | A missing tier-2 golden fails instead of being blessed (the second run of a verification) |
-| `TESSERA_GOLDEN_BLESS_LOCAL=1` | Re-bless tier-2 goldens that differ (never together with `TESSERA_GOLDEN_REQUIRE`; `TESSERA_BLESS` does not touch them) |
+| `TESSERA_GOLDEN_REQUIRE=1` | A missing tier-2 golden fails instead of being blessed (the second run of a verification); a picture carried over from the previous install version counts as a pass |
+| `TESSERA_GOLDEN_BLESS_LOCAL=1` | Re-bless tier-2 goldens that differ, and bless pictures changed since the previous install version: the owner's approval (never together with `TESSERA_GOLDEN_REQUIRE`; `TESSERA_BLESS` does not touch them; see "Local goldens after a game update" below) |
 | `TESSERA_SHEET_DIR` | Also copy the pictures a panel test takes to this folder, for judging them by eye |
 | `TESSERA_SEED`, `TESSERA_SAMPLE` | Reproducible sampling in real-data tests |
 | `TESSERA_OFFICIAL_SEND_CHECKSUM` | M8 live-verification aid, off by default: `per-buffer` or `whole-payload` payload checksum on every datagram the client sends to an official server, chat server included (see "Official session handshake diagnostics" below) |
@@ -367,6 +367,57 @@ official login never shows a service host, address or path (`apps/client/src/mai
 decision 0044). Where an HTTPS certificate or handshake check fails, the login logs its own
 line with the step and the kind only (`official login: HTTPS certificate not valid for the
 step's address step="…" kind="name mismatch"`).
+
+### Local goldens after a game update
+
+Tier-2 goldens ([decision 0031](decisions/0031-parity-panel-goldens.md)) live under
+`${TESSERA_GOLDEN_DIR:-${XDG_CACHE_HOME:-~/.cache}/tessera/goldens}/<package>/<test>/<function>/<install version>/<name>.png`.
+A game update changes the install version, so every golden of the new version starts
+missing. The shared helper (`apps/client/tests/ui_common/goldens.rs`, used by every tier-2
+test) then looks for the golden of the same name in the most recently modified sibling
+directory named like an install version (16 hex digits, or `schema-` and 16), and compares
+the new picture with it by the test's own comparison:
+
+- **Match:** the previous golden is copied as the current one (atomically), the test logs
+  `golden: carried over from <version> <old path> -> <new path>` and counts it as a pass,
+  also under `TESSERA_GOLDEN_REQUIRE=1`.
+- **Mismatch:** nothing is blessed, with or without `TESSERA_GOLDEN_REQUIRE`. The test writes
+  `<name>.actual.png` and `<name>.diff.png` into the new version's directory, records one
+  review entry under `<base>/review/<install version>/changed/` (one file per picture, safe
+  for parallel test binaries), and fails with `changed since install <old>: needs the owner's
+  review`. The other pictures of the test are still checked before it fails, so the review
+  list is complete.
+- **No previous golden:** the first-run rules (blessed, or a failure under
+  `TESSERA_GOLDEN_REQUIRE=1`).
+
+A later pass, carry-over or blessing of a picture removes its review entry and its actual and
+diff images. `TESSERA_GOLDEN_BLESS_LOCAL=1` is the owner's approval: it blesses a changed
+picture as before.
+
+`tools/golden-review.sh` reads the records of one install version (from `TESSERA_GAME_DIR`
+through `tessera-dattool` on `PATH` or `$TESSERA_DATTOOL`, from `--version V`, or else the
+version of the latest check in `<base>/review/last-version`), prints the counts (carried
+over, changed, new) and the review list, and writes the list to
+`<base>/review/<install version>.tsv` (package, test, function, name, old version, old
+golden, actual, diff, differing pixels). `--html FILE` writes one local page with old | new |
+diff side by side through `file://` links; it refuses a file inside a git work tree. No
+picture is copied into the repository. `--self-test` checks the tool.
+
+After an update:
+
+1. Wait until the launcher has stopped writing to the install (no patching in progress).
+2. Run the gate, with the tier-2 tests in release mode and without
+   `TESSERA_GOLDEN_BLESS_LOCAL`, for example
+   `cargo test --release -p tessera-client --test npc_windows_real_data --test quest_journal_real_data --test combat_ui_real_data --test social_panels_real_data --test parity_tooltips_real_data --test map_census_real_data --test travel_windows_real_data --test instance_finder_real_data`.
+   Failures that are not goldens (record counts, real-data changes) are findings of their own.
+3. `tools/golden-review.sh`, then
+   `tools/golden-review.sh --html ~/.cache/tessera/scratch/golden-review.html` (outside every
+   work tree).
+4. The owner reviews each changed picture on the page.
+5. Bless the approved ones: run their tests once with `TESSERA_GOLDEN_BLESS_LOCAL=1` (a test
+   blesses every picture it takes, so run only the tests whose changed pictures were all
+   approved), then run them again with `TESSERA_GOLDEN_REQUIRE=1`. A rejected picture is a
+   defect to fix, not a golden.
 
 ### Official session handshake diagnostics (M8 live verification)
 

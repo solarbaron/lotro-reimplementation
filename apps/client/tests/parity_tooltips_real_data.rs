@@ -689,9 +689,8 @@ fn fifty_item_and_fifty_skill_tooltips_are_painted() {
     for u in &unpainted {
         eprintln!("  not painted: {u}");
     }
-    let index_path = golden_dir.join("index.txt");
-    std::fs::create_dir_all(&golden_dir).expect("golden directory");
-    std::fs::write(&index_path, index).expect("index written");
+    let index_path = goldens::write_side_file(&golden_dir, "index.txt", index.as_bytes())
+        .unwrap_or_else(|e| panic!("index: {e}"));
     eprintln!("index: {}", index_path.display());
 
     // 3. The game UI from the install at UI scale 1, painted by the GPU UI pass.
@@ -737,7 +736,7 @@ fn fifty_item_and_fifty_skill_tooltips_are_painted() {
     );
 
     let t1 = Instant::now();
-    let (mut blessed, mut matched, mut clipped, mut defective) = (0, 0, 0, 0);
+    let (mut blessed, mut matched, mut carried, mut clipped, mut defective) = (0, 0, 0, 0, 0);
     // Tooltips built again after their fonts arrived (module docs).
     let mut rebuilt = 0;
     for shot in &shots {
@@ -822,13 +821,17 @@ fn fifty_item_and_fifty_skill_tooltips_are_painted() {
         match goldens::check_with_compare(&golden_dir, &shot.name, &pic, &flags, gpu_compare) {
             Ok(goldens::Outcome::Blessed(_)) => blessed += 1,
             Ok(goldens::Outcome::Passed(_)) => matched += 1,
+            Ok(goldens::Outcome::CarriedOver { .. }) => {
+                matched += 1;
+                carried += 1;
+            }
             Err(e) => failures.push(e),
         }
     }
     eprintln!(
-        "painted {} tooltips in {:?}: {blessed} blessed, {matched} passed, {defective} failed \
-         the panel audit (not painted), {clipped} taller or wider than the screen, {rebuilt} \
-         built again after their fonts arrived; goldens in {}",
+        "painted {} tooltips in {:?}: {blessed} blessed, {matched} passed ({carried} of them \
+         carried over), {defective} failed the panel audit (not painted), {clipped} taller or \
+         wider than the screen, {rebuilt} built again after their fonts arrived; goldens in {}",
         blessed + matched,
         t1.elapsed(),
         golden_dir.display()

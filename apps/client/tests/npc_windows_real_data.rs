@@ -105,6 +105,8 @@ struct Pictures {
     flags: goldens::Flags,
     seq: usize,
     results: Vec<(String, &'static str)>,
+    /// Golden failures, reported when the pictures are dropped (every picture is checked).
+    pending: goldens::Pending,
 }
 
 impl Pictures {
@@ -119,6 +121,7 @@ impl Pictures {
             flags,
             seq: 0,
             results: Vec::new(),
+            pending: goldens::Pending::default(),
         }
     }
 
@@ -152,9 +155,12 @@ impl Pictures {
         match goldens::check_with(&self.dir, &name, &img, &self.flags) {
             Ok(o) => {
                 println!("{name}: {} ({w}x{h})", o.word());
-                self.results.push((name, o.word()));
+                self.results.push((name.clone(), o.word()));
             }
-            Err(e) => panic!("{e}"),
+            Err(e) => {
+                self.results.push((name, "failed"));
+                self.pending.push(e);
+            }
         }
     }
 }
@@ -344,10 +350,14 @@ fn dialogue_on_the_install() {
         );
     }
     println!(
-        "dialogue: {} pictures ({} blessed, {} passed)",
+        "dialogue: {} pictures ({} blessed, {} passed, {} carried over)",
         pics.results.len(),
         pics.results.iter().filter(|r| r.1 == "blessed").count(),
-        pics.results.iter().filter(|r| r.1 == "passed").count()
+        pics.results.iter().filter(|r| r.1 == "passed").count(),
+        pics.results
+            .iter()
+            .filter(|r| r.1 == "carried over")
+            .count()
     );
 }
 

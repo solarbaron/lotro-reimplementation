@@ -378,6 +378,8 @@ struct Pictures {
     dir: PathBuf,
     flags: goldens::Flags,
     results: Vec<(String, &'static str)>,
+    /// Golden failures, reported when the pictures are dropped (every picture is checked).
+    pending: goldens::Pending,
 }
 
 impl Pictures {
@@ -390,6 +392,7 @@ impl Pictures {
             dir,
             flags,
             results: Vec::new(),
+            pending: goldens::Pending::default(),
         }
     }
 
@@ -420,7 +423,10 @@ impl Pictures {
                 println!("{name}: {} ({w}x{h})", o.word());
                 self.results.push((name.to_owned(), o.word()));
             }
-            Err(e) => panic!("{e}"),
+            Err(e) => {
+                self.results.push((name.to_owned(), "failed"));
+                self.pending.push(e);
+            }
         }
     }
 }

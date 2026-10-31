@@ -1482,6 +1482,24 @@ fn a_chat_challenge_without_dictionaries_is_unsupported() {
         let p = decode_datagram(&d, false, None, false).expect("decode");
         assert!(p.opt_headers.connect_accept.is_none(), "no accept");
     }
+    // The answer would be the same every time: the session ends and the ticket is not sent
+    // again, however long the client runs (engineering choice, spec silent).
+    assert_eq!(client.phase(), ChatPhase::Closed);
+    assert_eq!(client.counters().unsupported_negotiations, 1);
+    let mut auths = 0;
+    let mut t = 1.2;
+    while t < 200.0 {
+        let _ = client.poll(t, &schema);
+        while let Some((d, _)) = client.transport_mut().pop_outbound() {
+            let p = decode_datagram(&d, false, None, false).expect("decode");
+            if p.opt_headers.session_auth.is_some() {
+                auths += 1;
+            }
+        }
+        t += 5.0;
+    }
+    assert_eq!(auths, 0, "no further SessionAuthHeader after the refusal");
+    assert_eq!(client.counters().connects, 1);
 }
 
 /// `official-session.md` §7.3 (synthetic dictionaries): a chat challenge that names the

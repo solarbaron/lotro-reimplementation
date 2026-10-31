@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The synthetic test vectors of `docs/specs/official-session.md` §10.2 (Vectors 1–7), byte
+//! The synthetic test vectors of `docs/specs/official-session.md` §10.2 (Vectors 1–8), byte
 //! for byte, with the "must fail" variants the spec states (a whole-payload sum, swapped
-//! seeds, recipients read from the cookie, sequence 1, the former high-bit mask flag).
+//! seeds, recipients read from the cookie, sequence 1, the former high-bit mask flag, an
+//! unreversed referral cookie, a borrowed recipient, sequence or mask, an address family
+//! read at referral bytes 8–9).
 
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 use tessera_compat::session::{
     AuthConnection, BLOB_FLAG_DEFAULT_RECIPIENT, BlobFragmentHeader, CHAT_MAX_RECV_RATE,
     CodecUuids, ConnectionState, DatagramHeader, FLAG_CUMULATIVE_ACK, FlowControlHeader,
-    IsaacCipher, MAX_VARIABLE_U32, OptionalHeaders, SessionAuthHeader, SessionConnection,
-    SessionError, SessionEvent, WireCodecs, combine_packet_checksum, compute_datagram_checksum,
-    decode_datagram, decode_variable_u32, encode_datagram, encode_variable_u32,
-    guid_fields_swapped, max_recv_rate_for_speed, verify_packet_checksum,
+    IsaacCipher, MAX_VARIABLE_U32, OptionalHeaders, ReferralAuthHeader, SessionAuthHeader,
+    SessionConnection, SessionError, SessionEvent, WireCodecs, WorldReferralHeader,
+    combine_packet_checksum, compute_datagram_checksum, decode_datagram, decode_variable_u32,
+    encode_datagram, encode_variable_u32, guid_fields_swapped, max_recv_rate_for_speed,
+    verify_packet_checksum,
 };
 
 /// Parses a spec vector's hex text.
@@ -105,8 +108,21 @@ fn vector_3_transport_compact_integers() {
         decode_variable_u32(&[0xFF, 0xFF, 0xFF, 0xFF]),
         Ok((MAX_VARIABLE_U32, 4))
     );
+    // Decoder-only non-minimal reads: `80 01` and `C0 00 01 00` both decode to 1; the
+    // writer emits `01`.
+    assert_eq!(decode_variable_u32(&[0x80, 0x01]), Ok((1, 2)));
+    assert_eq!(decode_variable_u32(&[0xC0, 0x00, 0x01, 0x00]), Ok((1, 4)));
+    let mut minimal = Vec::new();
+    assert_eq!(encode_variable_u32(1, &mut minimal), Ok(1));
+    assert_eq!(minimal, [0x01]);
     // Truncated tiers.
-    for short in [&[0x80u8][..], &[0xC0, 0x00, 0x00], &[]] {
+    for short in [
+        &[0x80u8][..],
+        &[0xC0],
+        &[0xC0, 0x00],
+        &[0xC0, 0x00, 0x00],
+        &[],
+    ] {
         assert_eq!(
             decode_variable_u32(short),
             Err(SessionError::InvalidVariableU32)
@@ -163,11 +179,16 @@ const UUIDS: CodecUuids = CodecUuids {
     outgoing: OUT_UUID,
 };
 
-const VECTOR_5_CHALLENGE: &str = "00 00 01 02 00 2C 00 04 00 00 00 00 00 00 56 5F E8 83 33 44 11 22 40 8F 40 00 00 00 00 00 02 01 04 03 11 22 33 44 AA BB 03 04 11 22 33 44 55 66 77 88 40 30 20 10 60 50 80 70 90 A0 B0 C0 D0 E0 F0 01";
-const VECTOR_5_ACCEPT: &str = "00 00 03 04 00 1C 00 08 00 00 00 00 00 00 AF 96 C8 A4 00 01 11 22 44 33 22 11 03 04 01 02 AA BB CC DD 11 22 33 44 55 66 77 88 99 00 AB CD 00 00 00 00";
+const VECTOR_5_CHALLENGE: &str = "00 00 01 02 00 2C 00 04 00 00 00 00 00 00 95 B5 49 B9 33 44 11 22 40 8F 40 00 00 00 00 00 9A 71 C5 2E B8 06 D3 4F AA BB 03 04 11 22 33 44 55 66 77 88 40 30 20 10 60 50 80 70 90 A0 B0 C0 D0 E0 F0 01";
+const VECTOR_5_ACCEPT: &str = "00 00 03 04 00 1C 00 08 00 00 00 00 00 00 E6 F8 1D E3 00 01 11 22 4F D3 06 B8 2E C5 71 9A AA BB CC DD 11 22 33 44 55 66 77 88 99 00 AB CD 00 00 00 00";
+/// Vector 5's opaque challenge value (payload bytes 8–15).
+const VECTOR_5_COOKIE: [u8; 8] = [0x9A, 0x71, 0xC5, 0x2E, 0xB8, 0x06, 0xD3, 0x4F];
 const VECTOR_7_SERVER: &str = "00 00 01 02 00 19 01 00 00 06 00 00 00 02 B6 5D 79 93 33 44 11 22 40 8F 40 00 00 00 00 00 01 02 02 00 00 00 00 00 00 00 92 34 03 00 00 01 02";
 const VECTOR_7_CLIENT: &str =
-    "00 00 03 04 00 06 08 00 00 02 00 00 00 02 99 6B 6F E2 00 01 11 22 E8 03 00 00 F4 01";
+    "00 00 03 04 00 06 08 00 00 02 00 00 00 02 30 71 6F E2 00 02 11 22 71 00 00 00 F4 01";
+const VECTOR_8_REFERRAL: &str = "9A 71 C5 2E B8 06 D3 4F C0 00 02 09 30 39 55 AA 66 00";
+const VECTOR_8_REFERRAL_AUTH: &str =
+    "00 00 00 00 00 08 00 02 00 00 00 00 00 00 39 93 E9 37 00 00 00 00 4F D3 06 B8 2E C5 71 9A";
 
 /// A primary connection in State 1 with Vector 5's dictionaries.
 fn started() -> SessionConnection {
@@ -194,8 +215,8 @@ fn vector_5_challenge_and_accept() {
     assert_eq!(challenge.len(), 66);
     let pkt = decode_datagram(&challenge, true, None, true).expect("the challenge verifies");
     assert_eq!(pkt.header.header_checksum(), 0xEF3B_822B);
-    assert_eq!(pkt.payload_sum, 0x6724_6658);
-    assert_eq!(pkt.header.checksum, 0x565F_E883);
+    assert_eq!(pkt.payload_sum, 0xA679_C78E);
+    assert_eq!(pkt.header.checksum, 0x95B5_49B9);
     assert_eq!(
         (
             pkt.header.rec_id,
@@ -206,7 +227,7 @@ fn vector_5_challenge_and_accept() {
     );
     let ch = pkt.opt_headers.connect_challenge.expect("challenge");
     assert_eq!(ch.clock_candidate, 1000.0);
-    assert_eq!(ch.cookie, [0x02, 0x01, 0x04, 0x03, 0x11, 0x22, 0x33, 0x44]);
+    assert_eq!(ch.cookie, VECTOR_5_COOKIE);
     assert_eq!(ch.reserved_16, [0xAA, 0xBB]);
     assert_eq!(ch.outgoing_rec_id, 0x0304);
     assert_eq!(
@@ -240,21 +261,29 @@ fn vector_5_challenge_and_accept() {
     conn.receive_datagram(&challenge, SERVER, 0.1, WireCodecs::NONE)
         .expect("the challenge is taken");
     assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
-    // Recipients from the header and payload bytes 18..19, not from the cookie
-    // (`02 01` / `04 03`).
+    // Recipients from the header and payload bytes 18..19; reading either from the
+    // cookie must fail (neither is encoded there).
     assert_eq!(
         (conn.local_rec_id(), conn.server_rec_id()),
         (0x0102, 0x0304)
     );
-    assert_ne!(conn.local_rec_id(), 0x0201);
-    assert_ne!(conn.server_rec_id(), 0x0403);
+    for pair in VECTOR_5_COOKIE.chunks(2) {
+        for id in [
+            u16::from_be_bytes([pair[0], pair[1]]),
+            u16::from_le_bytes([pair[0], pair[1]]),
+        ] {
+            assert_ne!(conn.local_rec_id(), id);
+            assert_ne!(conn.server_rec_id(), id);
+        }
+    }
     assert!(conn.codecs_negotiated());
     let accept = conn.pop_outbound_datagram().expect("accept");
     assert_eq!(accept, hex(VECTOR_5_ACCEPT));
     assert_eq!(accept.len(), 50);
     let parsed = decode_datagram(&accept, false, None, true).expect("the accept verifies");
     assert_eq!(parsed.header.header_checksum(), 0xBDFE_821B);
-    assert_eq!(parsed.payload_sum, 0xF198_4689);
+    assert_eq!(parsed.payload_sum, 0x28F9_9BC8);
+    assert_eq!(parsed.header.checksum, 0xE6F8_1DE3);
     let resp = parsed.opt_headers.connect_accept.expect("accept");
     assert_eq!(resp.codec_uuid, OUT_UUID, "the outgoing on-disk UUID");
     assert_eq!(resp.max_recv_rate, 0);
@@ -385,29 +414,33 @@ fn vector_7_first_sequenced_exchange() {
         "no ClockSync on entry"
     );
 
-    // The client's first sequenced packet: FlowControl only, sequence 2, the first
-    // outgoing word, the client word 1 and the copied peer word.
-    let seq = conn
-        .send_sequenced_packet(
-            OptionalHeaders {
-                flow_control: Some(FlowControlHeader {
-                    bytes_received_delta: 1000,
-                    interval_ms: 500,
-                }),
-                ..OptionalHeaders::default()
-            },
-            Vec::new(),
-            false,
-            0.3,
-            None,
-        )
-        .expect("sent");
-    assert_eq!(seq, 2);
+    // The client's first sequenced packet, on the first tick after State 5: FlowControl
+    // only, sequence 2, the first outgoing word, the client word 2 (§4.2 P10-22-POLICY)
+    // and the copied peer word. The connection's own counters give 113 bytes (the 66 of
+    // the challenge and the 47 of the server packet) and 500 ms since the auth went out
+    // at 0.0 (§5.5 P10-22-POLICY).
+    conn.tick(0.5).expect("tick");
     let client = conn.pop_outbound_datagram().expect("client packet");
+    assert!(
+        conn.pop_outbound_datagram().is_none(),
+        "only the flow report"
+    );
     assert_eq!(client, hex(VECTOR_7_CLIENT));
+    assert_eq!(conn.send_seq_num(), 2);
     let parsed = decode_datagram(&client, false, None, false).expect("parses");
-    assert_eq!(parsed.header.header_checksum(), 0xC5F6_8209);
-    assert_eq!(parsed.payload_sum, 0xDC0A_0000);
+    assert_eq!(parsed.header.header_checksum(), 0xC5F7_8209);
+    assert_eq!(parsed.payload_sum, 0x6507_0000);
+    assert_eq!(parsed.header.checksum, 0x3071_6FE2);
+    assert_eq!(
+        parsed.opt_headers.flow_control,
+        Some(FlowControlHeader {
+            bytes_received_delta: 113,
+            interval_ms: 500,
+        })
+    );
+    // Nothing new arrived: the next tick sends no further report.
+    conn.tick(0.6).expect("tick");
+    assert!(conn.pop_outbound_datagram().is_none());
 }
 
 /// §10.2 Vector 7: "Reusing the incoming seed for the client, swapping the two seeds,
@@ -450,6 +483,11 @@ fn vector_7_must_fail_variants() {
     let mut seq_one = server_pkt.header;
     seq_one.seq_num = 1;
     assert!(verify_packet_checksum(seq_one, server_pkt.payload_sum, Some(in_first)).is_err());
+    let mut client_seq_one = client_pkt.header;
+    client_seq_one.seq_num = 1;
+    assert!(
+        verify_packet_checksum(client_seq_one, client_pkt.payload_sum, Some(out_first)).is_err()
+    );
     // A whole-payload sum for the server packet.
     let whole = compute_datagram_checksum(&server_pkt.raw_payload);
     assert_ne!(whole, server_pkt.payload_sum);
@@ -513,20 +551,7 @@ fn vector_7_with_directional_compression() {
     conn.receive_datagram(&compressed, SERVER, 0.2, codecs)
         .expect("the compressed first server packet verifies");
     assert_eq!(conn.state(), ConnectionState::Connected);
-    conn.send_sequenced_packet(
-        OptionalHeaders {
-            flow_control: Some(FlowControlHeader {
-                bytes_received_delta: 1000,
-                interval_ms: 500,
-            }),
-            ..OptionalHeaders::default()
-        },
-        Vec::new(),
-        false,
-        0.3,
-        codecs.outgoing,
-    )
-    .expect("sent");
+    conn.tick_with_codec(0.5, codecs.outgoing).expect("tick");
     let sent = conn.pop_outbound_datagram().expect("client packet");
     assert_eq!(
         &sent[..2],
@@ -534,8 +559,191 @@ fn vector_7_with_directional_compression() {
         "wire prefix = the outgoing recipient"
     );
     let parsed = decode_datagram(&sent, false, Some(&outgoing), false).expect("decompresses");
+    // The report counts the received bytes as they came: the compressed server packet.
+    let delta = u32::try_from(66 + compressed.len()).expect("small");
+    assert_eq!(
+        parsed.opt_headers.flow_control,
+        Some(FlowControlHeader {
+            bytes_received_delta: delta,
+            interval_ms: 500,
+        })
+    );
     let mut again = vec![0, 0];
     again.extend_from_slice(&parsed.header.to_wire_bytes());
     again.extend_from_slice(&parsed.raw_payload);
-    assert_eq!(again, hex(VECTOR_7_CLIENT));
+    let mut expected = hex(VECTOR_7_CLIENT);
+    if delta == 113 {
+        assert_eq!(again, expected);
+    } else {
+        // Vector 7 with this delta: the same header and the checksum over the new bytes.
+        expected[22..26].copy_from_slice(&delta.to_le_bytes());
+        assert_eq!(again[..14], expected[..14]);
+        assert_eq!(again[18..], expected[18..]);
+        verify_packet_checksum(
+            parsed.header,
+            parsed.payload_sum,
+            Some(IsaacCipher::from_seed(0x5566_7788).next_mask()),
+        )
+        .expect("the first outgoing word");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Vector 8: a referral and its ReferralAuthHeader (§6.5)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn vector_8_referral_to_referral_auth() {
+    let referral = hex(VECTOR_8_REFERRAL);
+    let wr = WorldReferralHeader::decode(&referral).expect("18 bytes");
+    assert_eq!(wr.cookie, VECTOR_5_COOKIE);
+    assert_eq!(
+        wr.target_addr,
+        SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 9), 12345)
+    );
+    assert_eq!(wr.metadata, [0x55, 0xAA, 0x66, 0x00]);
+    let mut back = Vec::new();
+    wr.encode(&mut back);
+    assert_eq!(back, referral);
+    // Bytes 8–9 read as an address family must fail: the port would then be `02 09`.
+    assert_ne!(u16::from_be_bytes([referral[10], referral[11]]), 12345);
+    assert_ne!(wr.target_addr.port(), 0x0209);
+
+    // A connected login connection reports it.
+    let mut conn = started();
+    conn.receive_datagram(&hex(VECTOR_5_CHALLENGE), SERVER, 0.1, WireCodecs::NONE)
+        .expect("challenge");
+    conn.receive_datagram(&hex(VECTOR_7_SERVER), SERVER, 0.2, WireCodecs::NONE)
+        .expect("server packet");
+    while conn.pop_event().is_some() {}
+    let dgram = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0102,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders {
+            world_referral: Some(wr),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .expect("referral datagram");
+    conn.receive_datagram(&dgram, SERVER, 0.3, WireCodecs::NONE)
+        .expect("referral");
+    let event = std::iter::from_fn(|| conn.pop_event())
+        .find(|e| matches!(e, SessionEvent::WorldReferralReceived { .. }));
+    assert_eq!(
+        event,
+        Some(SessionEvent::WorldReferralReceived {
+            cookie: VECTOR_5_COOKIE,
+            world_addr: SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 9), 12345),
+        })
+    );
+
+    // The fresh world connection: recipient zero, length 8, only 0x00020000, sequence
+    // zero, the final four bytes zero, the cookie reversed, nothing else.
+    let world_addr = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 9), 12345);
+    let mut world = SessionConnection::new(world_addr, 0.3);
+    world.set_codec_uuids(UUIDS);
+    world
+        .start_world_login(VECTOR_5_COOKIE, 0.3)
+        .expect("referral auth");
+    let sent = world.pop_outbound_datagram().expect("ReferralAuthHeader");
+    assert_eq!(sent, hex(VECTOR_8_REFERRAL_AUTH));
+    assert_eq!(sent.len(), 30);
+    let parsed = decode_datagram(&sent, false, None, true).expect("verifies");
+    assert_eq!(parsed.header.header_checksum(), 0xBAF3_70E5);
+    assert_eq!(parsed.payload_sum, 0x7EA0_7852);
+    assert_eq!(parsed.header.checksum, 0x3993_E937);
+    assert_eq!(
+        parsed.opt_headers.referral_auth,
+        Some(ReferralAuthHeader::for_cookie(VECTOR_5_COOKIE))
+    );
+    // Its State 1 retransmit is the same datagram.
+    world.tick(2.4).expect("tick");
+    assert_eq!(world.pop_outbound_datagram(), Some(sent.clone()));
+
+    // Must fail: the cookie echoed without reversal, and the login connection's recipient,
+    // sequence or mask borrowed.
+    let unreversed = encode_datagram(
+        DatagramHeader::default(),
+        &OptionalHeaders {
+            referral_auth: Some(ReferralAuthHeader {
+                reversed_cookie: VECTOR_5_COOKIE,
+            }),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .expect("encode");
+    assert_ne!(unreversed, sent);
+    let auth_only = OptionalHeaders {
+        referral_auth: Some(ReferralAuthHeader::for_cookie(VECTOR_5_COOKIE)),
+        ..OptionalHeaders::default()
+    };
+    for borrowed in [
+        DatagramHeader {
+            rec_id: 0x0304,
+            ..DatagramHeader::default()
+        },
+        DatagramHeader {
+            seq_num: 2,
+            ..DatagramHeader::default()
+        },
+        DatagramHeader {
+            client_word: 2,
+            peer_word: 0x1122,
+            ..DatagramHeader::default()
+        },
+    ] {
+        assert_ne!(
+            encode_datagram(borrowed, &auth_only, &[], None, None).expect("encode"),
+            sent
+        );
+    }
+    assert_ne!(
+        encode_datagram(
+            DatagramHeader::default(),
+            &auth_only,
+            &[],
+            Some(IsaacCipher::from_seed(0x5566_7788).next_mask()),
+            None
+        )
+        .expect("encode"),
+        sent
+    );
+
+    // A referral with a zero address or port raises no event (OPEN-SESSION-2).
+    for target in [
+        SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 12345),
+        SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 9), 0),
+    ] {
+        let dgram = encode_datagram(
+            DatagramHeader {
+                rec_id: 0x0102,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders {
+                world_referral: Some(WorldReferralHeader {
+                    target_addr: target,
+                    ..wr
+                }),
+                ..OptionalHeaders::default()
+            },
+            &[],
+            None,
+            None,
+        )
+        .expect("referral datagram");
+        conn.receive_datagram(&dgram, SERVER, 0.4, WireCodecs::NONE)
+            .expect("taken");
+        assert!(
+            !std::iter::from_fn(|| conn.pop_event())
+                .any(|e| matches!(e, SessionEvent::WorldReferralReceived { .. }))
+        );
+    }
 }

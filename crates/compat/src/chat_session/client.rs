@@ -237,6 +237,9 @@ pub struct ChatCounters {
     pub heartbeats: u64,
     /// Room messages that could not be mapped (unknown room, other message types).
     pub unmapped_messages: u64,
+    /// Connections closed because the chat dictionary negotiation is unsupported
+    /// (`official-session.md` §7.3, OPEN-SESSION-1); the session then ends for good.
+    pub unsupported_negotiations: u64,
 }
 
 /// What one [`ChatClient::poll`] produced.
@@ -830,7 +833,10 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         self.drain_session(now, schema, &mut out);
         // Ticks the connection and reaps one that has been closing for 20 s
         // (`official-session.md` §6.1).
-        match self.mux.tick(now) {
+        match self
+            .mux
+            .tick_with_codec(now, self.codecs.outgoing.as_deref())
+        {
             Ok(reaped) => self.forget_reaped(&reaped),
             Err(e) => {
                 tracing::debug!(error = %e, "chat-server session tick failed");
@@ -973,7 +979,20 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                 SessionEvent::Connected { .. } => self.state.on_transport_connected(now),
                 SessionEvent::Disconnected { reason } => {
                     self.log_handshake_failure(&reason);
-                    self.state.on_transport_lost(now);
+                    if reason == crate::session::DisconnectReason::UnsupportedCodec {
+                        // The chat dictionary is unsupported (`official-session.md` §7.3,
+                        // OPEN-SESSION-1): the same answer would come every time, so the
+                        // session ends here and the ticket is not sent again (engineering
+                        // choice, spec silent).
+                        tracing::info!(
+                            "official chat session: dictionary negotiation unsupported; \
+                             no further chat connection attempts"
+                        );
+                        self.counters.unsupported_negotiations += 1;
+                        self.state.close();
+                    } else {
+                        self.state.on_transport_lost(now);
+                    }
                     self.drop_session();
                     return;
                 }

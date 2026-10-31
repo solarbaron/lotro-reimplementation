@@ -1675,20 +1675,16 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     }
                 }
             }
-            SessionEvent::WorldReferralReceived {
-                referral_cookie,
-                world_addr,
-                ..
-            } => {
+            SessionEvent::WorldReferralReceived { cookie, world_addr } => {
                 if stop() {
                     // No world login after a cancel.
                     self.counters.cancelled_referrals += 1;
                     tracing::debug!("official session: referral after the cancel ignored");
                 } else {
-                    self.referral(referral_cookie, world_addr, now);
+                    self.referral(cookie, world_addr, now);
                 }
             }
-            SessionEvent::ServerRedirect(_) | SessionEvent::AuthServerAddress(_) => {
+            SessionEvent::AuthServerAddress(_) => {
                 // §6.6 names no client action that this session needs.
                 tracing::debug!("official session: redirect header ignored");
             }
@@ -1752,7 +1748,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// disconnect is out. Both: engineering choice, spec silent (question with the spec
     /// writers). The first referral also starts the graceful disconnect of the login
     /// connection (§6.5 step 2).
-    fn referral(&mut self, cookie: u64, addr: SocketAddrV4, now: f64) {
+    fn referral(&mut self, cookie: [u8; 8], addr: SocketAddrV4, now: f64) {
         if !matches!(self.stage, Stage::Entering { .. } | Stage::InWorld { .. }) {
             self.counters.stray_referrals += 1;
             tracing::debug!("official session: referral outside world entry ignored");
@@ -2507,8 +2503,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     fn tick(&mut self, now: f64) {
         let mut failed = None;
+        // The sequenced FlowControl-only packets a tick may send go out with the outgoing
+        // dictionary (`official-session.md` §5.5, §6.4.1).
+        let outgoing = self.codecs.outgoing.clone();
         for l in self.links_mut() {
-            if let Err(e) = l.mux.tick(now) {
+            if let Err(e) = l.mux.tick_with_codec(now, outgoing.as_deref()) {
                 failed = Some(e);
             }
         }

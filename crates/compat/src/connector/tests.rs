@@ -1059,13 +1059,14 @@ impl Server {
         );
     }
 
+    /// A `WorldReferralHeader` whose cookie bytes are `cookie` big-endian, so the
+    /// `ReferralAuthHeader` answering it carries `cookie.to_le_bytes()` (§6.5).
     fn referral(&self, cookie: u64, target: SocketAddrV4) -> Vec<u8> {
         self.control(OptionalHeaders {
             world_referral: Some(WorldReferralHeader {
-                referral_cookie: cookie,
-                sin_family: 2,
+                cookie: cookie.to_be_bytes(),
                 target_addr: target,
-                reserved_word_10: 0,
+                metadata: [0x55, 0xAA, 0x66, 0x00],
             }),
             ..OptionalHeaders::default()
         })
@@ -2159,7 +2160,8 @@ fn the_session_reaches_the_character_list_and_the_world() {
                 .expect("ReferralAuthHeader");
         }
     };
-    assert_eq!(ra.referral_cookie, 0x1122_3344_5566_7788);
+    // §6.5: the cookie's eight bytes reversed.
+    assert_eq!(ra.reversed_cookie, 0x1122_3344_5566_7788u64.to_le_bytes());
     let mut world = Server::new(0x0111, 0xBEEF_0002);
     world.connect(&run, 0xBEEF_0002, WORLD_SERVER);
     // The world name arrives before `0x90` and is not lost.

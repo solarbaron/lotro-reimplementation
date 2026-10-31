@@ -469,7 +469,7 @@ fn the_world_connection_is_written_with_its_cookie_replaced() {
     let txt = std::fs::read_to_string(dir.path().join("world-first-datagram.txt")).expect("txt");
     for part in [
         "ReferralAuthHeader (0x00020000)",
-        "referralCookie (u64 LE)",
+        "reversed referral cookie (8 B)",
         "remote address: the WorldReferralHeader's address",
         "remote address and port used: 192.0.2.20:9100",
         "remote form: referral address (IP from the header)",

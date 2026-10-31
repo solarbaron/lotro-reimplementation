@@ -261,12 +261,14 @@ fn rules_fitting(datagram: &[u8], masks: &[u32]) -> (bool, bool) {
 fn connected_traffic() -> Vec<Vec<u8>> {
     let start = session_start(0, None, Arc::default());
     let (world, mut d, mut login) = driver_at_characters_from(Service::default(), start);
-    // At least 1,400 bytes received, then a blob sent a second later: it carries a
-    // `FlowControlHeader` (6 bytes) before its fragment (`official-session.md` §5.5),
-    // buffers whose per-buffer sum differs from the whole-payload one.
+    // Datagrams received, then a blob sent in answer in the same pass (the `0x12C` that
+    // answers a `0x12F`): it carries the pending `FlowControlHeader` (6 bytes) before its
+    // fragment (`official-session.md` §5.5 P10-22-POLICY), buffers whose per-buffer sum
+    // differs from the whole-payload one.
     for _ in 0..30 {
         world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
     }
+    world.deliver(login.event(0x12F, &[]), LOGIN_SERVER);
     d.step(0.2, true, &go);
     let _ = d.take_events();
     d.command(
@@ -390,7 +392,8 @@ impl SendOracle {
         if (2..=4).contains(&q) {
             n += 2;
         }
-        if q == 2 || q == 4 || ((q == 1 || q == 3) && fragmented) {
+        // Field 4: never on queue 3 (§5.6.2, §5.6.3).
+        if q == 2 || q == 4 || (q == 1 && fragmented) {
             n += 2;
         }
         if fragmented {
@@ -483,6 +486,17 @@ fn every_datagram_sent_fits_an_independent_checksum_oracle() {
     let mut login = Server::new(0x0111, 0xBEEF_0001);
     world.deliver(login.challenge(0xBEEF_0001), LOGIN_SERVER);
     d.step(0.0, true, &go);
+    // A first server packet confirms State 5; the tick sends the FlowControl-only packet
+    // (sequence 2, §6.4.1), so the `0x12C` answering the `0x12F` that follows carries the
+    // next report with its fragment (§5.5 P10-22-POLICY).
+    world.deliver(
+        login.control(OptionalHeaders {
+            cumulative_ack: Some(0),
+            ..OptionalHeaders::default()
+        }),
+        LOGIN_SERVER,
+    );
+    d.step(0.05, true, &go);
     world.deliver(login.event(0x12F, &[]), LOGIN_SERVER);
     d.step(0.1, true, &go);
     for _ in 0..30 {
@@ -504,11 +518,12 @@ fn every_datagram_sent_fits_an_independent_checksum_oracle() {
         t += 0.5;
     }
     let mut sent = world.take_sent();
-    // The server asks again for the first sequenced datagram (§5.3): its resend reuses
-    // the word of its `seqNum` (§7.2).
+    // The server asks again for the first blob datagram, sequence 3 (the FlowControl-only
+    // sequence 2 has nothing to resend, §5.3): its resend reuses the word of its `seqNum`
+    // (§7.2).
     world.deliver(
         login.control(OptionalHeaders {
-            sequence_nak: Some(vec![2]),
+            sequence_nak: Some(vec![3]),
             ..OptionalHeaders::default()
         }),
         LOGIN_SERVER,
@@ -568,7 +583,7 @@ fn handshake_datagrams() -> Vec<Vec<u8>> {
     let mut world = SessionConnection::new(WORLD_SERVER, 0.0);
     world.set_codec_uuids(SYNTHETIC_CODEC_UUIDS);
     world
-        .start_world_login(0x0102_0304_0506_0708, 0.0)
+        .start_world_login([1, 2, 3, 4, 5, 6, 7, 8], 0.0)
         .expect("referral");
     while let Some(d) = world.pop_outbound_datagram() {
         out.push(d);
@@ -579,8 +594,8 @@ fn handshake_datagrams() -> Vec<Vec<u8>> {
 #[test]
 fn the_handshake_datagrams_are_one_buffer_each() {
     // One buffer each, so the per-buffer and the withdrawn whole-payload sums agree; the
-    // auth and the accept carry sequence 0, the referral the kept counter value 1
-    // (`official-session.md` §5.1, §6.4; OPEN-SESSION-9).
+    // auth, the accept and the referral carry sequence 0 (`official-session.md` §5.1,
+    // §6.4, §6.5).
     let datagrams = handshake_datagrams();
     assert_eq!(datagrams.len(), 3);
     let kinds: Vec<(bool, bool, bool, u32)> = datagrams
@@ -602,7 +617,7 @@ fn the_handshake_datagrams_are_one_buffer_each() {
         [
             (true, false, false, 0),
             (false, true, false, 0),
-            (false, false, true, 1)
+            (false, false, true, 0)
         ]
     );
 }

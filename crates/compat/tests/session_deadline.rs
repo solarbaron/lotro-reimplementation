@@ -142,6 +142,14 @@ fn receive(mux: &mut SessionMultiplexer, d: &[u8], t: f64) -> u16 {
         .0
 }
 
+/// Ticks at `t` and drops what it queued: the FlowControl-only packet that reports newly
+/// received datagrams (`official-session.md` §5.5 P10-22-POLICY), the first one after
+/// State 5 included.
+fn report(mux: &mut SessionMultiplexer, id: u16, t: f64) {
+    mux.tick(t).expect("tick");
+    drain(mux, id);
+}
+
 /// Ticks at `deadline - JUST_BEFORE` (nothing queued) and at `deadline` (something
 /// queued); returns the datagrams of the second tick.
 fn fires_at(mux: &mut SessionMultiplexer, id: u16, deadline: f64) -> usize {
@@ -213,6 +221,9 @@ fn acknowledgements_keep_alives_and_the_silence_timeout_are_deadlines() {
         ConnectionState::Connected
     );
     drain(&mut mux, id);
+    // The first tick after State 5 is due at once: the FlowControl-only packet (§5.5).
+    assert!(near(mux.next_deadline(0.1), 0.1));
+    report(&mut mux, id, 0.1);
     // A sequenced packet arrived: the cumulative acknowledgement, 2 s after the last
     // (§5.2; the first counts from the connection's start).
     assert!(near(mux.next_deadline(0.1), 2.0));
@@ -220,7 +231,7 @@ fn acknowledgements_keep_alives_and_the_silence_timeout_are_deadlines() {
     assert!(near(mux.next_deadline(2.0), 4.0));
     // A gap: the negative acknowledgement every 0.6 s instead (§5.3).
     receive(&mut mux, &server.packet(1), 2.5);
-    drain(&mut mux, id);
+    report(&mut mux, id, 2.5);
     assert!(near(mux.next_deadline(2.5), 2.6));
     fires_at(&mut mux, id, 2.6);
     assert!(near(mux.next_deadline(2.6), 3.2));
@@ -229,7 +240,7 @@ fn acknowledgements_keep_alives_and_the_silence_timeout_are_deadlines() {
 }
 
 #[test]
-fn an_idle_connection_wakes_only_for_its_clock_sync_and_silence_timeout() {
+fn an_idle_connection_wakes_only_for_its_silence_timeout() {
     let (mut mux, _) = at_login(0.0);
     let id = receive(&mut mux, &challenge(), 0.0);
     // An unsequenced packet ends the handshake: no acknowledgement is owed (§5.2).
@@ -254,14 +265,12 @@ fn an_idle_connection_wakes_only_for_its_clock_sync_and_silence_timeout() {
         ConnectionState::Connected
     );
     drain(&mut mux, id);
-    // The ClockSyncHeader 30 s after the one sent on entering State 5 (§8.1).
-    assert!(near(mux.next_deadline(5.0), 35.0));
-    fires_at(&mut mux, id, 35.0);
-    assert!(near(mux.next_deadline(35.0), 65.0));
-    // The next keep-alive and the silence timeout (60 s after the last packet, §8.2)
-    // coincide at 65 s; the timeout fires once the limit is exceeded.
+    report(&mut mux, id, 5.0);
+    // No standalone ClockSync (§5.1, §8.1, OPEN-SESSION-9): its timer wakes nothing. The
+    // silence timeout (60 s after the last packet, §8.2) fires once the limit is exceeded.
+    assert!(near(mux.next_deadline(5.0), 65.0));
     mux.tick(64.0).expect("tick");
-    drain(&mut mux, id);
+    assert_eq!(drain(&mut mux, id), 0, "nothing sent while idle");
     assert!(near(mux.next_deadline(64.0), 65.0));
     mux.tick(65.0 + JUST_BEFORE).expect("tick");
     assert_eq!(
@@ -351,6 +360,7 @@ fn connected_at(t: f64) -> (SessionMultiplexer, u16) {
     );
     assert_eq!(state(&mux, id), ConnectionState::Connected);
     drain(&mut mux, id);
+    report(&mut mux, id, t);
     (mux, id)
 }
 
@@ -413,7 +423,11 @@ fn out_of_order_acknowledgements_waiting_are_due_at_once() {
     drain(&mut mux, id);
     assert!(near(mux.next_deadline(6.0), 6.0), "due now");
     mux.tick(6.0).expect("tick");
-    assert_eq!(drain(&mut mux, id), 1, "the OutOfOrderAckHeader");
+    assert_eq!(
+        drain(&mut mux, id),
+        2,
+        "the OutOfOrderAckHeader and the report of the datagram that asked (§5.5)"
+    );
     // Flushed: no longer due, so the loop does not stay at its shortest wait.
     assert!(mux.next_deadline(6.0).is_some_and(|d| d > 6.5));
 }
@@ -503,7 +517,8 @@ fn the_flush_waits_twenty_seconds_for_unacknowledged_packets() {
     let mut server = Server::new();
     receive(&mut mux, &server.packet(0), 0.1);
     let conn = mux.connection_mut(id).expect("conn");
-    conn.send_blob(1, 0, 0x10, b"unacknowledged", 1.0, None)
+    // A reliable queue: State 6 waits for reliable content only (§6.1).
+    conn.send_blob(2, 0, 0x10, b"unacknowledged", 1.0, None)
         .expect("blob");
     drain(&mut mux, id);
     mux.connection_mut(id)

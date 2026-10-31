@@ -471,10 +471,9 @@ fuzz_target!(|data: &[u8]| {
                     &session,
                     login.control(OptionalHeaders {
                         world_referral: Some(WorldReferralHeader {
-                            referral_cookie: 0x1122_3344_5566_7788,
-                            sin_family: 2,
+                            cookie: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
                             target_addr: WORLD,
-                            reserved_word_10: 0,
+                            metadata: [0; 4],
                         }),
                         ..OptionalHeaders::default()
                     }),

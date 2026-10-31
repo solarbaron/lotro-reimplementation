@@ -453,6 +453,28 @@ pub enum SessionError {
         /// The queue ID (`5` or `6`).
         queue_id: u8,
     },
+    /// A fragment with `blobFlags` bit `0x04` or `0x20`, undefined in §5.6.3: the datagram
+    /// is rejected (§5.6.3 P10-22-POLICY).
+    #[error("fragment with undefined blobFlags bits {blob_flags:#04x}")]
+    UndefinedBlobFlags {
+        /// The fragment's `blobFlags`.
+        blob_flags: u8,
+    },
+    /// A fragment Tessera does not support (§5.6.3): one with an attachment
+    /// (`HasAttachment`, its checksum boundary is `OPEN-SESSION-10`; Tessera never sends
+    /// one either), or with `blobFlags` bit `0x02` on a queue other than `1`
+    /// (`OPEN-SESSION-14`). A received datagram with one is dropped and counted
+    /// ([`HandshakeCounts::unsupported_fragment_drops`]).
+    #[error("unsupported fragment on queue {queue_id} with blobFlags {blob_flags:#04x}")]
+    UnsupportedFragment {
+        /// The fragment's queue.
+        queue_id: u8,
+        /// The fragment's `blobFlags`.
+        blob_flags: u8,
+    },
+    /// The fragments of one multi-fragment blob name different recipients (§5.6.4 rule 3).
+    #[error("fragments of one blob with different recipients")]
+    FragmentRecipientMismatch,
     /// A `ConnectChallengeHeader` whose datagram header `recId` or payload bytes `18..19`
     /// (the incoming and outgoing recipients, §6.3) are zero: Tessera adopts only non-zero
     /// IDs (§6.3; refusing zero is an engineering choice).
@@ -1629,14 +1651,14 @@ pub fn combine_packet_checksum(
 /// and over its `fragDataLen`-byte payload slice as separate buffers. A standalone control
 /// packet (one optional header, such as `SessionAuthHeader`) is one whole buffer.
 ///
-/// A fragment's 28-byte attachment (`HasAttachment`) is counted with its header buffer.
-/// pending spec pass 10 writer fix: `OPEN-SESSION-10` (attachment checksum boundary);
-/// this is an engineering choice, Tessera never sends an attachment, and the receive side
-/// ([`decode_datagram`]) uses the same boundary.
+/// A fragment with a 28-byte attachment (`HasAttachment`) has no checksum boundary in the
+/// spec (`OPEN-SESSION-10`): it is refused ([`SessionError::UnsupportedFragment`]), and the
+/// receive side drops attachment-bearing packets ([`parse_packet_payload`]).
 ///
 /// # Errors
 ///
-/// Returns [`SessionError`] if a header or fragment fails to encode.
+/// Returns [`SessionError`] if a header or fragment fails to encode, or a fragment has an
+/// attachment.
 pub fn payload_checksum(
     opt_headers: &OptionalHeaders,
     fragments: &[BlobFragment],
@@ -1652,6 +1674,12 @@ pub fn payload_checksum(
         sum = sum.wrapping_add(compute_datagram_checksum(&buffer.buf));
     }
     for frag in fragments {
+        if frag.header.attachment.is_some() {
+            return Err(SessionError::UnsupportedFragment {
+                queue_id: frag.header.queue_id,
+                blob_flags: frag.header.blob_flags | BLOB_FLAG_HAS_ATTACHMENT,
+            });
+        }
         let mut header = Vec::new();
         frag.header.encode(&mut header)?;
         sum = sum
@@ -2791,11 +2819,24 @@ impl SessionAuthHeader {
     }
 }
 
-/// `ReferralAuthHeader` (`0x00020000`, 8 bytes) optional header (§6.5).
+/// `ReferralAuthHeader` (`0x00020000`, 8 bytes) optional header (§6.5): exactly the
+/// referral cookie's eight bytes in reverse order, nothing else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ReferralAuthHeader {
-    /// 64-bit referral cookie (`u64` LE at `+0x00`).
-    pub referral_cookie: u64,
+    /// The eight payload bytes as they go on the wire: the `WorldReferralHeader` cookie
+    /// reversed ([`Self::for_cookie`]).
+    pub reversed_cookie: [u8; 8],
+}
+
+impl ReferralAuthHeader {
+    /// The `ReferralAuthHeader` answering a `WorldReferralHeader` with `cookie` (its bytes
+    /// `0..7`): the eight bytes reversed (§6.5, §10.2 Vector 8).
+    #[must_use]
+    pub fn for_cookie(cookie: [u8; 8]) -> Self {
+        let mut reversed_cookie = cookie;
+        reversed_cookie.reverse();
+        Self { reversed_cookie }
+    }
 }
 
 /// Converts a dictionary UUID between its on-disk mixed-endian form (record bytes
@@ -2983,28 +3024,31 @@ impl ConnectAcceptHeader {
     }
 }
 
-/// `WorldReferralHeader` (`0x00000800`, 18 bytes) optional header (§6.5).
+/// `WorldReferralHeader` (`0x00000800`, 18 bytes) optional header (§6.5). No address
+/// family is serialized: IPv4 is implicit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorldReferralHeader {
-    /// 64-bit one-time authentication cookie for the target world server (`u64` LE at `+0x00`).
-    pub referral_cookie: u64,
-    /// Address family (`2` = `AF_INET`, `u16` LE at `+0x08`).
-    pub sin_family: u16,
-    /// Target world server IPv4 address and UDP port (`sin_port` BE at `+0x0A`, `sin_addr` BE at `+0x0C`).
+    /// Payload bytes `0..7`: the opaque referral cookie, reversed into the
+    /// `ReferralAuthHeader` ([`ReferralAuthHeader::for_cookie`]).
+    pub cookie: [u8; 8],
+    /// The world server: the IPv4 address at bytes `8..11` (network order) and the UDP port
+    /// at bytes `12..13` (big-endian).
     pub target_addr: SocketAddrV4,
-    /// `reserved_word_10` (`worldServerId`, `u16` LE at `+0x10`): server-side meaning `OPEN`
-    /// (`OPEN-SESSION-2`); read and ignored for connection setup, `0` in tests.
-    pub reserved_word_10: u16,
+    /// Payload bytes `14..17`: referral metadata (`OPEN-SESSION-2`), read and ignored, never
+    /// echoed in the `ReferralAuthHeader`.
+    pub metadata: [u8; 4],
 }
 
 impl WorldReferralHeader {
+    /// The byte length of the payload (`18`, §4.3).
+    pub const LEN: usize = 18;
+
     /// Serializes this 18-byte `WorldReferralHeader` optional header into `out` (§6.5).
     pub fn encode(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.referral_cookie.to_le_bytes());
-        out.extend_from_slice(&self.sin_family.to_le_bytes());
-        out.extend_from_slice(&self.target_addr.port().to_be_bytes());
+        out.extend_from_slice(&self.cookie);
         out.extend_from_slice(&self.target_addr.ip().octets());
-        out.extend_from_slice(&self.reserved_word_10.to_le_bytes());
+        out.extend_from_slice(&self.target_addr.port().to_be_bytes());
+        out.extend_from_slice(&self.metadata);
     }
 
     /// Decodes an 18-byte `WorldReferralHeader` optional header from `bytes` (§6.5).
@@ -3013,35 +3057,35 @@ impl WorldReferralHeader {
     ///
     /// Returns [`SessionError::OptionalHeaderOverrun`] if `bytes.len() < 18`.
     pub fn decode(bytes: &[u8]) -> Result<Self, SessionError> {
-        if bytes.len() < 18 {
+        let Some(b) = bytes.first_chunk::<{ Self::LEN }>() else {
             return Err(SessionError::OptionalHeaderOverrun {
                 flag: FLAG_WORLD_REFERRAL,
             });
-        }
-        let referral_cookie = u64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ]);
-        let sin_family = u16::from_le_bytes([bytes[8], bytes[9]]);
-        let port = u16::from_be_bytes([bytes[10], bytes[11]]);
-        let ip = Ipv4Addr::new(bytes[12], bytes[13], bytes[14], bytes[15]);
-        let reserved_word_10 = u16::from_le_bytes([bytes[16], bytes[17]]);
+        };
+        let mut cookie = [0u8; 8];
+        cookie.copy_from_slice(&b[0..8]);
+        let ip = Ipv4Addr::new(b[8], b[9], b[10], b[11]);
+        let port = u16::from_be_bytes([b[12], b[13]]);
         Ok(Self {
-            referral_cookie,
-            sin_family,
+            cookie,
             target_addr: SocketAddrV4::new(ip, port),
-            reserved_word_10,
+            metadata: [b[14], b[15], b[16], b[17]],
         })
     }
 }
 
-/// `ServerRedirectHeader` (`0x00000100`, 8 bytes) optional header (§6.6).
+/// `ServerRedirectHeader` (`0x00000100`, 4 bytes) optional header (§6.6): four opaque
+/// bytes, checksummed as one buffer. Their meaning is `OPEN-SESSION-17`: Tessera parses
+/// them as metadata, never reads an address from them and never sends them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ServerRedirectHeader {
-    /// `switchSeq`: monotonic server-redirect sequence number, processed only when greater
-    /// than the last one seen (`u32` LE at `+0x00`).
-    pub switch_seq: u32,
-    /// `switchType`: server redirect reason / mode code (`u32` LE at `+0x04`).
-    pub switch_type: u32,
+    /// The four bytes as received.
+    pub bytes: [u8; 4],
+}
+
+impl ServerRedirectHeader {
+    /// The byte length of the payload (`4`, §4.3, §6.6).
+    pub const LEN: usize = 4;
 }
 
 /// `AuthServerAddressHeader` (`0x00000200`, 8 bytes) optional header (§6.6).
@@ -3080,19 +3124,23 @@ impl TransportErrorHeader {
     }
 }
 
-/// `FlowControlHeader` (`0x08000000`, 6 bytes) optional header (§5.5).
+/// `FlowControlHeader` (`0x08000000`, 6 bytes) optional header (§5.5): a four-byte and a
+/// two-byte field, read little-endian. Their meaning is `OPEN-SESSION-13`; Tessera fills
+/// them by the interim P10-22-POLICY of §5.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FlowControlHeader {
-    /// Number of raw wire bytes received since the previous `FlowControlHeader` header (`u32` LE at `+0x00`).
+    /// `u32` LE at `+0x00`: the UDP payload bytes of the connection's valid peer datagrams
+    /// since the initial auth transmission or the previous report (interim policy).
     pub bytes_received_delta: u32,
-    /// Elapsed time in milliseconds (`u16` LE at `+0x04`).
+    /// `u16` LE at `+0x04`: the milliseconds since then, floor, modulo 65,536 (interim
+    /// policy).
     pub interval_ms: u16,
 }
 
 /// Decoded optional headers from a packet payload in canonical ascending bit order (§4.3).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct OptionalHeaders {
-    /// Bit 8 (`0x00000100`): `ServerRedirectHeader` (8 bytes).
+    /// Bit 8 (`0x00000100`): `ServerRedirectHeader` (4 opaque bytes, §6.6).
     pub server_redirect: Option<ServerRedirectHeader>,
     /// Bit 9 (`0x00000200`): `AuthServerAddressHeader` (8 bytes).
     pub auth_server_address: Option<AuthServerAddressHeader>,
@@ -3241,9 +3289,9 @@ impl OptionalHeaders {
         };
         let fixed = |present: bool, len: usize| if present { len } else { 0 };
         [
-            fixed(self.server_redirect.is_some(), 8),
+            fixed(self.server_redirect.is_some(), ServerRedirectHeader::LEN),
             fixed(self.auth_server_address.is_some(), 8),
-            fixed(self.world_referral.is_some(), 18),
+            fixed(self.world_referral.is_some(), WorldReferralHeader::LEN),
             list(&self.sequence_nak),
             list(&self.out_of_order_ack),
             fixed(self.cumulative_ack.is_some(), 4),
@@ -3275,10 +3323,9 @@ impl OptionalHeaders {
         // Reserved up front: once the credentials are written, `out` never moves
         // (`official-login.md` §6.3).
         out.reserve(self.encoded_len());
-        // Bit 8: 0x00000100 ServerRedirect (8 B)
+        // Bit 8: 0x00000100 ServerRedirect (4 opaque B, §6.6)
         if let Some(ss) = self.server_redirect {
-            out.extend_from_slice(&ss.switch_seq.to_le_bytes());
-            out.extend_from_slice(&ss.switch_type.to_le_bytes());
+            out.extend_from_slice(&ss.bytes);
         }
         marks.push(out.len());
         // Bit 9: 0x00000200 AuthServerAddress (8 B)
@@ -3333,7 +3380,7 @@ impl OptionalHeaders {
         marks.push(out.len());
         // Bit 17: 0x00020000 ReferralAuth (8 B)
         if let Some(wlr) = self.referral_auth {
-            out.extend_from_slice(&wlr.referral_cookie.to_le_bytes());
+            out.extend_from_slice(&wlr.reversed_cookie);
         }
         marks.push(out.len());
         // Bit 18: 0x00040000 ConnectChallenge (44 B)
@@ -3436,26 +3483,18 @@ impl OptionalHeaders {
             Ok(())
         };
 
-        // Bit 8: 0x00000100 ServerRedirect (8 B)
+        // Bit 8: 0x00000100 ServerRedirect (4 opaque B, §6.6)
         if (active & FLAG_SERVER_REDIRECT) != 0 {
-            need(cursor, 8, FLAG_SERVER_REDIRECT)?;
-            let switch_seq = u32::from_le_bytes([
-                payload[cursor],
-                payload[cursor + 1],
-                payload[cursor + 2],
-                payload[cursor + 3],
-            ]);
-            let switch_type = u32::from_le_bytes([
-                payload[cursor + 4],
-                payload[cursor + 5],
-                payload[cursor + 6],
-                payload[cursor + 7],
-            ]);
+            need(cursor, ServerRedirectHeader::LEN, FLAG_SERVER_REDIRECT)?;
             hdrs.server_redirect = Some(ServerRedirectHeader {
-                switch_seq,
-                switch_type,
+                bytes: [
+                    payload[cursor],
+                    payload[cursor + 1],
+                    payload[cursor + 2],
+                    payload[cursor + 3],
+                ],
             });
-            cursor += 8;
+            cursor += ServerRedirectHeader::LEN;
             marks.push(cursor);
         }
         // Bit 9: 0x00000200 AuthServerAddress (8 B)
@@ -3479,7 +3518,7 @@ impl OptionalHeaders {
         // Bit 11: 0x00000800 WorldReferral (18 B)
         if (active & FLAG_WORLD_REFERRAL) != 0 {
             hdrs.world_referral = Some(WorldReferralHeader::decode(&payload[cursor..])?);
-            cursor += 18;
+            cursor += WorldReferralHeader::LEN;
             marks.push(cursor);
         }
         // Bit 12: 0x00001000 SequenceNak (4 + 4*N B)
@@ -3566,17 +3605,9 @@ impl OptionalHeaders {
         // Bit 17: 0x00020000 ReferralAuth (8 B)
         if (active & FLAG_REFERRAL_AUTH) != 0 {
             need(cursor, 8, FLAG_REFERRAL_AUTH)?;
-            let referral_cookie = u64::from_le_bytes([
-                payload[cursor],
-                payload[cursor + 1],
-                payload[cursor + 2],
-                payload[cursor + 3],
-                payload[cursor + 4],
-                payload[cursor + 5],
-                payload[cursor + 6],
-                payload[cursor + 7],
-            ]);
-            hdrs.referral_auth = Some(ReferralAuthHeader { referral_cookie });
+            let mut reversed_cookie = [0u8; 8];
+            reversed_cookie.copy_from_slice(&payload[cursor..cursor + 8]);
+            hdrs.referral_auth = Some(ReferralAuthHeader { reversed_cookie });
             cursor += 8;
             marks.push(cursor);
         }
@@ -3733,20 +3764,49 @@ pub const MAX_SEND_QUEUE_ID: u8 = 4;
 /// The highest delivery queue a receiver accepts (`4`): receiver slots `5` and `6` are
 /// `OPEN-SESSION-12`, so a datagram with a fragment on them is dropped and counted
 /// ([`SessionError::UnsupportedReceiveQueue`]) (§5.6.2, §5.6.3).
-/// pending spec pass 10 writer fix: queues 5/6 framing (`OPEN-SESSION-12`).
 pub const MAX_RECEIVE_QUEUE_ID: u8 = 4;
 
-/// The `blobFlags` bits §5.6.3 defines (`0x01`, `0x08`, `0x10`, `0x40`, `0x80`).
-///
-/// pending spec pass 10 writer fix: `blobFlags` bit `0x02` (seen in the first server
-/// packet) and the other undefined bits. Interim engineering choice: a receiver accepts
-/// and ignores undefined bits, a sender sends them as `0`
-/// ([`BlobFragmentHeader::encode`] clears them).
+/// `blobFlags` bit 1 (`0x02`): an observed control bit without wire fields whose meaning is
+/// `OPEN-SESSION-14`. Accepted on queue `1` and kept in
+/// [`BlobFragmentHeader::blob_flags`] as metadata; a fragment on another queue with it is
+/// unsupported ([`SessionError::UnsupportedFragment`]); never sent (§5.6.3).
+pub const BLOB_FLAG_CONTROL_02: u8 = 0x02;
+
+/// `blobFlags` bits `0x04` and `0x20`, undefined: a received datagram with either is
+/// rejected ([`SessionError::UndefinedBlobFlags`]); never sent (§5.6.3 P10-22-POLICY).
+pub const UNDEFINED_BLOB_FLAGS: u8 = 0x04 | 0x20;
+
+/// The `blobFlags` bits Tessera sends (`0x01`, `0x08`, `0x10`, `0x40`, `0x80`, the bits
+/// §5.6.3 defines); [`BlobFragmentHeader::encode`] clears `0x02`, `0x04` and `0x20`.
 pub const DEFINED_BLOB_FLAGS: u8 = BLOB_FLAG_HAS_ATTACHMENT
     | BLOB_FLAG_ENCRYPTED
     | BLOB_FLAG_IS_FRAGMENTED
     | BLOB_FLAG_DEFAULT_RECIPIENT
     | BLOB_FLAG_OMIT_CHUNK_INFO;
+
+/// The receive policy of §5.6.3 for one decoded fragment header (P10-22-POLICY):
+/// undefined bits `0x04` and `0x20` reject the datagram, an attachment
+/// (`OPEN-SESSION-10`) and bit `0x02` outside queue `1` (`OPEN-SESSION-14`) are
+/// unsupported.
+///
+/// # Errors
+///
+/// [`SessionError::UndefinedBlobFlags`] or [`SessionError::UnsupportedFragment`].
+pub fn check_fragment_receive_policy(header: &BlobFragmentHeader) -> Result<(), SessionError> {
+    let flags = header.blob_flags;
+    if (flags & UNDEFINED_BLOB_FLAGS) != 0 {
+        return Err(SessionError::UndefinedBlobFlags { blob_flags: flags });
+    }
+    if (flags & BLOB_FLAG_HAS_ATTACHMENT) != 0
+        || ((flags & BLOB_FLAG_CONTROL_02) != 0 && header.queue_id != 1)
+    {
+        return Err(SessionError::UnsupportedFragment {
+            queue_id: header.queue_id,
+            blob_flags: flags,
+        });
+    }
+    Ok(())
+}
 
 /// Whether a fragment of queue `queue_id` carries `orderNum` (field 3b, §5.6.3): queues
 /// `2..=4`.
@@ -3756,11 +3816,9 @@ const fn has_order_num(queue_id: u8) -> bool {
 
 /// Whether a fragment of queue `queue_id` carries `blobId` (field 4, §5.6.3): queues `2`
 /// and `4` always, queue `1` when the blob is fragmented (an unfragmented queue-1 header
-/// has none). Queue `3` carries it when fragmented (the current rule is kept; §5.6.2 says
-/// only that it is omitted when unfragmented).
-/// pending spec pass 10 writer fix: the queue-3 blob ID when fragmented.
+/// has none), queue `3` never, fragmented or not (§5.6.2, §5.6.4 rule 3).
 const fn has_blob_id(queue_id: u8, fragmented: bool) -> bool {
-    matches!(queue_id, 2 | 4) || (matches!(queue_id, 1 | 3) && fragmented)
+    matches!(queue_id, 2 | 4) || (queue_id == 1 && fragmented)
 }
 
 /// Compact variable-length blob fragment header (fields 1–10 in §5.6.3).
@@ -3770,15 +3828,16 @@ pub struct BlobFragmentHeader {
     pub queue_id: u8,
     /// Optional 16-bit extension word (`Some` when bit 7 `0x80` of `queueAndOpt` is set, field 6).
     pub ext_word: Option<u16>,
-    /// Fragment flags byte (`blobFlags`, field 2), as received; bits outside
-    /// [`DEFINED_BLOB_FLAGS`] are ignored on receive and sent as `0`.
+    /// Fragment flags byte (`blobFlags`, field 2), as received (bit `0x02` included, kept
+    /// as metadata); bits outside [`DEFINED_BLOB_FLAGS`] are sent as `0`
+    /// ([`check_fragment_receive_policy`] is the receive policy).
     pub blob_flags: u8,
     /// Sequence group ID (present when `queue_id == 3`, field 3a; defaults to `0`).
     pub seq_group: u16,
     /// Per-queue ordering number (present when `queue_id` in `2..=4`, field 3b; defaults to `0xFFFF`).
     pub order_num: u16,
-    /// 16-bit blob identifier (present when `queue_id` in `{2, 4}` or (`queue_id` in
-    /// `{1, 3}` and `IsFragmented`), field 4).
+    /// 16-bit blob identifier (present when `queue_id` in `{2, 4}` or (`queue_id` is `1`
+    /// and `IsFragmented`), field 4; `0` otherwise).
     pub blob_id: u16,
     /// Zero-based fragment index (`0..num_frags - 1`, field 5a).
     pub frag_index: u32,
@@ -3826,7 +3885,7 @@ impl BlobFragmentHeader {
         if self.ext_word.is_some() {
             queue_and_opt |= 0x80;
         }
-        // Undefined bits go out as 0 (interim engineering choice, [`DEFINED_BLOB_FLAGS`]).
+        // 0x02, 0x04 and 0x20 go out as 0 (§5.6.3, [`DEFINED_BLOB_FLAGS`]).
         let mut flags = self.blob_flags & DEFINED_BLOB_FLAGS;
         if self.num_frags > 1 {
             flags |= BLOB_FLAG_IS_FRAGMENTED;
@@ -3851,7 +3910,7 @@ impl BlobFragmentHeader {
         if has_order_num(self.queue_id) {
             out.extend_from_slice(&self.order_num.to_le_bytes());
         }
-        // Field 4: blobId if queueId in {2, 4} or (queueId in {1, 3} and IsFragmented)
+        // Field 4: blobId if queueId in {2, 4} or (queueId == 1 and IsFragmented)
         if has_blob_id(self.queue_id, (flags & BLOB_FLAG_IS_FRAGMENTED) != 0) {
             out.extend_from_slice(&self.blob_id.to_le_bytes());
         }
@@ -3908,8 +3967,8 @@ impl BlobFragmentHeader {
         let blob_flags = bytes[1];
         let queue_id = queue_and_opt & 0x7F;
         if matches!(queue_id, 5 | 6) {
-            // pending spec pass 10 writer fix: queues 5/6 framing (OPEN-SESSION-12): the
-            // header's length is unknown, so the datagram is dropped (and counted).
+            // Queues 5/6 framing is OPEN-SESSION-12: the header's length is unknown, so the
+            // datagram is dropped (and counted).
             return Err(SessionError::UnsupportedReceiveQueue { queue_id });
         }
         if !(1..=MAX_RECEIVE_QUEUE_ID).contains(&queue_id) {
@@ -4250,10 +4309,23 @@ struct IncompleteBlob {
     created_at_sec: f64,
 }
 
+/// The identity of an incomplete blob (§5.6.4 rule 3): the sender's recipient ID, the
+/// queue, and the blob ID for queues `1`, `2` and `4`, or the sequence group and ordering
+/// number for queue `3`, which carries no blob ID (P10-22-POLICY).
+type BlobKey = (u16, u8, u16, u16);
+
+fn blob_key(sender_rec_id: u16, hdr: &BlobFragmentHeader) -> BlobKey {
+    if hdr.queue_id == 3 {
+        (sender_rec_id, 3, hdr.seq_group, hdr.order_num)
+    } else {
+        (sender_rec_id, hdr.queue_id, hdr.blob_id, 0)
+    }
+}
+
 /// Bounded `FragmentedBlob` reassembler with a `30.0`-second expiration timer (§5.6.4).
 #[derive(Debug, Clone)]
 pub struct BlobReassembler {
-    incomplete: HashMap<(u16, u8, u16), IncompleteBlob>,
+    incomplete: HashMap<BlobKey, IncompleteBlob>,
     max_concurrent_blobs: usize,
     max_blob_bytes: usize,
 }
@@ -4374,29 +4446,37 @@ impl BlobReassembler {
     ) -> Result<(), SessionError> {
         let live =
             |entry: &IncompleteBlob| now_sec - entry.created_at_sec <= BLOB_REASSEMBLY_EXPIRY_SEC;
-        let mut new_keys: Vec<((u16, u8, u16), u32)> = Vec::new();
+        let mut new_keys: Vec<(BlobKey, u32, u64)> = Vec::new();
         for frag in fragments {
             self.check_fragment(frag)?;
             let hdr = &frag.header;
             if hdr.num_frags == 1 {
                 continue;
             }
-            let key = (sender_rec_id, hdr.queue_id, hdr.blob_id);
+            let key = blob_key(sender_rec_id, hdr);
             let open = self
                 .incomplete
                 .get(&key)
                 .filter(|e| live(e))
-                .map(|e| e.num_frags)
-                .or_else(|| new_keys.iter().find(|(k, _)| *k == key).map(|&(_, n)| n));
+                .map(|e| (e.num_frags, e.recipient_id))
+                .or_else(|| {
+                    new_keys
+                        .iter()
+                        .find(|(k, _, _)| *k == key)
+                        .map(|&(_, n, r)| (n, r))
+                });
             match open {
-                Some(n) if n != hdr.num_frags => {
+                Some((n, _)) if n != hdr.num_frags => {
                     return Err(SessionError::InvalidFragmentBounds {
                         frag_index: hdr.frag_index,
                         num_frags: hdr.num_frags,
                     });
                 }
+                Some((_, r)) if r != hdr.recipient_id => {
+                    return Err(SessionError::FragmentRecipientMismatch);
+                }
                 Some(_) => {}
-                None => new_keys.push((key, hdr.num_frags)),
+                None => new_keys.push((key, hdr.num_frags, hdr.recipient_id)),
             }
         }
         let live_count = self.incomplete.values().filter(|e| live(e)).count();
@@ -4442,7 +4522,7 @@ impl BlobReassembler {
         }
 
         self.purge_expired(now_sec);
-        let key_tuple = (sender_rec_id, hdr.queue_id, hdr.blob_id);
+        let key_tuple = blob_key(sender_rec_id, hdr);
         if !self.incomplete.contains_key(&key_tuple)
             && self.incomplete.len() >= self.max_concurrent_blobs
         {
@@ -4474,6 +4554,9 @@ impl BlobReassembler {
                 frag_index: hdr.frag_index,
                 num_frags: hdr.num_frags,
             });
+        }
+        if entry.recipient_id != hdr.recipient_id {
+            return Err(SessionError::FragmentRecipientMismatch);
         }
 
         let word_idx = (hdr.frag_index as usize) >> 5;
@@ -4532,8 +4615,9 @@ pub struct DecodedPacket {
     /// Raw payload bytes (`header.pak_size` bytes immediately following the 20-byte `DatagramHeader`).
     pub raw_payload: Vec<u8>,
     /// The per-buffer `payloadSum` of §4.4.2 step 2 over the received bytes as they are:
-    /// each optional header, each fragment header (its alignment pad and attachment
-    /// included, see [`payload_checksum`]) and each fragment's data slice as its own buffer.
+    /// each optional header, each fragment header (its alignment pad included) and each
+    /// fragment's data slice as its own buffer. Attachment-bearing packets are refused
+    /// before ([`check_fragment_receive_policy`]).
     pub payload_sum: u32,
 }
 
@@ -4644,7 +4728,8 @@ pub fn encode_datagram(
 ///
 /// # Errors
 ///
-/// Returns [`SessionError`] if a header or fragment is malformed or trailing bytes remain.
+/// Returns [`SessionError`] if a header or fragment is malformed, trailing bytes remain or
+/// a fragment breaks the receive policy of [`check_fragment_receive_policy`].
 pub fn parse_packet_payload(
     flags: u32,
     payload: &[u8],
@@ -4670,6 +4755,9 @@ pub fn parse_packet_payload(
                 });
             }
             let (frag, consumed) = BlobFragment::decode(rest)?;
+            // §5.6.3 receive policy, before any checksum buffer of an unsupported
+            // fragment is formed (no invented attachment boundary, OPEN-SESSION-10).
+            check_fragment_receive_policy(&frag.header)?;
             let header_len = consumed.saturating_sub(frag.payload.len());
             if let Some(header) = rest.get(..header_len) {
                 sum = sum
@@ -4828,18 +4916,16 @@ pub enum SessionEvent {
         /// Assigned remote server `recId`.
         server_rec_id: u16,
     },
-    /// Server sent a `WorldReferralHeader` (`0x00000800`) to a world server (§6.5).
+    /// Server sent a `WorldReferralHeader` (`0x00000800`) to a world server (§6.5). A
+    /// referral whose address or port is zero raises no event: its fallback is
+    /// `OPEN-SESSION-2`.
     WorldReferralReceived {
-        /// 64-bit referral cookie to present in `ReferralAuthHeader` (`0x00020000`).
-        referral_cookie: u64,
-        /// Resolved world server IPv4 address and UDP port (the login server's address when
-        /// `sin_addr` is `0.0.0.0`).
+        /// The referral's opaque cookie (payload bytes `0..7`), for
+        /// [`SessionConnection::start_world_login`], which reverses it.
+        cookie: [u8; 8],
+        /// The world server's IPv4 address and UDP port (payload bytes `8..13`).
         world_addr: SocketAddrV4,
-        /// `reserved_word_10` as received (meaning `OPEN`, `OPEN-SESSION-2`).
-        reserved_word_10: u16,
     },
-    /// Server sent a `ServerRedirectHeader` (`0x00000100`, §6.6).
-    ServerRedirect(ServerRedirectHeader),
     /// Server sent an `AuthServerAddressHeader` (`0x00000200`, §6.6).
     AuthServerAddress(SocketAddrV4),
     /// A complete `FragmentedBlob` was reassembled (§5.6.4).
@@ -4874,6 +4960,9 @@ pub struct SentPacketRecord {
     pub seq_num: u32,
     /// Saved outgoing ISAAC XOR mask drawn when `seq_num` was first assigned (§7.2).
     pub xor_mask: u32,
+    /// Saved client word of header bytes `16..17`, reused on retransmission (§4.2
+    /// P10-22-POLICY).
+    pub client_word: u16,
     /// Optional headers carried in the packet.
     pub opt_headers: OptionalHeaders,
     /// Blob fragments carried in the packet.
@@ -4914,6 +5003,10 @@ pub struct HandshakeCounts {
     /// Received datagrams dropped because a fragment was on receiver queue `5` or `6`,
     /// whose framing is `OPEN-SESSION-12` ([`SessionError::UnsupportedReceiveQueue`]).
     pub unsupported_queue_drops: u64,
+    /// Received datagrams dropped because a fragment had an attachment
+    /// (`OPEN-SESSION-10`) or `blobFlags` bit `0x02` outside queue `1`
+    /// (`OPEN-SESSION-14`) ([`SessionError::UnsupportedFragment`]).
+    pub unsupported_fragment_drops: u64,
 }
 
 /// The install's two directional dictionary UUIDs, each the raw on-disk bytes `16..31` of
@@ -4928,12 +5021,63 @@ pub struct CodecUuids {
     pub outgoing: [u8; 16],
 }
 
-/// The initial outgoing word of header bytes `16..17` from the accept on (§4.2, §6.4).
+/// The client word of header bytes `16..17` in the accept (§4.2, §6.4).
 ///
-/// pending spec pass 10 writer fix: the client header word on sequenced packets after the
-/// accept (`OPEN-SESSION-8`). Tessera keeps `1` on every later packet until the spec gives
-/// the word's evolution.
+/// After the accept the word follows the interim P10-22-POLICY of §4.2 (unverified on the
+/// official service, `OPEN-SESSION-8`): it advances by one (modulo 65,536) for each newly
+/// allocated sequenced packet, so sequences `2` and `3` carry `2` and `3`, and a
+/// retransmission keeps the packet's saved word. Unsequenced packets after the accept carry
+/// the word of the last allocated packet (engineering choice, spec silent).
 pub const INITIAL_CLIENT_WORD: u16 = 1;
+
+/// The interim flow-report counters of §5.5 (P10-22-POLICY, `OPEN-SESSION-13`).
+#[derive(Debug, Clone, Copy)]
+struct FlowReport {
+    /// UDP payload bytes of this connection's valid peer datagrams since `since_sec`.
+    bytes: u32,
+    /// The initial auth transmission, or the last report sent.
+    since_sec: f64,
+    /// Valid peer datagrams arrived since the last report.
+    pending: bool,
+    /// The first FlowControl-only packet after State `5` went out.
+    initial_sent: bool,
+}
+
+impl FlowReport {
+    fn new(now_sec: f64) -> Self {
+        Self {
+            bytes: 0,
+            since_sec: now_sec,
+            pending: false,
+            initial_sent: false,
+        }
+    }
+
+    /// Counts one valid peer datagram of `len` bytes.
+    fn count(&mut self, len: usize) {
+        self.bytes = self
+            .bytes
+            .saturating_add(u32::try_from(len).unwrap_or(u32::MAX));
+        self.pending = true;
+    }
+
+    /// The report for `now_sec`: the bytes counted and the elapsed milliseconds (floor,
+    /// modulo 65,536, §5.5).
+    fn header(&self, now_sec: f64) -> FlowControlHeader {
+        let elapsed_ms = ((now_sec - self.since_sec).max(0.0) * 1000.0).floor();
+        FlowControlHeader {
+            bytes_received_delta: self.bytes,
+            interval_ms: ((elapsed_ms as u64) & 0xFFFF) as u16,
+        }
+    }
+
+    /// A report was sent at `now_sec`: the counters start again.
+    fn reset(&mut self, now_sec: f64) {
+        self.bytes = 0;
+        self.since_sec = now_sec;
+        self.pending = false;
+    }
+}
 
 /// Per-connection state machine, sequence window, ISAAC generators, and fragmented blob reassembler (§3.4, §5–§8).
 pub struct SessionConnection {
@@ -4947,11 +5091,10 @@ pub struct SessionConnection {
     last_ack_nak_sent_sec: f64,
     last_clock_sync_sent_sec: f64,
     last_handshake_retransmit_sec: f64,
-    last_flow_sent_sec: f64,
-    bytes_received_since_flow: u32,
+    flow: FlowReport,
     extended_silence_timeout: bool,
     server_clock_offset_sec: f64,
-    last_switch_seq: u32,
+    adopted_challenge: Option<(u16, ConnectChallengeHeader)>,
     client_word: u16,
     peer_word: u16,
 
@@ -5029,11 +5172,10 @@ impl SessionConnection {
             last_ack_nak_sent_sec: now_sec,
             last_clock_sync_sent_sec: now_sec,
             last_handshake_retransmit_sec: now_sec,
-            last_flow_sent_sec: now_sec,
-            bytes_received_since_flow: 0,
+            flow: FlowReport::new(now_sec),
             extended_silence_timeout: false,
             server_clock_offset_sec: 0.0,
-            last_switch_seq: 0,
+            adopted_challenge: None,
             client_word: 0,
             peer_word: 0,
 
@@ -5301,6 +5443,8 @@ impl SessionConnection {
         self.state = ConnectionState::SessionAuthSent;
         self.state_entered_at_sec = now_sec;
         self.last_handshake_retransmit_sec = now_sec;
+        // §5.5: the flow counters start at the initial auth transmission.
+        self.flow = FlowReport::new(now_sec);
 
         // §5.1, §6.2: sequence zero, independent of the next sequenced-packet counter.
         let hdr = self.base_datagram_header(0);
@@ -5314,28 +5458,30 @@ impl SessionConnection {
         Ok(())
     }
 
-    /// Initiates a world-server session by transitioning from State `0` to State `1` and queueing
-    /// an unsequenced `ReferralAuthHeader` (`0x00020000`) datagram (§6.1, §6.5) with `seqNum`
-    /// the current counter value (`1`) and the final four header bytes `0` (§4.2, §5.1).
+    /// Initiates a world-server session by transitioning from State `0` to State `1` and
+    /// queueing an unsequenced `ReferralAuthHeader` (`0x00020000`) datagram (§6.1, §6.5):
+    /// `wirePrefix` `0x0000`, `recId` `0x0000`, `seqNum` `0`, the final four header bytes
+    /// `0`, and as payload only the eight bytes of the referral's `cookie` reversed
+    /// (§10.2 Vector 8). Call it on a fresh connection: nothing of the login connection
+    /// (recipients, masks, counters) is carried over.
     ///
     /// # Errors
     ///
     /// Returns [`SessionError`] if the connection is not in `Idle` state or encoding fails.
-    pub fn start_world_login(
-        &mut self,
-        referral_cookie: u64,
-        now_sec: f64,
-    ) -> Result<(), SessionError> {
+    pub fn start_world_login(&mut self, cookie: [u8; 8], now_sec: f64) -> Result<(), SessionError> {
         if self.state != ConnectionState::Idle {
             return Err(SessionError::InvalidState { state: self.state });
         }
-        let wlr = ReferralAuthHeader { referral_cookie };
+        let wlr = ReferralAuthHeader::for_cookie(cookie);
         self.stored_referral_auth = Some(wlr);
         self.state = ConnectionState::SessionAuthSent;
         self.state_entered_at_sec = now_sec;
         self.last_handshake_retransmit_sec = now_sec;
+        // §5.5: the flow counters start at the initial auth transmission.
+        self.flow = FlowReport::new(now_sec);
 
-        let hdr = self.base_datagram_header(self.referral_auth_seq());
+        // §4.2, §6.5: sequence zero.
+        let hdr = self.base_datagram_header(0);
         let opt = OptionalHeaders {
             referral_auth: Some(wlr),
             ..OptionalHeaders::default()
@@ -5346,21 +5492,23 @@ impl SessionConnection {
         Ok(())
     }
 
-    /// `seqNum` of a `ReferralAuthHeader` datagram.
-    ///
-    /// pending spec pass 10 writer fix: `ReferralAuthHeader` sequence (`OPEN-SESSION-9`).
-    /// The current behaviour is kept: the unchanged counter value, `1` (§5.1, §6.4.1).
-    fn referral_auth_seq(&self) -> u32 {
-        self.send_seq_num
-    }
-
     /// Sends a sequenced (`MaskedChecksumFlag` `0x00000002`) packet carrying `opt_headers`
     /// and `fragments`, recording it in the outbound retransmission table with its ISAAC
-    /// `xor_mask` (§5.1, §7.2). The packet allocates the next sequence number (the first is
-    /// `2`) and draws its outgoing mask; a `ClockSyncHeader` carried here uses that number
-    /// and mask, not a second word (§6.4.1). The packet is compressed with
-    /// `outgoing_codec` (the client-to-server dictionary) once the codecs are negotiated
-    /// (§4.1.2, §7.3).
+    /// `xor_mask` and client word (§4.2, §5.1, §7.2). The packet allocates the next sequence
+    /// number (the first is `2`) and draws its outgoing mask; a `ClockSyncHeader` carried
+    /// here uses that number and mask, not a second word (§6.4.1). The packet is compressed
+    /// with `outgoing_codec` (the client-to-server dictionary) once the codecs are
+    /// negotiated (§4.1.2, §7.3).
+    ///
+    /// The interim flow-report policy of §5.5 (P10-22-POLICY) applies: in State `5` the
+    /// first sequenced packet is always the FlowControl-only one (it is sent first when it
+    /// has not gone out yet), and a report of newly received datagrams is attached to the
+    /// packet when `opt_headers` carries none. A `ClockSyncHeader` is attached once
+    /// `30.0` s have passed since State `5` or the last one (§8.1): Tessera sends ClockSync
+    /// only on sequenced packets (`OPEN-SESSION-9`), so its timer is no deadline.
+    ///
+    /// Nothing is allocated (sequence number, ISAAC word, client word) unless the datagram
+    /// encodes.
     ///
     /// # Errors
     ///
@@ -5370,16 +5518,101 @@ impl SessionConnection {
     /// `0x7FFFFFFF` (§5.1).
     pub fn send_sequenced_packet(
         &mut self,
+        opt_headers: OptionalHeaders,
+        fragments: Vec<BlobFragment>,
+        retransmit_eligible: bool,
+        now_sec: f64,
+        outgoing_codec: Option<&dyn BitTreeCodec>,
+    ) -> Result<u32, SessionError> {
+        if self.outgoing_isaac.is_none() {
+            return Err(SessionError::InvalidState { state: self.state });
+        }
+        if self.state == ConnectionState::Connected && !self.flow.initial_sent {
+            self.send_flow_only(now_sec, outgoing_codec)?;
+        }
+        self.allocate_sequenced(
+            opt_headers,
+            fragments,
+            retransmit_eligible,
+            now_sec,
+            outgoing_codec,
+        )
+    }
+
+    /// Sends one FlowControl-only sequenced packet with the counters of §5.5
+    /// (P10-22-POLICY): the first one after State `5` (§6.4.1) and later ones when newly
+    /// received datagrams found no other packet to ride on.
+    fn send_flow_only(
+        &mut self,
+        now_sec: f64,
+        outgoing_codec: Option<&dyn BitTreeCodec>,
+    ) -> Result<u32, SessionError> {
+        let opt = OptionalHeaders {
+            flow_control: Some(self.flow.header(now_sec)),
+            ..OptionalHeaders::default()
+        };
+        // A FlowControl-only packet has nothing to retransmit: a negative acknowledgement
+        // of it is answered with OutOfOrderAckHeader (§5.3).
+        let seq = self.allocate_sequenced_with(opt, Vec::new(), false, now_sec, outgoing_codec)?;
+        self.flow.reset(now_sec);
+        self.flow.initial_sent = true;
+        Ok(seq)
+    }
+
+    /// [`Self::allocate_sequenced_with`] with the pending flow report and the due ClockSync
+    /// attached.
+    fn allocate_sequenced(
+        &mut self,
         mut opt_headers: OptionalHeaders,
         fragments: Vec<BlobFragment>,
         retransmit_eligible: bool,
         now_sec: f64,
         outgoing_codec: Option<&dyn BitTreeCodec>,
     ) -> Result<u32, SessionError> {
-        // §7.2: a sequenced packet's checksum needs the outgoing ISAAC word.
-        if self.outgoing_isaac.is_none() {
-            return Err(SessionError::InvalidState { state: self.state });
+        let attach_flow =
+            self.flow.initial_sent && self.flow.pending && opt_headers.flow_control.is_none();
+        if attach_flow {
+            opt_headers.flow_control = Some(self.flow.header(now_sec));
         }
+        // §8.1: the 30.0 s ClockSync timer runs from State 5; a due header rides on this
+        // packet (no standalone ClockSync, §5.1, §6.1 State 5, OPEN-SESSION-9).
+        let attach_clock = self.state == ConnectionState::Connected
+            && now_sec - self.last_clock_sync_sent_sec >= CLOCK_SYNC_INTERVAL_SEC
+            && opt_headers.clock_sync.is_none();
+        if attach_clock {
+            opt_headers.clock_sync = Some(now_sec + self.server_clock_offset_sec);
+        }
+        let seq = self.allocate_sequenced_with(
+            opt_headers,
+            fragments,
+            retransmit_eligible,
+            now_sec,
+            outgoing_codec,
+        )?;
+        if attach_flow {
+            self.flow.reset(now_sec);
+        }
+        if attach_clock {
+            self.last_clock_sync_sent_sec = now_sec;
+        }
+        Ok(seq)
+    }
+
+    /// Allocates the next sequence number, ISAAC word and client word for a packet of
+    /// `opt_headers` and `fragments` and queues it, committing nothing when it fails to
+    /// encode.
+    fn allocate_sequenced_with(
+        &mut self,
+        opt_headers: OptionalHeaders,
+        fragments: Vec<BlobFragment>,
+        retransmit_eligible: bool,
+        now_sec: f64,
+        outgoing_codec: Option<&dyn BitTreeCodec>,
+    ) -> Result<u32, SessionError> {
+        // §7.2: a sequenced packet's checksum needs the outgoing ISAAC word.
+        let Some(outgoing) = self.outgoing_isaac.as_ref() else {
+            return Err(SessionError::InvalidState { state: self.state });
+        };
         // §4.3: Tessera never sends bits 25 and 26; refused before a number is used up.
         if (opt_headers.flags_mask() & OBSERVED_ONLY_FLAGS_MASK) != 0 {
             return Err(SessionError::InvalidHeaderFlags {
@@ -5401,38 +5634,25 @@ impl SessionConnection {
             return Err(SessionError::OutboundWindowOverflow);
         }
 
-        // Attach FlowControl header if >= 1/3 s and >= 1,400 bytes received (§5.5).
-        // pending spec pass 10 writer fix: when the first standalone FlowControl is sent
-        // and its field values (§6.4.1 observes a first sequenced packet carrying only
-        // FlowControl). The current §5.5 attach-on-send behaviour is kept.
-        let elapsed_flow = now_sec - self.last_flow_sent_sec;
-        if opt_headers.flow_control.is_none()
-            && elapsed_flow >= (1.0 / 3.0)
-            && self.bytes_received_since_flow >= 1400
-        {
-            opt_headers.flow_control = Some(FlowControlHeader {
-                bytes_received_delta: self.bytes_received_since_flow,
-                // floor(elapsed_sec * 1000.0) truncated to u16: the low 16 bits (§5.5).
-                interval_ms: ((elapsed_flow * 1000.0) as u64 & 0xFFFF) as u16,
-            });
-            self.bytes_received_since_flow = 0;
-            self.last_flow_sent_sec = now_sec;
-        }
-
-        let Some(outgoing) = self.outgoing_isaac.as_mut() else {
-            return Err(SessionError::InvalidState { state: self.state });
-        };
-        let xor_mask = outgoing.next_mask();
-        self.send_seq_num = next_seq;
-
-        let hdr = self.base_datagram_header(next_seq);
+        // The mask comes from a copy of the generator and the word from a local: both are
+        // committed only once the datagram encoded (§7.2 item 4, §4.2 P10-22-POLICY).
+        let mut generator = outgoing.clone();
+        let xor_mask = generator.next_mask();
+        let client_word = self.client_word.wrapping_add(1);
+        let mut hdr = self.base_datagram_header(next_seq);
+        hdr.client_word = client_word;
         let codec = self.data_codec(outgoing_codec);
         let dgram = Self::encode_own(hdr, &opt_headers, &fragments, Some(xor_mask), codec)?;
+
+        self.outgoing_isaac = Some(generator);
+        self.send_seq_num = next_seq;
+        self.client_word = client_word;
         self.retransmit_table.insert(
             next_seq,
             SentPacketRecord {
                 seq_num: next_seq,
                 xor_mask,
+                client_word,
                 opt_headers,
                 fragments,
                 retransmit_eligible,
@@ -5495,6 +5715,19 @@ impl SessionConnection {
         if self.outgoing_isaac.is_none() {
             return Err(SessionError::InvalidState { state: self.state });
         }
+        // §5.6.1: the opcode must fit the compact integer, checked before anything is
+        // allocated (a payload too large is refused by `split_blob` before that too).
+        if blob_header_word > MAX_VARIABLE_U32 {
+            return Err(SessionError::VariableU32OutOfRange {
+                value: blob_header_word,
+            });
+        }
+        if payload.len() > MAX_BLOB_BYTES {
+            return Err(SessionError::BlobTooLarge {
+                total_bytes: payload.len(),
+                limit: MAX_BLOB_BYTES,
+            });
+        }
         let order_num = if (2..=4).contains(&queue_id) {
             let on = self.next_order_num[usize::from(queue_id)];
             self.next_order_num[usize::from(queue_id)] = on.wrapping_add(1);
@@ -5503,8 +5736,8 @@ impl SessionConnection {
             0xFFFF
         };
         let is_multi = payload.len() > MAX_BLOB_FRAG_PAYLOAD;
-        // `blobId` is on the wire for queues 2 and 4, and for queues 1 and 3 when the blob
-        // is fragmented (§5.6.2, §5.6.3 field 4).
+        // `blobId` is on the wire for queues 2 and 4, and for queue 1 when the blob is
+        // fragmented; never for queue 3 (§5.6.2, §5.6.3 field 4).
         let blob_id = if has_blob_id(queue_id, is_multi) {
             let bid = self.next_blob_id;
             self.next_blob_id = if bid == u16::MAX { 1 } else { bid + 1 };
@@ -5602,10 +5835,16 @@ impl SessionConnection {
         let pkt = match decode_datagram(datagram, true, self.receive_codec(codecs.incoming), true) {
             Ok(pkt) => pkt,
             Err(err @ SessionError::UnsupportedReceiveQueue { .. }) => {
-                // pending spec pass 10 writer fix: queues 5/6 framing (OPEN-SESSION-12):
-                // dropped and counted.
+                // §5.6.2, §5.6.3: queues 5/6 are dropped and counted (OPEN-SESSION-12).
                 self.counts.unsupported_queue_drops =
                     self.counts.unsupported_queue_drops.saturating_add(1);
+                return Err(err);
+            }
+            Err(err @ SessionError::UnsupportedFragment { .. }) => {
+                // §5.6.3: attachment-bearing packets (OPEN-SESSION-10) and blobFlags 0x02
+                // outside queue 1 (OPEN-SESSION-14) are dropped and counted.
+                self.counts.unsupported_fragment_drops =
+                    self.counts.unsupported_fragment_drops.saturating_add(1);
                 return Err(err);
             }
             Err(err) => return Err(err),
@@ -5629,6 +5868,14 @@ impl SessionConnection {
             if hdr.rec_id == 0 || cr.outgoing_rec_id == 0 {
                 tracing::debug!("ConnectChallengeHeader without recipient IDs dropped");
                 return Err(SessionError::InvalidChallengeRecipient);
+            }
+            // §6.1, §6.4.1: in State 2 only a repeat of the adopted challenge is answered
+            // (with the pending accept); any other is refused before anything changes.
+            if self.state == ConnectionState::ChallengeAcceptSent
+                && !self.repeats_adopted_challenge(hdr.rec_id, cr)
+            {
+                tracing::debug!("a different ConnectChallengeHeader in State 2 dropped");
+                return Err(SessionError::UnexpectedConnectChallenge { state: self.state });
             }
             // §3.4: when another active connection occupies the adopted ID, the challenge
             // is ignored (nothing changes, nothing is answered).
@@ -5681,14 +5928,14 @@ impl SessionConnection {
             }
         }
 
-        // Valid packet accepted: update receive timestamp and flow counter
+        // Valid packet accepted: update the receive timestamp, and count its UDP payload
+        // bytes (wire prefix and compressed bytes included) for the next flow report (§5.5).
         self.last_recv_time_sec = now_sec;
-        self.bytes_received_since_flow = self
-            .bytes_received_since_flow
-            .saturating_add(datagram.len() as u32);
+        self.flow.count(datagram.len());
 
         // State 2 -> State 5 (§6.4.1): this packet came from the adopted peer and passed the
-        // framing, directional decompression, checksum and sequence checks above.
+        // framing, directional decompression, checksum and sequence checks above. A
+        // duplicate challenge does not confirm State 5 ([`Self::accept_challenge`]).
         if self.state == ConnectionState::ChallengeAcceptSent
             && pkt.opt_headers.connect_challenge.is_none()
             && pkt.opt_headers.transport_error.is_none()
@@ -5789,6 +6036,9 @@ impl SessionConnection {
         now_sec: f64,
     ) -> Result<(), SessionError> {
         self.counts.challenges = self.counts.challenges.saturating_add(1);
+        if self.state == ConnectionState::ChallengeAcceptSent {
+            return self.repeat_accept(cr, incoming, now_sec);
+        }
         // §7.3: the challenge must name the install's incoming dictionary, compared after the
         // field-wise conversion; a null UUID, a mismatch or a connection without
         // dictionaries is an explicit unsupported-negotiation result.
@@ -5808,6 +6058,7 @@ impl SessionConnection {
         // ClockSyncHeader (§8.1).
         self.local_rec_id = incoming.rec_id;
         self.server_rec_id = cr.outgoing_rec_id;
+        self.adopted_challenge = Some((incoming.rec_id, *cr));
         self.codecs_negotiated = true;
         // §4.2, §6.4: the accept's own word and the challenge header's bytes 18..19.
         self.client_word = INITIAL_CLIENT_WORD;
@@ -5836,15 +6087,55 @@ impl SessionConnection {
         self.outbound_datagrams.push_back(dgram);
         self.counts.connect_accept = self.counts.connect_accept.saturating_add(1);
 
-        if self.state == ConnectionState::SessionAuthSent {
-            self.state = ConnectionState::ChallengeAcceptSent;
-            self.state_entered_at_sec = now_sec;
-            self.last_handshake_retransmit_sec = now_sec;
-            // State 1 is left: the stored credentials and cookie are no longer retransmitted.
-            self.forget_auth();
-        } else if self.state == ConnectionState::ChallengeAcceptSent {
-            self.enter_connected_state(now_sec);
-        }
+        // Only State 1 reaches here (State 2 answers with [`Self::repeat_accept`]).
+        self.state = ConnectionState::ChallengeAcceptSent;
+        self.state_entered_at_sec = now_sec;
+        self.last_handshake_retransmit_sec = now_sec;
+        // State 1 is left: the stored credentials and cookie are no longer retransmitted.
+        self.forget_auth();
+        Ok(())
+    }
+
+    /// Whether a challenge with datagram `recId` `rec_id` repeats the adopted one: the
+    /// same recipients, cookie, seeds and dictionary GUID (engineering choice, spec silent;
+    /// the clock candidate and the ignored bytes `16..17` are not compared).
+    fn repeats_adopted_challenge(&self, rec_id: u16, cr: &ConnectChallengeHeader) -> bool {
+        self.adopted_challenge.is_some_and(|(adopted_id, adopted)| {
+            adopted_id == rec_id
+                && adopted.cookie == cr.cookie
+                && adopted.outgoing_rec_id == cr.outgoing_rec_id
+                && adopted.incoming_seed == cr.incoming_seed
+                && adopted.outgoing_seed == cr.outgoing_seed
+                && adopted.incoming_codec_guid == cr.incoming_codec_guid
+        })
+    }
+
+    /// A challenge in State `2` (§6.1, §6.4.1): it only causes the pending accept to be
+    /// resent; it does not confirm State `5` and nothing is adopted again. A challenge that
+    /// does not repeat the adopted one was refused before anything changed
+    /// ([`Self::repeats_adopted_challenge`]).
+    fn repeat_accept(
+        &mut self,
+        cr: &ConnectChallengeHeader,
+        incoming: DatagramHeader,
+        now_sec: f64,
+    ) -> Result<(), SessionError> {
+        let Some(resp) = self
+            .stored_connect_accept
+            .filter(|_| self.repeats_adopted_challenge(incoming.rec_id, cr))
+        else {
+            return Err(SessionError::UnexpectedConnectChallenge { state: self.state });
+        };
+        self.last_handshake_retransmit_sec = now_sec;
+        let hdr = self.base_datagram_header(0);
+        let opt = OptionalHeaders {
+            connect_accept: Some(resp),
+            ..OptionalHeaders::default()
+        };
+        let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;
+        self.outbound_datagrams.push_back(dgram);
+        self.counts.connect_accept_retransmits =
+            self.counts.connect_accept_retransmits.saturating_add(1);
         Ok(())
     }
 
@@ -5879,7 +6170,9 @@ impl SessionConnection {
                 if let Some(rec) = self.retransmit_table.get(&s)
                     && rec.retransmit_eligible
                 {
-                    let hdr = self.base_datagram_header(rec.seq_num);
+                    // The saved sequence number, mask and client word (§4.2, §5.3).
+                    let mut hdr = self.base_datagram_header(rec.seq_num);
+                    hdr.client_word = rec.client_word;
                     let dgram = Self::encode_own(
                         hdr,
                         &rec.opt_headers,
@@ -5906,28 +6199,23 @@ impl SessionConnection {
             }
         }
 
-        // WorldReferralHeader (0x00000800, §6.5)
+        // WorldReferralHeader (0x00000800, §6.5): the address and port as received. The
+        // zero-address fallback is OPEN-SESSION-2, so a referral with a zero address or
+        // port raises no event (nothing is sent to an endpoint the spec does not give).
         if let Some(ref_hdr) = &opt.world_referral {
-            let ip = if ref_hdr.target_addr.ip().is_unspecified() {
-                *self.remote_addr.ip()
+            let addr = ref_hdr.target_addr;
+            if addr.ip().is_unspecified() || addr.port() == 0 {
+                tracing::warn!("WorldReferralHeader without an address or port ignored");
             } else {
-                *ref_hdr.target_addr.ip()
-            };
-            let world_addr = SocketAddrV4::new(ip, ref_hdr.target_addr.port());
-            self.events.push_back(SessionEvent::WorldReferralReceived {
-                referral_cookie: ref_hdr.referral_cookie,
-                world_addr,
-                reserved_word_10: ref_hdr.reserved_word_10,
-            });
+                self.events.push_back(SessionEvent::WorldReferralReceived {
+                    cookie: ref_hdr.cookie,
+                    world_addr: addr,
+                });
+            }
         }
 
-        // ServerRedirectHeader (0x00000100, §6.6): only when switchSeq is above the last one seen
-        if let Some(ss) = opt.server_redirect
-            && ss.switch_seq > self.last_switch_seq
-        {
-            self.last_switch_seq = ss.switch_seq;
-            self.events.push_back(SessionEvent::ServerRedirect(ss));
-        }
+        // ServerRedirectHeader (0x00000100, §6.6): four opaque bytes, no state effect
+        // (OPEN-SESSION-17).
 
         // AuthServerAddressHeader (0x00000200, §6.6)
         if let Some(lsa) = opt.auth_server_address {
@@ -5982,19 +6270,39 @@ impl SessionConnection {
     /// - State `1`: retransmits `SessionAuthHeader` / `ReferralAuthHeader` every `2.0` s
     ///   (`20.0` s handshake timeout).
     /// - State `2`: retransmits `ConnectAcceptHeader` every `0.6` s (`20.0` s timeout).
-    /// - State `5`: checks the `60.0` s / `300.0` s silence timeout, sends `ClockSyncHeader` every
-    ///   `30.0` s, flushes `OutOfOrderAckHeader`, sends `SequenceNakHeader` every `0.6` s when gaps
-    ///   exist, or `CumulativeAckHeader` every `2.0` s when none exist.
+    /// - State `5`: checks the `60.0` s / `300.0` s silence timeout, flushes
+    ///   `OutOfOrderAckHeader` (no standalone ClockSync: the header rides on a sequenced
+    ///   packet once its `30.0` s are up, [`Self::send_sequenced_packet`], `OPEN-SESSION-9`),
+    ///   sends the FlowControl-only packets of the §5.5 interim policy (P10-22-POLICY: the
+    ///   first tick after State `5`, then any tick after newly received datagrams that no
+    ///   other packet reported), and sends `SequenceNakHeader` every `0.6` s when gaps exist,
+    ///   or `CumulativeAckHeader` every `2.0` s when none exist.
     /// - State `6` / `7`: flushes outbound reliable packets, then retransmits
     ///   `DisconnectHeader` every `1.0` s.
     ///
     /// Every control packet here is unsequenced and goes out with `wirePrefix` `0x0000`
-    /// (§4.1.1), so no codec is needed.
+    /// (§4.1.1); the FlowControl-only packets are sequenced and use no codec here (see
+    /// [`Self::tick_with_codec`]).
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError`] if encoding a periodic control packet fails.
+    /// Returns [`SessionError`] if encoding a periodic packet fails.
     pub fn tick(&mut self, now_sec: f64) -> Result<(), SessionError> {
+        self.tick_with_codec(now_sec, None)
+    }
+
+    /// [`Self::tick`], compressing its sequenced FlowControl-only packets with
+    /// `outgoing_codec` (the client-to-server dictionary, §4.1.2, §6.4.1) once the codecs
+    /// are negotiated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError`] if encoding a periodic packet fails.
+    pub fn tick_with_codec(
+        &mut self,
+        now_sec: f64,
+        outgoing_codec: Option<&dyn BitTreeCodec>,
+    ) -> Result<(), SessionError> {
         self.reassembler.purge_expired(now_sec);
 
         match self.state {
@@ -6005,15 +6313,8 @@ impl SessionConnection {
                 }
                 if now_sec - self.last_handshake_retransmit_sec >= SESSION_AUTH_RETRANSMIT_SEC {
                     self.last_handshake_retransmit_sec = now_sec;
-                    // The stored first datagram again, with the same sequence number:
-                    // `0` for SessionAuthHeader (§5.1), the ReferralAuthHeader rule
-                    // otherwise ([`Self::referral_auth_seq`]).
-                    let seq = if self.stored_session_auth.is_some() {
-                        0
-                    } else {
-                        self.referral_auth_seq()
-                    };
-                    let hdr = self.base_datagram_header(seq);
+                    // The stored first datagram again, with sequence zero (§5.1, §6.5).
+                    let hdr = self.base_datagram_header(0);
                     let opt = OptionalHeaders {
                         session_auth: self.stored_session_auth.clone(),
                         referral_auth: self.stored_referral_auth,
@@ -6066,16 +6367,10 @@ impl SessionConnection {
                     })?;
                 }
 
-                // Periodic ClockSyncHeader every 30.0 s (§8.1), sent standalone.
-                // pending spec pass 10 writer fix: standalone ClockSync sequence
-                // (OPEN-SESSION-9); the current unsequenced form with the current counter
-                // value is kept ([`Self::queue_control`]).
-                if now_sec - self.last_clock_sync_sent_sec >= CLOCK_SYNC_INTERVAL_SEC {
-                    self.last_clock_sync_sent_sec = now_sec;
-                    self.queue_control(OptionalHeaders {
-                        clock_sync: Some(now_sec + self.server_clock_offset_sec),
-                        ..OptionalHeaders::default()
-                    })?;
+                // §5.5 P10-22-POLICY: the first FlowControl-only packet, then one for
+                // newly received datagrams no other packet reported.
+                if !self.flow.initial_sent || self.flow.pending {
+                    self.send_flow_only(now_sec, outgoing_codec)?;
                 }
 
                 // SequenceNakHeader every 0.6 s while gaps exist (§5.3), else
@@ -6105,7 +6400,7 @@ impl SessionConnection {
                 }
             }
             ConnectionState::DisconnectingFlush => {
-                if self.retransmit_table.is_empty()
+                if !self.has_reliable_unacked()
                     || now_sec - self.state_entered_at_sec >= DISCONNECT_FLUSH_LIMIT_SEC
                 {
                     self.state = ConnectionState::DisconnectSent;
@@ -6141,7 +6436,8 @@ impl SessionConnection {
     /// The earliest time (on the clock of `now_sec`) at which [`Self::tick`] or the
     /// multiplexer's cleanup has work on this connection: the handshake retransmits and
     /// timeouts (§6.1), the out-of-order acknowledgements waiting (§5.4, due at once), the
-    /// `ClockSyncHeader` (§8.1), the `SequenceNakHeader` or `CumulativeAckHeader` (§5.2,
+    /// first FlowControl-only packet (§5.5, due at once), the `SequenceNakHeader` or
+    /// `CumulativeAckHeader` (§5.2,
     /// §5.3), the silence timeout (§8.2), the disconnect's flush, retransmit and end
     /// (§6.1, §8.2), the cleanup after [`CLOSING_CLEANUP_SEC`] in State `8` (§6.1) and the expiry of an
     /// incomplete blob (§5.6.4). `None` when no timer runs (States `0`, `3`, `4` with no
@@ -6176,11 +6472,11 @@ impl SessionConnection {
                     SILENCE_TIMEOUT_SEC
                 };
                 at(self.last_recv_time_sec + silence_limit);
-                if !self.out_of_order_ack_queue.is_empty() {
-                    // Flushed on the next tick (§5.4).
+                if !self.out_of_order_ack_queue.is_empty() || !self.flow.initial_sent {
+                    // Flushed on the next tick (§5.4); the first FlowControl-only packet
+                    // goes out on the first tick after State 5 (§5.5).
                     at(f64::NEG_INFINITY);
                 }
-                at(self.last_clock_sync_sent_sec + CLOCK_SYNC_INTERVAL_SEC);
                 if !self.missing_gaps.is_empty() {
                     at(self.last_ack_nak_sent_sec + SEQUENCE_NAK_INTERVAL_SEC);
                 } else if self.recv_seq_expected > 1 {
@@ -6188,7 +6484,7 @@ impl SessionConnection {
                 }
             }
             ConnectionState::DisconnectingFlush => {
-                if self.retransmit_table.is_empty() {
+                if !self.has_reliable_unacked() {
                     at(f64::NEG_INFINITY);
                 } else {
                     at(self.state_entered_at_sec + DISCONNECT_FLUSH_LIMIT_SEC);
@@ -6206,13 +6502,21 @@ impl SessionConnection {
         next
     }
 
+    /// Whether a sent packet with reliable content still waits for its acknowledgement
+    /// (State `6` drains these, §6.1): packets with only unreliable content, such as the
+    /// FlowControl-only ones, are never resent (§5.3) and do not hold the flush.
+    fn has_reliable_unacked(&self) -> bool {
+        self.retransmit_table
+            .values()
+            .any(|r| r.retransmit_eligible)
+    }
+
     /// Queues an unsequenced control packet that goes out uncompressed without
     /// `MaskedChecksumFlag` (§4.1.1). It repeats the current allocated outgoing sequence
     /// number and allocates none and draws no mask: the standalone acknowledgement rule of
-    /// §6.4.1. The other standalone controls (negative acknowledgements, out-of-order
-    /// acknowledgements, ClockSync, disconnects) follow it too.
-    /// pending spec pass 10 writer fix: other unsequenced classes (`OPEN-SESSION-9`); the
-    /// current behaviour is kept.
+    /// §5.2 and §6.4.1. The other standalone controls Tessera sends (negative
+    /// acknowledgements, out-of-order acknowledgements, disconnects) follow it too: the
+    /// spec infers no rule for them (`OPEN-SESSION-9`), so this is an engineering choice.
     fn queue_control(&mut self, opt: OptionalHeaders) -> Result<(), SessionError> {
         let hdr = self.base_datagram_header(self.send_seq_num);
         let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;
@@ -6417,9 +6721,23 @@ impl SessionMultiplexer {
     /// Returns the first [`SessionError`] a connection's tick reports; the other
     /// connections are still ticked.
     pub fn tick(&mut self, now_sec: f64) -> Result<Vec<u16>, SessionError> {
+        self.tick_with_codec(now_sec, None)
+    }
+
+    /// [`Self::tick`] with [`SessionConnection::tick_with_codec`]: sequenced
+    /// FlowControl-only packets are compressed with `outgoing_codec`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::tick`].
+    pub fn tick_with_codec(
+        &mut self,
+        now_sec: f64,
+        outgoing_codec: Option<&dyn BitTreeCodec>,
+    ) -> Result<Vec<u16>, SessionError> {
         let mut first_err = None;
         for conn in self.connections.values_mut() {
-            if let Err(err) = conn.tick(now_sec) {
+            if let Err(err) = conn.tick_with_codec(now_sec, outgoing_codec) {
                 first_err.get_or_insert(err);
             }
         }
@@ -7147,9 +7465,9 @@ impl ControlMessage {
     /// or `body` is malformed.
     pub fn decode(opcode: u32, body: &[u8]) -> Result<Self, SessionError> {
         match opcode {
-            // pending spec pass 10 writer fix: the opcode of the first server blobs vs the
-            // 0x12F "empty" rule (§6.4.1 observes a first server blob whose framing the spec
-            // does not tie to 0x12F); no change: 0x12F is read as empty, as §9.3 gives.
+            // §9.3: 0x12F is read as empty. The first server blobs of a login connection
+            // are other queue-1 opcodes (0x149, 0xAA, §6.4.1), which callers record or skip;
+            // 0x12C answers only a 0x12F, never the entry to State 5 (OPEN-SESSION-15).
             OPCODE_VERSION_REQUEST => Ok(Self::VersionRequest),
             OPCODE_CLIENT_VERSION => Ok(Self::ClientVersion(ClientVersionMessage::decode(body)?)),
             OPCODE_VERSION_STATUS => Ok(Self::VersionStatus(VersionStatusMessage::decode(body)?)),

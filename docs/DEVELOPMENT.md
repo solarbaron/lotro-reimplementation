@@ -458,7 +458,9 @@ handshake, never an address, port, account or ticket (`crates/compat/src/connect
   answered, but from another address or port) and `recv_errors` (failed socket reads, which
   on some systems is how "nobody listens at that port" shows);
 - `official chat session: handshake failed` (`info`): the same counts of the chat-server
-  connection when it closes from its handshake (no endpoint).
+  connection when it closes from its handshake (no endpoint). When the chat dictionary is
+  unsupported (`official-session.md` §7.3, OPEN-SESSION-1) one more line says so and the
+  chat session stops for the rest of the run: the ticket is not sent to the chat server again.
 
 `RUST_LOG=info,tessera_compat=debug` shows the waiting lines too.
 

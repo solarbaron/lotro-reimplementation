@@ -1025,8 +1025,9 @@ fn referral_auth(
         rows,
         PAYLOAD_AT,
         8,
-        "referralCookie (u64 LE)",
-        "redacted: the referral's cookie, 8 bytes, every byte replaced by 'X'",
+        "reversed referral cookie (8 B)",
+        "redacted: the referral's cookie bytes in reverse order, 8 bytes, every byte \
+         replaced by 'X'",
     );
     Ok(end)
 }

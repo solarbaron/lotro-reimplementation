@@ -654,18 +654,16 @@ fn unsupported_codec_uuid_closes_with_reason() {
 fn all_optional_headers_ascending_bit_order() {
     let opt = OptionalHeaders {
         server_redirect: Some(ServerRedirectHeader {
-            switch_seq: 11,
-            switch_type: 2,
+            bytes: [0x0B, 0x00, 0x00, 0x02],
         }),
         auth_server_address: Some(AuthServerAddressHeader {
             sin_family: 2,
             addr: SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 55), 2900),
         }),
         world_referral: Some(WorldReferralHeader {
-            referral_cookie: 0x0102_0304_0506_0708,
-            sin_family: 2,
+            cookie: [1, 2, 3, 4, 5, 6, 7, 8],
             target_addr: SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 99), 9050),
-            reserved_word_10: 0,
+            metadata: [0, 0, 0, 0],
         }),
         sequence_nak: Some(vec![3, 4]),
         out_of_order_ack: Some(vec![2]),
@@ -730,7 +728,7 @@ fn all_optional_headers_ascending_bit_order() {
     let opt_world = OptionalHeaders {
         cumulative_ack: Some(10),
         referral_auth: Some(ReferralAuthHeader {
-            referral_cookie: 0xCAFE_BABE_1234_5678,
+            reversed_cookie: [0x78, 0x56, 0x34, 0x12, 0xBE, 0xBA, 0xFE, 0xCA],
         }),
         ..OptionalHeaders::default()
     };
@@ -881,9 +879,14 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
         // Tick at t = 0.9 s (>= 0.6 s) to trigger SequenceNak for missing seqs [2, 3]
         conn.tick(0.9).expect("tick nak");
     }
-    // Drain the SequenceNak
+    // The first tick after State 5 sends the FlowControl-only packet (sequence 2, §5.5,
+    // §6.4.1), then the SequenceNak.
     let flushed = mux.flush_outbound(&mut transport).expect("flush");
-    assert_eq!(flushed, 1);
+    assert_eq!(flushed, 2);
+    let (flow_dgram, _) = transport.pop_outbound().expect("FlowControl datagram");
+    let flow = decode_datagram(&flow_dgram, false, None, false).expect("parse flow");
+    assert_eq!(flow.header.seq_num, 2);
+    assert!(flow.opt_headers.flow_control.is_some());
     let (sequence_nak_dgram, _) = transport.pop_outbound().expect("SequenceNak datagram");
     let parsed_sequence_nak =
         decode_datagram(&sequence_nak_dgram, false, None, true).expect("parse SequenceNak");
@@ -921,10 +924,9 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
         },
         &OptionalHeaders {
             world_referral: Some(WorldReferralHeader {
-                referral_cookie: 0xABCD_EF01_2345_6789,
-                sin_family: 2,
+                cookie: [0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89],
                 target_addr: world_server_addr,
-                reserved_word_10: 9,
+                metadata: [9, 0, 0, 0],
             }),
             ..OptionalHeaders::default()
         },
@@ -938,20 +940,13 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
 
     let mut referral_event = None;
     while let Some(ev) = mux.connection_mut(routed_id).expect("conn").pop_event() {
-        if let SessionEvent::WorldReferralReceived {
-            referral_cookie,
-            world_addr,
-            reserved_word_10,
-        } = ev
-        {
-            referral_event = Some((referral_cookie, world_addr, reserved_word_10));
+        if let SessionEvent::WorldReferralReceived { cookie, world_addr } = ev {
+            referral_event = Some((cookie, world_addr));
         }
     }
-    let (cookie, resolved_world_addr, world_id) =
-        referral_event.expect("WorldReferralReceived event");
-    assert_eq!(cookie, 0xABCD_EF01_2345_6789);
+    let (cookie, resolved_world_addr) = referral_event.expect("WorldReferralReceived event");
+    assert_eq!(cookie, [0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89]);
     assert_eq!(resolved_world_addr, world_server_addr);
-    assert_eq!(world_id, 9);
 
     // Open new world connection on the same SessionMultiplexer and send ReferralAuth (0x00020000)
     let world_conn_id = mux
@@ -970,9 +965,14 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
             .opt_headers
             .referral_auth
             .expect("wlr")
-            .referral_cookie,
-        cookie
+            .reversed_cookie,
+        [0x89, 0x67, 0x45, 0x23, 0x01, 0xEF, 0xCD, 0xAB]
     );
+    // §6.5: sequence zero, recipient zero, the final four header bytes zero.
+    assert_eq!(parsed_wlr.header.seq_num, 0);
+    assert_eq!(parsed_wlr.header.rec_id, 0);
+    assert_eq!(parsed_wlr.header.client_word, 0);
+    assert_eq!(parsed_wlr.header.peer_word, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -2241,7 +2241,27 @@ fn challenge_datagram(incoming_rec_id: u16) -> Vec<u8> {
     challenge_for(incoming_rec_id, 0x1122_3344)
 }
 
-/// §6.4: a `ConnectChallengeHeader` is acted on only in States 1 and 2.
+/// An unsequenced server packet with only a `CumulativeAckHeader` to incoming recipient
+/// `rec_id`: a valid established packet that confirms State 5 (§6.4.1).
+fn server_ack(rec_id: u16) -> Vec<u8> {
+    encode_datagram(
+        DatagramHeader {
+            rec_id,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders {
+            cumulative_ack: Some(0),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .unwrap()
+}
+
+/// §6.4: a `ConnectChallengeHeader` is acted on only in States 1 and 2; in State 2 a
+/// repeat only resends the pending accept and does not confirm State 5 (§6.1, §6.4.1).
 #[test]
 fn challenge_outside_states_1_and_2_is_dropped() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 32), 9000);
@@ -2257,14 +2277,56 @@ fn challenge_outside_states_1_and_2_is_dropped() {
     assert_eq!(idle.server_rec_id(), 0);
     assert!(idle.pop_outbound_datagram().is_none());
 
-    // State 2 acts on it (and moves to State 5, §6.1); State 5 drops a later one.
-    let mut conn = challenged_connection(peer, 0x0150, 1);
-    conn.receive_datagram(&challenge_datagram(0x0150), peer, 0.1, WireCodecs::NONE)
+    // State 2: the repeated challenge resends the accept, byte for byte, and the state
+    // stays 2.
+    let mut conn = SessionConnection::new(peer, 0.0);
+    conn.set_codec_uuids(UUIDS);
+    conn.start_login(account_auth("A", 0).unwrap(), 0.0)
+        .unwrap();
+    conn.receive_datagram(&challenge_datagram(0x0150), peer, 0.0, WireCodecs::NONE)
+        .unwrap();
+    while conn.pop_outbound_datagram().is_some() {}
+    let mut accept = None;
+    conn.tick(0.6).unwrap();
+    while let Some(d) = conn.pop_outbound_datagram() {
+        accept = Some(d);
+    }
+    let accept = accept.expect("the 0.6 s accept retransmit");
+    conn.receive_datagram(&challenge_datagram(0x0150), peer, 0.7, WireCodecs::NONE)
+        .unwrap();
+    assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
+    assert_eq!(conn.pop_outbound_datagram(), Some(accept.clone()));
+    assert!(conn.pop_outbound_datagram().is_none());
+    assert!(
+        !std::iter::from_fn(|| conn.pop_event())
+            .any(|e| matches!(e, SessionEvent::Connected { .. })),
+        "a duplicate challenge does not confirm State 5"
+    );
+    // The accept is still retransmitted every 0.6 s, from the repeat on.
+    conn.tick(1.2).unwrap();
+    assert!(conn.pop_outbound_datagram().is_none());
+    conn.tick(1.3).unwrap();
+    assert_eq!(conn.pop_outbound_datagram(), Some(accept));
+    assert_eq!(conn.handshake_counts().connect_accept, 1);
+    assert_eq!(conn.handshake_counts().connect_accept_retransmits, 3);
+    // A different challenge in State 2 is refused and changes nothing.
+    assert_eq!(
+        conn.receive_datagram(&challenge_datagram(0x0151), peer, 1.4, WireCodecs::NONE),
+        Err(SessionError::UnexpectedConnectChallenge {
+            state: ConnectionState::ChallengeAcceptSent
+        })
+    );
+    assert_eq!(conn.local_rec_id(), 0x0150);
+    assert!(conn.pop_outbound_datagram().is_none());
+
+    // The next valid server packet that is not a challenge confirms State 5.
+    conn.receive_datagram(&server_ack(0x0150), peer, 1.5, WireCodecs::NONE)
         .unwrap();
     assert_eq!(conn.state(), ConnectionState::Connected);
     while conn.pop_outbound_datagram().is_some() {}
+    // State 5 drops a later challenge.
     assert_eq!(
-        conn.receive_datagram(&challenge_datagram(0x0102), peer, 0.2, WireCodecs::NONE),
+        conn.receive_datagram(&challenge_datagram(0x0150), peer, 1.6, WireCodecs::NONE),
         Err(SessionError::UnexpectedConnectChallenge {
             state: ConnectionState::Connected
         })
@@ -2532,7 +2594,7 @@ fn closing_connections_take_no_address_routed_traffic_and_are_reaped() {
 fn local_disconnect_ends_with_a_reason() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 39), 9000);
     let mut conn = challenged_connection(peer, 0x0100, 6);
-    conn.receive_datagram(&challenge_datagram(0x0100), peer, 0.1, WireCodecs::NONE)
+    conn.receive_datagram(&server_ack(0x0100), peer, 0.1, WireCodecs::NONE)
         .unwrap();
     assert_eq!(conn.state(), ConnectionState::Connected);
     while conn.pop_event().is_some() {}
@@ -2738,18 +2800,16 @@ fn session_auth_buffers_are_sized_exactly_and_never_compressed() {
 fn optional_headers_encoded_len_matches_encode() {
     let opt = OptionalHeaders {
         server_redirect: Some(ServerRedirectHeader {
-            switch_seq: 1,
-            switch_type: 2,
+            bytes: [1, 0, 0, 2],
         }),
         auth_server_address: Some(AuthServerAddressHeader {
             sin_family: 2,
             addr: SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 9000),
         }),
         world_referral: Some(WorldReferralHeader {
-            referral_cookie: 0x77,
-            sin_family: 2,
+            cookie: [0x77; 8],
             target_addr: SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 2), 9001),
-            reserved_word_10: 0,
+            metadata: [0; 4],
         }),
         sequence_nak: Some(vec![4, 5, 6]),
         out_of_order_ack: Some(vec![9]),
@@ -2757,7 +2817,7 @@ fn optional_headers_encoded_len_matches_encode() {
         disconnect: true,
         session_auth: Some(account_auth("A", 0).unwrap()),
         referral_auth: Some(ReferralAuthHeader {
-            referral_cookie: 0x55,
+            reversed_cookie: [0x55; 8],
         }),
         connect_challenge: Some(template_challenge()),
         connect_accept: Some(ConnectAcceptHeader {
@@ -2899,29 +2959,81 @@ fn an_occupied_slot_ignores_the_challenge() {
     assert_eq!(mux.connection(b).unwrap().local_rec_id(), 0x0201);
 }
 
-/// §5.6.2–§5.6.3: `blobId` is on the wire for queue 3 when the blob is fragmented (the
-/// kept rule; pending spec pass 10 writer fix); queues 5 and 6 are OPEN-SESSION-12 and a
-/// fragment on them is refused (the datagram is dropped and counted).
+/// §5.6.2–§5.6.4: queue 3 carries no `blobId`, fragmented or not, and its fragments are
+/// reassembled by sequence group and ordering number; queues 5 and 6 are OPEN-SESSION-12
+/// and a fragment on them is refused (the datagram is dropped and counted).
 #[test]
-fn queue_3_fragments_carry_a_blob_id_and_queues_5_and_6_are_dropped() {
-    let frags = split_blob(3, 9, 0x0042, 0x13, None, 0x6F, &vec![7u8; 500]).unwrap();
+fn queue_3_fragments_carry_no_blob_id_and_queues_5_and_6_are_dropped() {
+    let frags = split_blob(3, 9, 0, 0x13, None, 0x6F, &vec![7u8; 500]).unwrap();
     assert_eq!(frags.len(), 2);
-    for f in &frags {
+    for (i, f) in frags.iter().enumerate() {
         let mut wire = Vec::new();
         f.header.encode(&mut wire).unwrap();
         // queueAndOpt, blobFlags (DefaultRecipient | IsFragmented), seqGroup 0x13,
-        // orderNum 9, blobId 0x0042.
-        assert_eq!(&wire[..7], &[0x03, 0x50, 0x13, 0x09, 0x00, 0x42, 0x00]);
+        // orderNum 9, then at once fragIndex and numFrags 2.
+        assert_eq!(
+            &wire[..7],
+            &[0x03, 0x50, 0x13, 0x09, 0x00, u8::try_from(i).unwrap(), 0x02]
+        );
         let (back, _) = BlobFragmentHeader::decode(&wire).unwrap();
-        assert_eq!(back.blob_id, 0x0042);
+        assert_eq!(back.blob_id, 0);
         assert_eq!(back.seq_group, 0x13);
+        assert_eq!(back.order_num, 9);
     }
-    // Unfragmented queue 3: no blobId.
-    let single = split_blob(3, 9, 0x0042, 0x13, None, 0x6F, &[1, 2]).unwrap();
+    // Unfragmented queue 3: no blobId either.
+    let single = split_blob(3, 9, 0, 0x13, None, 0x6F, &[1, 2]).unwrap();
     let mut wire = Vec::new();
     single[0].header.encode(&mut wire).unwrap();
     assert_eq!(&wire[..5], &[0x03, 0x40, 0x13, 0x09, 0x00]);
     assert_eq!(BlobFragmentHeader::decode(&wire).unwrap().0.blob_id, 0);
+
+    // Reassembly keys queue 3 by (sender, queue, group, order): two blobs of one group
+    // with different ordering numbers, interleaved, come out whole.
+    let other = split_blob(3, 10, 0, 0x13, None, 0x70, &vec![8u8; 500]).unwrap();
+    let mut table = BlobReassembler::default();
+    assert!(
+        table
+            .ingest(0x0304, frags[0].clone(), 0.0)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        table
+            .ingest(0x0304, other[0].clone(), 0.0)
+            .unwrap()
+            .is_none()
+    );
+    let first = table
+        .ingest(0x0304, frags[1].clone(), 0.0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (first.blob_header_word, first.payload),
+        (0x6F, vec![7u8; 500])
+    );
+    let second = table
+        .ingest(0x0304, other[1].clone(), 0.0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (second.blob_header_word, second.payload),
+        (0x70, vec![8u8; 500])
+    );
+    assert_eq!(table.incomplete_len(), 0);
+    // Fragments of one identity must name one recipient (§5.6.4 rule 3).
+    let mut strange = frags[1].clone();
+    strange.header.recipient_id = 7;
+    strange.header.blob_flags &= !0x40;
+    assert!(
+        table
+            .ingest(0x0304, frags[0].clone(), 0.0)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        table.ingest(0x0304, strange, 0.0),
+        Err(SessionError::FragmentRecipientMismatch)
+    );
 
     // Queues 5 and 6: their framing is unspecified (OPEN-SESSION-12): refused, and a
     // connection counts the dropped datagram.
@@ -2957,11 +3069,12 @@ fn queue_3_fragments_carry_a_blob_id_and_queues_5_and_6_are_dropped() {
     ));
 }
 
-/// §4.2, §6.4, §6.4.1, §8.1: after the accept every client packet carries the client word 1
-/// (pending spec pass 10 writer fix: OPEN-SESSION-8 keeps it) and a copy of the challenge
-/// header's bytes 18..19; State 5 queues no ClockSyncHeader; the first sequenced packet is
-/// sequence 2; a standalone acknowledgement repeats the current sequence without drawing a
-/// mask; a ClockSyncHeader on a sequenced packet uses that packet's sequence and mask.
+/// §4.2, §6.4, §6.4.1, §8.1: the accept carries client word 1, later packets the word of
+/// the §4.2 interim policy (P10-22-POLICY: one more per newly allocated sequenced packet,
+/// the saved word on a resend), all a copy of the challenge header's bytes 18..19; State 5
+/// queues no ClockSyncHeader; the first sequenced packet is the FlowControl-only sequence
+/// 2; a standalone acknowledgement repeats the current sequence without drawing a mask; a
+/// ClockSyncHeader on a sequenced packet uses that packet's sequence and mask.
 #[test]
 fn header_words_and_sequences_after_the_accept() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 70), 9000);
@@ -3028,8 +3141,22 @@ fn header_words_and_sequences_after_the_accept() {
     );
 
     let mut client = IsaacCipher::from_seed(template_challenge().outgoing_seed);
-    // The first sequenced packet: sequence 2 with the first outgoing word.
+    // The first sequenced packet is the FlowControl-only one (sequence 2, client word 2,
+    // the first outgoing word, §5.5 and §4.2 P10-22-POLICY); the blob follows as sequence 3
+    // with word 3.
     conn.send_blob(4, 0, 0x12C, &[0, 1, 2], 0.3, None).unwrap();
+    let flow = decode_datagram(&conn.pop_outbound_datagram().unwrap(), false, None, false).unwrap();
+    assert_eq!(
+        (
+            flow.header.seq_num,
+            flow.header.client_word,
+            flow.header.peer_word,
+            flow.header.flags
+        ),
+        (2, 2, 0x1122, 0x0800_0002)
+    );
+    assert!(flow.fragments.is_empty());
+    verify_packet_checksum(flow.header, flow.payload_sum, Some(client.next_mask())).unwrap();
     let blob = decode_datagram(&conn.pop_outbound_datagram().unwrap(), false, None, false).unwrap();
     assert_eq!(
         (
@@ -3037,18 +3164,26 @@ fn header_words_and_sequences_after_the_accept() {
             blob.header.client_word,
             blob.header.peer_word
         ),
-        (2, 1, 0x1122)
+        (3, 3, 0x1122)
+    );
+    assert!(
+        blob.opt_headers.flow_control.is_none(),
+        "nothing new to report"
     );
     verify_packet_checksum(blob.header, blob.payload_sum, Some(client.next_mask())).unwrap();
-    // A standalone acknowledgement repeats the current sequence (2) and draws nothing.
+    // A standalone acknowledgement repeats the current sequence (3) and draws nothing.
     conn.tick(2.5).unwrap();
     let standalone =
         decode_datagram(&conn.pop_outbound_datagram().unwrap(), false, None, true).unwrap();
     assert!(standalone.opt_headers.cumulative_ack.is_some());
     assert_eq!(standalone.header.flags & FLAG_MASKED_CHECKSUM, 0);
-    assert_eq!(standalone.header.seq_num, 2);
-    assert_eq!(conn.send_seq_num(), 2);
-    // A ClockSync on a sequenced packet: sequence 3 with the second word, not a third.
+    assert_eq!(
+        (standalone.header.seq_num, standalone.header.client_word),
+        (3, 3)
+    );
+    assert_eq!(conn.send_seq_num(), 3);
+    assert!(conn.pop_outbound_datagram().is_none());
+    // A ClockSync on a sequenced packet: sequence 4 with the next word, not a second.
     let seq = conn
         .send_sequenced_packet(
             OptionalHeaders {
@@ -3061,10 +3196,36 @@ fn header_words_and_sequences_after_the_accept() {
             None,
         )
         .unwrap();
-    assert_eq!(seq, 3);
+    assert_eq!(seq, 4);
     let sync = decode_datagram(&conn.pop_outbound_datagram().unwrap(), false, None, false).unwrap();
-    assert_eq!(sync.header.seq_num, 3);
+    assert_eq!((sync.header.seq_num, sync.header.client_word), (4, 4));
     verify_packet_checksum(sync.header, sync.payload_sum, Some(client.next_mask())).unwrap();
+    // A retransmission keeps the packet's saved sequence, mask and word (§4.2, §5.3).
+    let mut nak = DatagramHeader {
+        rec_id: 0x0150,
+        ..DatagramHeader::default()
+    };
+    nak.seq_num = 0;
+    let nak = encode_datagram(
+        nak,
+        &OptionalHeaders {
+            sequence_nak: Some(vec![3]),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    conn.receive_datagram(&nak, peer, 2.65, WireCodecs::NONE)
+        .unwrap();
+    let resent = conn.pop_outbound_datagram().unwrap();
+    let resent_pkt = decode_datagram(&resent, false, None, false).unwrap();
+    assert_eq!(
+        (resent_pkt.header.seq_num, resent_pkt.header.client_word),
+        (3, 3)
+    );
+    assert_eq!(resent_pkt.fragments, blob.fragments);
     // Bits 25 and 26 are never sent.
     assert!(matches!(
         conn.send_sequenced_packet(
@@ -3081,7 +3242,180 @@ fn header_words_and_sequences_after_the_accept() {
     ));
     assert_eq!(
         conn.send_seq_num(),
-        3,
+        4,
         "nothing allocated for a refused packet"
     );
+}
+
+/// A queue-`queue` fragment header with `blob_flags`, unfragmented, default recipient,
+/// opcode `0x10`, three data bytes.
+fn flagged_fragment(queue: u8, extra_flags: u8) -> BlobFragment {
+    let mut frag = split_blob(queue, 1, 5, 4, None, 0x10, &[1, 2, 3])
+        .unwrap()
+        .remove(0);
+    frag.header.blob_flags |= extra_flags;
+    frag
+}
+
+/// A server datagram carrying `frag` with its raw header bytes as `header_bytes` (so
+/// flags the encoder clears reach the wire): unsequenced, to `rec_id`, checksummed per
+/// buffer (§4.4.2).
+fn raw_fragment_datagram(rec_id: u16, header_bytes: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut payload = header_bytes.to_vec();
+    payload.extend_from_slice(data);
+    let mut hdr = DatagramHeader {
+        rec_id,
+        flags: FLAG_HAS_FRAGMENTED_BLOBS,
+        pak_size: u16::try_from(payload.len()).unwrap(),
+        ..DatagramHeader::default()
+    };
+    let sum = compute_datagram_checksum(header_bytes).wrapping_add(compute_datagram_checksum(data));
+    hdr.checksum = combine_packet_checksum(hdr, sum, None).unwrap();
+    let mut dgram = vec![0u8, 0];
+    dgram.extend_from_slice(&hdr.to_wire_bytes());
+    dgram.extend_from_slice(&payload);
+    dgram
+}
+
+/// §5.6.3 receive policy (P10-22-POLICY): `blobFlags` `0x04` and `0x20` reject the
+/// datagram; `0x02` is accepted on queue 1 and kept as metadata, unsupported on queues 2–4;
+/// attachment-bearing packets are dropped (OPEN-SESSION-10); a sender clears `0x02`, `0x04`
+/// and `0x20` and never sends an attachment.
+#[test]
+fn blob_flags_receive_policy_and_attachments() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 72), 9000);
+    let wire_of = |frag: &BlobFragment, flags: u8| {
+        let mut wire = Vec::new();
+        frag.header.encode(&mut wire).unwrap();
+        wire[1] = flags;
+        wire
+    };
+    // Undefined bits.
+    for bit in [0x04u8, 0x20] {
+        let mut conn = challenged_connection(peer, 0x0150, 1);
+        let frag = flagged_fragment(1, 0);
+        let flags = frag.header.blob_flags | bit;
+        let dgram = raw_fragment_datagram(0x0150, &wire_of(&frag, flags), &frag.payload);
+        assert_eq!(
+            conn.receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE),
+            Err(SessionError::UndefinedBlobFlags { blob_flags: flags })
+        );
+        assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
+        assert!(conn.pop_event().is_none());
+    }
+    // Bit 0x02 on queue 1: delivered, the bit kept.
+    let mut conn = challenged_connection(peer, 0x0150, 1);
+    let frag = flagged_fragment(1, 0);
+    let flags = frag.header.blob_flags | 0x02;
+    let dgram = raw_fragment_datagram(0x0150, &wire_of(&frag, flags), &frag.payload);
+    let pkt = conn
+        .receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE)
+        .unwrap();
+    assert_eq!(pkt.fragments[0].header.blob_flags, flags);
+    assert_eq!(conn.state(), ConnectionState::Connected);
+    assert!(
+        std::iter::from_fn(|| conn.pop_event())
+            .any(|e| matches!(e, SessionEvent::BlobReceived(b) if b.payload == [1, 2, 3]))
+    );
+    // Bit 0x02 on queues 2, 3 and 4: unsupported, dropped and counted.
+    for queue in [2u8, 3, 4] {
+        let mut conn = challenged_connection(peer, 0x0150, 1);
+        let frag = flagged_fragment(queue, 0);
+        let flags = frag.header.blob_flags | 0x02;
+        let dgram = raw_fragment_datagram(0x0150, &wire_of(&frag, flags), &frag.payload);
+        assert_eq!(
+            conn.receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE),
+            Err(SessionError::UnsupportedFragment {
+                queue_id: queue,
+                blob_flags: flags
+            })
+        );
+        assert_eq!(conn.handshake_counts().unsupported_fragment_drops, 1);
+        assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
+    }
+    // An attachment: the header layout parses, the packet is dropped and counted.
+    let mut conn = challenged_connection(peer, 0x0150, 1);
+    let mut frag = flagged_fragment(2, BLOB_FLAG_HAS_ATTACHMENT);
+    frag.header.attachment = Some(FragmentAttachment {
+        words64: [1, 2, 3],
+        word32: 4,
+    });
+    let mut wire = Vec::new();
+    frag.header.encode(&mut wire).unwrap();
+    assert_eq!(
+        BlobFragmentHeader::decode(&wire).unwrap().0.attachment,
+        frag.header.attachment
+    );
+    let dgram = raw_fragment_datagram(0x0150, &wire, &frag.payload);
+    assert!(matches!(
+        conn.receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE),
+        Err(SessionError::UnsupportedFragment { queue_id: 2, .. })
+    ));
+    assert_eq!(conn.handshake_counts().unsupported_fragment_drops, 1);
+    // Never sent: no checksum boundary is invented for it.
+    assert!(matches!(
+        encode_datagram(
+            DatagramHeader::default(),
+            &OptionalHeaders::default(),
+            &[frag],
+            None,
+            None
+        ),
+        Err(SessionError::UnsupportedFragment { .. })
+    ));
+    // A sender clears 0x02, 0x04 and 0x20.
+    let loud = flagged_fragment(1, 0x02 | 0x04 | 0x20);
+    let mut wire = Vec::new();
+    loud.header.encode(&mut wire).unwrap();
+    assert_eq!(wire[1] & (0x02 | 0x04 | 0x20), 0);
+}
+
+/// §4.3, §6.5, §6.6: `ServerRedirectHeader` is four opaque bytes and its own checksum
+/// buffer; a first world server packet with flags `0x01000106` (the field, ClockSync, then
+/// fragments) parses, verifies with the first incoming word and confirms State 5.
+#[test]
+fn a_four_byte_server_redirect_ahead_of_clock_sync_and_fragments() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 73), 9000);
+    let seed = 0x0042_4242;
+    let mut conn = challenged_connection(peer, 0x0160, seed);
+    let frag = flagged_fragment(2, 0);
+    let opt = OptionalHeaders {
+        server_redirect: Some(ServerRedirectHeader {
+            bytes: [0xDE, 0xAD, 0xBE, 0xEF],
+        }),
+        clock_sync: Some(1000.0),
+        ..OptionalHeaders::default()
+    };
+    let mask = IsaacCipher::from_seed(seed).next_mask();
+    let dgram = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0160,
+            seq_num: 2,
+            ..DatagramHeader::default()
+        },
+        &opt,
+        std::slice::from_ref(&frag),
+        Some(mask),
+        None,
+    )
+    .unwrap();
+    let pkt = decode_datagram(&dgram, true, None, false).unwrap();
+    assert_eq!(pkt.header.flags, 0x0100_0106);
+    // 4 redirect bytes, 8 ClockSync bytes, then the fragment.
+    assert_eq!(&pkt.raw_payload[..4], &[0xDE, 0xAD, 0xBE, 0xEF]);
+    let mut frag_wire = Vec::new();
+    frag.header.encode(&mut frag_wire).unwrap();
+    let per_buffer = compute_datagram_checksum(&pkt.raw_payload[..4])
+        .wrapping_add(compute_datagram_checksum(&pkt.raw_payload[4..12]))
+        .wrapping_add(compute_datagram_checksum(&frag_wire))
+        .wrapping_add(compute_datagram_checksum(&frag.payload));
+    assert_eq!(pkt.payload_sum, per_buffer);
+    conn.receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE)
+        .unwrap();
+    assert_eq!(conn.state(), ConnectionState::Connected);
+    // The field raises no event and changes nothing (OPEN-SESSION-17).
+    assert!(!std::iter::from_fn(|| conn.pop_event()).any(|e| !matches!(
+        e,
+        SessionEvent::Connected { .. } | SessionEvent::BlobReceived(_)
+    )));
 }

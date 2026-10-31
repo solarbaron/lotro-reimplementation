@@ -362,6 +362,37 @@ fn a_base_inside_a_work_tree_is_refused() {
 }
 
 #[test]
+fn a_base_inside_the_install_is_refused() {
+    let (t, _) = base();
+    let install = t.path().join("install");
+    std::fs::create_dir_all(&install).expect("mkdir");
+    for dir in [
+        install.clone(),
+        install.join("census"),
+        install.join("a/b/census"),
+    ] {
+        let err = crate::check_outside_install(&dir, &install).expect_err("refused");
+        assert!(matches!(&err, CensusError::InsideInstall { .. }), "{err}");
+    }
+    assert!(!install.join("a").exists(), "nothing is written");
+    for dir in [t.path().join("census"), t.path().join("install-census/x")] {
+        crate::check_outside_install(&dir, &install).expect("outside the install");
+    }
+}
+
+#[test]
+fn an_archive_that_does_not_open_is_an_error_not_an_absent_record() {
+    let (t, _) = base();
+    let path = t.path().join("client_general.dat");
+    std::fs::write(&path, [0u8; 64]).expect("write");
+    let err = crate::version::content_entry(&path).expect_err("a failed reader");
+    assert!(
+        matches!(&err, CensusError::VersionInput { archive, .. } if archive == &path),
+        "{err}"
+    );
+}
+
+#[test]
 fn invalid_components_versions_and_names_are_refused() {
     let (_t, base) = base();
     for (p, t, f) in [

@@ -303,7 +303,8 @@ fn scriptlets_decode() {
 /// `script-runtime.md` §30.1 and §30.5 (R43): every While node decodes to its typed fields,
 /// and the census of this install (41 nodes in 17 tables, `Names` empty, `Inverse` 0, one
 /// Default port and no other port each) is checked against the local baseline of the install
-/// version (decision 0045; a data update may change it).
+/// version (decision 0045; a data update may change it). A sampled run (debug build without
+/// `TESSERA_FULL=1`, every 23rd table) checks the decoding only and records no census.
 #[test]
 fn while_nodes_decode_and_follow_the_census() {
     use tessera_formats::script_table::{NodeData, PortType};
@@ -353,6 +354,10 @@ fn while_nodes_decode_and_follow_the_census() {
         sum[1], sum[0], sum[2], sum[3], sum[4], sum[5]
     );
     assert_eq!(sum[2], 0, "every While node decodes to its fields");
+    if !exhaustive() {
+        eprintln!("sampled run (debug build without TESSERA_FULL=1): no census recorded");
+        return;
+    }
     let mut census = tessera_testkit::census!(
         "while_nodes_decode_and_follow_the_census",
         &game_dir().expect("install")
@@ -411,6 +416,7 @@ const PORT_PAIRS: [(u8, u8); 32] = [
 /// every port of every node of the decoded 0x07 and 0x0C records has a (kind, port type)
 /// pair of the §4.5.1 table. Ports outside it are counted per pair against the local
 /// baseline of the install version (decision 0045). Decoding does not depend on the table.
+/// A sampled run (debug build without `TESSERA_FULL=1`) records no census.
 #[test]
 fn port_pairs_follow_the_census() {
     let Some(set) = open_set() else { return };
@@ -458,6 +464,10 @@ fn port_pairs_follow_the_census() {
     }
     let total: usize = outside.values().sum();
     eprintln!("ports: {ports}; outside the §4.5.1 census: {total} {outside:?}");
+    if !exhaustive() {
+        eprintln!("sampled run (debug build without TESSERA_FULL=1): no census recorded");
+        return;
+    }
     let mut census = tessera_testkit::census!(
         "port_pairs_follow_the_census",
         &game_dir().expect("install")
@@ -479,7 +489,8 @@ fn port_pairs_follow_the_census() {
 /// parts) and WL-I14 (every Switch on `QuestState_Test` has value ports for 0, 1 and 2 and
 /// no Default port) always fail the test; the tables found (eight, two of them sharing a
 /// combination of parts) are a census checked against the local baseline of the install
-/// version (decision 0045).
+/// version (decision 0045). A sampled run (debug build without `TESSERA_FULL=1`) checks the
+/// rules on its sample and records no census.
 #[test]
 fn quest_state_tables_follow_their_parts() {
     use tessera_formats::gameplay::world_logic::{QuestStateTest, WorldLogicLabels};
@@ -584,6 +595,10 @@ fn quest_state_tables_follow_their_parts() {
         tables.len()
     );
     assert!(bad.is_empty(), "{bad:?}");
+    if !exhaustive() {
+        eprintln!("sampled run (debug build without TESSERA_FULL=1): no census recorded");
+        return;
+    }
     let mut census = tessera_testkit::census!(
         "quest_state_tables_follow_their_parts",
         &game_dir().expect("install")
@@ -1123,7 +1138,6 @@ fn random_dye_chains_replace_the_placeholder() {
         );
     }
     census.count_vs_spec("Scriptlet nodes holding the parameter", invokers.len(), 49);
-    census.finish();
     assert!(
         parameters.keys().all(|p| [2000, 2003, 2013].contains(p)),
         "{parameters:?}"
@@ -1259,6 +1273,8 @@ fn random_dye_chains_replace_the_placeholder() {
         ]),
         "A62: the hair chain's edits keep their stored slots and keys"
     );
+    // After every rule check: a failing run writes no baseline.
+    census.finish();
 }
 
 /// The hair chain of `appearance.md` §7.4 (A62) and the slots its edits store (`Beard`,

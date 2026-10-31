@@ -72,6 +72,19 @@ and a spec writer verifying a table needs to compare with them.
 - Decisions 0036 and 0037 keep their rules; the exit verifiers' comparisons with the spec
   counts on the owner's install are the strict-mode run.
 
+## Implementation notes (2026-10-31, after review)
+Engineering choices inside the decision, not changes to it:
+- The baseline key is computed only from readers that succeed: an archive whose header check
+  fails or that does not open, or a lookup, read or parse of a version record that fails,
+  fails the census; only a record that is absent is an input of the fingerprint. So a
+  dat-layer regression on an unchanged install cannot move every census to a new key that
+  passes. The "no baseline yet" message lists each archive's input.
+- A test finishes its census after its last rule check, so a run that breaks a rule writes
+  no baseline (a panic before `finish` writes nothing).
+- Tests that sample in debug builds record no census in a sampled run, so the build profile
+  never decides the baseline.
+- A census directory at or under the game install is refused, as one inside a work tree is.
+
 ## Open
 - The tests that pinned counts are converted one by one; until a test is converted it keeps
   its pinned numbers.

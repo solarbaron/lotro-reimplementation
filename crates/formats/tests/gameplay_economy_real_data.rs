@@ -748,7 +748,8 @@ fn target_table(
 
 /// The E-I2 references outside a field's class list that the `economy.md` §12 OPEN records
 /// (install of 2026-10-31): class-3924 items (`items.md` §2.1) in an item field, and
-/// recipes (1024) named as ingredients. Counted, not failed.
+/// recipes (1024) named as ingredients. Counted, not failed: a Tessera interim rule until a
+/// spec writer answers that OPEN (the spec's E-I2 has no exceptions).
 fn open_e_i2_exception(label: &str, class: u32, classes: &[u32]) -> bool {
     (class == 3924 && classes.contains(&796))
         || (label == "CraftRecipe_Ingredient" && class == 1024)
@@ -1784,6 +1785,7 @@ fn economy_family_census_and_invariants() {
         economy.len(),
         started.elapsed()
     );
-    census.finish();
     assert!(broken.is_empty(), "economy invariants broken: {broken:?}");
+    // After every rule check: a failing run writes no baseline.
+    census.finish();
 }

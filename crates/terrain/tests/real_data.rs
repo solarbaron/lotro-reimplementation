@@ -373,7 +373,7 @@ fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut St
                 // A chunk whose index list is longer than a u16 `start` addresses stores
                 // windows that are not mesh triangles (`landblock.md` §3.8.2 OPEN; drawn
                 // never, `terrain.md` §7 Decision (6)); anywhere else every stored triangle
-                // is one.
+                // is one. The exception is a Tessera interim rule until that OPEN is answered.
                 let long = data.terrain.indices.len() > usize::from(u16::MAX);
                 for l in &layers {
                     for t in l.indices.as_chunks::<3>().0 {

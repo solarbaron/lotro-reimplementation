@@ -320,9 +320,10 @@ fn liquid_world_position_rule() {
     );
     let mut census = census("liquid_world_position_rule");
     census.count_vs_spec("liquid-distortion records (W52)", liquids.len(), 4);
-    census.finish();
     assert_eq!(world, [0x2B00_0442], "rule (i)");
     assert_eq!(no_type5, world, "rule (ii) selects the same record");
+    // After every rule check: a failing run writes no baseline.
+    census.finish();
 }
 
 #[test]

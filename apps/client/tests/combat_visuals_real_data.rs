@@ -265,7 +265,10 @@ fn every_particle_node_reached_by_combat_records_names_an_existing_record() {
     }
     // §10.5: the counts of §10.2's first row (this test's key set is narrower than §10.2's,
     // implementer OPEN of §10.5), checked against this install's local census baseline
-    // (decision 0045).
+    // (decision 0045). The former floor of 95 % of the spec's figure is gone on purpose: on
+    // an unchanged install the baseline catches any drop, and on the first run after a game
+    // update a drop shows as drift only, which decision 0045 accepts. `got > 0` stays a rule
+    // check so the checks above are never vacuous.
     let mut census = tessera_testkit::census!(
         "every_particle_node_reached_by_combat_records_names_an_existing_record",
         &dir

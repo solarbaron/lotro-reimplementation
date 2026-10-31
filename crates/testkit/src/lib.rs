@@ -15,7 +15,15 @@
 //!   short level-1 content fingerprint (`install-layout.md` §9.4), else `schema-` and the
 //!   short level-0 one, as for the tier-2 goldens of decision 0031. A directory inside a git
 //!   work tree is refused (the nearest existing ancestor is canonicalised and it and every
-//!   ancestor are checked for a `.git` entry).
+//!   ancestor are checked for a `.git` entry), and so is one at or under the game install.
+//! - **Version inputs:** an absent version record is an input of the fingerprint, a failed
+//!   reader is not: an archive whose header check fails or that does not open, or a lookup,
+//!   read or parse of a version record that fails, makes [`Census::open`] return
+//!   [`CensusError::VersionInput`], so a dat-layer regression fails the census instead of
+//!   moving it to a new install version that passes. The "no baseline yet" message lists
+//!   what each archive contributed.
+//! - **Order:** call [`Census::finish`] after the test's last rule assertion, so that a run
+//!   whose rule checks fail writes no baseline (a panic before `finish` writes nothing).
 //! - **Baseline present:** every recorded name must match it exactly; a missing or extra
 //!   name, or any differing value, fails with a table of name, baseline and observed.
 //! - **No baseline yet** (first run on an install version): the baseline is written
@@ -52,7 +60,9 @@ mod tests;
 pub use census::{
     Against, Census, CensusError, Count, DriftRow, Failure, Options, Outcome, Row, default_base,
 };
-pub use version::{check_outside_work_trees, install_version, is_version_name};
+pub use version::{
+    check_outside_install, check_outside_work_trees, install_version, is_version_name,
+};
 
 /// Opens the census of one test function of the calling crate:
 /// `census!(function, game_dir)` is [`Census::open`] with the calling package's name and

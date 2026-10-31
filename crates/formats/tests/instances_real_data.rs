@@ -945,6 +945,7 @@ fn instances_census() {
     for p in problems.iter().take(20) {
         eprintln!("  {p}");
     }
-    census.finish();
     assert!(problems.is_empty(), "{} reference problems", problems.len());
+    // After every rule check: a failing run writes no baseline.
+    census.finish();
 }

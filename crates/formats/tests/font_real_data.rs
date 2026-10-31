@@ -358,10 +358,10 @@ fn every_font_decodes_with_the_census() {
     c.count_vs_spec("§3.3 largest advance", max_advance, 37);
     let zero_width = all().filter(|g| g.width == 0).count();
     c.count_vs_spec("§3.3 glyphs with W = 0", zero_width, 8);
-    c.finish();
 
     if fonts.len() != SPEC_RECORDS || glyphs != SPEC_GLYPHS {
         println!("install differs from the spec's census build; record identities not asserted");
+        c.finish();
         return;
     }
     // §3.1.
@@ -408,4 +408,6 @@ fn every_font_decodes_with_the_census() {
             f.did
         );
     }
+    // After every rule check: a failing run writes no baseline.
+    c.finish();
 }

@@ -6,7 +6,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::version::{check_outside_work_trees, install_version, is_version_name};
+use crate::version::{
+    check_outside_install, check_outside_work_trees, is_version_name, version_with_inputs,
+};
 
 /// Base directory variable.
 const ENV_DIR: &str = "TESSERA_CENSUS_DIR";
@@ -136,6 +138,32 @@ pub enum CensusError {
     /// The install version of the game directory could not be computed.
     #[error("the install version of {} cannot be computed", .0.display())]
     NoVersion(PathBuf),
+    /// An archive of the install, or one of its version records, could not be read: a
+    /// reader failed (a record that is absent is not an error), so no census key is chosen.
+    #[error(
+        "the install version cannot be computed: {}: {reason}; a reader failed, so the census \
+         chooses no baseline key (decision 0045)",
+        archive.display()
+    )]
+    VersionInput {
+        /// The archive.
+        archive: PathBuf,
+        /// What failed.
+        reason: String,
+    },
+    /// The census directory lies in the game install.
+    #[error(
+        "census directory {} is inside the game install {}; refused (real-data tests never \
+         write to the install)",
+        dir.display(),
+        install.display()
+    )]
+    InsideInstall {
+        /// The refused directory.
+        dir: PathBuf,
+        /// The install (canonical).
+        install: PathBuf,
+    },
     /// An I/O failure.
     #[error("{}: {source}", path.display())]
     Io {
@@ -330,6 +358,9 @@ pub struct Census {
     entries: Vec<Entry>,
     seen: BTreeSet<String>,
     invalid: Vec<String>,
+    /// What went into the install version, one line per archive (empty for
+    /// [`Census::open_with`]).
+    inputs: Vec<String>,
     finished: bool,
 }
 
@@ -363,16 +394,20 @@ impl Census {
     /// [`Options::from_env`]. `test` is the test binary's crate name (see [`crate::census!`]).
     ///
     /// # Errors
-    /// No install version, invalid components, or a directory inside a git work tree.
+    /// No install version or a failed version reader ([`crate::install_version`]), invalid
+    /// components, or a census directory inside a git work tree or inside the install.
     pub fn open(
         package: &str,
         test: &str,
         function: &str,
         game_dir: &Path,
     ) -> Result<Self, CensusError> {
-        let version =
-            install_version(game_dir).ok_or_else(|| CensusError::NoVersion(game_dir.into()))?;
-        Self::open_with(package, test, function, &version, Options::from_env())
+        let (version, inputs) = version_with_inputs(game_dir)?;
+        let options = Options::from_env();
+        check_outside_install(&options.base, game_dir)?;
+        let mut census = Self::open_with(package, test, function, &version, options)?;
+        census.inputs = inputs;
+        Ok(census)
     }
 
     /// Opens a census for an install version the caller computed, with explicit options.
@@ -410,6 +445,7 @@ impl Census {
             entries: Vec::new(),
             seen: BTreeSet::new(),
             invalid: Vec::new(),
+            inputs: Vec::new(),
             finished: false,
         })
     }
@@ -580,6 +616,13 @@ impl Census {
             self.baseline.display(),
             entries.len()
         );
+        if !self.inputs.is_empty() {
+            eprintln!(
+                "census: install version {} computed from:\n  {}",
+                self.version,
+                self.inputs.join("\n  ")
+            );
+        }
         let previous = self.baseline.parent().and_then(|dir| {
             let (version, path) = previous_baseline(dir, &self.version)?;
             match read_baseline(&path) {

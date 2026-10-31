@@ -622,7 +622,8 @@ fn layers_resolve_and_masks_are_a8() {
         eprintln!("FAIL {f}");
     }
     // Rules: no unresolved key, quad value or stream failure; rejected triangles only in
-    // chunks longer than a u16 `start` addresses (`landblock.md` §3.8.2 OPEN).
+    // chunks longer than a u16 `start` addresses (a Tessera interim rule while the
+    // `landblock.md` §3.8.2 OPEN is unanswered; `terrain.md` §7 Decision (6)).
     assert!(all.failures.is_empty(), "{} failures", all.failures.len());
     assert_eq!(
         all.rejected.iter().sum::<usize>(),

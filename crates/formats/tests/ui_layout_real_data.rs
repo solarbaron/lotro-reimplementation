@@ -577,7 +577,6 @@ fn every_ui_layout_decodes_with_the_census() {
         })
         .count();
     c.count_vs_spec("§3.2 layouts reached by none", reached_by_none, 1);
-    c.finish();
 
     // UL21: `containerdisplay` holds PlayerBag1..6_Template, each resolving to UIScaler and
     // none named by a base reference.
@@ -613,4 +612,6 @@ fn every_ui_layout_decodes_with_the_census() {
         }
         assert_eq!(named, 0, "UL21: {name} is not a base");
     }
+    // After every rule check: a failing run writes no baseline.
+    c.finish();
 }

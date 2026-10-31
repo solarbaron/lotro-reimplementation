@@ -118,8 +118,10 @@ well, and the client's tests enable `tessera-compat`'s `test-support` feature, w
 build must never contain (§6.1). `tools/check-release-features.sh` checks the normal
 dependency graph (`cargo tree -p tessera-client -e features,normal -i tessera-compat`, default
 and all features) and fails if the feature is in it; `--self-test` checks that it catches the
-feature on fixture workspaces (OE-T22). CI and `tools/ci-local.sh` run both as the job
-`release-features`.
+feature on fixture workspaces (OE-T22). It also fails when the dev-only
+`tessera-testkit` (decision 0045) is in a normal or build graph of a shipped package
+(client, explorer, dattool, server, load tester). CI and `tools/ci-local.sh` run both as the
+job `release-features`.
 
 ### Running the CI checks locally
 
@@ -439,8 +441,14 @@ Real-data tests that count records, sites or categories record those counts with
 helper (`tessera_testkit::Census`, [decision 0045](decisions/0045-census-local-baselines.md))
 instead of pinning numbers. The counts of one install version are kept in a local baseline,
 `${TESSERA_CENSUS_DIR:-${XDG_CACHE_HOME:-~/.cache}/tessera/census}/<package>/<test>/<function>/<install version>.tsv`
-(the install version of the goldens above), never committed and refused inside a work tree.
-Rule checks (no failures, nothing misclassified, invariants) stay strict assertions.
+(the install version of the goldens above), never committed and refused inside a work tree
+or inside the install. Rule checks (no failures, nothing misclassified, invariants) stay
+strict assertions; a test finishes its census after its last rule check, so a run whose rule
+checks fail writes no baseline. Tests that sample in debug builds (every *n*-th record unless
+`TESSERA_FULL=1`) record no census in a sampled run, so debug and release runs share one
+baseline. An archive or version record that cannot be read fails the census instead of
+choosing a new install version, and the "no baseline yet" message lists what each archive
+gave the version: a new version that appears without a game update is a finding.
 
 - **Baseline present:** every count must match it exactly; a missing, extra or differing
   count fails with a table of name, baseline and observed. Without an install update that is

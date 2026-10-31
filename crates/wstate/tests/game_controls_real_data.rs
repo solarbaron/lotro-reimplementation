@@ -417,6 +417,7 @@ fn entry_kinds_and_scope() {
         classes.len()
     );
     census.count_vs_spec("GC2 root classes", classes.len(), 97);
+    assert!(bytes > 0, "GC2: bytes of object state and property set");
     census.count_vs_spec("GC2 bytes of object state and property set", bytes, 338_903);
 
     // Kinds of the spec's groups.

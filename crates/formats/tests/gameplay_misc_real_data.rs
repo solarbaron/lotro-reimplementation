@@ -202,8 +202,11 @@ fn compositors() {
                 .map(|c| (l.layer_key, c.colour_key))
         })
         .collect();
-    assert!(
-        zero_mask_keys.len() <= 1,
+    // §3.4 states that zero-mask entries exist (121 in the spec's install) and that they all
+    // share one key pair, so there is exactly one.
+    assert_eq!(
+        zero_mask_keys.len(),
+        1,
         "§3.4: zero-mask entries share one key pair"
     );
     assert!(
@@ -445,7 +448,10 @@ fn compositor_controls() {
         controls.extend(CompositorControl::find_all(&ed.properties, &pids));
         descriptors += 1;
     }
-    // Every 0x47 record parses (above).
+    // Every 0x47 record parses (above). A rule check, not a count: an empty range would leave
+    // the checks below vacuous.
+    assert!(descriptors > 0, "entity descriptors");
+    assert!(!controls.is_empty(), "compositor controls (§3.7)");
     c.count_vs_spec("entity descriptors", descriptors, 40_643);
     c.count_vs_spec("compositor controls", controls.len(), 218);
     assert!(controls.iter().all(|c| {
@@ -561,17 +567,22 @@ fn ui_scenes() {
 // §5 imposter tables
 // ---------------------------------------------------------------------------------------------
 
-/// How a non-empty imposter table lays out its atlas.
+/// How a non-empty imposter table relates to the cell rule and the cell size of MR5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum AtlasLayout {
     /// §5.2 and §5.4 (MR5): the *i*-th entry in cell (*i* mod 16, ⌊*i* / 16⌋), cells of
-    /// (31/32) / grid.
+    /// (31/32) / grid; checked in full.
     Spec,
-    /// Observed after the 2026-10-31 update and not in the spec (`misc-records.md` §5.4
-    /// OPEN): the *i*-th entry in cell (*i* mod 15, ⌊*i* / 15⌋), `cell_u` and `cell_v` one
-    /// whole 128-texel cell of the top-level atlas.
-    FifteenColumns,
+    /// Tessera interim rule while the `misc-records.md` §5.4 OPEN (2026-10-31) is
+    /// unanswered: a table that breaks only the MR5 cell rule or cell size is an OPEN
+    /// exception, counted and reported, not checked against any other layout (the spec
+    /// states none). Every other part of MR5 still holds for it.
+    OpenException,
 }
+
+/// The note printed when a table is an [`AtlasLayout::OpenException`].
+const IMPOSTER_OPEN: &str = "misc-records.md §5.4 OPEN (2026-10-31): tables breaking the MR5 \
+                             cell rule or cell size are counted as exceptions, not checked";
 
 #[test]
 fn imposter_tables() {
@@ -580,6 +591,8 @@ fn imposter_tables() {
     };
     let data = store.game_data();
     let recs = records(data.source(), 0x2700_0000, 0x2800_0000);
+    // A rule check, not a count: an empty range would leave the checks below vacuous.
+    assert!(!recs.is_empty(), "imposter tables");
     census.count_vs_spec("imposter tables", recs.len(), 507);
     let mut tables = Vec::new();
     for (_, did, payload) in &recs {
@@ -607,10 +620,12 @@ fn imposter_tables() {
         tables.iter().map(|t| t.entries.len()).max().unwrap_or(0),
         128,
     );
-    // MR5 for every table. The cell rule and the cell size have a second form in the data
-    // (`AtlasLayout::FifteenColumns`), checked against the atlas below; every other part of
-    // MR5 holds for all tables.
+    // MR5 for every table. A table that breaks only the cell rule or the cell size is an
+    // OPEN exception (`misc-records.md` §5.4 OPEN; Tessera interim rule): counted, and the
+    // parts of MR5 that `first_unusual_field` checks after the cell rule (both atlases) are
+    // checked for it here. Any other MR5 failure fails the test.
     let mut layouts: HashMap<Did, AtlasLayout> = HashMap::new();
+    let mut fifteen_per_row = 0usize;
     for t in &tables {
         let layout = match t.first_unusual_field() {
             None => AtlasLayout::Spec,
@@ -618,17 +633,17 @@ fn imposter_tables() {
                 "entry cell is not (i mod 16, i / 16) (MR5)"
                 | "cell size is not (31/32) / grid (MR5)",
             ) => {
-                let fifteen =
-                    t.entries.iter().enumerate().all(|(i, e)| {
-                        usize::from(e.column) == i % 15 && usize::from(e.row) == i / 15
-                    });
-                assert!(fifteen, "{}: entry cells in neither layout (MR5)", t.did);
                 assert!(
                     !t.colour_atlas.is_null() && !t.second_atlas.is_null(),
                     "{}: non-empty table without both atlases (MR5)",
                     t.did
                 );
-                AtlasLayout::FifteenColumns
+                // An observation for the OPEN, counted, not a rule.
+                fifteen_per_row +=
+                    usize::from(t.entries.iter().enumerate().all(|(i, e)| {
+                        usize::from(e.column) == i % 15 && usize::from(e.row) == i / 15
+                    }));
+                AtlasLayout::OpenException
             }
             Some(other) => panic!("{}: {other}", t.did),
         };
@@ -641,6 +656,17 @@ fn imposter_tables() {
         "non-empty tables with layout",
         &histogram(layouts.values().copied()),
         &[(AtlasLayout::Spec, 300)],
+    );
+    let exceptions = layouts
+        .values()
+        .filter(|l| **l == AtlasLayout::OpenException)
+        .count();
+    if exceptions > 0 {
+        eprintln!("imposter tables: {exceptions} MR5 exceptions; {IMPOSTER_OPEN}");
+    }
+    census.count(
+        "MR5 exceptions (§5.4 OPEN) with entries 15 per row",
+        fifteen_per_row,
     );
     let multi = tables.iter().filter(|t| t.entries.len() >= 2).count();
     census.count_vs_spec("tables with two or more entries", multi, 289);
@@ -674,6 +700,7 @@ fn imposter_tables() {
     assert_eq!(empty.len() + full.len(), tables.len());
     census.count_vs_spec("non-empty tables", full.len(), 300);
     let mut lists = 0;
+    let mut atlas_cell = 0usize;
     for t in &full {
         let mut formats = Vec::new();
         let mut sizes = Vec::new();
@@ -699,30 +726,22 @@ fn imposter_tables() {
             Some(AtlasLayout::Spec) => {
                 assert_eq!(Some((w, h)), t.atlas_texels(), "{} (§5.4)", t.did);
             }
-            Some(AtlasLayout::FifteenColumns) => {
-                // One cell of `cell_u` × `cell_v` is 128 × 128 texels of the atlas.
-                assert!(w % 128 == 0 && h % 128 == 0, "{}: atlas size", t.did);
+            Some(AtlasLayout::OpenException) => {
+                // The §5.4 geometry is not checked (the spec states none for these
+                // tables); an observation for the OPEN is counted.
                 let one =
                     |cell: f32, texels: u32| (cell * (texels / 128) as f32 - 1.0).abs() <= 1.0e-6;
-                assert!(
-                    one(t.cell_u, w) && one(t.cell_v, h),
-                    "{}: cell size is not one atlas cell",
-                    t.did
-                );
-                let used = t
-                    .entries
-                    .iter()
-                    .map(|e| (u32::from(e.column) + 1, u32::from(e.row) + 1))
-                    .fold((0, 0), |a, b| (a.0.max(b.0), a.1.max(b.1)));
-                assert!(
-                    used.0 <= w / 128 && used.1 <= h / 128,
-                    "{}: entry cells outside the atlas",
-                    t.did
+                atlas_cell += usize::from(
+                    w % 128 == 0 && h % 128 == 0 && one(t.cell_u, w) && one(t.cell_v, h),
                 );
             }
             None => unreachable!("every non-empty table has a layout"),
         }
     }
+    census.count(
+        "MR5 exceptions (§5.4 OPEN) with a cell of one 128-texel atlas cell",
+        atlas_cell,
+    );
     assert_eq!(
         lists,
         2 * full.len(),

@@ -31,6 +31,7 @@ members = [
     "crates/particles",
     "crates/gamedata",
     "crates/compat",
+    "crates/testkit",
     "apps/dattool",
     "apps/client",
     "apps/explorer",
@@ -77,6 +78,8 @@ tessera-scriptgraph = { path = "crates/scriptgraph" }
 tessera-particles = { path = "crates/particles" }
 tessera-gamedata = { path = "crates/gamedata" }
 tessera-compat = { path = "crates/compat" }
+# Dev-only test helpers (decision 0045); only ever a dev-dependency.
+tessera-testkit = { path = "crates/testkit" }
 
 anyhow = "1"
 bitflags = "2"

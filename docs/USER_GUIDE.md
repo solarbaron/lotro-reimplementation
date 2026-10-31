@@ -1395,6 +1395,7 @@ Nothing goes into the install directory.
 | Headless screenshots, sheets, frame and walk logs | wherever you point `--screenshot`, `--sheet`, `--frame-log`, `--walk-log` | |
 | Timing reports of `--scenario-timing` runs (§3.19) | wherever you point `--ui-report` (and `--frame-log` for the frames) | |
 | Local golden images of real-data panel tests, the parity tooltip images and their index (§3.14, §3.19) | `~/.cache/tessera/goldens/<package>/<test>/<function>/<install version>/` (`$XDG_CACHE_HOME/tessera/goldens`; never inside a git work tree) | `TESSERA_GOLDEN_DIR` |
+| Local census baselines of real-data tests and their drift reports (decision 0045) | `~/.cache/tessera/census/<package>/<test>/<function>/<install version>.tsv` and `~/.cache/tessera/census/drift/` (`$XDG_CACHE_HOME/tessera/census`; never inside a git work tree) | `TESSERA_CENSUS_DIR` |
 
 On other systems the settings file (and the keymap beside it) lives in the platform's
 usual per-user configuration directory, under `tessera/`. The data folder follows the same

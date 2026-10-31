@@ -4483,6 +4483,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessera-testkit"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "tessera-dat",
+ "tessera-install",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "tessera-text"
 version = "0.1.0"
 dependencies = [
@@ -4549,6 +4559,7 @@ dependencies = [
  "tessera-dat",
  "tessera-formats",
  "tessera-props",
+ "tessera-testkit",
  "tessera-wstate",
  "thiserror 2.0.21",
  "tracing",

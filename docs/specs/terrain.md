@@ -393,6 +393,15 @@ Layer textures use the world-space coordinate sets of `terrain-texturing.md` §6
   the surface's vertex streams are finite with downward ceiling normals. The worked
   example of `terrain-texturing.md` §14 is reproduced exactly
   (`crates/terrain/tests/worked_example.rs`).
+
+  > **OPEN (clean-room implementer, 2026-10-31):** after the game update the install has
+  > 1,284 rejected layer triangles (19 layers of three region-6 terrain chunks whose index
+  > lists exceed 65,535 entries), so "0 rejected" and "none in the install" in §7
+  > Decision (6) and above no longer hold. The format question is the OPEN of
+  > `landblock.md` §3.8.2. Meanwhile Decision (6) stands (not drawn, counted, logged); the
+  > real-data tests check that rejected triangles occur only in such chunks, and the
+  > figures of this section are compared with each install's local census baseline
+  > (decision 0045).
 - Fuzzing: `terrain_layers` (layer resolution, draw records, level-of-detail lists, vertex
   streams, texture frame and masks on hostile tables and chunks) and `terrain_mesh`
   (meshing, normals, shading, queries, selection, tiles, splat conversion on arbitrary
@@ -542,3 +551,4 @@ and marks those sides final, not provisional.
 | 2026-10-06 | Implementer (clean room), M4.5 code-review fixes: §7 Tessera Decisions (6)–(10) (rejected stored triangles, level-of-detail lists in the surface's winding, shared `whole` lists and per-chunk warnings, logged mask rejection, finite layer transform); §9 OPEN on the stale ceiling and height-scale sentences and the header. Not yet reviewed. |
 | 2026-10-08 | Spec writer (dirty room; M1 probe OBS-T and M4 BIN-T under decision 0011, §0.3). Status Accepted → Revised. §0: rows TR16–TR23, new §0.3. §1: ceiling bullet matches §7; the "one conversion" OPEN answered by stating the implemented two-step rounding as the Tessera Decision. §5: **normals now follow the original's rule** (`landblock.md` §3.14: mean of unit triangle normals, diagonal neighbours at corners, missing-block triangles left out, no renormalisation, mirrored ceiling rule); fixed summation order for bit identity; region-border sides final; the central-difference rule kept as superseded until the code follows. §8: seam figures replaced by the implementer's 2026-10-06 run (east and north seams), OPEN closed; note on diagonal neighbours. §9: OPENs answered — stale statements, ceiling normals, terrain normals, region edges; texture origin and draw distance partly answered (far radius by graphics level, sector radius, near radius 1, reference landblock held by the sector manager, player position as load position) with narrowed OPENs. The M3 criterion-3 evidence in `docs/ROADMAP.md` (east seams only) is for that file's owner to update. |
 | 2026-10-08 | Spec reviewer (not the writer of the 2026-10-08 revision): review passed; Status Revised → Accepted. Record in the review log. |
+| 2026-10-31 | Implementer (clean room), after the game update of that date: OPEN filed in §8 (1,284 rejected layer triangles; the format question is the OPEN of `landblock.md` §3.8.2); §7 Decision (6) unchanged. Not yet reviewed. |

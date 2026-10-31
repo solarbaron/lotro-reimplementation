@@ -1520,6 +1520,20 @@ on synthetic fixtures and may warn (not fail) when real data breaks one.
 | E-I17 | For every NPC, `Vendor_ItemList` equals the list that the hash-set rule of §6.3.1 builds from its inventories. |
 | E-I18 | Every `CraftRecipe_CooldownDuration` key used by a recipe has an entry in the CooldownControl duration map (§11.5.3), and the map's object form equals its property list. |
 
+> **OPEN:** (implementer, 2026-10-31, after the game update of that date) E-I2 no longer
+> holds for nine references of the install. (a) Six item fields name records of root class
+> 3924 (the property-modifying tokens of `items.md` §2.1, an item class that the item list
+> of §1 does not name): four `Barter_Item` costs or rewards, one `VendorInventory_Items`
+> entry and one `Vendor_ItemList` entry. (b) Three `CraftRecipe_Ingredient` entries name
+> records of root class 1024, that is recipes, not items. Open: whether 3924 belongs to the
+> item classes of §1 for every item field (and what a vendor or barter window shows for
+> it), and what a recipe named as an ingredient means (what the crafting panel shows, and
+> whether it counts toward the ingredient checks of §5.1). Meanwhile Tessera decodes both
+> as stored, gives the recipe ingredients no meaning, and its real-data E-I2 check counts
+> class-3924 records in a field that takes items, and recipes named as ingredients, as
+> exceptions instead of failing on them; any other class outside a field's list still
+> fails E-I2.
+
 ---
 
 <a id="s13"></a>
@@ -1721,3 +1735,4 @@ Data questions:
 | 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 and rows E1–E3. Answered the three implementer OPENs: §4.5/§4.8 type codes of the world-event condition fields (E1), §4.9 the stored `RunicLevelLootTable_Level` (E2), §6.2 `Usage_MinLevel` never stored in both places, top level first by decision (E3). Still OPEN (server behaviour or owner observation): the munge-level override, loot rolls, random generator and descent order, runic pulls, level index, filtered lists, species tables, critical crafts, craft XP, execution time, sale price, money drops and their unit, profession attributes, PVP key, reward-once set. |
 | 2026-10-10 | Notes only (no fact changed), for P3 (`npc-windows.md`): §7 order of the currency directory's two forms; §6.1 barter costs that are wallet items. Status unchanged. |
 | 2026-10-16 | Notes only (no fact changed), for P6 (`crafting-panels.md`): §15 recipe name rule, description getters, execution time against induction duration, tool and facility tests. Status unchanged. |
+| 2026-10-31 | Implementer (clean room), after the game update of that date: OPEN filed after the invariants table of §12 (E-I2 broken by nine references: class 3924 in item fields, class 1024 as recipe ingredients), with the interim Tessera rule of the real-data check. No fact changed; not yet reviewed. |

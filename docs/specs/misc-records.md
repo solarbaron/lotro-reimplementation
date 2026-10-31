@@ -698,6 +698,25 @@ applied when the colour atlas's texture object carries a renderer-internal flag 
 graphics device reports a capability; neither comes from the data. Tessera rule: never apply
 the vertical flip.
 
+> **OPEN:** (implementer, 2026-10-31, after the game update of that date) The install's
+> non-empty imposter tables no longer follow the cell rule of §5.2 and the geometry of
+> this section. Of 607 tables, the 297 empty ones are unchanged; all 310 non-empty ones
+> (in every region, 223 of them with more than 15 entries) store the *i*-th entry in cell
+> (*i* mod 15, ⌊*i* / 15⌋) instead of (*i* mod 16, ⌊*i* / 16⌋), and their `cell_u` and
+> `cell_v` are one whole 128-texel cell of the top-level atlas (`cell_u` × width / 128 =
+> `cell_v` × height / 128 = 1, no 31/32 margin). The atlases are larger than the formula
+> above gives: observed column counts 2, 4, 8, 16 with 1, 2–3, 4–7, 8–15 entries in the
+> first row, and row counts 2, 4, 8, 16 with 1, 2–3, 4–7, 8–9 rows used, so one column and
+> one row of cells appear to stay free. Both lists are still 4-level mip chains, DXT5 and
+> DXT1, of equal size. Open: (a) the cell step and texture coordinates the client now uses
+> for these tables (I7's step = `cell_u` + `cell_u` / 31 would no longer land on the
+> cells); (b) whether the free column and row and the 31/32 margin of MR13 still mean
+> anything (MR13 not re-measured); (c) whether the client tells the two layouts apart by a
+> stored value or by the cell size alone. Meanwhile Tessera decodes the tables unchanged,
+> uses each entry's stored (`column`, `row`) with the I7 rule as written, and its real-data
+> test accepts either layout (the second one checked as observed above) and counts how many
+> tables use each.
+
 ---
 
 <a id="s6"></a>
@@ -1584,3 +1603,4 @@ These are proposals for the owners of those specs; this session edits only this 
 | 2026-10-11 | Policy wording only, after [decision 0034](../decisions/0034-official-server-compatibility.md); no fact changed, nothing re-measured, status unchanged. "Purpose", provenance row CD1, §11 and the OPEN callouts of §11 and §19 on the compression dictionaries no longer say they are behind the M8 gate: the owner set that gate aside on 2026-10-11, and the dictionaries' body and field meanings are now M8 research within decision 0034 §2. The statement that no BIN reading was done for them stays true. |
 | 2026-10-23 | Spec writer (dirty room; no probe of its own beyond re-reading scene 0x21000004 for the answer in `ui-widgets.md` §12.2). §4.2: the round-3 implementer OPEN on the portrait stand-in camera filed and answered by reference. Status Accepted → Revised, awaiting independent review. No record fact or rule changed. |
 | 2026-10-23 | Independent review (spec-review:spec-ui-r4:3 (independent session)) of the round-4 revision: **passed**, CLEAN_ROOM.md §5.3 every item; contamination screen clean; status Revised → Accepted. Header status and review record only; no other text changed. |
+| 2026-10-31 | Implementer (clean room), after the game update of that date: OPEN filed at the end of §5.4 (non-empty imposter tables no longer follow the cell rule of §5.2), with the interim Tessera rule of the real-data test. No fact changed; not yet reviewed. |

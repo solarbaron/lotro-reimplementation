@@ -1002,8 +1002,8 @@ fn the_keep_alive_leaves_the_queue_panel_alone() {
 }
 
 /// pending §25 fix 12: a packet that stays refused while the server keeps sending ends the
-/// attempt, by the age of its gap. Reached on the version path, whose wait is longer than the gap's:
-/// on the `0xDD` path §9.3.7's waits end the attempt first.
+/// attempt, by the age of its gap, with §9.3.7's one Disconnect. Reached on the version path, whose
+/// wait is longer than the gap's: on the `0xDD` path §9.3.7's waits end the attempt first.
 #[test]
 fn a_gap_that_stays_open_ends_the_attempt() {
     let (world, mut d, mut login) = connected();
@@ -1022,10 +1022,47 @@ fn a_gap_that_stays_open_ends_the_attempt() {
         assert!(!d.ended(), "{t}");
         t += 10.0;
     }
+    world.take_sent();
     d.step(1.0 + MAX_GAP_AGE_SEC + 0.1, false, &go);
     d.step(1.0 + MAX_GAP_AGE_SEC + 0.2, false, &go);
+    let sent = sent_packets(&world);
+    assert_eq!(
+        sent.iter().filter(|p| p.opt_headers.disconnect).count(),
+        1,
+        "{sent:?}"
+    );
     assert_refused(&mut d, UnsupportedNegotiation::TrafficRefused);
     assert_no_ticket_after(&world, &mut d, 1.0 + MAX_GAP_AGE_SEC + 1.0);
+}
+
+/// §9.3.7's one Disconnect holds at the character list too: the stall ends the session there, not
+/// as a login refusal.
+#[test]
+fn a_gap_that_stays_open_at_the_list_sends_one_disconnect() {
+    let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
+    let _ = d.take_events();
+    login.seq += 1;
+    let _ = login.isaac.next_mask();
+    world.deliver(queue1(&mut login, 0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+    d.step(1.0, true, &go);
+    let mut t = 2.0;
+    while t < 1.0 + MAX_GAP_AGE_SEC {
+        world.deliver(queue1(&mut login, 0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+        d.step(t, true, &go);
+        assert!(!d.ended(), "{t}");
+        t += 10.0;
+    }
+    world.take_sent();
+    d.step(1.0 + MAX_GAP_AGE_SEC + 0.1, false, &go);
+    d.step(1.0 + MAX_GAP_AGE_SEC + 0.2, false, &go);
+    let sent = sent_packets(&world);
+    assert_eq!(
+        sent.iter().filter(|p| p.opt_headers.disconnect).count(),
+        1,
+        "{sent:?}"
+    );
+    assert!(d.ended());
+    assert!(d.take_events().iter().any(is_disconnected));
 }
 
 /// pending §25 fix 12: datagrams that match only the source and recipient are counted and end
@@ -2030,6 +2067,286 @@ fn the_logs_report_the_stages_and_no_values() {
     // The synthetic inventory's iteration values and the opaque word of `0xDD`.
     for needle in ["10030", "10031", "16909060", "01020304"] {
         assert!(!logs.contains(needle), "{needle} logged:\n{logs}");
+    }
+}
+
+/// A list whose first property has an ID the install's dictionary does not know.
+fn list_with_unknown_property() -> Vec<u8> {
+    let mut public_props = EncodedPropertyTable::new();
+    public_props.push(0x2BAD, crate::world::EncodedPropertyValue::StringToken(1));
+    CharacterListResponse {
+        characters: vec![CharacterSummaryEntry {
+            character_id: 0x0200_0000_0000_0042,
+            name: "Aldo".to_owned(),
+            status_or_world: 0,
+            public_props,
+            private_props: EncodedPropertyTable::new(),
+            metadata_a: 0,
+            visual_desc: crate::world::EntityAppearanceDesc::default(),
+            metadata_b: 0,
+            metadata_c: u32::MAX,
+            metadata_d: 0,
+            metadata_e: u32::MAX,
+            timestamp_or_meta: 0,
+        }],
+        account_props: EncodedPropertyTable::new(),
+    }
+    .to_bytes()
+    .expect("list")
+}
+
+/// §9.3.7: a diagnostic that contains no service data. What refused a message is logged as its
+/// kind, at every level; a wrong property ID, a short read, stray bytes or a flags byte are the
+/// server's values.
+#[test]
+fn a_refused_message_logs_its_kind_and_no_value() {
+    let ((), logs) = logs_of(|| {
+        let refused = |opcode: u32, data: &[u8]| {
+            let (world, mut d, mut login) = connected();
+            world.deliver(queue1(&mut login, opcode, data), LOGIN_SERVER);
+            d.step(0.1, true, &go);
+            assert!(d.ended(), "{opcode:#x}");
+        };
+        refused(0x6C, &list_with_unknown_property());
+        refused(0x6C, &[0x00, 0x01]);
+        let mut request = install_request(RULE, &[]);
+        request.extend_from_slice(&[0xAB; 17]);
+        refused(0xDD, &request);
+        refused(0xDD, &[0x84, 0, 0, 0, 0]);
+    });
+    for kind in [
+        "UnknownPropertyId",
+        "UnexpectedEof",
+        "TrailingBytes",
+        "InvalidEnvelopeFlags",
+    ] {
+        assert!(logs.contains(kind), "{kind} not logged:\n{logs}");
+    }
+    for needle in [
+        "11181",
+        "2bad",
+        "2BAD",
+        "byte(s)",
+        "17 trailing",
+        "0x84",
+        "132",
+    ] {
+        assert!(!logs.contains(needle), "{needle} logged:\n{logs}");
+    }
+}
+
+/// `official-entry.md` §8.1: "Leave queue" at the session's queue panel ends the session with
+/// `ClientRequested` and one Disconnect. No `0xEC` follows, whatever the server says next.
+#[test]
+fn leaving_the_queue_panel_ends_the_session_and_sends_no_advertisement() {
+    let status = LoginQueueStatusMessage {
+        login_result: crate::session::LOGON_RESULT_QUEUED,
+        detail_text: String::new(),
+        queue: Some(crate::session::LoginQueuePosition {
+            position: 3,
+            total: 9,
+        }),
+    };
+    let queued = encode_event_envelope(&status.encode().expect("encode"));
+    let (world, mut d, mut login) = connected();
+    world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
+    d.step(1.0, true, &go);
+    let _ = d.take_events();
+    world.take_sent();
+    d.command(
+        &Command::Account(tessera_net::account::AccountCommand::LeaveLoginQueue),
+        2.0,
+    )
+    .expect("carried");
+    let sent = sent_packets(&world);
+    assert_eq!(
+        sent.iter().filter(|p| p.opt_headers.disconnect).count(),
+        1,
+        "{sent:?}"
+    );
+    let events = d.take_events();
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::Disconnected {
+                reason: DisconnectReason::ClientRequested
+            }
+        )),
+        "{events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::Account(AccountEvent::LoginRefused { .. }))),
+        "{events:?}"
+    );
+    assert!(d.ended());
+    assert_eq!(d.connection_states().0, None);
+    world.deliver(
+        queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+        LOGIN_SERVER,
+    );
+    world.deliver(queue1(&mut login, 0xF5, &[0]), LOGIN_SERVER);
+    assert_no_ticket_after(&world, &mut d, 2.1);
+    assert!(d.take_events().is_empty());
+}
+
+/// §9.3.7's list is of opcodes, so a container is outside it, whatever it holds: it ends the wait
+/// for `0xF5` before what it holds is looked at, and nothing answers an `0xF5` after it.
+#[test]
+fn a_container_is_outside_the_completion_guard_whatever_it_holds() {
+    let batch_of_listed = encode_batch_container(&[(0x149, vec![0x00, 0x7F])], false).expect("one");
+    let empty_batch = encode_batch_container(&[], false).expect("empty");
+    let wrapped = crate::session::encode_single_wrapper(0x149, &[0x00, 0x7F], false).expect("one");
+    for (opcode, data) in [
+        (OPCODE_BATCH_CONTAINER, batch_of_listed),
+        (OPCODE_BATCH_CONTAINER, empty_batch),
+        (crate::session::OPCODE_SINGLE_WRAPPER, wrapped),
+        // Malformed: the same result.
+        (OPCODE_BATCH_CONTAINER, vec![0x00, 0xFF]),
+    ] {
+        let (world, mut d, mut login) = connected();
+        world.deliver(
+            queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+            LOGIN_SERVER,
+        );
+        d.step(0.1, true, &go);
+        world.take_sent();
+        world.deliver(queue1(&mut login, opcode, &data), LOGIN_SERVER);
+        world.deliver(queue1(&mut login, 0xF5, &[0]), LOGIN_SERVER);
+        d.step(0.2, true, &go);
+        let sent = sent_packets(&world);
+        assert!(opcodes(&sent).is_empty(), "{opcode:#x} {data:x?}");
+        assert_eq!(
+            sent.iter().filter(|p| p.opt_headers.disconnect).count(),
+            1,
+            "{opcode:#x} {data:x?}"
+        );
+        assert_refused(&mut d, UnsupportedNegotiation::UnsupportedPreparation);
+    }
+}
+
+/// §9.3.7's bounded counter: outside the guard a container's own opcode is counted once, also when
+/// it holds nothing and so reaches no per-message count, and what it holds is counted too.
+#[test]
+fn a_container_outside_the_guard_is_counted_also_when_empty() {
+    let (world, mut d, mut login) = connected();
+    let empty = encode_batch_container(&[], false).expect("empty");
+    world.deliver(
+        queue1(&mut login, OPCODE_BATCH_CONTAINER, &empty),
+        LOGIN_SERVER,
+    );
+    d.step(0.1, true, &go);
+    assert!(!d.ended());
+    assert_eq!(d.skip_counters().count(OPCODE_BATCH_CONTAINER), 1);
+    let holding = encode_batch_container(&[(0x149, vec![0x00, 0x7F])], false).expect("one");
+    world.deliver(
+        queue1(&mut login, OPCODE_BATCH_CONTAINER, &holding),
+        LOGIN_SERVER,
+    );
+    d.step(0.2, true, &go);
+    assert_eq!(d.skip_counters().count(OPCODE_BATCH_CONTAINER), 2);
+    assert_eq!(d.skip_counters().count(0x149), 1);
+}
+
+/// §9.3.7: an unreadable answer ends an entry rather than leaving it stuck, also when the envelope
+/// itself is what cannot be read; not the entry deadline's "no answer".
+#[test]
+fn an_unreadable_envelope_of_an_entry_answer_ends_the_entry() {
+    for (opcode, reason) in [
+        (0x90, UNSUPPORTED_SESSION_START),
+        (0x6D, UNSUPPORTED_ENTRY_ANSWER),
+        (0xB3, UNSUPPORTED_ENTRY_ANSWER),
+    ] {
+        for flags in [0x04u8, 0x80] {
+            let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
+            d.command(
+                &Command::EnterWorld {
+                    character: "Aldo".to_owned(),
+                },
+                1.0,
+            )
+            .expect("enter");
+            d.step(1.1, true, &go);
+            world.deliver(login.blob(opcode, &[flags, 1, 0, 0, 0]), LOGIN_SERVER);
+            d.step(1.2, true, &go);
+            let events = d.take_events();
+            assert!(
+                events.iter().any(|e| matches!(
+                    e,
+                    Event::EnterWorldFailed { reason: r, .. } if r == reason
+                )),
+                "{opcode:#x} {events:?}"
+            );
+            assert!(d.ended(), "{opcode:#x}");
+        }
+    }
+}
+
+/// A `0xB3` that cannot be read still says the server closes: at the character list too.
+#[test]
+fn an_unreadable_envelope_of_an_eviction_ends_the_session_at_the_list() {
+    let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
+    world.deliver(login.blob(0xB3, &[0x04, 1, 0, 0, 0]), LOGIN_SERVER);
+    d.step(1.0, true, &go);
+    let events = d.take_events();
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::Disconnected {
+                reason: DisconnectReason::ServerClosed(_)
+            }
+        )),
+        "{events:?}"
+    );
+    assert!(d.ended());
+}
+
+/// `super::super::diag`: every login that ends before its list logs the stage line, also when the
+/// server ended it.
+#[test]
+fn a_login_the_server_ends_before_the_list_logs_its_stages() {
+    let version_rejected = encode_event_envelope(
+        &VersionStatusMessage {
+            status: 0,
+            server_version_info: String::new(),
+        }
+        .encode()
+        .expect("encode"),
+    );
+    let logon_refused = encode_event_envelope(
+        &LoginQueueStatusMessage {
+            login_result: 0x8000_0001,
+            detail_text: String::new(),
+            queue: None,
+        }
+        .encode()
+        .expect("encode"),
+    );
+    let mut eviction = vec![0x00, 0x09, 0x00, 0x00, 0x00];
+    eviction.push(0x00);
+    for (opcode, data) in [
+        (0xB3, eviction),
+        (0xB3, vec![0x04, 1, 0, 0, 0]),
+        (0x12D, version_rejected),
+        (0x130, logon_refused),
+    ] {
+        let ((), logs) = logs_of(|| {
+            let (world, mut d, mut login) = connected();
+            world.deliver(
+                queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+                LOGIN_SERVER,
+            );
+            d.step(0.1, true, &go);
+            world.deliver(queue1(&mut login, opcode, &data), LOGIN_SERVER);
+            d.step(0.2, true, &go);
+            assert!(d.ended(), "{opcode:#x}");
+        });
+        assert!(
+            logs.contains("login ended before the character list"),
+            "{opcode:#x}:\n{logs}"
+        );
+        assert!(logs.contains("ec_sent=true"), "{opcode:#x}:\n{logs}");
     }
 }
 

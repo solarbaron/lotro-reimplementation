@@ -26,7 +26,9 @@
 //! - fix 12: refused transport forms are counted and only a sequence gap that stays open ends
 //!   the attempt ([`crate::session::MAX_GAP_AGE_SEC`]).
 //! - fix 17: a run list that repeats an iteration is refused, as the invariant does not say how
-//!   a repeat counts ([`AdvertisedArchive::check_invariant`]).
+//!   a repeat counts, and a stored run of one or two values is taken as stored input and written
+//!   again by the §9.3.7 run rule, though Vector 14 names that form a must-fail
+//!   ([`AdvertisedArchive::check_invariant`]).
 //! - The client's own preflight refusals beyond §9.3.7's table: fix 14 (`archive_inventory` in
 //!   the client).
 //!
@@ -282,7 +284,10 @@ impl AdvertisedArchive {
     /// increasing order. Nothing is repaired.
     ///
     /// pending §25 fix 17: the invariant does not say how a repeated iteration counts; a run
-    /// list that repeats one is refused, on the side of not sending.
+    /// list that repeats one is refused, on the side of not sending. Vector 14 says a two-value
+    /// negative run or a run of one must fail, while `install-layout.md` treats that stored form as
+    /// valid and §9.3.7 re-serializes it; labelled, it passes as stored input, and what is sent is
+    /// the canonical form.
     ///
     /// # Errors
     ///

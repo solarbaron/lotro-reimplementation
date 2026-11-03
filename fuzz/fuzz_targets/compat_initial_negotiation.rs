@@ -99,6 +99,41 @@ fn iteration_entries(archive: &AdvertisedArchive, record: &[u8], stamp: u16) {
     let _ = advertisement_order(archive.wire_identifier());
 }
 
+/// A zlib stream of one stored deflate block: `data` as it is, with a valid Adler-32, so the input
+/// reaches what follows the inflation instead of stopping at the stream's check.
+fn stored_zlib(data: &[u8], len: u16) -> Vec<u8> {
+    let mut out = vec![0x78, 0x01, 0x01];
+    out.extend_from_slice(&len.to_le_bytes());
+    out.extend_from_slice(&(!len).to_le_bytes());
+    out.extend_from_slice(data);
+    let (mut a, mut b) = (1u32, 0u32);
+    for &byte in data {
+        a = (a + u32::from(byte)) % 65_521;
+        b = (b + a) % 65_521;
+    }
+    out.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    out
+}
+
+/// Flags `0x01` (§9.3.7): the layout is measured on the inflated body, so a compressed `data`
+/// reads exactly as the plain one does, and a wrong stated length fails whatever `data` holds.
+fn compressed_request(data: &[u8]) {
+    let plain = InstallRequest::from_envelope_body(data);
+    // One stored block holds this much, below every decompression bound.
+    let Ok(len) = u16::try_from(data.len()) else {
+        return;
+    };
+    let compressed = |stated: u32| {
+        let mut out = vec![0x01];
+        out.extend_from_slice(&stated.to_le_bytes());
+        out.extend_from_slice(&stored_zlib(data, len));
+        out
+    };
+    let stated = u32::from(len);
+    assert_eq!(InstallRequest::from_data(&compressed(stated)), plain);
+    assert!(InstallRequest::from_data(&compressed(stated + 1)).is_err());
+}
+
 fuzz_target!(|data: &[u8]| {
     let parts = chunks(data);
 
@@ -113,7 +148,7 @@ fuzz_target!(|data: &[u8]| {
             other => panic!("flags {other:?} decoded"),
         }
     }
-    let _ = InstallRequest::from_envelope_body(data);
+    compressed_request(data);
 
     // The top level of `0x6C`: one flags byte, then the count, and never a false list.
     let _ = CharacterListResponse::from_envelope_body(data, &Everything);
@@ -127,8 +162,8 @@ fuzz_target!(|data: &[u8]| {
             let Ok(archive) = advertised_archive(id, part, stamp) else {
                 continue;
             };
-            assert!(stamp < 3, "stamp 3 or more is malformed");
-            if stamp < 2 {
+            assert!(stamp == 1 || stamp == 2, "every other stamp fails");
+            if stamp == 1 {
                 assert!(archive.notes.is_empty(), "no trailing part below stamp 2");
             }
             assert!(archive.check_invariant().is_ok(), "invariant 7 held");

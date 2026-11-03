@@ -172,8 +172,8 @@ pub const MAX_ORDER_GROUPS: usize = 256;
 // pending §25 fix 12: §9.3.7 makes the first refused form terminal, but does not settle the
 // validation order or scope: one unverified datagram matching the address and recipient must not
 // end a login. Until the fix says, refusals are counted and this gap is what ends a stall.
-/// How long a connected connection keeps a sequence gap open before it closes with
-/// [`DisconnectReason::UnsupportedTraffic`]. A datagram refused before anything was committed
+/// How long a connected connection keeps a sequence gap open before it sends one standalone
+/// Disconnect and closes with [`DisconnectReason::UnsupportedTraffic`]. A datagram refused before anything was committed
 /// (§9.3.7: no sequence, generator, reassembly or Ack change) leaves its sequence number
 /// missing, so while later packets keep arriving the gap would be NAKed for as long as the peer
 /// keeps answering and its retransmission keeps being refused. A gap opens only after a later
@@ -6689,6 +6689,11 @@ impl SessionConnection {
                         gaps = self.missing_gaps.len(),
                         "official session: a sequence gap stayed open; closing the connection"
                     );
+                    // §9.3.7's unsupported-transport row: one Disconnect if possible, and this is
+                    // the last moment it is, before the connection stops being State 5.
+                    if self.queue_standalone_disconnect().is_err() {
+                        tracing::debug!("official session: the closing Disconnect was not encoded");
+                    }
                     self.close(DisconnectReason::UnsupportedTraffic, now_sec);
                     return Ok(());
                 }

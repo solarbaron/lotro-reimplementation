@@ -66,6 +66,7 @@ use tessera_net::account::{
 };
 
 use crate::credentials::Credentials;
+use crate::initial::{InstallUnsupported, UnsupportedNegotiation};
 use crate::login::{
     DatacenterInfo, GameSubscription, HttpClient, HttpRequest, HttpResponse, LoginAccountResult,
     LoginError, LoginFailureClass, QueueEvaluation, QueueResult, RemoteLauncherConfig,
@@ -94,7 +95,7 @@ pub const MAX_QUEUE_POLL: Duration = Duration::from_secs(crate::login::MAX_QUEUE
 ///
 /// | Class | Category |
 /// |---|---|
-/// | `F02` local configuration | `ClientNotAccepted` (see [`local_refusal`]) |
+/// | `F02` local configuration | `UnsupportedStep` with Tessera's note (see [`local_refusal`]) |
 /// | `F03` service unavailable (maintenance included) | `ServiceUnavailable` |
 /// | `F04` rejected, account locked | `AccountNotAllowed` |
 /// | `F04` rejected, any other fault | `BadCredentials` |
@@ -114,16 +115,28 @@ pub fn login_refusal(err: &LoginError) -> LoginRefusal {
     }
 }
 
-/// The category for a missing install or a failed local discovery (`F02`, before any
-/// network operation). `official-entry.md` §8.6 has no row for it; it is not a refusal of
-/// the credentials, and the account form cannot fix it. The closest neutral category whose
-/// row returns to the start screen is `ClientNotAccepted` ("did not accept this client":
-/// this client cannot be set up from the install). Engineering choice, spec silent
-/// (question with the spec writers).
+/// The category for a missing install or a failed local discovery (`F02`, before any network
+/// operation): the start screen's `UnsupportedStep`, as §9.3.7 gives a language that is absent or
+/// unreadable, with [`LOCAL_INSTALL_NOTE`] as Tessera's own line. It is not a refusal of the
+/// credentials and nothing came from the service, so it does not read as an account fault or as
+/// the service's answer (decision 0046 item 6). The class stays in the log. pending §25 fix 7:
+/// `official-login.md` §5.1 has no preflight step and `official-entry.md` §8.6 no row for it;
+/// labelled until the fix places them.
 #[must_use]
 pub const fn local_refusal() -> LoginRefusal {
-    LoginRefusal::ClientNotAccepted
+    LoginRefusal::UnsupportedStep
 }
+
+/// Tessera's line under a [`local_refusal`].
+pub const LOCAL_INSTALL_NOTE: &str =
+    UnsupportedNegotiation::Inventory(InstallUnsupported::NotRead).detail();
+
+/// Tessera's line under an account with more than one subscription for the game: the choice has no
+/// specification, so it is a limit of Tessera's, not the account's (decision 0046 item 6). The
+/// reason stays `official-entry.md` §7.3's `UnsupportedStep`.
+pub const SEVERAL_SUBSCRIPTIONS_NOTE: &str = "This account has more than one subscription for this \
+     game, and Tessera cannot choose between them yet. This is a Tessera limit, not a fault of your \
+     account.";
 
 /// The service's own text of a failure, cleaned, for `LoginRefused.detail`
 /// (`official-entry.md` §8.6 "The service said: ⟨text⟩"): the `faultstring` of a SOAP fault.
@@ -160,6 +173,8 @@ pub fn world_refusal(err: &LoginError) -> WorldRefusal {
 pub enum LoginStop {
     /// A refusal for the user, with the service's text when there is one.
     Refused(LoginRefusal, Option<String>),
+    /// A refusal of Tessera's own, with its line: nothing in it came from the service.
+    RefusedLocally(LoginRefusal, &'static str),
     /// The backend let go; nothing more is reported.
     Cancelled,
 }
@@ -169,6 +184,9 @@ impl From<&LoginError> for LoginStop {
         // The class only: a local error's text can name a path of the user.
         tracing::info!(class = %e.failure_class(), "official login failed");
         let reason = login_refusal(e);
+        if e.failure_class() == LoginFailureClass::F02ConfigInvalid {
+            return Self::RefusedLocally(reason, LOCAL_INSTALL_NOTE);
+        }
         Self::Refused(reason, service_detail(e, reason))
     }
 }
@@ -510,11 +528,11 @@ pub fn authenticate(
         .matching_subscriptions(&local.config.datacenter_game_name)
         .map_err(|e| LoginStop::from(&e))?;
     if matching.len() != 1 {
-        tracing::info!(
-            subscriptions = matching.len(),
-            "official login: more than one subscription; Tessera has no choice for it"
-        );
-        return Err(LoginStop::Refused(LoginRefusal::UnsupportedStep, None));
+        tracing::info!("official login: more than one subscription; Tessera has no choice for it");
+        return Err(LoginStop::RefusedLocally(
+            LoginRefusal::UnsupportedStep,
+            SEVERAL_SUBSCRIPTIONS_NOTE,
+        ));
     }
     let Some(subscription) = matching.pop() else {
         return Err(LoginStop::Refused(LoginRefusal::AccountNotAllowed, None));

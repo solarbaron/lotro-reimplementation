@@ -1971,8 +1971,10 @@ impl World {
                     self.entities.remove(&id);
                 }
             }
-            Event::EnterWorldFailed { character, reason } => {
-                tracing::warn!(%character, "net: {reason}");
+            Event::EnterWorldFailed { reason, .. } => {
+                // The reason only: a character's name is account data, and on the official
+                // service every selection reaches this today (decision 0046 item 6).
+                tracing::warn!("net: {reason}");
                 // The session is back at character selection (`tessera-protocol.md`
                 // §6.2.11, Appendix A "Decision on `EnterWorldFailed`"). The character
                 // screens (manual entry) go back to the selection with the reason and the

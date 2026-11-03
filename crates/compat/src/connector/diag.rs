@@ -30,6 +30,9 @@
 //!   the counts of the messages skipped; never an identifier, an iteration value, a key or a
 //!   path. A login that ends before the list logs
 //!   `official session: login ended before the character list` with the same fields.
+//! - What refused a message or datagram of the login (`official-session.md` §9.3.7: a diagnostic
+//!   with no service data) is logged as a kind ([`error_kind`]): an error's text can hold values of
+//!   the server's message.
 //! - The chat-server connection (`official-messages-play.md` §6.6, the same session layer)
 //!   logs `official chat session: handshake failed` (`info`, [`log_chat_failed`]) when it
 //!   closes from its handshake, with the connection's own counts.
@@ -93,6 +96,18 @@ impl Default for LoginServerEntry {
             overridden: false,
         }
     }
+}
+
+/// The kind of `error` for a log line: the name of its variant, with no field. The text and the
+/// fields of an error from a received message can hold its values (a property ID, a flags byte, a
+/// count).
+#[must_use]
+pub fn error_kind(error: &impl std::fmt::Debug) -> String {
+    let form = format!("{error:?}");
+    let end = form
+        .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .unwrap_or(form.len());
+    form.get(..end).unwrap_or_default().to_owned()
 }
 
 impl LoginServerEntry {

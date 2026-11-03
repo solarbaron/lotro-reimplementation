@@ -979,6 +979,13 @@ impl Run {
             .collect()
     }
 
+    fn refused_note(&self) -> Option<String> {
+        self.seen.iter().find_map(|e| match e {
+            Event::Account(AccountEvent::LoginRefused { note, .. }) => note.clone(),
+            _ => None,
+        })
+    }
+
     fn refused(&self) -> Option<(LoginRefusal, Option<String>)> {
         self.seen.iter().find_map(|e| match e {
             Event::Account(AccountEvent::LoginRefused { reason, detail, .. }) => {
@@ -1312,8 +1319,15 @@ fn ack_portal_exit(run: &mut Run, world: &Server) {
 fn i1_local_discovery_failure_reaches_no_network() {
     let mut run = start(Service::default(), false);
     run.wait_event(is_disconnected);
-    // Not a refusal of the credentials: the start screen's category (§8.6).
-    assert_eq!(run.refused(), Some((LoginRefusal::ClientNotAccepted, None)));
+    // Not a refusal of the credentials and not the service's answer: the start screen's category
+    // (§8.6), with Tessera's own line (decision 0046 item 6; pending §25 fix 7).
+    assert_eq!(run.refused(), Some((LoginRefusal::UnsupportedStep, None)));
+    assert_eq!(
+        run.refused_note().as_deref(),
+        Some(super::login_phase::LOCAL_INSTALL_NOTE)
+    );
+    assert!(super::login_phase::LOCAL_INSTALL_NOTE.contains("Tessera limit"));
+    assert!(super::login_phase::LOCAL_INSTALL_NOTE.contains("not a fault of your account"));
     assert!(run.world.requests().is_empty());
     assert_eq!(run.world.binds(), 0);
 }
@@ -1424,6 +1438,12 @@ fn several_subscriptions_are_an_unsupported_step() {
     );
     run.wait_event(is_disconnected);
     assert_eq!(run.refused(), Some((LoginRefusal::UnsupportedStep, None)));
+    // A limit of Tessera's: the note selects the Tessera text, not "cannot log in to this account"
+    // (decision 0046 item 6).
+    assert_eq!(
+        run.refused_note().as_deref(),
+        Some(super::login_phase::SEVERAL_SUBSCRIPTIONS_NOTE)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -4127,7 +4147,13 @@ fn login_failures_map_to_the_entry_categories() {
     let local = LoginError::ConfigInvalid {
         reason: String::new(),
     };
-    assert_eq!(login_refusal(&local), LoginRefusal::ClientNotAccepted);
+    assert_eq!(login_refusal(&local), LoginRefusal::UnsupportedStep);
+    // With Tessera's own line, not the service's words.
+    assert!(matches!(
+        super::login_phase::LoginStop::from(&local),
+        super::login_phase::LoginStop::RefusedLocally(LoginRefusal::UnsupportedStep, n)
+            if n == super::login_phase::LOCAL_INSTALL_NOTE
+    ));
     assert_eq!(
         world_refusal(&LoginError::WorldRoleDenied),
         WorldRefusal::NotAllowed

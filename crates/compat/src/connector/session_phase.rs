@@ -25,7 +25,9 @@
 //! with no flush wait and sends the ticket no more. While a wait of the exchange runs the driver
 //! keeps the client's progress screen alive on a timer (not while its queue panel shows), so the
 //! wait is the bound. Once the attempt is cancelled the login answers nothing and what it queued
-//! in its last pass stays unsent. Omitted, each marked where it would be:
+//! in its last pass stays unsent. The user's "Leave queue" at the session's queue panel ends the
+//! attempt the same way, with `Disconnected { ClientRequested }` (`official-entry.md` §8.1): this
+//! phase has no new world list to send. Omitted, each marked where it would be:
 //! - OPEN-SESSION-20: neither `0x13D` nor `0x19E` is emitted; after `0x6C` the client goes to
 //!   selection (`SessionDriver::character_list`). No real platform ID, destination or `0x13D`
 //!   bit source is specified (decision 0046 item 5, a known difference from the observed client).
@@ -173,7 +175,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 
-use tessera_net::account::{AccountEvent, LoginRefusal, LoginStage};
+use tessera_net::account::{AccountCommand, AccountEvent, LoginRefusal, LoginStage};
 use tessera_net::model::{MAX_NAME_LEN, is_valid_name};
 use tessera_net::{
     CharacterEvent, CharacterSummary, ChatChannel, Command, DisconnectReason, EntityId, Event,
@@ -202,9 +204,10 @@ use crate::session::{
     BindPlan, BindPorts, ClientVersionMessage, CodecUuids, ConnectionState, ControlMessage,
     DEFAULT_BLOB_RECIPIENT_ID, DEFAULT_MAX_CONTAINER_DEPTH, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
     DisconnectReason as LinkEnd, LogonOutcome, MAX_DATAGRAM_BUF, MAX_ORDER_GROUPS,
-    MIN_DATAGRAM_BYTES, OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS, OrderBand,
-    ReassembledBlob, SessionError, SessionEvent, SessionMultiplexer, UdpDatagramTransport,
-    dispatch_message, max_recv_rate_for_speed, order_band,
+    MIN_DATAGRAM_BYTES, OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS,
+    OPCODE_SINGLE_WRAPPER, OrderBand, ReassembledBlob, SessionError, SessionEvent,
+    SessionMultiplexer, UdpDatagramTransport, dispatch_message, max_recv_rate_for_speed,
+    order_band,
 };
 use crate::world::{
     AccountEvictionNotice, CharacterEnterWorldRequest, CharacterListResponse,
@@ -216,7 +219,7 @@ use crate::world::{
 use super::data::{SchemaView, chat_categories, prepare_advertisement};
 use super::diag::{
     AuthMode, BindCase, HANDSHAKE_REPORT_SEC, HandshakeReport, LinkDiag, LocalSource,
-    LoginServerEntry, RejectKind, RemoteForm, RemoteName, carries_challenge,
+    LoginServerEntry, RejectKind, RemoteForm, RemoteName, carries_challenge, error_kind,
 };
 use super::dump::{
     AtClose, Caught, ConnectionDump, DumpDir, DumpKind, Endpoint, SocketDump, Tap, Target,
@@ -1745,10 +1748,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// The line of a login stopped from outside before its character list (a cancel, the
-    /// client's watchdog or a revoked network right), past its handshake: the handshake's own
-    /// line covers the rest. An attempt that already ended has logged its line.
-    fn log_login_abandoned(&mut self, reason: &str, now: f64) {
+    /// The line of a login that ends before its character list for a reason of no refusal of the
+    /// initial exchange (a cancel, the client's watchdog, a revoked network right, leaving the
+    /// queue, or the server's own end of it), past its handshake: the handshake's own line covers
+    /// the rest. An attempt that already ended has logged its line.
+    fn log_login_end(&mut self, reason: &str, now: f64) {
         if self.ended || self.stage != Stage::Login || self.login.in_handshake() {
             return;
         }
@@ -1851,7 +1855,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     }
                     self.counters.refused_datagrams += 1;
                     if let Some(skipped) = self.refused_log.allow(now) {
-                        tracing::debug!(error = %e, skipped, "official session: datagram refused");
+                        tracing::debug!(
+                            kind = %error_kind(&e),
+                            skipped,
+                            "official session: datagram refused"
+                        );
                     }
                 }
             }
@@ -1922,6 +1930,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 } else if blob.queue_id == QUEUE_SEQUENCED {
                     self.note_queue3(world, blob.seq_group, blob.order_num);
                 }
+                if self.initial_container(&blob, world, now, stop) {
+                    return;
+                }
                 match dispatch_message(
                     blob.blob_header_word,
                     &blob.payload,
@@ -1960,9 +1971,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     }
                     Err(e) => {
                         self.counters.decode_errors += 1;
-                        tracing::debug!(error = %e, "official session: message refused");
+                        tracing::debug!(kind = %error_kind(&e), "official session: message refused");
                         if !stop() {
-                            self.initial_envelope_refused(&blob, world, now);
+                            self.envelope_refused(&blob, world, now);
                         }
                     }
                 }
@@ -2088,6 +2099,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 LinkEnd::HandshakeTimeout | LinkEnd::SilenceTimeout => {
                     self.end(DisconnectReason::TimedOut);
                 }
+                // pending §25 fix 7: handshake-stage unsupported results have no row; labelled, a
+                // dictionary the install lacks stays §8.6's "did not accept this client".
                 LinkEnd::UnsupportedCodec => self.refuse(LoginRefusal::ClientNotAccepted),
                 _ => self.end(DisconnectReason::ServerClosed(String::new())),
             }
@@ -2181,7 +2194,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 Ok(m) => self.control(m, now),
                 Err(e) => {
                     self.counters.decode_errors += 1;
-                    tracing::debug!(opcode, error = %e, "official session: control message refused");
+                    tracing::debug!(
+                        opcode,
+                        kind = %error_kind(&e),
+                        "official session: control message refused"
+                    );
                 }
             }
             return;
@@ -2268,9 +2285,52 @@ impl<N: ConnectorNet> SessionDriver<N> {
         skips
     }
 
-    /// A blob whose envelope did not decode (§9.1): when the initial exchange needed it, the
-    /// attempt ends as it would for its body (§9.3.7).
-    fn initial_envelope_refused(&mut self, blob: &ReassembledBlob, world: bool, now: f64) {
+    /// A container's own opcode on the login connection before the list (§9.4.2). The tests of
+    /// [`Self::message`] only see what it holds, so the outer opcode is tested here: while `0xF5`
+    /// is awaited it is outside §9.3.7's list, which ends the attempt before anything in it is
+    /// looked at, whether it holds a listed message, nothing or something malformed. Otherwise it
+    /// is counted like any skipped message, also when it holds nothing. Returns whether the
+    /// attempt ended. Nothing happens once the attempt is cancelled.
+    fn initial_container(
+        &mut self,
+        blob: &ReassembledBlob,
+        world: bool,
+        now: f64,
+        stop: &dyn Fn() -> bool,
+    ) -> bool {
+        let opcode = blob.blob_header_word;
+        if !matches!(opcode, OPCODE_BATCH_CONTAINER | OPCODE_SINGLE_WRAPPER)
+            || world
+            || self.stage != Stage::Login
+            || stop()
+        {
+            return false;
+        }
+        if self.outside_completion_guard(opcode, world) {
+            self.refuse_unsupported(UnsupportedNegotiation::UnsupportedPreparation, now);
+            return true;
+        }
+        self.initial.skipped(opcode, blob.payload.len());
+        self.sync_initial();
+        false
+    }
+
+    /// A blob whose envelope did not decode (§9.1): when something waits on it, the session goes
+    /// on as it would for an unreadable body of that message (§9.3.7): the entry's `0x90` and
+    /// `0x6D` end the entry rather than leaving it stuck, `0xB3` ends the session in every stage
+    /// ([`Self::eviction_unread`]), and in the initial exchange the attempt ends.
+    fn envelope_refused(&mut self, blob: &ReassembledBlob, world: bool, now: f64) {
+        let entering = matches!(self.stage, Stage::Entering { .. });
+        match blob.blob_header_word {
+            PlayerSessionReady::EVENT_ID if entering => {
+                return self.entry_unsupported(UNSUPPORTED_SESSION_START, now);
+            }
+            CharacterOperationError::EVENT_ID if entering => {
+                return self.entry_unsupported(UNSUPPORTED_ENTRY_ANSWER, now);
+            }
+            AccountEvictionNotice::EVENT_ID => return self.eviction_unread(now),
+            _ => {}
+        }
         if world || self.stage != Stage::Login {
             return;
         }
@@ -2316,7 +2376,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let request = match InstallRequest::from_envelope_body(&m.body) {
             Ok(r) => r,
             Err(e) => {
-                tracing::debug!(error = %e, "official session: install request refused");
+                tracing::debug!(kind = %error_kind(&e), "official session: install request refused");
                 self.refuse_unsupported(UnsupportedNegotiation::MalformedRequest, now);
                 return;
             }
@@ -2429,6 +2489,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 0 => {
                     // §9.3: rejected; the connection closes locally.
                     tracing::info!("official session: the service did not accept this version");
+                    self.log_login_end("version not accepted", now);
                     self.login.close_quietly();
                     self.refuse(LoginRefusal::ClientNotAccepted);
                 }
@@ -2471,6 +2532,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                         logon_result = format_args!("{code:#010x}"),
                         "official session: the service refused the logon"
                     );
+                    self.log_login_end("logon refused", now);
                     self.refuse(LoginRefusal::AccountNotAllowed);
                 }
                 LogonOutcome::Unknown(code) => {
@@ -2513,7 +2575,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             Ok(l) => l,
             Err(e) => {
                 self.counters.decode_errors += 1;
-                tracing::debug!(error = %e, "official session: character list refused");
+                tracing::debug!(kind = %error_kind(&e), "official session: character list refused");
                 if self.stage == Stage::Login {
                     self.refuse_unsupported(UnsupportedNegotiation::ListDecode, now);
                 }
@@ -2725,15 +2787,21 @@ impl<N: ConnectorNet> SessionDriver<N> {
             .flatten();
         let Some(reason) = reason else {
             self.counters.decode_errors += 1;
-            if matches!(self.stage, Stage::Entering { .. }) {
-                self.entry_unsupported(UNSUPPORTED_ENTRY_ANSWER, now);
-            } else {
-                self.end(DisconnectReason::ServerClosed(String::new()));
-            }
-            return;
+            return self.eviction_unread(now);
         };
         tracing::info!(reason, "official session: the server ended the session");
+        self.log_login_end("the server ended the session", now);
         self.end(DisconnectReason::ServerClosed(String::new()));
+    }
+
+    /// A `0xB3` whose reason cannot be read still says that the server closes.
+    fn eviction_unread(&mut self, now: f64) {
+        if matches!(self.stage, Stage::Entering { .. }) {
+            self.entry_unsupported(UNSUPPORTED_ENTRY_ANSWER, now);
+        } else {
+            self.log_login_end("the server ended the session", now);
+            self.end(DisconnectReason::ServerClosed(String::new()));
+        }
     }
 
     /// A message in the world (module docs "Entities"): batches are unpacked, the entity
@@ -3599,6 +3667,16 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 self.pending_out.extend(out);
                 Ok(())
             }
+            // `official-entry.md` §8.1: a new world list if the backend can, else the session's
+            // end. This phase has no list to send: one standalone Disconnect, a local close and
+            // nothing more, so no `0xEC` follows.
+            Command::Account(AccountCommand::LeaveLoginQueue) if self.stage == Stage::Login => {
+                tracing::info!("official session: the user left the login queue");
+                self.log_login_end("left the queue", now);
+                self.say_goodbye("left the login queue", now);
+                self.end(DisconnectReason::ClientRequested);
+                Ok(())
+            }
             other => {
                 tracing::debug!(
                     command = other.name(),
@@ -3617,7 +3695,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// Play messages not yet queued on a connection are dropped. No ticket refresh starts
     /// after this, and a running one is stopped.
     pub fn begin_shutdown(&mut self, now: f64) {
-        self.log_login_abandoned("cancelled", now);
+        self.log_login_end("cancelled", now);
         // What the login queued in its last pass (`0xEC` among it) stays unsent: nothing more
         // goes out after a cancel but the goodbye.
         if self.stage == Stage::Login
@@ -3650,7 +3728,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// could be sent): every connection is closed locally and the chat client dropped. A
     /// connection still in its handshake logs its counts once, at `now`.
     pub fn abandon(&mut self, now: f64) {
-        self.log_login_abandoned("network right revoked", now);
+        self.log_login_end("network right revoked", now);
         self.ended = true;
         self.shutting_down = true;
         self.events.clear();

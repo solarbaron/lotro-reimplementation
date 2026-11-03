@@ -575,11 +575,19 @@ fn the_iteration_stamp_decides_the_trailing_part() {
         advertised_archive(id, &iteration_record(), 1),
         Err(InstallUnsupported::ArchiveIteration)
     );
-    // Stamp 3 and more are malformed.
+    // §9.3.7: every stamp but 1 and 2 fails, stamp 3 and more as malformed and stamp 0 though the
+    // general reader takes it as having no trailing part.
     assert_eq!(
         advertised_archive(id, &iteration_record(), 3),
         Err(InstallUnsupported::ArchiveIteration)
     );
+    for (bytes, stamp) in [(&short, 0), (&[0u8; 4].to_vec(), 0), (&short, u16::MAX)] {
+        assert_eq!(
+            advertised_archive(id, bytes, stamp),
+            Err(InstallUnsupported::ArchiveIteration),
+            "stamp {stamp}"
+        );
+    }
     // An empty list passes with exact consumption and `K = 0`, in both stamps, and writes the
     // real empty list.
     let empty = advertised_archive(id, &[0u8; 4], 1).expect("stamp 1, no iterations");
@@ -736,6 +744,172 @@ fn a_stale_or_stray_auxiliary_file_is_left_out() {
         |d| std::fs::write(d.join("client_custom_aux_1x.datx"), b"x").expect("written"),
         InstallUnsupported::ArchiveFailed,
     );
+}
+
+/// §9.3.7's row is by file name: a part at or past its family's verified count is stale also when
+/// it does not open, and it is left alone. A part below the count that does not open is a missing
+/// active member.
+#[test]
+fn a_stale_auxiliary_file_that_does_not_open_is_left_out() {
+    let garbage = [0u8; 4096];
+    let dir = fresh();
+    std::fs::write(dir.path().join("client_mesh_aux_2.datx"), garbage).expect("written");
+    assert_eq!(inventory_of(dir.path()), Ok(10));
+    assert_eq!(
+        std::fs::read(dir.path().join("client_mesh_aux_2.datx")).expect("still there"),
+        garbage
+    );
+    // Too short to be an archive, and an archive cut in the middle.
+    let dir = fresh();
+    std::fs::write(dir.path().join("client_mesh_aux_2.datx"), b"x").expect("written");
+    let cut = aux(0x0102_0000, 0, 3, 2).build().bytes;
+    std::fs::write(
+        dir.path().join("client_mesh_aux_3.datx"),
+        cut.get(..cut.len() / 2).expect("half"),
+    )
+    .expect("written");
+    assert_eq!(inventory_of(dir.path()), Ok(10));
+    // The same file as an active part is not stale.
+    refused(
+        |d| std::fs::write(d.join("client_mesh_aux_1.datx"), garbage).expect("written"),
+        InstallUnsupported::ArchiveFailed,
+    );
+}
+
+/// §9.3.7's first row: a requested language that is present but unreadable is unsupported, with no
+/// fallback to another language's key. `install-layout.md` §3.5 falls back for a label with no
+/// file. Beside it, the same corrupt file of a language nobody requested stays out, and a label
+/// with no file still falls back.
+#[test]
+fn a_requested_language_that_is_present_but_unreadable_is_refused() {
+    let open_for = |dir: &Path, label: &str| {
+        ArchiveSet::open(
+            dir,
+            SetOptions {
+                language: Some(label.to_owned()),
+                ..SetOptions::default()
+            },
+        )
+        .expect("the set opens")
+    };
+    let dir = fresh();
+    std::fs::write(dir.path().join("client_local_FR.dat"), [0u8; 4096]).expect("written");
+    // The set falls back to the language that opened, and the login does not.
+    let set = open_for(dir.path(), "FR");
+    assert_eq!(set.language(), Some("DE"), "the set's own fallback");
+    assert_eq!(set.requested_language(), Some("FR"));
+    assert_eq!(
+        initial_inputs(&set).inventory.map(|a| a.len()),
+        Err(InstallUnsupported::ArchiveFailed)
+    );
+    // ASCII case-insensitive, as the names of the set are.
+    assert_eq!(
+        initial_inputs(&open_for(dir.path(), "fr"))
+            .inventory
+            .map(|a| a.len()),
+        Err(InstallUnsupported::ArchiveFailed)
+    );
+    // Requesting the language that opens: the corrupt one is another language's.
+    assert_eq!(
+        initial_inputs(&open_for(dir.path(), "DE"))
+            .inventory
+            .map(|a| a.len()),
+        Ok(10)
+    );
+    // No file: the fallback of §3.5, on the label actually mounted.
+    assert_eq!(
+        initial_inputs(&open_for(dir.path(), "ES"))
+            .inventory
+            .map(|a| a.len()),
+        Ok(10)
+    );
+}
+
+/// §9.3.7's row leaves other languages out of the inventory, and a part another language is missing
+/// is no problem of the listed sets.
+#[test]
+fn another_languages_missing_part_refuses_nothing() {
+    let dir = fresh();
+    write(
+        dir.path(),
+        "client_local_FR.dat",
+        &base(0x0303_0000, 0x1003, 2),
+    );
+    let set = open(dir.path());
+    assert!(
+        set.problems()
+            .iter()
+            .any(|p| p.path.is_none() && p.severity == tessera_dat::Severity::Error),
+        "the set reports the missing part"
+    );
+    assert_eq!(archive_inventory(&set, "DE", &[1]).map(|a| a.len()), Ok(10));
+}
+
+/// A local archive fault on the official path logs the file's name, never the directory it lies
+/// in, which can name the user: not when it fails to open, not for a name that differs only in
+/// case and not for a file that opens with something odd about it.
+#[test]
+fn a_local_archive_fault_logs_no_install_path() {
+    use std::sync::{Arc, Mutex, PoisonError};
+
+    #[derive(Clone, Default)]
+    struct Buf(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Buf {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let dir = fresh();
+    std::fs::write(dir.path().join("client_sound_aux_7.datx"), [0u8; 4096]).expect("written");
+    let cut = aux(0x0102_0000, 0, 3, 2).build().bytes;
+    std::fs::write(
+        dir.path().join("client_mesh_aux_3.datx"),
+        cut.get(..cut.len() / 2).expect("half"),
+    )
+    .expect("written");
+    write(
+        dir.path(),
+        "CLIENT_MESH_AUX_4.DATX",
+        &aux(0x0102_0000, 0, 4, 2),
+    );
+    write(
+        dir.path(),
+        "client_mesh_aux_4.datx",
+        &aux(0x0102_0000, 0, 4, 2),
+    );
+    let mut odd = aux(0x0102_0000, 0, 5, 2);
+    odd.engine_version = 1;
+    write(dir.path(), "client_mesh_aux_5.datx", &odd);
+
+    let buf = Buf::default();
+    let out = buf.clone();
+    let sub = tracing_subscriber::fmt()
+        .with_writer(move || out.clone())
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .finish();
+    // With one registered subscriber `tracing` asks only the current thread's about a new callsite.
+    let _second = tracing::Dispatch::new(tracing_subscriber::fmt().finish());
+    tracing::subscriber::with_default(sub, || {
+        tracing::callsite::rebuild_interest_cache();
+        // The dictionary is what this fixture has not got: the opening is what is under test.
+        let _ = tessera_client::official::install_data::install_data_at(dir.path(), "DE");
+    });
+    let logs =
+        String::from_utf8_lossy(&buf.0.lock().unwrap_or_else(PoisonError::into_inner)).into_owned();
+    assert!(logs.contains("client_sound_aux_7.datx"), "{logs}");
+    assert!(logs.contains("skipping archive"), "{logs}");
+    assert!(logs.contains("client_mesh_aux_5.datx"), "{logs}");
+    let shown = dir.path().to_string_lossy();
+    assert!(!logs.contains(shown.as_ref()), "the directory:\n{logs}");
 }
 
 /// §9.3.7, `dat-container.md` §3.4.1: neither the raw older encoding nor a conversion is sent.

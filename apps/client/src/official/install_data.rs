@@ -869,15 +869,17 @@ const REQUIRED_PORTAL_KINDS: [ArchiveKind; 5] = [
 /// has no entry. Region 1's two bases are required when the map has that key.
 ///
 /// A stale or stray auxiliary file is left out with a warning, when its family's own membership
-/// is verified (`install-layout.md` §3.4). A missing active member, an unverified
-/// membership, an ambiguous base or a conflicting identifier is unsupported, and so is an older
-/// identifier encoding, an unknown family or iteration metadata breaking invariant 7.
+/// is verified (`install-layout.md` §3.4), whether or not it opens. A missing active member, an
+/// unverified membership, an ambiguous base or a conflicting identifier is unsupported, and so is
+/// an older identifier encoding, an unknown family or iteration metadata breaking invariant 7.
+/// A chosen language that is present but unreadable is unsupported: only an absent label falls
+/// back (§9.3.7's first row, `install-layout.md` §3.5).
 ///
 /// pending §25 fix 14: §9.3.7's row passes a non-region-1 set that fails to open, and "fails to
 /// open" has no test. Until the fix these stay labelled refusals, on the side of not sending:
 ///
-/// - any other problem [`ArchiveSet`] recorded for an archive of these sets, whatever its
-///   severity: a file that failed to open, a missing part, two names differing only in case;
+/// - any other problem [`ArchiveSet`] recorded for a named file of these sets, whatever its
+///   severity: a file that failed to open, two names differing only in case;
 /// - half of a region pair (`install-layout.md` §3.3);
 /// - an overlay next to a listed base (`dat-container.md` §2.5: the set's records may be out of
 ///   date);
@@ -922,40 +924,68 @@ pub fn archive_inventory(
         return Err(InstallUnsupported::ArchiveMissing);
     }
     check_region_pairs(&bases, region_keys)?;
-    let stale = check_set_parts(set, &bases, &other_language)?;
-    check_set_problems(set, &other_language, &stale)?;
+    check_set_parts(set, &bases, &other_language)?;
+    check_set_problems(set, &bases, &other_language)?;
     check_stray_parts(set, &bases, &other_language)?;
     bases.into_iter().map(advertised_base).collect()
 }
 
-/// pending §25 fix 14: a problem of an archive of the listed sets makes the inventory unsupported.
-/// A stale part's own problems do not: it is left out. A problem naming no file (a missing part,
-/// an implausible count) cannot be told apart by language, so it counts too. The one exception is
-/// the warning that the requested language is absent, the only one with no file and no error:
-/// §9.3.7 goes on with the label actually mounted.
+/// The problems [`ArchiveSet`] recorded for named files, once [`check_set_parts`] has verified
+/// every listed family (§9.3.7).
+///
+/// - A file of the requested language, not a stale part of a mounted one, makes the inventory
+///   unsupported: a language that is present but unreadable does not fall back to another.
+///   `install-layout.md` §3.5's fallback is for a label with no file. Which label is requested is
+///   pending §25 fix 15; this is what happens once that label's own file fails.
+/// - A part at or past its verified family's count is stale and left out with a warning, also
+///   when it does not open.
+/// - Another language's file is not this login's.
+/// - pending §25 fix 14: any other named file of the listed sets makes it unsupported.
+///
+/// A problem naming no file says nothing here: the requested language being absent, where §9.3.7
+/// goes on with the label actually mounted, or a family's missing part or implausible count, which
+/// [`check_set_parts`] has decided for the listed families and is not this login's for another
+/// language.
 fn check_set_problems(
     set: &ArchiveSet,
+    bases: &[&SetMember],
     other_language: &dyn Fn(&ArchiveKind) -> bool,
-    stale: &[tessera_dat::ArchiveId],
 ) -> Result<(), InstallUnsupported> {
+    let requested = |kind: &ArchiveKind| {
+        matches!((kind, set.requested_language()),
+            (ArchiveKind::Local(l), Some(r)) if l.eq_ignore_ascii_case(r))
+    };
     for problem in set.problems() {
-        if problem.path.is_none() && problem.severity != tessera_dat::Severity::Error {
+        let Some(path) = problem.path.as_deref() else {
+            continue;
+        };
+        let id = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(tessera_dat::ArchiveId::from_file_name)
+            .ok_or(InstallUnsupported::ArchiveFailed)?;
+        if is_stale_part(&id, bases) {
+            // A member that opened was reported by `check_set_parts`.
+            if !set.members().iter().any(|m| m.id == id) {
+                tracing::warn!("official login: a stale auxiliary archive is left out");
+            }
             continue;
         }
-        let id = problem
-            .path
-            .as_deref()
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str())
-            .and_then(tessera_dat::ArchiveId::from_file_name);
-        let left_out = id
-            .as_ref()
-            .is_some_and(|id| other_language(&id.kind) || stale.contains(id));
-        if !left_out {
+        if requested(&id.kind) || !other_language(&id.kind) {
             return Err(InstallUnsupported::ArchiveFailed);
         }
     }
     Ok(())
+}
+
+/// Whether `id` is at or past its listed family's verified count (`install-layout.md` §3.4).
+fn is_stale_part(id: &tessera_dat::ArchiveId, bases: &[&SetMember]) -> bool {
+    id.part != 0
+        && bases
+            .iter()
+            .find(|b| b.id.kind == id.kind)
+            .and_then(|b| base_membership(b).ok())
+            .is_some_and(|(count, _)| id.part >= count)
 }
 
 /// pending §25 fix 14: each region key's two bases, both or neither, and both for region 1.
@@ -1029,14 +1059,14 @@ fn active_parts<'a>(
     Ok(family.into_iter().filter(|m| m.id.part >= count).collect())
 }
 
-/// Checks every listed family's parts ([`active_parts`]) and returns its stale leftovers, each with
-/// a warning: excluded, never deleted or modified (`official-session.md` §9.3.7). An auxiliary part
-/// with no base at all has no membership to verify against.
+/// Checks every listed family's parts ([`active_parts`]). Its stale leftovers each get a warning:
+/// excluded, never deleted or modified (`official-session.md` §9.3.7). An auxiliary part with no
+/// base at all has no membership to verify against.
 fn check_set_parts(
     set: &ArchiveSet,
     bases: &[&SetMember],
     other_language: &dyn Fn(&ArchiveKind) -> bool,
-) -> Result<Vec<tessera_dat::ArchiveId>, InstallUnsupported> {
+) -> Result<(), InstallUnsupported> {
     for member in set.members() {
         if member.id.part != 0
             && !other_language(&member.id.kind)
@@ -1045,14 +1075,12 @@ fn check_set_parts(
             return Err(InstallUnsupported::ArchiveFailed);
         }
     }
-    let mut stale = Vec::new();
     for base in bases {
-        for part in active_parts(set, base)? {
+        for _ in active_parts(set, base)? {
             tracing::warn!("official login: a stale auxiliary archive is left out");
-            stale.push(part.id.clone());
         }
     }
-    Ok(stale)
+    Ok(())
 }
 
 /// What [`ArchiveSet`] does not open and the listing shows: a name matching
@@ -1162,16 +1190,21 @@ pub const fn uses_older_identifier(dataset: u32) -> bool {
 /// One advertisement entry from an archive's identifier and its iteration record's bytes and
 /// directory-entry stamp (`install-layout.md` §9.2.1, §9.3; `official-session.md` §9.3.7): decoded
 /// to exact exhaustion and checked against invariant 7, with no repair. An empty list passes with
-/// `K = 0`, and stamp 1 means `K = 0`; the record's metadata is its own.
+/// `K = 0`, and stamp 1 means `K = 0`; the record's metadata is its own. §9.3.7 takes stamps 1 and
+/// 2 and every other stamp fails, whatever the general reader of the record accepts.
 ///
 /// # Errors
 ///
-/// [`InstallUnsupported::ArchiveIteration`] for a malformed record or one breaking the invariant.
+/// [`InstallUnsupported::ArchiveIteration`] for another stamp, a malformed record or one breaking
+/// the invariant.
 pub fn advertised_archive(
     resource_id: [u8; 8],
     iteration_record: &[u8],
     stamp: u16,
 ) -> Result<AdvertisedArchive, InstallUnsupported> {
+    if !matches!(stamp, 1 | 2) {
+        return Err(InstallUnsupported::ArchiveIteration);
+    }
     let record = IterationRecord::parse(iteration_record, stamp)
         .map_err(|_| InstallUnsupported::ArchiveIteration)?;
     let spans = record

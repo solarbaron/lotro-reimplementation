@@ -195,26 +195,30 @@ impl Archive {
                 ),
             });
         }
-        let shown = path.as_deref().map(Path::display);
+        // The file's name, never its directory: an install's path can name the user.
+        let shown = path
+            .as_deref()
+            .and_then(Path::file_name)
+            .map(std::ffi::OsStr::to_string_lossy);
         if u64::from(header.file_size) != file_len {
             tracing::warn!(
-                path = ?shown,
+                file = ?shown,
                 header = header.file_size,
                 actual = file_len,
                 "header file size differs from the real length (concurrent patching?)"
             );
         }
         if header.engine_version != CURRENT_ENGINE_VERSION {
-            tracing::warn!(path = ?shown, version = header.engine_version, "unexpected engine version");
+            tracing::warn!(file = ?shown, version = header.engine_version, "unexpected engine version");
             if header.engine_version == LEGACY_ENGINE_VERSION && !options.legacy_layout {
-                tracing::warn!(path = ?shown, "engine version 111 suggests the legacy layout, which is disabled");
+                tracing::warn!(file = ?shown, "engine version 111 suggests the legacy layout, which is disabled");
             }
         }
         if !header.layout_sizes_are_standard() {
-            tracing::warn!(path = ?shown, "header layout sizes are not 104/32/8");
+            tracing::warn!(file = ?shown, "header layout sizes are not 104/32/8");
         }
         if !header.journal_is_empty() {
-            tracing::warn!(path = ?shown, "journal is not empty (interrupted patch?)");
+            tracing::warn!(file = ?shown, "journal is not empty (interrupted patch?)");
         }
         Ok(Self {
             source,

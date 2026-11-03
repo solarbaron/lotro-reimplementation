@@ -317,6 +317,21 @@ fn open_failure(e: &Error) -> (Severity, u8) {
     }
 }
 
+/// A file's name for a log line. Its directory stays out of the log: an install's path can name
+/// the user.
+fn file_name_of(path: &Path) -> std::borrow::Cow<'_, str> {
+    path.file_name()
+        .map_or(std::borrow::Cow::Borrowed(""), |n| n.to_string_lossy())
+}
+
+/// An open failure's text for a log line, with no path in it ([`file_name_of`]).
+fn without_path(e: &Error) -> String {
+    match e {
+        Error::Io { source, .. } => format!("I/O error: {source}"),
+        other => other.to_string(),
+    }
+}
+
 /// Where [`ArchiveSet::locate`] found a DID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Located {
@@ -359,6 +374,8 @@ pub struct ArchiveSet {
     problems: Vec<SetProblem>,
     /// The selected language label, if the set has language archives.
     language: Option<String>,
+    /// The label [`SetOptions::language`] asked for.
+    requested_language: Option<String>,
     /// Per member: whether locate may search it (false for other languages' archives).
     routable: Vec<bool>,
 }
@@ -404,7 +421,12 @@ impl ArchiveSet {
                 Ok(archive) => members.push(SetMember { id, path, archive }),
                 Err(e) => {
                     let (severity, invariant) = open_failure(&e);
-                    tracing::warn!(path = %path.display(), error = %e, "skipping archive");
+                    // The file's name, never its directory: the install's path can name the user.
+                    tracing::warn!(
+                        file = %file_name_of(&path),
+                        error = %without_path(&e),
+                        "skipping archive"
+                    );
                     problems.push(SetProblem::new(
                         Some(path),
                         severity,
@@ -418,6 +440,7 @@ impl ArchiveSet {
             return Err(Error::NoArchives { path: dir });
         }
         let language = Self::select_language(&members, options.language.as_deref(), &mut problems);
+        let requested_language = options.language;
         let routable = members
             .iter()
             .map(|m| match (&m.id.kind, &language) {
@@ -432,6 +455,7 @@ impl ArchiveSet {
             fallback: options.fallback_search_all,
             problems,
             language,
+            requested_language,
             routable,
         };
         set.check_membership();
@@ -473,7 +497,7 @@ impl ArchiveSet {
                         name_of(p),
                         name_of(&chosen.1)
                     );
-                    tracing::warn!(path = %p.display(), "{message}");
+                    tracing::warn!("{message}");
                     problems.push(SetProblem::new(
                         Some(p.clone()),
                         Severity::Warning,
@@ -706,6 +730,12 @@ impl ArchiveSet {
     /// any language archive ([`SetOptions::language`], install-layout §3.5).
     pub fn language(&self) -> Option<&str> {
         self.language.as_deref()
+    }
+
+    /// The label [`SetOptions::language`] asked for, which [`ArchiveSet::language`] differs from
+    /// after a fallback (install-layout §3.5).
+    pub fn requested_language(&self) -> Option<&str> {
+        self.requested_language.as_deref()
     }
 
     /// Whether [`ArchiveSet::locate`] may search member `i`. Archives of a language other

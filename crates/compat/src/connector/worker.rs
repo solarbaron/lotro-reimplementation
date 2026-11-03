@@ -25,8 +25,8 @@ use super::control::{Control, Msg};
 use super::data::{InstallDataLoader, LocalInputs, LocalPaths, SchemaView, discover_local};
 use super::diag::{LoginServerEntry, login_server_entry};
 use super::login_phase::{
-    Authenticated, LoginStop, PlainSteps, WORLD_LIST_STATUS_TIMEOUT_SEC, authenticate,
-    get_datacenters, get_remote_config, join_status, leave_queue, local_refusal,
+    Authenticated, LOCAL_INSTALL_NOTE, LoginStop, PlainSteps, WORLD_LIST_STATUS_TIMEOUT_SEC,
+    authenticate, get_datacenters, get_remote_config, join_status, leave_queue, local_refusal,
     queue_poll_interval, take_a_number, world_list, world_refusal, world_status,
 };
 use super::net::{ConnectorNet, NetHttp};
@@ -178,8 +178,10 @@ impl Out {
             self.one(revoked());
             return;
         }
-        if let LoginStop::Refused(reason, detail) = stop {
-            self.refuse(reason, detail);
+        match stop {
+            LoginStop::Refused(reason, detail) => self.refuse(reason, detail),
+            LoginStop::RefusedLocally(reason, note) => self.refuse_locally(reason, note),
+            LoginStop::Cancelled => {}
         }
     }
 
@@ -253,7 +255,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
             Err(problem) => {
                 // A kind only, never a path (`official-entry.md` §7.3).
                 tracing::warn!(%problem, "official login: no install");
-                out.refuse(local_refusal(), None);
+                out.refuse_locally(local_refusal(), LOCAL_INSTALL_NOTE);
                 return;
             }
         }
@@ -268,7 +270,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         Ok(l) => l,
         Err(e) => {
             tracing::info!(class = %e.failure_class(), "official login: local discovery failed");
-            out.refuse(local_refusal(), None);
+            out.refuse_locally(local_refusal(), LOCAL_INSTALL_NOTE);
             return;
         }
     };

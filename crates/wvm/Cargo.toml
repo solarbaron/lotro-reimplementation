@@ -17,6 +17,7 @@ tracing.workspace = true
 [dev-dependencies]
 tessera-dat.workspace = true
 tessera-props.workspace = true
+tessera-testkit.workspace = true
 
 [lints]
 workspace = true

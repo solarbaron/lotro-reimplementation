@@ -3,10 +3,8 @@
 //! (read-only), skipped unless `TESSERA_GAME_DIR` is set:
 //!
 //! - `record_counts_and_surface_inputs`: every surface record (0x31), material (0x30) and
-//!   shader record (0x2B) still decodes (at least the 13,781, 24,094 and 510 of the spec's
-//!   install, `material.md` §4.1, §6.1, §7.1, kept as lower bounds because content patches
-//!   add records; 13,783, 24,096 and 510 after the 2026-10-27 patch); every shader record's
-//!   texture-matrix bindings are
+//!   shader record (0x2B) still decodes (13,781, 24,094 and 510 in the spec's install,
+//!   `material.md` §4.1, §6.1, §7.1); every shader record's texture-matrix bindings are
 //!   complete (§7.3: 407 matrices, all seven values each); every surface record resolves
 //!   with its feature flags (§11) and its lighting inputs (`lighting.md` §4.1) at several
 //!   times, with every effective float curve and colour finite.
@@ -16,6 +14,9 @@
 //!   records gives a water material on its own defaults.
 //! - `liquid_world_position_rule`: the interface rule of `water.md` W52 selects exactly
 //!   0x2B000442 among the four liquid-distortion records.
+//!
+//! The counts are checked against the local baseline of the install version (decision 0045,
+//! `tessera-testkit`), with the spec's figures beside them; the rules stay assertions.
 //!
 //! Run with `TESSERA_GAME_DIR=… cargo test --release -p tessera-material --test
 //! world_fidelity_real_data -- --nocapture --test-threads 1`. Only counts and DIDs are
@@ -50,6 +51,12 @@ fn archives() -> Option<&'static ArchiveSet> {
         Some(ArchiveSet::open(&dir, SetOptions::default()).expect("open install"))
     })
     .as_ref()
+}
+
+/// The census of one test function (decision 0045).
+fn census(function: &str) -> tessera_testkit::Census {
+    let dir = PathBuf::from(std::env::var_os("TESSERA_GAME_DIR").expect("install"));
+    tessera_testkit::census!(function, &dir).expect("census")
 }
 
 /// Every DID with high byte `prefix` held by any archive of the install, sorted.
@@ -87,6 +94,7 @@ const TIMES: [f64; 4] = [0.0, 1.5, 37.25, 3_700.0];
 #[test]
 fn record_counts_and_surface_inputs() {
     let Some(set) = archives() else { return };
+    let mut census = census("record_counts_and_surface_inputs");
 
     // Decoders of M2 still decode everything.
     let mut layouts: BTreeMap<u32, TextureMatrixLayout> = BTreeMap::new();
@@ -112,14 +120,10 @@ fn record_counts_and_surface_inputs() {
         material_dids.len(),
         shader_dids.len()
     );
-    // Lower bounds: the counts of the spec's install. Every record decodes to its last
-    // byte (the loops above); content patches add records.
-    assert!(
-        surface_dids.len() >= 13_781,
-        "0x31 count (material.md §4.1)"
-    );
-    assert!(material_dids.len() >= 24_094, "0x30 count (§6.1)");
-    assert!(shader_dids.len() >= 510, "0x2B count (§7.1)");
+    // Every record decodes to its last byte (the loops above).
+    census.count_vs_spec("§4.1 surface records (0x31)", surface_dids.len(), 13_781);
+    census.count_vs_spec("§6.1 materials (0x30)", material_dids.len(), 24_094);
+    census.count_vs_spec("§7.1 shader records (0x2B)", shader_dids.len(), 510);
 
     // Texture-matrix bindings (§7.3).
     let matrices: usize = layouts.values().map(|l| l.matrices.len()).sum();
@@ -139,7 +143,10 @@ fn record_counts_and_surface_inputs() {
         "texture matrices: {matrices} ({complete} complete) in {} records, by index {by_index:?}; older-semantic bindings {older}, out of range {out_of_range}, conflicts {conflicts}",
         layouts.values().filter(|l| !l.is_empty()).count()
     );
-    assert_eq!(matrices, 407, "§7.3: 407 matrices with semantics 38–44");
+    census.count_vs_spec("§7.3 matrices with semantics 38–44", matrices, 407);
+    for (index, n) in &by_index {
+        census.count(&format!("§7.3 matrices of index {index}"), *n);
+    }
     assert_eq!(
         complete, matrices,
         "§7.3: every matrix has all seven values"
@@ -189,6 +196,10 @@ fn record_counts_and_surface_inputs() {
     );
     assert_eq!(permutation_conflicts, 0);
     assert_eq!(differing.len(), conflicted.len());
+    census.count(
+        "§7.3 records with conflicting matrix bindings",
+        conflicted.len(),
+    );
 
     // Every surface record: feature flags and lighting inputs.
     let lib = MaterialLibrary::new(set);
@@ -255,6 +266,19 @@ fn record_counts_and_surface_inputs() {
         surface_dids.len()
     );
     assert_eq!(non_finite_raw, 0);
+    for (what, n) in [
+        ("animated", animated),
+        ("with texture matrices", with_matrices),
+        ("with specular", specular),
+        ("with black specular", black_specular),
+        ("two-sided", two_sided),
+        ("alpha-tested", alpha_tested),
+        ("without depth write", no_depth_write),
+        ("with named constants", named),
+    ] {
+        census.count(&format!("surfaces {what}"), n);
+    }
+    census.finish();
 }
 
 /// `water.md` W52 (§8.5.5, §14 (c)): among the liquid-distortion records of `material.md`
@@ -294,14 +318,18 @@ fn liquid_world_position_rule() {
         hex(&world),
         hex(&no_type5)
     );
-    assert_eq!(liquids.len(), 4, "four liquid-distortion records (W52)");
+    let mut census = census("liquid_world_position_rule");
+    census.count_vs_spec("liquid-distortion records (W52)", liquids.len(), 4);
     assert_eq!(world, [0x2B00_0442], "rule (i)");
     assert_eq!(no_type5, world, "rule (ii) selects the same record");
+    // After every rule check: a failing run writes no baseline.
+    census.finish();
 }
 
 #[test]
 fn water_chain() {
     let Some(set) = archives() else { return };
+    let mut census = census("water_chain");
     let lib = MaterialLibrary::new(set);
 
     // Water tables (0x16) → wet entries' surface records.
@@ -323,7 +351,9 @@ fn water_chain() {
         tables.len(),
         surfaces.len()
     );
-    assert_eq!(surfaces.len(), 76, "water.md §4.2");
+    census.count("water tables", tables.len());
+    census.count("wet entries", entries);
+    census.count_vs_spec("water.md §4.2 distinct wet surfaces", surfaces.len(), 76);
 
     let mut by_shader: BTreeMap<u32, usize> = BTreeMap::new();
     let mut undeclared: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
@@ -362,7 +392,15 @@ fn water_chain() {
         }
     }
     let expected: BTreeMap<u32, usize> = WATER_SHADERS.into_iter().collect();
-    assert_eq!(by_shader, expected, "water.md §8.2 shader table");
+    let shaders: BTreeSet<u32> = expected.keys().chain(by_shader.keys()).copied().collect();
+    for shader in shaders {
+        let name = format!("water.md §8.2 wet surfaces of shader {shader:#010X}");
+        let got = by_shader.get(&shader).copied().unwrap_or(0);
+        match expected.get(&shader) {
+            Some(&spec) => census.count_vs_spec(&name, got, spec),
+            None => census.count(&name, got),
+        }
+    }
 
     // Each water shader on its own defaults.
     for (shader, _) in WATER_SHADERS {
@@ -415,4 +453,5 @@ fn water_chain() {
             assert!(p.fog_color[..3].iter().all(|&x| close(x, 0.0)));
         }
     }
+    census.finish();
 }

@@ -10,16 +10,20 @@
 //! - **SC7 and §4.1.** Every surface-layer key and every quad-grid value of every terrain
 //!   and ceiling chunk of every landblock-data record resolves in its region's table:
 //!   [`resolve_landblock`] reports no unresolved layer. Also §4.2 (draw order
-//!   non-decreasing, no key twice in a chunk) and §4.3/§4.5 (no rejected layer triangle:
-//!   none off the level-0 grid, wound against its surface or repeated;
-//!   hole triangles counted in terrain chunks with layers).
+//!   non-decreasing, no key twice in a chunk) and §4.3/§4.5 (rejected layer triangles, off
+//!   the level-0 grid, wound against their surface or repeated, sorted by kind and found
+//!   only in chunks with more than 65,535 indices, `landblock.md` §3.8.2 OPEN; hole
+//!   triangles counted in terrain chunks with layers).
 //! - **§5.1 (T14).** Every mask named by a drawn layer exists and is an A8 surface, square,
 //!   128, 256 or 512 texels, and passes [`AlphaMask::check`].
 //! - **§10 (T37).** Every `Landblock_LightMap` and `Landblock_CeilingLightMap` value of
 //!   every landblock-property record names a DXT1 surface.
 //!
-//! Counts are printed next to the spec's figures for this install (observations, so they
-//! are not asserted). A release build visits every record; a debug build a 1-in-23 sample
+//! Counts are printed next to the spec's figures and, in an exhaustive run, checked against
+//! this install's local census baseline (decision 0045, `tessera-testkit`); a game update
+//! changes them without failing the test. Rule checks stay assertions: among them, the
+//! only rejected layer triangles (§4.3/§4.5 above) lie in chunks with more than 65,535
+//! indices (`landblock.md` §3.8.2 OPEN). A release build visits every record; a debug build a 1-in-23 sample
 //! unless `TESSERA_FULL=1`. Skipped unless `TESSERA_GAME_DIR` points at an install. Run
 //! with `cargo test --release -p tessera-terrain --test layers_real_data -- --nocapture`.
 //! Only counts and DIDs are printed; no game data leaves the install.
@@ -40,25 +44,36 @@ use tessera_formats::{
 };
 use tessera_terrain::{
     AlphaMask, ChunkLayers, EdgeLods, LayerVertices, Lod, Neighbours, ResolveOptions, TerrainBlock,
-    VertexNormals, fixed_block_offset, resolve_landblock, triangulate,
+    VertexNormals, fixed_block_offset, resolve_landblock, splat_layers, triangulate,
 };
 
 /// The property dictionary (`property-system.md` §3), as the formats tests read it.
 const PROPERTY_DICTIONARY: u32 = 0x3400_0000;
 
-fn open_set() -> Option<ArchiveSet> {
-    let dir = match std::env::var_os("TESSERA_GAME_DIR") {
-        Some(d) if !d.is_empty() => PathBuf::from(d),
+fn game_dir() -> Option<PathBuf> {
+    match std::env::var_os("TESSERA_GAME_DIR") {
+        Some(d) if !d.is_empty() => Some(PathBuf::from(d)),
         _ => {
             eprintln!("TESSERA_GAME_DIR not set; skipping");
-            return None;
+            None
         }
-    };
+    }
+}
+
+fn open_set() -> Option<ArchiveSet> {
+    let dir = game_dir()?;
     Some(ArchiveSet::open(&dir, SetOptions::default()).expect("open archive set"))
 }
 
 fn exhaustive() -> bool {
     !cfg!(debug_assertions) || std::env::var_os("TESSERA_FULL").is_some_and(|v| v == "1")
+}
+
+/// The census of `function` against this install's local baseline (decision 0045). Only an
+/// exhaustive run records counts: a sample's counts are not the install's.
+fn census(function: &str) -> Option<tessera_testkit::Census> {
+    let dir = game_dir()?;
+    exhaustive().then(|| tessera_testkit::census!(function, &dir).expect("census"))
 }
 
 /// Runs `f` over `items` on every core; results come back in no fixed order.
@@ -189,6 +204,12 @@ fn terrain_type_tables_hold_the_decoder_invariants() {
             t.did
         );
     }
+    if let Some(mut c) = census("terrain_type_tables_hold_the_decoder_invariants") {
+        c.count_vs_spec("terrain type tables", all.len(), 5u32);
+        c.count_vs_spec("terrain type entries", entries, 4_688u32);
+        c.count("regions with a slot-8 table", by_region.len());
+        c.finish();
+    }
 }
 
 #[derive(Default)]
@@ -205,6 +226,21 @@ struct Tally {
     all_empty: usize,
     hole_triangles: usize,
     off_grid: usize,
+    /// Rejected triangles by kind: [two equal corners, not a level-0 grid triangle, wound
+    /// against the surface, repeated within its layer].
+    rejected: [usize; 4],
+    /// Landblocks with a rejected triangle.
+    rejected_blocks: usize,
+    /// Layers with a rejected triangle.
+    rejected_layers: usize,
+    /// Layers whose stored triangles are all rejected.
+    rejected_whole_layers: usize,
+    /// Of the layers with a rejected triangle, those whose window read 65,536 indices
+    /// further on holds only grid triangles wound as the surface, within the layer's
+    /// `min_vertex` / `vertex_span` (the observation of the `landblock.md` §3.8.2 OPEN).
+    rejected_layers_whole_at_wrap: usize,
+    /// Chunks with layers whose index list holds more than 65,535 entries.
+    long_chunks: usize,
     order_violations: usize,
     repeated_keys: usize,
     masks: BTreeSet<u32>,
@@ -226,6 +262,14 @@ impl Tally {
         self.all_empty += o.all_empty;
         self.hole_triangles += o.hole_triangles;
         self.off_grid += o.off_grid;
+        for (a, b) in self.rejected.iter_mut().zip(o.rejected) {
+            *a += b;
+        }
+        self.rejected_blocks += o.rejected_blocks;
+        self.rejected_layers += o.rejected_layers;
+        self.rejected_whole_layers += o.rejected_whole_layers;
+        self.rejected_layers_whole_at_wrap += o.rejected_layers_whole_at_wrap;
+        self.long_chunks += o.long_chunks;
         self.order_violations += o.order_violations;
         self.repeated_keys += o.repeated_keys;
         self.masks.extend(o.masks);
@@ -263,6 +307,8 @@ fn check_block(set: &ArchiveSet, member: usize, e: &Entry, table: &TerrainTypeTa
         }
         t.chunks[k] += 1;
         t.layers[k] += chunk.layers.len();
+        let long = chunk.indices.len() > usize::from(u16::MAX);
+        t.long_chunks += usize::from(long);
         // SC7: quad-grid values are keys of the table too.
         if let Some(q) = &chunk.quads {
             for &v in q.iter() {
@@ -312,6 +358,21 @@ fn check_block(set: &ArchiveSet, member: usize, e: &Entry, table: &TerrainTypeTa
             ));
         }
         t.off_grid += r.rejected_triangles();
+        if r.rejected_triangles() > 0 {
+            classify_rejected(&data, surface, &mut t);
+            t.rejected_blocks += 1;
+            // `terrain.md` §7 Decision (6) keeps these triangles out of the picture. The
+            // only stored triangles it rejects lie in chunks whose index list is longer
+            // than a u16 `start` can address (`landblock.md` §3.8.2 OPEN).
+            if !long {
+                t.failures.push(format!(
+                    "{:#010x} {surface:?}: {} rejected layer triangles in a chunk of {} indices",
+                    e.did,
+                    r.rejected_triangles(),
+                    chunk.indices.len()
+                ));
+            }
+        }
         // On every 7th block: the level-0 index lists give the stored triangles back (both
         // surfaces, winding included), and the surface's vertex streams are finite with
         // downward ceiling normals.
@@ -348,6 +409,76 @@ fn check_block(set: &ArchiveSet, member: usize, e: &Entry, table: &TerrainTypeTa
         }
     }
     t
+}
+
+/// Sorts the stored triangles of every drawn layer of `surface` that `resolve_chunk` does
+/// not draw into the kinds of [`Tally::rejected`] (`terrain.md` §7 Decision (6)).
+fn classify_rejected(data: &LandblockData, surface: GridSurface, t: &mut Tally) {
+    let (Some(chunk), Some(block)) = (
+        data.surface_chunk(surface),
+        match surface {
+            GridSurface::Terrain => Some(TerrainBlock::from_landblock(data)),
+            GridSurface::Ceiling => TerrainBlock::from_ceiling(data),
+        },
+    ) else {
+        return;
+    };
+    let Ok(layers) = splat_layers(chunk) else {
+        return;
+    };
+    let sorted = |mut v: [u16; 3]| {
+        v.sort_unstable();
+        v
+    };
+    let grid: BTreeSet<[u16; 3]> = triangulate(&block, Lod::FINEST, EdgeLods::NONE)
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&v| sorted(v))
+        .collect();
+    let down = surface == GridSurface::Ceiling;
+    let drawn_as_surface =
+        |tri: [u16; 3]| grid.contains(&sorted(tri)) && (signed_area(tri) < 0) == down;
+    for l in &layers {
+        let mut seen = BTreeSet::new();
+        let (mut stored, mut bad) = (0usize, 0usize);
+        for &tri in l.indices.as_chunks::<3>().0 {
+            stored += 1;
+            let kind = if tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2] {
+                Some(0)
+            } else if !grid.contains(&sorted(tri)) {
+                Some(1)
+            } else if (signed_area(tri) < 0) != down {
+                Some(2)
+            } else if !seen.insert(sorted(tri)) {
+                Some(3)
+            } else {
+                None
+            };
+            if let Some(k) = kind {
+                t.rejected[k] += 1;
+                bad += 1;
+            }
+        }
+        t.rejected_layers += usize::from(bad > 0);
+        t.rejected_whole_layers += usize::from(bad > 0 && bad == stored);
+        if bad > 0
+            && let Some(stored_layer) = chunk.layers.get(l.ordinal)
+        {
+            let r = stored_layer.index_range();
+            let wrap = 1 + usize::from(u16::MAX);
+            let span = u32::from(stored_layer.min_vertex)
+                ..u32::from(stored_layer.min_vertex) + u32::from(stored_layer.vertex_span);
+            let whole = chunk
+                .indices
+                .get(r.start + wrap..r.end + wrap)
+                .is_some_and(|w| {
+                    w.iter().all(|&v| span.contains(&u32::from(v)))
+                        && w.as_chunks::<3>().0.iter().all(|&t| drawn_as_surface(t))
+                });
+            t.rejected_layers_whole_at_wrap += usize::from(whole);
+        }
+    }
 }
 
 /// Twice the signed area of a triangle of grid vertex numbers seen from above (positive:
@@ -425,6 +556,7 @@ struct MaskTally {
 #[test]
 fn layers_resolve_and_masks_are_a8() {
     let Some(set) = open_set() else { return };
+    let mut census = census("layers_resolve_and_masks_are_a8");
     let tables = region_tables(&set);
     let mut all = Tally::default();
     for (region, entries) in landblock_entries(&set, 0) {
@@ -475,14 +607,83 @@ fn layers_resolve_and_masks_are_a8() {
         all.repeated_keys,
         all.stream_checks,
     );
+    eprintln!(
+        "rejected layer triangles by kind [equal corners, not a grid triangle, wound against, \
+         repeated] {:?}; in {} layers ({} with every triangle rejected, {} whole at index + \
+         65,536) of {} landblocks; {} chunks with more than 65,535 indices",
+        all.rejected,
+        all.rejected_layers,
+        all.rejected_whole_layers,
+        all.rejected_layers_whole_at_wrap,
+        all.rejected_blocks,
+        all.long_chunks
+    );
     for f in all.failures.iter().take(20) {
         eprintln!("FAIL {f}");
     }
+    // Rules: no unresolved key, quad value or stream failure; rejected triangles only in
+    // chunks longer than a u16 `start` addresses (a Tessera interim rule while the
+    // `landblock.md` §3.8.2 OPEN is unanswered; `terrain.md` §7 Decision (6)).
     assert!(all.failures.is_empty(), "{} failures", all.failures.len());
     assert_eq!(
-        all.off_grid, 0,
-        "rejected layer triangles (off the grid, wrongly wound, repeated)"
+        all.rejected.iter().sum::<usize>(),
+        all.off_grid,
+        "every rejected triangle is classified"
     );
+    if let Some(c) = &mut census {
+        c.count_vs_spec("landblock-data records", all.blocks, 390_150u32);
+        c.count_vs_spec("terrain chunks with layers", all.chunks[0], 86_726u32);
+        c.count_vs_spec("ceiling chunks with layers", all.chunks[1], 2_355u32);
+        c.count_vs_spec("layers", all.layers[0] + all.layers[1], 925_884u32);
+        c.count("drawn terrain layers", all.drawn[0]);
+        c.count("drawn ceiling layers", all.drawn[1]);
+        c.count("drawn whole layers", all.whole);
+        c.count_vs_spec(
+            "drawn terrain layers without diffuse",
+            all.no_diffuse_drawn[0],
+            60u32,
+        );
+        c.count_vs_spec(
+            "drawn ceiling layers without diffuse",
+            all.no_diffuse_drawn[1],
+            43u32,
+        );
+        c.count_vs_spec("hole triangles", all.hole_triangles, 2_750_134u32);
+        c.count_vs_spec("landblocks with hole triangles", all.hole_blocks, 2_368u32);
+        c.count_vs_spec("terrain chunks with no drawn layer", all.all_empty, 515u32);
+        c.count_vs_spec("rejected layer triangles", all.off_grid, 0u32);
+        for (k, name) in [
+            "equal corners",
+            "not a grid triangle",
+            "wound against",
+            "repeated",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            c.count_vs_spec(
+                &format!("rejected layer triangles: {name}"),
+                all.rejected[k],
+                0u32,
+            );
+        }
+        c.count_vs_spec("layers with rejected triangles", all.rejected_layers, 0u32);
+        c.count(
+            "layers with every triangle rejected",
+            all.rejected_whole_layers,
+        );
+        c.count(
+            "rejected layers whole at index + 65,536",
+            all.rejected_layers_whole_at_wrap,
+        );
+        c.count_vs_spec(
+            "landblocks with rejected triangles",
+            all.rejected_blocks,
+            0u32,
+        );
+        c.count("chunks with more than 65,535 indices", all.long_chunks);
+        c.count_vs_spec("stream checks", all.stream_checks, 12_748u32);
+    }
     assert_eq!(
         all.order_violations, 0,
         "§4.2: draw order decreases in a chunk"
@@ -532,6 +733,14 @@ fn layers_resolve_and_masks_are_a8() {
         eprintln!("FAIL {f}");
     }
     assert!(failures.is_empty(), "{} mask failures", failures.len());
+    if let Some(mut c) = census {
+        c.count_vs_spec("masks of drawn layers", masks.len(), 646_073u32);
+        for (side, spec) in [(128u32, 623_092u32), (256, 20_624), (512, 2_357)] {
+            let n = sizes.get(&side).copied().unwrap_or(0);
+            c.count_vs_spec(&format!("masks of {side} texels"), n, spec);
+        }
+        c.finish();
+    }
 }
 
 #[test]
@@ -609,4 +818,22 @@ fn light_maps_are_dxt1() {
         eprintln!("FAIL {f}");
     }
     assert!(failures.is_empty(), "{} failures", failures.len());
+    if let Some(mut c) = census("light_maps_are_dxt1") {
+        c.count("landblock-property records", records);
+        c.count_vs_spec("terrain light-map values", values[0], 4_692u32);
+        c.count_vs_spec("ceiling light-map values", values[1], 749u32);
+        c.count_vs_spec("light-map surfaces", surfaces.len(), 5_422u32);
+        for ((w, h), spec) in [((128u32, 128u32), 5_421u32), ((64, 64), 1)] {
+            let n = sizes.get(&(w, h)).copied().unwrap_or(0);
+            c.count_vs_spec(&format!("light-map surfaces of {w} x {h}"), n, spec);
+        }
+        // Sizes the spec does not list.
+        let other: usize = sizes
+            .iter()
+            .filter(|(k, _)| !matches!(k, (128, 128) | (64, 64)))
+            .map(|(_, n)| n)
+            .sum();
+        c.count_vs_spec("light-map surfaces of other sizes", other, 0u32);
+        c.finish();
+    }
 }

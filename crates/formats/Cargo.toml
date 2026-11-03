@@ -26,6 +26,8 @@ tessera-dat = { path = "../dat" }
 # library (parent map) and record access. A dev-dependency cycle; integration tests share
 # one build of this crate with it, unit tests must not use it.
 tessera-wstate = { path = "../wstate" }
+# Census counts of the real-data tests against local per-install baselines (decision 0045).
+tessera-testkit.workspace = true
 
 [lints]
 workspace = true

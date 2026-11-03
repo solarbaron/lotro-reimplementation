@@ -19,6 +19,12 @@
 # no longer matches cargo's output and the guard would pass vacuously), and the forward
 # normal tree must contain tessera-compat at all.
 #
+# Dev-only test kit (decision 0045). In this repository the guard also checks that the
+# dev-only crate tessera-testkit is in no normal or build graph of a shipped package
+# (tessera-client, tessera-explorer, tessera-dattool, tessera-server, tessera-loadtest), with
+# default features and with --all-features (forward `cargo tree -e normal,build`). Its
+# self-check: the dev graph of tessera-wvm, whose tests use the kit, must show it.
+#
 # Usage: tools/check-release-features.sh [--root DIR] [--self-test]
 #   (no option)    check this repository's workspace
 #   --root DIR     the workspace to check (default: this repository); the self-test uses it
@@ -56,7 +62,7 @@ while [ $# -gt 0 ]; do
             ws="$(cd "$2" && pwd)" || usage_error "no directory $2"
             shift 2 ;;
         --self-test) self_test=1; shift ;;
-        -h|--help) sed -n '2,32p' "$script"; exit 0 ;;
+        -h|--help) sed -n '2,38p' "$script"; exit 0 ;;
         *) usage_error "unknown option $1" ;;
     esac
 done
@@ -172,5 +178,38 @@ for features in "" "--all-features"; do
         echo "check-release-features: $client ($label): test-support not in the normal graph"
     fi
 done
+
+# ---- dev-only test kit (decision 0045) ---------------------------------------------------
+
+if [ "$ws" = "$repo" ]; then
+    kit_pattern='tessera-testkit v'
+    kit_tree() { # PACKAGE ARGS...
+        local pkg="$1"
+        shift
+        cargo tree --color never -p "$pkg" --target all --locked "$@" 2>/dev/null || {
+            echo "check-release-features: cargo tree -p $pkg $* failed in $ws" >&2
+            exit 2
+        }
+    }
+    if ! grep -qF "$kit_pattern" <<<"$(kit_tree tessera-wvm -e normal,build,dev)"; then
+        echo "check-release-features: self-check failed: the dev graph of tessera-wvm does not" >&2
+        echo "  show '$kit_pattern' (has cargo's output format changed?)" >&2
+        failed=1
+    fi
+    for pkg in tessera-client tessera-explorer tessera-dattool tessera-server tessera-loadtest; do
+        for features in "" "--all-features"; do
+            label="${features:-default features}"
+            flags=(-e normal,build)
+            [ -n "$features" ] && flags+=("$features")
+            if grep -qF "$kit_pattern" <<<"$(kit_tree "$pkg" "${flags[@]}")"; then
+                echo "check-release-features: $pkg ($label) links the dev-only tessera-testkit" >&2
+                echo "  through a normal or build dependency" >&2
+                failed=1
+            else
+                echo "check-release-features: $pkg ($label): tessera-testkit not in the normal graph"
+            fi
+        done
+    done
+fi
 
 exit "$failed"

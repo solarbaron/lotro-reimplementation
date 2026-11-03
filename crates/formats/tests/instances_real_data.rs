@@ -17,8 +17,12 @@
 //! The object-state forms (N-I1's object part, N-I8, N-I11, §13) are not checked here: they
 //! need `tessera-wstate`.
 //!
+//! The counts are checked against the local baseline of the install version (decision 0045,
+//! `tessera-testkit`), with the spec's figures beside them (drift reports,
+//! `TESSERA_CENSUS_STRICT=1`); the invariants and rules stay assertions.
+//!
 //! Skipped unless `TESSERA_GAME_DIR` points at an install. A debug build reads a 1-in-23
-//! sample of the object records and skips the census assertions unless `TESSERA_FULL=1`.
+//! sample of the object records and skips the census unless `TESSERA_FULL=1`.
 //! Run with `cargo test --release -p tessera-formats --test instances_real_data -- --nocapture`.
 //! Only counts, DIDs, class numbers and labels are printed; no game data leaves the install.
 
@@ -281,33 +285,35 @@ fn instances_census() {
     );
     assert!(kinds_wrong.is_empty(), "§3.4 classification");
     if !exhaustive() {
-        eprintln!("debug sample: census assertions skipped (TESSERA_FULL=1 for all)");
+        eprintln!("debug sample: census skipped (TESSERA_FULL=1 for all)");
         return;
     }
+    let dir = PathBuf::from(std::env::var_os("TESSERA_GAME_DIR").expect("install"));
+    let mut census = tessera_testkit::census!("instances_census", &dir).expect("census");
 
     // §2.1 census.
-    let mut census_ok = true;
     let (mut n, mut b70, mut b79) = (0usize, 0u64, 0u64);
     for &(class, records, bytes70, bytes79, _) in CENSUS {
         let got = per_class.get(&class).copied().unwrap_or_default();
         n += got.0;
         b70 += got.1;
         b79 += got.2;
-        if got != (records, bytes70, bytes79) {
-            census_ok = false;
-            eprintln!("  class {class}: {got:?}, spec ({records}, {bytes70}, {bytes79})");
-        }
+        census.count_vs_spec(&format!("§2.1 class {class} records"), got.0, records);
+        census.count_vs_spec(&format!("§2.1 class {class} 0x70 bytes"), got.1, bytes70);
+        census.count_vs_spec(&format!("§2.1 class {class} 0x79 bytes"), got.2, bytes79);
     }
     for &(class, records) in BATTLE_STATS {
         let got = per_class.get(&class).map_or(0, |c| c.0);
-        if got != records {
-            census_ok = false;
-            eprintln!("  class {class}: {got} records, spec {records}");
-        }
+        census.count_vs_spec(
+            &format!("§2.1 battle-statistic class {class} records"),
+            got,
+            records,
+        );
     }
     eprintln!("census: {n} records, {b70} bytes of 0x70, {b79} bytes of 0x79");
-    assert!(census_ok, "§2.1 per-class census");
-    assert_eq!((n, b70, b79), (1_833, 1_213_530, 1_679_741), "§2.1 totals");
+    census.count_vs_spec("§2.1 records", n, 1_833);
+    census.count_vs_spec("§2.1 0x70 bytes", b70, 1_213_530u64);
+    census.count_vs_spec("§2.1 0x79 bytes", b79, 1_679_741u64);
 
     // Typed views by kind.
     let templates: BTreeMap<u32, (u32, &Template)> = views
@@ -359,14 +365,15 @@ fn instances_census() {
     eprintln!(
         "N-I2: {did45} type-0x45 DID values in the §2.1 records, {dangling} dangling (battle statistics included); IntroVO {intro} values, {intro_nonzero} non-zero, {intro_bad} not 0x2A"
     );
-    assert_eq!(did45, 38_545, "§3.2: type-0x45 values in the §2.1 records");
+    census.count_vs_spec("§3.2 type-0x45 values in the §2.1 records", did45, 38_545);
     if dangling != 0 {
         problems.push(format!("N-I2: {dangling} dangling"));
     }
+    census.count_vs_spec("§3.2 IntroVO values", intro, 942);
+    census.count_vs_spec("§3.2 IntroVO non-zero", intro_nonzero, 908);
     assert_eq!(
-        (intro, intro_nonzero, intro_bad),
-        (942, 908, 0),
-        "§3.2 IntroVO"
+        intro_bad, 0,
+        "§3.2 IntroVO: every non-zero value is a 0x2A DID"
     );
 
     // §4: templates.
@@ -375,11 +382,30 @@ fn instances_census() {
         m
     });
     eprintln!("templates: {} {by_kind:?}", templates.len());
-    assert_eq!(templates.len(), 1_511);
-    assert_eq!(by_kind.get(&TemplateKind::Ordinary), Some(&959));
-    assert_eq!(by_kind.get(&TemplateKind::Mission), Some(&384));
-    assert_eq!(by_kind.get(&TemplateKind::WorldJoinEncounter), Some(&166));
-    assert_eq!(by_kind.get(&TemplateKind::OtherSkirmish), Some(&2));
+    census.count_vs_spec("§4 templates", templates.len(), 1_511);
+    for (kind, spec) in [
+        (TemplateKind::Ordinary, 959),
+        (TemplateKind::Mission, 384),
+        (TemplateKind::WorldJoinEncounter, 166),
+        (TemplateKind::OtherSkirmish, 2),
+    ] {
+        census.count_vs_spec(
+            &format!("§4 templates of kind {kind:?}"),
+            by_kind.get(&kind).copied().unwrap_or(0),
+            spec,
+        );
+    }
+    for (kind, &got) in &by_kind {
+        if !matches!(
+            kind,
+            TemplateKind::Ordinary
+                | TemplateKind::Mission
+                | TemplateKind::WorldJoinEncounter
+                | TemplateKind::OtherSkirmish
+        ) {
+            census.count(&format!("§4 templates of kind {kind:?}"), got);
+        }
+    }
     let skirmish_class_ok = templates
         .values()
         .all(|(c, t)| t.skirmish_class == (*c == 2651));
@@ -438,30 +464,53 @@ fn instances_census() {
     );
     assert_eq!(local, 0, "N-I3, N-I4, N-I5");
     assert_eq!(unknown_layer, 0, "N-I3: content layer in the DID map");
-    assert_eq!(
-        (values, aligned, with_list, no_list, dup),
-        (4_628, 4_410, 1_487, 24, 25),
-        "§4.3"
-    );
+    census.count_vs_spec("§4.3 landblock values", values, 4_628);
+    census.count_vs_spec("§4.3 aligned landblocks", aligned, 4_410);
+    census.count_vs_spec("§4.3 templates with a landblock list", with_list, 1_487);
+    census.count_vs_spec("§4.3 templates without a landblock list", no_list, 24);
+    census.count_vs_spec("§4.3 templates with a duplicate landblock", dup, 25);
 
     // §5.1 control and N-I6.
     let template_dids: BTreeSet<Did> = templates.keys().map(|d| Did(*d)).collect();
     let controls = one(InstanceKind::EncounterControl);
-    assert_eq!(controls.len(), 1);
+    assert_eq!(controls.len(), 1, "one encounter control");
     if let InstanceRecord::EncounterControl(c) = controls[0].1 {
         let devs = c.check_lockable(&lock_size);
         report("N-I6", &devs);
         assert!(devs.is_empty(), "N-I6");
-        assert_eq!(c.lockable.len(), 43);
-        assert_eq!(c.locks.len(), 5);
+        census.count_vs_spec("§5.1 lockable templates", c.lockable.len(), 43);
+        census.count_vs_spec("§5.1 locks", c.locks.len(), 5);
         let sizes: BTreeSet<u32> = c.locks.iter().filter_map(|r| r.size).collect();
-        assert_eq!(sizes, (1..=5).collect());
-        assert_eq!(c.lock(5).map(|r| r.reset_day_keys().len()), Some(7));
-        assert_eq!(c.lock(1).map(|r| r.reset_day_keys().len()), Some(1));
-        assert_eq!(c.entry_filters.len(), 4);
-        let filter_classes: BTreeSet<_> = c.entry_filters.iter().map(|d| class_of(*d)).collect();
-        assert_eq!(filter_classes, [Some(2573), Some(2576)].into());
-        assert_eq!(c.filter_ignored.len(), 12);
+        census.count_vs_spec("§5.1 distinct lock sizes", sizes.len(), 5);
+        census.count_vs_spec(
+            "§5.1 smallest lock size",
+            sizes.first().copied().unwrap_or(0),
+            1u32,
+        );
+        census.count_vs_spec(
+            "§5.1 largest lock size",
+            sizes.last().copied().unwrap_or(0),
+            5u32,
+        );
+        census.count_vs_spec(
+            "§5.1 reset days of lock 5",
+            c.lock(5).map_or(0, |r| r.reset_day_keys().len()),
+            7,
+        );
+        census.count_vs_spec(
+            "§5.1 reset days of lock 1",
+            c.lock(1).map_or(0, |r| r.reset_day_keys().len()),
+            1,
+        );
+        census.count_vs_spec("§5.1 entry filters", c.entry_filters.len(), 4);
+        // N-I2: entry filters are of the two filter classes.
+        assert!(
+            c.entry_filters
+                .iter()
+                .all(|d| matches!(class_of(*d), Some(2573 | 2576))),
+            "N-I2: entry-filter classes"
+        );
+        census.count_vs_spec("§5.1 filter-ignored templates", c.filter_ignored.len(), 12);
         for d in c
             .lockable
             .iter()
@@ -499,12 +548,10 @@ fn instances_census() {
         params.len(),
         distinct.len()
     );
-    assert_eq!((params.len(), distinct.len()), (183, 183));
-    assert_eq!(
-        (same_bands_overlap, triple_overlap),
-        (0, 144),
-        "§6.1 band overlaps"
-    );
+    census.count_vs_spec("§6.1 match parameters", params.len(), 183);
+    census.count_vs_spec("§6.1 distinct match parameters", distinct.len(), 183);
+    census.count_vs_spec("§6.1 same-band level overlaps", same_bands_overlap, 0);
+    census.count_vs_spec("§6.1 triple overlaps", triple_overlap, 144);
 
     // §6.2 trait lists.
     let mut trait_sizes: Vec<usize> = one(InstanceKind::SkillTrainerTraits)
@@ -515,28 +562,55 @@ fn instances_census() {
         })
         .collect();
     trait_sizes.sort_unstable();
-    assert_eq!(trait_sizes, vec![1, 47, 89], "§6.2");
+    census.count_vs_spec("§6.2 trait lists", trait_sizes.len(), 3);
+    for (i, &n) in trait_sizes.iter().enumerate() {
+        match [1, 47, 89].get(i) {
+            Some(&spec) => census.count_vs_spec(&format!("§6.2 trait list {i} (by size)"), n, spec),
+            None => census.count(&format!("§6.2 trait list {i} (by size)"), n),
+        }
+    }
 
     // §6.3 skirmish control, N-I12.
     let sc = one(InstanceKind::SkirmishControl);
-    assert_eq!(sc.len(), 1);
+    assert_eq!(sc.len(), 1, "one skirmish control");
     if let InstanceRecord::SkirmishControl(c) = sc[0].1 {
         let devs = c.check_conversion();
         report("N-I12", &devs);
         assert!(devs.is_empty(), "N-I12");
-        assert_eq!(c.difficulty_multipliers.len(), 3);
-        assert_eq!(c.group_size_multipliers.len(), 6);
-        assert_eq!(c.trait_gates.len(), 6);
-        assert_eq!(c.blocked_stats.len(), 6);
-        assert_eq!((c.grs_properties.len(), c.stat_to_grs.len()), (19, 19));
-        assert_eq!(c.derived_stats.len(), 5);
-        // §3.5: fields read by their full labels.
-        let tiers: Vec<(Option<u32>, Option<u32>)> =
-            [(1, 1), (2, 3), (3, 3), (6, 6), (12, 12), (24, 12)]
-                .into_iter()
-                .map(|(a, b)| (Some(a), Some(b)))
-                .collect();
-        assert_eq!(c.group_tiers, tiers, "§6.3 group tiers");
+        for (what, got, spec) in [
+            ("difficulty multipliers", c.difficulty_multipliers.len(), 3),
+            ("group-size multipliers", c.group_size_multipliers.len(), 6),
+            ("trait gates", c.trait_gates.len(), 6),
+            ("blocked statistics", c.blocked_stats.len(), 6),
+            ("GRS properties", c.grs_properties.len(), 19),
+            ("statistic-to-GRS pairs", c.stat_to_grs.len(), 19),
+            ("derived statistics", c.derived_stats.len(), 5),
+        ] {
+            census.count_vs_spec(&format!("§6.3 {what}"), got, spec);
+        }
+        // §3.5: fields read by their full labels; every pair has both halves.
+        assert!(
+            c.group_tiers
+                .iter()
+                .all(|(a, b)| a.is_some() && b.is_some()),
+            "§6.3 group tiers"
+        );
+        let spec_tiers = [(1, 1), (2, 3), (3, 3), (6, 6), (12, 12), (24, 12)];
+        census.count_vs_spec("§6.3 group tiers", c.group_tiers.len(), spec_tiers.len());
+        for (i, (a, b)) in c.group_tiers.iter().enumerate() {
+            let (a, b) = (a.unwrap_or(0), b.unwrap_or(0));
+            let name = |half: &str| format!("§6.3 group tier {i} {half}");
+            match spec_tiers.get(i) {
+                Some(&(sa, sb)) => {
+                    census.count_vs_spec(&name("size"), a, sa);
+                    census.count_vs_spec(&name("tier"), b, sb);
+                }
+                None => {
+                    census.count(&name("size"), a);
+                    census.count(&name("tier"), b);
+                }
+            }
+        }
         assert!(
             c.trait_gates
                 .iter()
@@ -550,18 +624,26 @@ fn instances_census() {
         assert!(c.derived_stats.iter().all(|d| d.derived.is_some()
             && d.primary.is_some()
             && (1..=6).contains(&d.operations.len())));
-        assert_eq!(
+        census.count_vs_spec(
+            "§6.3 derived statistics with scale 3,600",
             c.derived_stats.iter().filter(|d| d.scale == 3600).count(),
             3,
-            "§6.3: scale 3,600 in three statistics"
         );
-        assert_eq!(c.fastest_possible_time, Some(0.5));
-        assert_eq!(c.max_skirmishes_per_week, Some(-1));
+        let fastest = c.fastest_possible_time.expect("fastest possible time");
+        assert!(fastest.is_finite(), "§6.3 fastest possible time");
+        #[allow(clippy::cast_possible_truncation)]
+        let fastest_ms = (f64::from(fastest) * 1000.0).round() as i64;
+        census.count_vs_spec("§6.3 fastest possible time (ms)", fastest_ms, 500i64);
+        census.count_vs_spec(
+            "§6.3 skirmishes per week",
+            c.max_skirmishes_per_week.expect("skirmishes per week"),
+            -1i32,
+        );
     }
 
     // §7.1 world join, N-I7.
     let wj = one(InstanceKind::WorldJoinControl);
-    assert_eq!(wj.len(), 1);
+    assert_eq!(wj.len(), 1, "one world-join control");
     let InstanceRecord::WorldJoinControl(w) = wj[0].1 else {
         unreachable!()
     };
@@ -582,21 +664,30 @@ fn instances_census() {
         w.featured.len(),
         w.seasonal.len()
     );
+    census.count_vs_spec("§7.1 available templates", w.available.len(), 150);
+    census.count_vs_spec("§7.1 groups", w.groups.len(), 8);
+    census.count_vs_spec("§7.1 grouped templates", grouped.len(), 14);
+    let group_count = u32::try_from(w.groups.len()).expect("group count");
     assert_eq!(
-        (w.available.len(), w.groups.len(), grouped.len()),
-        (150, 8, 14)
+        labels_sorted,
+        (1..=group_count).collect::<Vec<_>>(),
+        "§7.1: group labels 1 … n"
     );
-    assert_eq!(labels_sorted, (1..=8).collect::<Vec<_>>());
-    assert_eq!((w.featured.len(), w.seasonal.len()), (6, 5));
-    assert_eq!(w.min_level, Some(10));
-    assert_eq!(w.finder_order().len(), 164);
+    census.count_vs_spec("§7.1 featured templates", w.featured.len(), 6);
+    census.count_vs_spec("§7.1 seasonal templates", w.seasonal.len(), 5);
+    census.count_vs_spec(
+        "§7.1 minimum level",
+        w.min_level.expect("minimum level"),
+        10i32,
+    );
+    census.count_vs_spec("§7.1 finder order", w.finder_order().len(), 164);
     for d in w.available.iter().chain(&grouped) {
         if !template_dids.contains(d) {
             problems.push(format!("N-I2: finder names non-template {:#010x}", d.0));
         }
     }
     let tickets = one(InstanceKind::WorldJoinTicket);
-    assert_eq!(tickets.len(), 2, "§7.2");
+    census.count_vs_spec("§7.2 tickets", tickets.len(), 2);
 
     // §8.1, §8.3, N-I9.
     let big_battles: BTreeSet<Did> = templates
@@ -605,7 +696,7 @@ fn instances_census() {
         .map(|(d, _)| Did(*d))
         .collect();
     let script_records = one(InstanceKind::DistantBattleScript);
-    assert_eq!(script_records.len(), 14);
+    census.count_vs_spec("§8.3 distant-battle scripts", script_records.len(), 14);
     for (d, _) in &script_records {
         let n = scripts.get(&Did(*d)).map_or(0, Vec::len);
         if n != 1 {
@@ -640,20 +731,18 @@ fn instances_census() {
         "distant battles: {waves} waves, {objectives} objectives, {} units named",
         units_named.len()
     );
-    assert_eq!(
-        (waves, objectives, units_named.len()),
-        (41, 85, 60),
-        "§8.3, §14.2"
-    );
+    census.count_vs_spec("§8.3 waves", waves, 41);
+    census.count_vs_spec("§8.3 objectives", objectives, 85);
+    census.count_vs_spec("§8.3 units named", units_named.len(), 60);
     let bb = one(InstanceKind::BigBattleControl);
-    assert_eq!(bb.len(), 1);
+    assert_eq!(bb.len(), 1, "one big-battle control");
     if let InstanceRecord::BigBattleControl(b) = bb[0].1 {
-        assert_eq!(b.medals.len(), 5);
-        assert_eq!(b.quest_points.len(), 107);
-        assert_eq!(b.quest_encounters.len(), 99);
+        census.count_vs_spec("§8.1 medals", b.medals.len(), 5);
+        census.count_vs_spec("§8.1 quest points", b.quest_points.len(), 107);
+        census.count_vs_spec("§8.1 quest encounters", b.quest_encounters.len(), 99);
         let targets: BTreeSet<Did> = b.quest_encounters.iter().filter_map(|(_, e)| *e).collect();
         assert_eq!(targets, big_battles, "§8.1 quest → encounter targets");
-        assert_eq!(b.location_events.len(), 3);
+        census.count_vs_spec("§8.1 location events", b.location_events.len(), 3);
         assert!(
             b.quest_points
                 .iter()
@@ -668,11 +757,11 @@ fn instances_census() {
 
     // §8.4, §8.5, N-I10.
     let fc = one(InstanceKind::FormationControl);
-    assert_eq!(fc.len(), 1);
+    assert_eq!(fc.len(), 1, "one formation control");
     let InstanceRecord::FormationControl(form) = fc[0].1 else {
         unreachable!()
     };
-    assert_eq!(form.widths.len(), 7);
+    census.count_vs_spec("§8.5 formation widths", form.widths.len(), 7);
     assert!(form.widths.iter().all(|(c, w)| c.is_some() && w.is_some()));
     let (mut units, mut groups, mut offsets, mut unit_devs) = (0, 0, 0, 0);
     for (d, v) in one(InstanceKind::DistantBattleUnit) {
@@ -692,7 +781,9 @@ fn instances_census() {
     eprintln!(
         "distant-battle units: {units}, {groups} groups, {offsets} offsets, {unit_devs} deviations"
     );
-    assert_eq!((units, groups, offsets), (96, 376, 26_581), "§8.4");
+    census.count_vs_spec("§8.4 units", units, 96);
+    census.count_vs_spec("§8.4 groups", groups, 376);
+    census.count_vs_spec("§8.4 offsets", offsets, 26_581);
     assert_eq!(unit_devs, 0, "N-I10");
 
     // §8.7, §9, §10.1.
@@ -701,10 +792,15 @@ fn instances_census() {
         .iter()
         .filter(|(_, v)| matches!(v, InstanceRecord::BattleStat(s) if s.scope == Some(3)))
         .count();
-    assert_eq!((stats.len(), player_scope), (13, 13), "§8.7");
+    census.count_vs_spec("§8.7 battle statistics", stats.len(), 13);
+    assert_eq!(
+        player_scope,
+        stats.len(),
+        "§8.7: every statistic has player scope"
+    );
     let sp = one(InstanceKind::SessionPlayControl);
     if let [(_, InstanceRecord::SessionPlayControl(s))] = sp.as_slice() {
-        assert_eq!(s.slots.len(), 87, "§9");
+        census.count_vs_spec("§9 session-play slots", s.slots.len(), 87);
     } else {
         panic!("one session-play control expected");
     }
@@ -712,22 +808,27 @@ fn instances_census() {
     let [(_, InstanceRecord::FellowshipMakerControl(f))] = fm.as_slice() else {
         panic!("one fellowship-maker control expected");
     };
-    assert_eq!(f.valid_sizes, vec![2, 3, 6]);
-    assert_eq!(
-        (
-            f.match_time.len(),
-            f.bonus_thresholds.len(),
-            f.excluded.len()
-        ),
-        (3, 5, 1)
-    );
+    census.count_vs_spec("§10.1 valid sizes", f.valid_sizes.len(), 3);
+    for (i, &size) in f.valid_sizes.iter().enumerate() {
+        match [2u32, 3, 6].get(i) {
+            Some(&spec) => census.count_vs_spec(&format!("§10.1 valid size {i}"), size, spec),
+            None => census.count(&format!("§10.1 valid size {i}"), size),
+        }
+    }
+    census.count_vs_spec("§10.1 match times", f.match_time.len(), 3);
+    census.count_vs_spec("§10.1 bonus thresholds", f.bonus_thresholds.len(), 5);
+    census.count_vs_spec("§10.1 excluded templates", f.excluded.len(), 1);
     assert!(f.match_time.iter().all(|(a, b)| a.is_some() && b.is_some()));
     assert!(
         f.bonus_thresholds
             .iter()
             .all(|(a, b)| a.is_some() && b.is_some())
     );
-    assert_eq!(f.min_level, Some(10));
+    census.count_vs_spec(
+        "§10.1 minimum level",
+        f.min_level.expect("minimum level"),
+        10i32,
+    );
 
     // §10.2 item 2, I29: the flag bits come from the mapper named by
     // `FellowshipMaker_PlayerConfiguration`, by key label.
@@ -744,19 +845,25 @@ fn instances_census() {
         bits.sizes,
         bits.tiers
     );
-    assert_eq!(
-        mapper.names().len(),
-        21,
-        "§10.2: 21 keys (0 and 1–21 except 15)"
+    // §10.2: 21 keys (0 and 1–21 except 15), 20 of them non-zero.
+    census.count_vs_spec("§10.2 mapper keys", mapper.names().len(), 21);
+    census.count_vs_spec("§10.2 non-zero keys", bits.keys.len(), 20);
+    census.count_vs_spec(
+        "§10.2 keys with bit 0x4000",
+        usize::from(bits.keys.contains(&0x4000)),
+        0,
     );
-    assert_eq!(bits.keys.len(), 20, "§10.2 item 3: 20 non-zero keys");
-    assert!(!bits.keys.contains(&0x4000));
-    assert_eq!(bits.kind_mask(), 0x18_000F, "§15.1 B8: the six Type_ bits");
-    assert_eq!(
-        bits.sizes.keys().copied().collect::<Vec<_>>(),
-        vec![1, 2, 3, 6]
-    );
-    assert_eq!(bits.tiers.len(), 10);
+    // §15.1 B8: the six Type_ bits.
+    census.count_vs_spec("§10.2 kind mask", bits.kind_mask(), 0x18_000Fu32);
+    let size_keys: Vec<u32> = bits.sizes.keys().copied().collect();
+    census.count_vs_spec("§10.2 size keys", size_keys.len(), 4);
+    for (i, &k) in size_keys.iter().enumerate() {
+        match [1u32, 2, 3, 6].get(i) {
+            Some(&spec) => census.count_vs_spec(&format!("§10.2 size key {i}"), k, spec),
+            None => census.count(&format!("§10.2 size key {i}"), k),
+        }
+    }
+    census.count_vs_spec("§10.2 tier bits", bits.tiers.len(), 10);
 
     // §10.2 kind bits over the 166 templates with a category.
     let rules = MatchingRules {
@@ -781,10 +888,19 @@ fn instances_census() {
         (Some(0x10_0000), 7),
     ]
     .into();
-    assert_eq!(
-        kind_counts, expected,
-        "§10.2: kind bits disjoint, per-kind counts"
-    );
+    let kind_keys: BTreeSet<Option<u32>> =
+        expected.keys().chain(kind_counts.keys()).copied().collect();
+    for k in kind_keys {
+        let name = match k {
+            Some(bit) => format!("§10.2 category templates with kind bit {bit:#x}"),
+            None => "§10.2 category templates without a kind bit".to_owned(),
+        };
+        let got = kind_counts.get(&k).copied().unwrap_or(0);
+        match expected.get(&k) {
+            Some(&spec) => census.count_vs_spec(&name, got, spec),
+            None => census.count(&name, got),
+        }
+    }
 
     // The index rebuilt over every finder template with a valid size (which templates get
     // entries is OPEN, so the count is reported, not checked).
@@ -810,7 +926,7 @@ fn instances_census() {
     assert!(idx.unlabelled_kinds.is_empty() && idx.unencodable.is_empty());
     assert_eq!(
         idx.by_flag.len(),
-        20,
+        rules.bits.keys.len(),
         "N-I11: one key per non-zero mapper key"
     );
     // N-I11: one kind, one size and one tier bit per entry.
@@ -830,4 +946,6 @@ fn instances_census() {
         eprintln!("  {p}");
     }
     assert!(problems.is_empty(), "{} reference problems", problems.len());
+    // After every rule check: a failing run writes no baseline.
+    census.finish();
 }

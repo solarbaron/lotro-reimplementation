@@ -14,8 +14,9 @@
 //!   links are reciprocal (`collision.md` §5.8), the cells the set places answer the
 //!   point-in-cell lookup at the centre of their bounds (when inside their volume), and
 //!   portal polygons of linked cells coincide (within 1 cm) in the landblock frame for the
-//!   share §5.8 reports (all but 862 entries). No portal is left out by the per-set
-//!   budgets.
+//!   share §5.8 reports (all but 862 entries in the spec's install; the count is checked
+//!   against the install's local census baseline, decision 0045). No portal is left out by
+//!   the per-set budgets.
 //! - `streamer_finds_cells_owned_by_distant_landblocks`: settles the streamer around a
 //!   landblock whose cells reach two landblocks beyond its own square (region 4, landblock
 //!   (252, 152)) and checks that every placed cell of every resident landblock is found by
@@ -55,6 +56,12 @@ fn install() -> Option<PathBuf> {
 
 fn full() -> bool {
     !cfg!(debug_assertions) || std::env::var_os("TESSERA_FULL").is_some_and(|v| v == "1")
+}
+
+/// The census of `function` against this install's local baseline (decision 0045). Only a
+/// full run records counts: a sample's counts are not the install's.
+fn census(function: &str, dir: &std::path::Path) -> Option<tessera_testkit::Census> {
+    full().then(|| tessera_testkit::census!(function, dir).expect("census"))
 }
 
 fn workers() -> usize {
@@ -206,6 +213,12 @@ fn terrain_render_triangles_equal_collision_triangles() {
             regions.len()
         );
     }
+    // `landblock.md` LB-E1 and `collision.md` §6.4 figures (the install of 2026-10-05).
+    if let Some(mut c) = census("terrain_render_triangles_equal_collision_triangles", &dir) {
+        c.count_vs_spec("landblock-data records", blocks, 390_150u32);
+        c.count_vs_spec("ceilings", ceilings, 6_867u32);
+        c.finish();
+    }
 }
 
 #[test]
@@ -318,23 +331,26 @@ fn cells_and_portals_of_landblock_info() {
     assert_eq!(found, placed, "point-in-cell at the cells' centres");
     assert_eq!(left_out, 0, "no portal left out by the per-set budgets");
     if full() {
-        // The install as patched on 2026-10-27 (104,271 cells and 393,842 entries in the
-        // spec's install).
-        assert_eq!(cells, 105_424, "cells of landblock info");
         // `landblock.md` §4.4 (L42): the two cells without an offset lie at the landblock
         // origin and are placed like every other cell.
         assert_eq!(placed, cells, "cells placed");
-        assert_eq!(portals, 398_096, "neighbour entries");
-
-        // §5.8: 862 neighbour entries do not coincide within 1 cm; the 10 entries that
-        // touch the two cells without an offset have polygons and coincide (L42: their 5
-        // joins match exactly at the origin).
+        // §5.8: every neighbour entry has a polygon; the 10 entries that touch the two cells
+        // without an offset have polygons and coincide (L42: their 5 joins match exactly
+        // at the origin).
         assert_eq!(portals - corner_pairs, 0, "entries without a polygon");
-        assert_eq!(
+    }
+    // `collision.md` C9 and §5.8 figures (the install of 2026-10-05).
+    if let Some(mut c) = census("cells_and_portals_of_landblock_info", &dir) {
+        c.count("landblock-info records with cells", infos);
+        c.count_vs_spec("cells of landblock info", cells, 104_271u32);
+        c.count("cells with geometry", available);
+        c.count_vs_spec("neighbour entries", portals, 393_842u32);
+        c.count_vs_spec(
+            "portal pairs farther than 1 cm",
             corner_pairs - coincide,
-            862,
-            "portal pairs farther than 1 cm"
+            862u32,
         );
+        c.finish();
     }
 }
 

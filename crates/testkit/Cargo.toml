@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-testkit"
+description = "Dev-only test helpers: local per-install census baselines of real-data tests (decision 0045)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# Used only as a dev-dependency, by integration tests (tests/*.rs). It links tessera-install
+# and tessera-dat to compute the install version; their own integration tests may use it too
+# (an integration test links the same library as this crate), their unit tests should not.
+[dependencies]
+tessera-dat.workspace = true
+tessera-install.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -3,9 +3,11 @@
 //! skipped unless `TESSERA_GAME_DIR` is set (`docs/specs/wlib-bytecode.md` §13).
 //!
 //! Decodes the whole code block of record 0x56000000 (every instruction of every body),
-//! checks the load-time rules V1–V14 and the cross-check V16, and compares the census
-//! counts of §2–§9, §6.4 and §11.2 (B19) with the spec. V15 (stack-depth search) and the
-//! family census of §10 (which needs the object records) are not covered here.
+//! checks the load-time rules V1–V14 and the cross-check V16, and records the census
+//! counts of §2–§9, §6.4 and §11.2 (B19) against the local baseline of the install version
+//! (decision 0045, `tessera-testkit`), with the spec's numbers beside them (drift reports,
+//! `TESSERA_CENSUS_STRICT=1`). V15 (stack-depth search) and the family census of §10 (which
+//! needs the object records) are not covered here.
 //!
 //! Run with `TESSERA_GAME_DIR=… cargo test --release -p tessera-wvm --test real_data --
 //! --nocapture`. Only counts, offsets and class indices are printed; no message text
@@ -16,8 +18,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
+use tessera_testkit::Count;
 use tessera_wstate::ObjectStore;
-use tessera_wvm::{Census, Opcode, Program, UnassignedRead, definite_assignment};
+use tessera_wvm::{Census, Opcode, Program, definite_assignment};
 
 fn game_dir() -> Option<PathBuf> {
     match std::env::var_os("TESSERA_GAME_DIR") {
@@ -54,26 +57,33 @@ fn bytecode_census() {
     );
 
     let c = Census::of(code);
+    // Counts go to the local baseline of this install version (decision 0045); the numbers
+    // beside them are those `wlib-bytecode.md` states. Rule checks stay assertions.
+    let mut census = tessera_testkit::census!("bytecode_census", &dir).expect("census");
 
-    // §1, §2, V1, V2.
-    // The whole-block counts L, V1, V5 and V7 are those of the install as patched on
-    // 2026-10-27 (`wlib-bytecode.md` states the earlier 1,919,904, 362,178, 24,929 and
-    // 134,547); the patch added three instructions to one body.
-    assert_eq!(c.len, 1_919_916, "L");
-    assert_eq!(c.instructions, 362_181, "V1 instruction count");
-    assert_eq!(c.bodies, 18_323, "V2 body count");
-    assert_eq!(c.uses(0x10), 18_323, "V2 frame entries");
-    // V3: return width per body.
+    // §1, §2, V1, V2. The spec states L, V1, V5 and V7 for the install of 2026-10-07.
+    census.count_vs_spec("L", c.len, 1_919_904);
+    census.count_vs_spec("V1 instruction count", c.instructions, 362_178);
+    census.count_vs_spec("V2 body count", c.bodies, 18_323);
     assert_eq!(
-        c.bodies_by_return,
-        [4_956, 13_129, 238],
-        "V3 bodies by return width"
+        c.uses(0x10) as usize,
+        c.bodies,
+        "V2: one frame entry per body"
     );
-    assert_eq!(c.uses(0x11), 22_340);
-    assert_eq!(c.uses(0x12), 329);
-    assert_eq!(c.uses(0x13), 7_189);
+    // V3: return width per body.
+    for (width, (n, spec)) in c
+        .bodies_by_return
+        .iter()
+        .zip([4_956, 13_129, 238])
+        .enumerate()
+    {
+        census.count_vs_spec(&format!("V3 bodies returning {width} cells"), *n, spec);
+    }
+    census.count_vs_spec("0x11 sites", c.uses(0x11), 22_340);
+    census.count_vs_spec("0x12 sites", c.uses(0x12), 329);
+    census.count_vs_spec("0x13 sites", c.uses(0x13), 7_189);
     // V4, §3.1.
-    assert_eq!(c.distinct_opcodes(), 177, "distinct opcodes");
+    census.count_vs_spec("distinct opcodes", c.distinct_opcodes(), 177);
     assert_eq!(c.stray_fields, 0, "16-bit fields where the opcode has none");
     let imm: BTreeMap<(u8, u8), u32> = [
         ((0x01, 2), 13_425),
@@ -86,35 +96,53 @@ fn bytecode_census() {
     ]
     .into_iter()
     .collect();
-    assert_eq!(c.immediate_types, imm, "V4 immediate type bytes");
+    census.count_vs_spec(
+        "V4 immediate (opcode, type) pairs",
+        c.immediate_types.len(),
+        imm.len(),
+    );
+    let pairs: BTreeSet<(u8, u8)> = imm
+        .keys()
+        .chain(c.immediate_types.keys())
+        .copied()
+        .collect();
+    for (op, t) in pairs {
+        let name = format!("V4 immediate 0x{op:02X} type {t}");
+        let observed = c.immediate_types.get(&(op, t)).copied().unwrap_or(0);
+        match imm.get(&(op, t)) {
+            Some(&spec) => census.count_vs_spec(&name, observed, spec),
+            None => census.count(&name, observed),
+        }
+    }
     // V5, §3.4.
-    assert_eq!(c.branch_targets, 24_930, "V5 branch targets");
-    assert_eq!(c.switches, 223, "switches");
-    assert_eq!(c.uses(0x57), 223, "all switches are 0x57");
-    assert_eq!(
-        c.switch_targets, 1_323,
-        "V5 switch targets (entries + defaults)"
+    census.count_vs_spec("V5 branch targets", c.branch_targets, 24_929);
+    census.count_vs_spec("switches", c.switches, 223);
+    assert_eq!(c.uses(0x57) as usize, c.switches, "all switches are 0x57");
+    census.count_vs_spec(
+        "V5 switch targets (entries + defaults)",
+        c.switch_targets,
+        1_323,
     );
     // V6, §2, §6.1.
-    assert_eq!(c.static_calls, 31_189, "V6 static-call sites");
-    assert_eq!(c.static_targets.len(), 9_651, "V6 statically called bodies");
+    census.count_vs_spec("V6 static-call sites", c.static_calls, 31_189);
+    census.count_vs_spec("V6 statically called bodies", c.static_targets.len(), 9_651);
     // V7 (the decoder rejects any access outside the frame).
     eprintln!(
         "frame-cell accesses: {} in all, {} touching a local cell",
         c.frame_accesses, c.local_accesses
     );
-    assert_eq!(c.frame_accesses, 134_548, "V7 frame-cell accesses");
+    census.count_vs_spec("V7 frame-cell accesses", c.frame_accesses, 134_547);
 
-    assert_eq!(c.this_accesses, 7_329, "V8 this-attribute accesses");
+    census.count_vs_spec("V8 this-attribute accesses", c.this_accesses, 7_329);
     // §5 operand censuses.
-    assert_eq!(c.virtual_calls, 8_574, "0x14 sites");
-    assert_eq!(c.max_virtual_slot, 1_335, "largest virtual slot");
-    assert_eq!(c.native_calls, 29_985, "0x15 sites");
-    assert_eq!(c.native_ids.len(), 2_019, "distinct native IDs");
+    census.count_vs_spec("0x14 sites", c.virtual_calls, 8_574);
+    census.count_vs_spec("largest virtual slot", c.max_virtual_slot, 1_335);
+    census.count_vs_spec("0x15 sites", c.native_calls, 29_985);
+    census.count_vs_spec("distinct native IDs", c.native_ids.len(), 2_019);
     let packages = c.native_packages();
-    assert_eq!(packages.len(), 320, "native packages");
-    assert_eq!(c.max_native_function, 102, "largest native function number");
-    assert_eq!(c.max_native_args, 120, "largest native argument bytes");
+    census.count_vs_spec("native packages", packages.len(), 320);
+    census.count_vs_spec("largest native function number", c.max_native_function, 102);
+    census.count_vs_spec("largest native argument bytes", c.max_native_args, 120);
     for (pkg, sites, fns) in [
         (221u16, 4_089u32, 13usize),
         (39, 3_115, 75),
@@ -127,121 +155,152 @@ fn bytecode_census() {
         (225, 840, 21),
         (214, 728, 14),
     ] {
-        assert_eq!(packages.get(&pkg), Some(&(sites, fns)), "package {pkg}");
+        let (s, f) = packages.get(&pkg).copied().unwrap_or((0, 0));
+        census.count_vs_spec(&format!("package {pkg} sites"), s, sites);
+        census.count_vs_spec(&format!("package {pkg} functions"), f, fns);
     }
-    assert_eq!(c.new_classes.values().sum::<u32>(), 554, "0x0C sites");
-    assert_eq!(c.new_classes.len(), 270, "0x0C classes");
-    assert_eq!(c.native_classes.values().sum::<u32>(), 5_950, "0x0E sites");
-    assert_eq!(c.native_classes.len(), 102, "0x0E classes");
-    assert_eq!(
-        c.prototypes
-            .iter()
-            .map(|(&k, &v)| (k, v))
-            .collect::<Vec<_>>(),
-        vec![(1603, 5)],
-        "0x0D operands"
-    );
-    assert!(
-        library.singletons().contains(&1603),
-        "class 1603 in chunk 64"
-    );
+    census.count_vs_spec("0x0C sites", c.new_classes.values().sum::<u32>(), 554);
+    census.count_vs_spec("0x0C classes", c.new_classes.len(), 270);
+    census.count_vs_spec("0x0E sites", c.native_classes.values().sum::<u32>(), 5_950);
+    census.count_vs_spec("0x0E classes", c.native_classes.len(), 102);
+    census.count_vs_spec("0x0D distinct operands", c.prototypes.len(), 1);
+    let mut prototypes: BTreeMap<u32, u32> = c.prototypes.clone();
+    prototypes.entry(1603).or_insert(0);
+    for (class, sites) in prototypes {
+        let name = format!("0x0D sites naming class {class}");
+        if class == 1603 {
+            census.count_vs_spec(&name, sites, 5);
+        } else {
+            census.count(&name, sites);
+        }
+    }
+    for class in c.prototypes.keys() {
+        assert!(
+            library.singletons().contains(class),
+            "0x0D operand class {class} in chunk 64"
+        );
+    }
     // V14.
-    assert_eq!(c.max_locals_bytes, 416, "V14 largest L");
-    assert_eq!(c.max_args_bytes, 144, "V14 largest A");
+    census.count_vs_spec("V14 largest L", c.max_locals_bytes, 416);
+    census.count_vs_spec("V14 largest A", c.max_args_bytes, 144);
 
     // §8 messages, V11.
     let m = &program.messages;
-    assert_eq!(m.len(), 4_525, "message count");
-    assert_eq!(m.total_units(), 217_576, "message code units");
-    assert_eq!(m.lengths().max(), Some(3_040), "longest message");
-    assert_eq!(m.lengths().filter(|&n| n == 0).count(), 1, "empty messages");
-    assert_eq!(m.array_count, 0, "arrays after the messages");
-    assert_eq!(c.uses(0x0F), 6_449, "0x0F sites");
-    assert_eq!(c.messages.len(), 4_525, "every message is referenced");
+    census.count_vs_spec("message count", m.len(), 4_525);
+    census.count_vs_spec("message code units", m.total_units(), 217_576);
+    census.count_vs_spec("longest message", m.lengths().max().unwrap_or(0), 3_040);
+    census.count_vs_spec("empty messages", m.lengths().filter(|&n| n == 0).count(), 1);
+    census.count_vs_spec("arrays after the messages", m.array_count, 0);
+    census.count_vs_spec("0x0F sites", c.uses(0x0F), 6_449);
+    assert_eq!(c.messages.len(), m.len(), "every message is referenced");
 
     // V8–V13 and B18 against the class library.
     let t1 = Instant::now();
     let rep = program.check();
     eprintln!("library checks ({:.2?}): {rep:?}", t1.elapsed());
     assert!(rep.is_clean(), "V8-V13 / B18 findings: {:?}", rep.findings);
-    assert_eq!(rep.table_entries, 124_804, "non-null method-table entries");
-    assert_eq!(rep.this_accesses, 7_329, "V8 accesses");
-    assert_eq!(rep.initializers, 1_661, "V13 classes with a slot-0 body");
-    assert_eq!(rep.shared_bodies, 4_218, "shared bodies");
-    assert_eq!(rep.max_owners, 1_151, "most owners of one body");
-    assert_eq!(
-        rep.sibling_shared, 1_428,
-        "shared bodies with sibling owners"
+    census.count_vs_spec("non-null method-table entries", rep.table_entries, 124_804);
+    assert_eq!(rep.this_accesses, c.this_accesses, "V8 accesses");
+    census.count_vs_spec("V13 classes with a slot-0 body", rep.initializers, 1_661);
+    census.count_vs_spec("shared bodies", rep.shared_bodies, 4_218);
+    census.count_vs_spec("most owners of one body", rep.max_owners, 1_151);
+    census.count_vs_spec(
+        "shared bodies with sibling owners",
+        rep.sibling_shared,
+        1_428,
     );
     assert_eq!(rep.ownerless_bodies, 0, "bodies reachable only by offset");
 
-    // V16 (§4.3, B17).
+    // V16 (§4.3, B17): one body (0x125B8, L = A = 24) reads local 0 before any store, at
+    // 0x127D4 (tested with 0x54) and 0x127E0.
     let t2 = Instant::now();
     let da = definite_assignment(code);
     eprintln!(
-        "definite assignment ({:.2?}): {} analysed, {} skipped, reads {:x?}",
+        "definite assignment ({:.2?}): {} analysed, {} skipped, {} reads",
         t2.elapsed(),
         da.analysed,
         da.skipped.len(),
-        da.reads
+        da.reads.len()
     );
     assert!(da.skipped.is_empty(), "skipped bodies {:x?}", da.skipped);
-    assert_eq!(
-        da.reads,
-        vec![
-            UnassignedRead {
-                body: 0x125B8,
-                offset: 0x127D4,
-                local: 0
-            },
-            UnassignedRead {
-                body: 0x125B8,
-                offset: 0x127E0,
-                local: 0
-            },
-        ],
-        "V16"
-    );
-    let b = code.body_at(0x125B8).expect("body 0x125B8");
-    assert_eq!((b.locals_bytes, b.args_bytes), (24, 24));
-    let read = code.instruction(0x127D4).expect("read site");
-    assert_eq!(read.frame_access().map(|a| a.index), Some(0));
-    let next = code
-        .instruction(read.end())
-        .expect("instruction after the read");
-    assert_eq!(next.opcode, Opcode(0x54), "the read is tested with 0x54");
+    census.count_vs_spec("V16 unassigned reads", da.reads.len(), 2);
+    let read_bodies: BTreeSet<u32> = da.reads.iter().map(|r| r.body).collect();
+    census.count_vs_spec("V16 bodies with unassigned reads", read_bodies.len(), 1);
+    let spec_reads = [(0x125B8u32, 0x127D4u32, 0u16), (0x125B8, 0x127E0, 0)];
+    for (i, r) in da.reads.iter().enumerate() {
+        let n = i + 1;
+        let read = code.instruction(r.offset).expect("read site");
+        assert_eq!(
+            read.frame_access().map(|a| a.index),
+            Some(i32::from(r.local)),
+            "V16 read {n} loads the local it names"
+        );
+        let names = [
+            format!("V16 read {n} body"),
+            format!("V16 read {n} offset"),
+            format!("V16 read {n} local"),
+        ];
+        let values = [Count::from(r.body), r.offset.into(), r.local.into()];
+        match spec_reads.get(i) {
+            Some(&(b, o, l)) => {
+                for ((name, v), s) in
+                    names
+                        .iter()
+                        .zip(values)
+                        .zip([Count::from(b), o.into(), l.into()])
+                {
+                    census.count_vs_spec(name, v, s);
+                }
+            }
+            None => {
+                for (name, v) in names.iter().zip(values) {
+                    census.count(name, v);
+                }
+            }
+        }
+    }
+    if let Some(first) = da.reads.first() {
+        let b = code.body_at(first.body).expect("body of the first read");
+        census.count_vs_spec("V16 first read body L", b.locals_bytes, 24);
+        census.count_vs_spec("V16 first read body A", b.args_bytes, 24);
+        let read = code.instruction(first.offset).expect("read site");
+        let next = code
+            .instruction(read.end())
+            .expect("instruction after the read");
+        census.count_vs_spec("V16 first read: next opcode", next.opcode.0, 0x54);
+    }
 
     // §6.4: the constant virtual ID 0x005B0001.
     let id = tessera_wvm::FunctionId(0x005B_0001);
-    assert_eq!(
-        program.function_slot(id),
-        Ok(84),
-        "class 91 function 1 -> slot 84"
-    );
+    let slot = program.function_slot(id).expect("class 91 function 1");
+    census.count_vs_spec("§6.4 slot of class 91 function 1", slot, 84);
     let slot84 = program
         .resolve_virtual(91, id)
-        .expect("slot 84 of class 91");
+        .expect("the slot of class 91 function 1");
     let descendants: Vec<u32> = library
         .classes()
         .map(|d| d.index)
         .filter(|&i| i != 91 && library.is_a(i, 91))
         .collect();
-    assert_eq!(descendants.len(), 136, "descendants of class 91");
+    census.count_vs_spec("descendants of class 91", descendants.len(), 136);
     for &d in &descendants {
         assert_eq!(
             program.resolve_virtual(d, id).map(|x| x.start),
             Ok(slot84.start),
-            "class {d} overrides slot 84"
+            "class {d} overrides the slot of 0x005B0001"
         );
     }
-    assert_eq!(slot84.args_bytes, 32, "three arguments and the receiver");
-    assert_eq!(slot84.returns, 1);
+    census.count_vs_spec("§6.4 body argument bytes", slot84.args_bytes, 32);
+    census.count_vs_spec("§6.4 body return cells", slot84.returns, 1);
     let calls: BTreeSet<u32> = code
         .body_instructions(slot84)
         .filter_map(Result::ok)
         .filter_map(|i| i.word_of(Opcode::CALL_VIRTUAL))
         .collect();
-    assert_eq!(calls, BTreeSet::from([85]), "slot 84 forwards to slot 85");
+    census.count_vs_spec("§6.4 body: distinct virtual-call slots", calls.len(), 1);
+    if let Some(&forward) = calls.first() {
+        census.count_vs_spec("§6.4 body: first virtual-call slot", forward, 85);
+    }
 
     // §11.2 / B19: integer immediates equal to defined property IDs.
     let reg = store.game_data().registry().expect("property registry");
@@ -280,12 +339,14 @@ fn bytecode_census() {
         reg.len(),
         distinct.len()
     );
-    assert_eq!(
-        hits, 8_712,
-        "B19 integer immediates equal to a defined property ID"
+    census.count_vs_spec(
+        "B19 integer immediates equal to a defined property ID",
+        hits,
+        8_712,
     );
-    assert_eq!(distinct.len(), 3_524, "B19 distinct property IDs");
-    assert_eq!(float_hits, 0, "B19 float immediates");
-    assert_eq!(short_hits, 4_406, "§11.2 short immediates");
+    census.count_vs_spec("B19 distinct property IDs", distinct.len(), 3_524);
+    census.count_vs_spec("B19 float immediates", float_hits, 0);
+    census.count_vs_spec("§11.2 short immediates", short_hits, 4_406);
+    census.finish();
     eprintln!("total {:.2?}", t0.elapsed());
 }

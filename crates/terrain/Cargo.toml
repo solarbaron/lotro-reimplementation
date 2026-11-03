@@ -20,8 +20,9 @@ proptest.workspace = true
 tessera-render.workspace = true
 png = "0.18"
 tracing-subscriber.workspace = true
-# Real-data test only (tests/real_data.rs).
+# Real-data tests only (tests/real_data.rs, tests/layers_real_data.rs).
 tessera-dat.workspace = true
+tessera-testkit.workspace = true
 
 [lints]
 workspace = true

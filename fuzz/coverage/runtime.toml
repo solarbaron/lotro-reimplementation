@@ -1705,3 +1705,15 @@ reason = "fuzz target of the official login presenter (Account events and the us
 [[skip]]
 path = "fuzz/fuzz_targets/particles_weather.rs"
 reason = "fuzz target of the weather drop simulation and the MeshFX prop life (particle-runtime.md §11.2.5-§11.2.6, appearance.md §5.7), not of a parser"
+
+# =========================================================================================
+# tessera-testkit (dev-only, decision 0045)
+
+[[package]]
+crate = "tessera-testkit"
+reason = "dev-only test helper (publish = false, only ever a dev-dependency, never linked by a shipped binary or a fuzz target); it reads back only the census baselines it writes itself, through private functions"
+
+[[skip]]
+path = "crates/testkit/src/census.rs"
+fns = ["open"]
+reason = "Census::open takes the game directory only to compute the install version with tessera-install (fuzzed by its own targets); it decodes nothing itself"

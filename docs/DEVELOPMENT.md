@@ -118,8 +118,10 @@ well, and the client's tests enable `tessera-compat`'s `test-support` feature, w
 build must never contain (§6.1). `tools/check-release-features.sh` checks the normal
 dependency graph (`cargo tree -p tessera-client -e features,normal -i tessera-compat`, default
 and all features) and fails if the feature is in it; `--self-test` checks that it catches the
-feature on fixture workspaces (OE-T22). CI and `tools/ci-local.sh` run both as the job
-`release-features`.
+feature on fixture workspaces (OE-T22). It also fails when the dev-only
+`tessera-testkit` (decision 0045) is in a normal or build graph of a shipped package
+(client, explorer, dattool, server, load tester). CI and `tools/ci-local.sh` run both as the
+job `release-features`.
 
 ### Running the CI checks locally
 
@@ -352,6 +354,9 @@ commit message.
 | `TESSERA_GOLDEN_REQUIRE=1` | A missing tier-2 golden fails instead of being blessed (the second run of a verification); a picture carried over from the previous install version counts as a pass |
 | `TESSERA_GOLDEN_BLESS_LOCAL=1` | Re-bless tier-2 goldens that differ, and bless pictures changed since the previous install version: the owner's approval (never together with `TESSERA_GOLDEN_REQUIRE`; `TESSERA_BLESS` does not touch them; see "Local goldens after a game update" below) |
 | `TESSERA_SHEET_DIR` | Also copy the pictures a panel test takes to this folder, for judging them by eye |
+| `TESSERA_CENSUS_DIR` | Where the local census baselines of real-data tests live ([decision 0045](decisions/0045-census-local-baselines.md); default `${XDG_CACHE_HOME:-~/.cache}/tessera/census`; never inside a work tree; see "Census baselines after a game update" below) |
+| `TESSERA_CENSUS_STRICT=1` | A census count that differs from the spec value the test gives fails too (for spec writers verifying a census table) |
+| `TESSERA_CENSUS_REBASE=1` | Rewrite the census baselines of the current install version (after the owner or a builder accepted a change seen on that version) |
 | `TESSERA_SEED`, `TESSERA_SAMPLE` | Reproducible sampling in real-data tests |
 | `TESSERA_OFFICIAL_LOGIN_SERVER` | M8 live-verification aid, off by default: a 1-based index into the world status's login servers, instead of the first; a deliberate departure from `official-login.md` §3.3 and I3 (see "Official session handshake diagnostics" below) |
 | `TESSERA_OFFICIAL_DUMP_DIR` | M8 live-verification aid, off by default: an existing directory outside the install and outside any git work tree that receives Tessera's own first datagram of each official connection, credentials replaced, with a description. The files hold the server's address and port and the local address and port used: for the owner and the spec writer only, **never commit them** (see "Official session handshake diagnostics" below) |
@@ -418,7 +423,8 @@ After an update:
 2. Run the gate, with the tier-2 tests in release mode and without
    `TESSERA_GOLDEN_BLESS_LOCAL`, for example
    `cargo test --release -p tessera-client --test npc_windows_real_data --test quest_journal_real_data --test combat_ui_real_data --test social_panels_real_data --test parity_tooltips_real_data --test map_census_real_data --test travel_windows_real_data --test instance_finder_real_data`.
-   Failures that are not goldens (record counts, real-data changes) are findings of their own.
+   Failures that are not goldens are findings of their own; census counts that moved with
+   the update do not fail (next section).
 3. `tools/golden-review.sh`, then
    `tools/golden-review.sh --html ~/.cache/tessera/scratch/golden-review.html` (outside every
    work tree).
@@ -427,6 +433,49 @@ After an update:
    blesses every picture it takes, so run only the tests whose changed pictures were all
    approved), then run them again with `TESSERA_GOLDEN_REQUIRE=1`. A rejected picture is a
    defect to fix, not a golden.
+
+### Census baselines after a game update
+
+Real-data tests that count records, sites or categories record those counts with the census
+helper (`tessera_testkit::Census`, [decision 0045](decisions/0045-census-local-baselines.md))
+instead of pinning numbers. The counts of one install version are kept in a local baseline,
+`${TESSERA_CENSUS_DIR:-${XDG_CACHE_HOME:-~/.cache}/tessera/census}/<package>/<test>/<function>/<install version>.tsv`
+(the install version of the goldens above), never committed and refused inside a work tree
+or inside the install. Rule checks (no failures, nothing misclassified, invariants) stay
+strict assertions; a test finishes its census after its last rule check, so a run whose rule
+checks fail writes no baseline. Tests that sample in debug builds (every *n*-th record unless
+`TESSERA_FULL=1`) record no census in a sampled run, so debug and release runs share one
+baseline. An archive or version record that cannot be read fails the census instead of
+choosing a new install version, and the "no baseline yet" message lists what each archive
+gave the version: a new version that appears without a game update is a finding.
+
+- **Baseline present:** every count must match it exactly; a missing, extra or differing
+  count fails with a table of name, baseline and observed. Without an install update that is
+  a regression in Tessera's code.
+- **No baseline yet** (a new install version or a new machine): the baseline is written and
+  the test passes. It prints a drift report (name, previous, observed, spec) against the
+  newest previous install version's baseline of the same test, or else against the spec
+  values written in the test, and keeps the drifted rows in
+  `<base>/drift/<install version>/<package>/<test>/<function>.tsv` (one file per test, so
+  parallel test binaries never share a file); `<base>/drift/last-version` names the version
+  of the latest census.
+- `TESSERA_CENSUS_STRICT=1` also fails on a count that differs from its spec value (a spec
+  writer checking a census table). `TESSERA_CENSUS_REBASE=1` rewrites the current version's
+  baselines once a change on that version is accepted.
+
+`tools/census-drift.sh [--base DIR] [--version V]` prints the drifted counts of one install
+version, grouped by test; the version comes from `--version`, from `TESSERA_GAME_DIR` through
+`tessera-dattool` (as `tools/golden-review.sh`), or from the latest census. `--self-test`
+checks the tool.
+
+After an update (with the golden steps above):
+
+1. Run the gate with `TESSERA_GAME_DIR` set (release tests with the install).
+2. `tools/census-drift.sh` lists the counts that moved, for the record (for example in the
+   status notes); nothing needs approval for counts alone.
+3. Only a failed rule check, or a count that differs from an existing baseline of the same
+   install version, is a finding to fix. If such a change is accepted, rerun the test with
+   `TESSERA_CENSUS_REBASE=1`.
 
 ### Official session handshake diagnostics (M8 live verification)
 

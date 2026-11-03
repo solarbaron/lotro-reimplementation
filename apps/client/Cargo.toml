@@ -91,6 +91,8 @@ tessera-wstate.workspace = true
 # log (`src/main.rs`; decision 0044 item 3).
 log = "0.4"
 tracing-log = "0.2"
+# Real-data census counts against local per-install baselines (decision 0045).
+tessera-testkit.workspace = true
 
 [lints]
 workspace = true

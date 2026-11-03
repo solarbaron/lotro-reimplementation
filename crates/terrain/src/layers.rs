@@ -1821,6 +1821,18 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
         struct Count(Arc<AtomicUsize>);
         impl tracing::Subscriber for Count {
+            // "Sometimes" keeps every callsite asking `enabled` on each event, so a thread
+            // without a subscriber cannot cache "never" for this one between the rebuild
+            // below and the warning.
+            fn register_callsite(
+                &self,
+                _: &'static tracing::Metadata<'static>,
+            ) -> tracing::subscriber::Interest {
+                tracing::subscriber::Interest::sometimes()
+            }
+            fn max_level_hint(&self) -> Option<tracing::level_filters::LevelFilter> {
+                Some(tracing::level_filters::LevelFilter::TRACE)
+            }
             fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
                 true
             }

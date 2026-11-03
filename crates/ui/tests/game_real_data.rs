@@ -300,9 +300,13 @@ fn game_widgets_on_the_native_panels() {
         areas.len(),
         w.marker.is_some()
     );
-    // The counts the spec gives for this install (GP3); a game update may change them.
-    assert_eq!(tree.nodes.len(), 227, "GP3: nodes");
-    assert_eq!(areas.len(), 541, "GP3: areas");
+    // The counts the spec gives for its install (GP3), checked against this install's local
+    // census baseline (decision 0045); a game update changes them.
+    let mut census =
+        tessera_testkit::census!("game_widgets_on_the_native_panels", &dir).expect("census");
+    census.count_vs_spec("GP3 nodes", tree.nodes.len(), 227u32);
+    census.count_vs_spec("GP3 areas", areas.len(), 541u32);
+    census.count("GP3 depth", depth);
     assert!(w.marker.is_some(), "§9.5: the marker from the minimap");
     let (_, active) = w.shown.unwrap();
     let bg = ui.parent(active).expect("MapBackground");
@@ -407,6 +411,8 @@ fn game_widgets_on_the_native_panels() {
     assert!(cap > 0, "CW-I8");
     assert_eq!(chat.post_line(&mut ui, 0x80, "x"), 1);
     assert_eq!(ui.list_entries(list).len(), 1);
+    // After every rule check: a failing run writes no baseline.
+    census.finish();
 }
 
 /// A minimap and world-map data source with no records (the checks need none).

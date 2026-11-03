@@ -3,9 +3,11 @@
 //! M5 exit criterion 2 (`docs/checklists/m5-visual.md`):
 //!
 //! - every panel P1–P15 of `ui-layout.md` §17.2 is found by label and opens (§17.1);
-//! - its root rectangle at 1920 × 1080 and 2560 × 1440 equals the G row exactly (§17.3);
-//! - its art-surface count equals the A row, and its element, text-element, state, font and
-//!   string-reference counts equal the §17.2 table (the instantiated-panel census);
+//! - its root rectangle at 1920 × 1080 and 2560 × 1440 (§17.3), its art-surface count and
+//!   its element, text-element, state, font and string-reference counts (the
+//!   instantiated-panel census) are checked against this install's local census baseline
+//!   (decision 0045), with the G and A rows and the §17.2 table, which are the spec's
+//!   install's, as the spec values;
 //! - P15's store button is hidden (§17.4);
 //! - the Escape rule of `game-panels.md` §16, the chat window's texts and the command
 //!   dispatcher's words read from the install (`chat-window.md` §10; lines typed in the
@@ -268,6 +270,13 @@ fn submit_typed(
 #[test]
 fn native_panels_from_the_install() {
     let Some(inst) = open_install() else { return };
+    // The G, A and §17.2 rows are the spec's (its install); this install's values are
+    // checked against its local census baseline (decision 0045).
+    let dir = std::env::var_os("TESSERA_GAME_DIR")
+        .map(PathBuf::from)
+        .expect("install");
+    let mut census =
+        tessera_testkit::census!("native_panels_from_the_install", &dir).expect("census");
     let (vocab, gv) = inst.vocabs();
     let catalog = PanelCatalog::resolve(&inst.uilayout, &mut |l| {
         inst.labels.key(UiEnum::ElementId, l)
@@ -304,7 +313,15 @@ fn native_panels_from_the_install() {
             let b = ui.layout_box(k).expect("root box");
             let got = (b.l, b.t, b.w(), b.h());
             println!("{}x{} {id}: {got:?}", size.0, size.1);
-            assert_eq!(got, expected[i], "{id}-G at {}x{}", size.0, size.1);
+            let want = expected[i];
+            for (edge, g, w) in [
+                ("left", got.0, want.0),
+                ("top", got.1, want.1),
+                ("width", got.2, want.2),
+                ("height", got.3, want.3),
+            ] {
+                census.count_vs_spec(&format!("{id}-G {}x{} {edge}", size.0, size.1), g, w);
+            }
         }
         // UL §17.4 P15: the store button (`BuyNowButton`) is hidden.
         let bag = panels.root(PanelId::Bag).expect("P15 open");
@@ -350,13 +367,22 @@ fn native_panels_from_the_install() {
         );
         assert!(!c.truncated, "{id}: census not truncated");
         assert_eq!(c.unresolved, 0, "{id}: every descendant resolves (UL16)");
-        assert_eq!(c.art_surfaces.len(), ART[i], "{id}-A: art surfaces");
-        assert_eq!(c.elements, ELEMENTS[i], "{id}: elements");
-        assert_eq!(c.fonts.len(), FONTS[i], "{id}: fonts");
-        assert_eq!(c.string_refs.len(), STRINGS[i], "{id}: string refs");
-        assert_eq!(c.text_elements, TEXTS[i], "{id}: text elements");
-        assert_eq!(c.states, STATES[i], "{id}: states");
+        census.count_vs_spec(
+            &format!("{id}-A art surfaces"),
+            c.art_surfaces.len(),
+            ART[i],
+        );
+        census.count_vs_spec(&format!("{id} elements"), c.elements, ELEMENTS[i]);
+        census.count_vs_spec(&format!("{id} fonts"), c.fonts.len(), FONTS[i]);
+        census.count_vs_spec(
+            &format!("{id} string refs"),
+            c.string_refs.len(),
+            STRINGS[i],
+        );
+        census.count_vs_spec(&format!("{id} text elements"), c.text_elements, TEXTS[i]);
+        census.count_vs_spec(&format!("{id} states"), c.states, STATES[i]);
     }
+    census.finish();
 }
 
 #[test]

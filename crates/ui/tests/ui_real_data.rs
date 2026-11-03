@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The element tree against a user's own install (read-only): the fifteen native panels of
 //! `ui-layout.md` §17 are opened as root panels at three screen sizes (§17.1), every element
-//! resolves (UL16), the roots land at the §17.3 geometry, and the non-root elements with an
-//! object mode match UL22. The exact numbers are asserted only on the build the spec was
-//! measured on (302 layout records, 2,610,590 bytes); otherwise they are printed.
+//! resolves (UL16), and the root geometry (§17.3) and the non-root elements with an object
+//! mode (UL22) are checked against this install's local census baseline (decision 0045,
+//! `tessera-testkit`), with the numbers of the build the spec was measured on (302 layout
+//! records, 2,610,590 bytes) as the spec values.
 //!
 //! Skipped unless `TESSERA_GAME_DIR` points at an install. Run with
 //! `cargo test --release -p tessera-ui --test ui_real_data -- --nocapture`. Only counts and
@@ -200,8 +201,11 @@ fn native_panels_open_with_the_spec_geometry() {
         .and_then(|d| did_map(&set, d))
         .expect("UILAYOUT map");
     let (records, bytes) = layout_census(&set);
-    let spec_build = records == 302 && bytes == 2_610_590;
-    println!("layout records {records}, {bytes} bytes; spec build: {spec_build}");
+    println!("layout records {records}, {bytes} bytes");
+    let mut census = tessera_testkit::census!("native_panels_open_with_the_spec_geometry", &dir)
+        .expect("census");
+    census.count_vs_spec("layout records", records, 302u32);
+    census.count_vs_spec("layout bytes", bytes, 2_610_590u32);
 
     let mut vocab = Vocab::default();
     vocab.resolve_with(
@@ -234,9 +238,16 @@ fn native_panels_open_with_the_spec_geometry() {
             let got = (b.l, b.t, b.w(), b.h());
             let elements = count(&ui, k);
             println!("{name} at {size:?}: root {got:?}, {elements} elements");
-            if spec_build {
-                assert_eq!(got, geo[si], "{name} at {size:?}");
+            let want = geo[si];
+            for (edge, g, w) in [
+                ("left", got.0, want.0),
+                ("top", got.1, want.1),
+                ("width", got.2, want.2),
+                ("height", got.3, want.3),
+            ] {
+                census.count_vs_spec(&format!("{name} {}x{} {edge}", size.0, size.1), g, w);
             }
+            census.count(&format!("{name} {}x{} elements", size.0, size.1), elements);
             if si == 0 {
                 let (mut n, mut s, mut c) = (0, 0, 0);
                 for e in descendants(&ui, k) {
@@ -251,8 +262,17 @@ fn native_panels_open_with_the_spec_geometry() {
                 }
                 println!("{name}: UL22 {n} ({s} Stretch, {c} CanvasResize)");
                 totals = (totals.0 + n, totals.1 + s, totals.2 + c);
-                if spec_build && let Some(row) = MODES.iter().find(|r| r.0 == name) {
-                    assert_eq!((n, s, c), (row.1, row.2, row.3), "UL22 {name}");
+                let row = MODES.iter().find(|r| r.0 == name);
+                for (what, got, spec) in [
+                    ("object modes", n, row.map(|r| r.1)),
+                    ("Stretch", s, row.map(|r| r.2)),
+                    ("CanvasResize", c, row.map(|r| r.3)),
+                ] {
+                    let key = format!("{name} UL22 {what}");
+                    match spec {
+                        Some(spec) => census.count_vs_spec(&key, got, spec),
+                        None => census.count(&key, got),
+                    }
                 }
             }
         }
@@ -307,9 +327,10 @@ fn native_panels_open_with_the_spec_geometry() {
         );
     }
     println!("UL22 totals {totals:?}");
-    if spec_build {
-        assert_eq!(totals, (92, 86, 6));
-    }
+    census.count_vs_spec("UL22 object modes", totals.0, 92u32);
+    census.count_vs_spec("UL22 Stretch", totals.1, 86u32);
+    census.count_vs_spec("UL22 CanvasResize", totals.2, 6u32);
+    census.finish();
 }
 
 fn descendants(ui: &Ui, k: ElementKey) -> Vec<ElementKey> {

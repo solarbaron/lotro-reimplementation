@@ -7,7 +7,9 @@
 //! - [`TerrainBlock::height_at`] agrees with the decoder's `LandblockData::terrain_height`
 //!   (`landblock.md` §3.11) at pseudo-random points;
 //! - every surface layer converts with [`splat_layers`] and every stored layer triangle is a
-//!   triangle of the level-0 mesh (the mesh uses the data's own triangulation, HM6);
+//!   triangle of the level-0 mesh (the mesh uses the data's own triangulation, HM6), except
+//!   in chunks with more than 65,535 indices (`landblock.md` §3.8.2 OPEN), where the others
+//!   are counted;
 //! - a mesh at a pseudo-random level, stitched to its neighbours' levels, is a valid
 //!   counter-clockwise cover of the block;
 //! - for every east and north neighbour pair with shared edge samples (HM7) whose two blocks
@@ -15,7 +17,8 @@
 //!   pseudo-random levels each) have bit-identical edge vertices, normals and segments; east
 //!   and north seams are counted separately and both must be non-zero.
 //!
-//! Skipped unless `TESSERA_GAME_DIR` points at an install. Run with
+//! In an exhaustive run the counts are checked against this install's local census baseline
+//! (decision 0045, `tessera-testkit`). Skipped unless `TESSERA_GAME_DIR` points at an install. Run with
 //! `cargo test --release -p tessera-terrain --test real_data -- --nocapture`. Only counts,
 //! timings and DIDs are printed; no game data leaves the install.
 
@@ -50,6 +53,13 @@ fn open_set() -> Option<&'static ArchiveSet> {
 
 fn exhaustive() -> bool {
     !cfg!(debug_assertions) || std::env::var_os("TESSERA_FULL").is_some_and(|v| v == "1")
+}
+
+/// The census of `function` against this install's local baseline (decision 0045). Only an
+/// exhaustive run records counts: the debug window's counts are not the install's.
+fn census(function: &str) -> Option<tessera_testkit::Census> {
+    let dir = std::env::var_os("TESSERA_GAME_DIR").map(PathBuf::from)?;
+    exhaustive().then(|| tessera_testkit::census!(function, &dir).expect("census"))
 }
 
 /// Runs `f` over `items` on every core, keeping the input order.
@@ -99,6 +109,9 @@ struct Stats {
     max_height_diff: f32,
     layers: usize,
     layer_triangles: usize,
+    /// Stored layer triangles that are not level-0 mesh triangles (only in chunks with
+    /// more than 65,535 indices, `landblock.md` §3.8.2 OPEN).
+    off_mesh_triangles: usize,
     covers: usize,
     pairs_matching: usize,
     pairs_mismatched_flat: usize,
@@ -270,6 +283,7 @@ fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut St
             max_diff: f32,
             layers: usize,
             layer_triangles: usize,
+            off_mesh_triangles: usize,
             covers: usize,
             flat: bool,
             matching: usize,
@@ -290,6 +304,7 @@ fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut St
                 max_diff: 0.0,
                 layers: 0,
                 layer_triangles: 0,
+                off_mesh_triangles: 0,
                 covers: 0,
                 flat: block.is_flat(),
                 matching: 0,
@@ -355,15 +370,22 @@ fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut St
                     .iter()
                     .map(|t| canon([t[0], t[1], t[2]]))
                     .collect();
+                // A chunk whose index list is longer than a u16 `start` addresses stores
+                // windows that are not mesh triangles (`landblock.md` §3.8.2 OPEN; drawn
+                // never, `terrain.md` §7 Decision (6)); anywhere else every stored triangle
+                // is one. The exception is a Tessera interim rule until that OPEN is answered.
+                let long = data.terrain.indices.len() > usize::from(u16::MAX);
                 for l in &layers {
                     for t in l.indices.as_chunks::<3>().0 {
+                        let on_mesh = tris.contains(&canon([t[0], t[1], t[2]]));
                         assert!(
-                            tris.contains(&canon([t[0], t[1], t[2]])),
+                            on_mesh || long,
                             "{:#010x}: layer {} triangle {t:?} is not a mesh triangle",
                             data_did(region, x, y),
                             l.ordinal
                         );
                         o.layer_triangles += 1;
+                        o.off_mesh_triangles += usize::from(!on_mesh);
                     }
                 }
                 o.layers += layers.len();
@@ -460,6 +482,7 @@ fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut St
             stats.max_height_diff = stats.max_height_diff.max(o.max_diff);
             stats.layers += o.layers;
             stats.layer_triangles += o.layer_triangles;
+            stats.off_mesh_triangles += o.off_mesh_triangles;
             stats.covers += o.covers;
             stats.pairs_matching += o.matching;
             stats.pairs_mismatched_flat += o.mismatched_flat;
@@ -528,7 +551,7 @@ fn terrain_meshes_real_landblocks() {
         run_region(set, region, &xs, &ys, &mut s);
         eprintln!(
             "region {region}: {} blocks ({} flat), {} decode failures, {} height checks \
-             (max diff {:.2e}), {} layers / {} layer triangles on mesh triangles, {} stitched \
+             (max diff {:.2e}), {} layers / {} layer triangles ({} not on mesh triangles), {} stitched \
              covers, neighbour pairs: {} matching ({} east + {} north seams compared), {} \
              mismatched (flat), {} \
              mismatched (relief), {} exact LOD-error checks",
@@ -539,6 +562,7 @@ fn terrain_meshes_real_landblocks() {
             s.max_height_diff,
             s.layers,
             s.layer_triangles,
+            s.off_mesh_triangles,
             s.covers,
             s.pairs_matching,
             s.seams_east,
@@ -554,6 +578,12 @@ fn terrain_meshes_real_landblocks() {
         total.seams_north += s.seams_north;
         total.lod_checks += s.lod_checks;
         total.layer_triangles += s.layer_triangles;
+        total.off_mesh_triangles += s.off_mesh_triangles;
+        total.layers += s.layers;
+        total.covers += s.covers;
+        total.pairs_matching += s.pairs_matching;
+        total.pairs_mismatched_flat += s.pairs_mismatched_flat;
+        total.flat_blocks += s.flat_blocks;
         total.t_block += s.t_block;
         total.t_lod += s.t_lod;
         total.t_normals += s.t_normals;
@@ -581,4 +611,30 @@ fn terrain_meshes_real_landblocks() {
     assert!(total.seams_east > 0, "no east seam was compared");
     assert!(total.seams_north > 0, "no north seam was compared");
     assert!(total.lod_checks > 0, "no LOD error was checked");
+    // `terrain.md` §8 figures (the install of 2026-10-06).
+    if let Some(mut c) = census("terrain_meshes_real_landblocks") {
+        c.count_vs_spec("landblock-data records", total.blocks, 390_150u32);
+        c.count("flat blocks", total.flat_blocks);
+        c.count("layers", total.layers);
+        c.count_vs_spec("layer triangles", total.layer_triangles, 458_061_498u32);
+        c.count_vs_spec(
+            "layer triangles not on mesh triangles",
+            total.off_mesh_triangles,
+            0u32,
+        );
+        c.count("stitched covers", total.covers);
+        c.count_vs_spec(
+            "neighbour pairs sharing their edge",
+            total.pairs_matching,
+            777_240u32,
+        );
+        c.count(
+            "neighbour pairs differing (flat)",
+            total.pairs_mismatched_flat,
+        );
+        c.count_vs_spec("east seams", total.seams_east, 382_536u32);
+        c.count_vs_spec("north seams", total.seams_north, 382_536u32);
+        c.count_vs_spec("exact LOD-error checks", total.lod_checks, 48_768u32);
+        c.finish();
+    }
 }

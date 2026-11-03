@@ -35,6 +35,16 @@ not only wire or observable facts.
    Implementers still take no rule from a description the spec itself says is not a rule; the rules
    they need are stated as wire or observable facts.
 
+5. **Omissions.** Not sending 0x13D, 0x19E and the first world RPC is accepted for any user past the
+   warning and consent gate, as a labelled interim policy and a known difference from the observed
+   client. Neither capture omits 0x13D or 0x19E, so the server's treatment of this is untested.
+6. **Availability.** The conformance build merges without waiting for the character list to work,
+   and the official login stays available. An account with characters may therefore use a login
+   ticket and send the real advertisement, and then stop at an "unsupported" result until
+   OPEN-WORLD-10 is answered. The result text must say this is a Tessera limit, not an account fault.
+7. **Character create and delete** on the official service are left to the spec writer to specify
+   or withhold. Nothing sends them until the spec gives a rule.
+
 ## Consequences
 
 - The interim header word and flow-control policies are known to differ from, or are not confirmed

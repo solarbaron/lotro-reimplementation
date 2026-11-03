@@ -92,7 +92,19 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // §3 character screen
-    let _ = CharacterListResponse::from_bytes(data, &schema);
+    // The current top level: one flags byte, then the count (official-session.md §9.3.5).
+    // (A count and a verdict: a decoded float may be NaN, which equals nothing.)
+    let whole = CharacterListResponse::from_bytes(data, &schema);
+    if let Some(body) = data.get(1..)
+        && data.first() == Some(&0)
+    {
+        assert_eq!(
+            CharacterListResponse::from_envelope_body(body, &schema)
+                .map(|l| l.characters.len())
+                .ok(),
+            whole.map(|l| l.characters.len()).ok()
+        );
+    }
     let _ = CharacterNameCheckRequest::from_bytes(data);
     let _ = CharacterCreateRequest::from_bytes(data, &schema);
     let _ = CharacterCreateAck::from_bytes(data, &schema);
@@ -103,7 +115,13 @@ fuzz_target!(|data: &[u8]| {
     let _ = CharacterOperationError::from_bytes(data);
     let _ = AccountEvictionNotice::from_bytes(data);
     let _ = PlatformAccountIdReport::from_bytes(data);
-    let _ = CharacterEnterWorldRequest::from_bytes(data, &schema);
+    // `0x6F` is its one flags byte and fields, nothing prepended (§9.3.5, Vector 12).
+    if let Ok(select) = CharacterEnterWorldRequest::from_bytes(data, &schema)
+        && let Ok(env) = select.to_envelope_bytes()
+    {
+        assert_eq!(env.first(), Some(&0));
+        assert_eq!(select.to_bytes().ok().as_deref(), Some(env.as_slice()));
+    }
 
     // §4 world entry, portal space, calendar
     let _ = WorldNameAnnouncement::from_bytes(data);

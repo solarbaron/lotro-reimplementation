@@ -57,6 +57,23 @@ impl InstallData for Typed {
     fn chat_category_keys(&self) -> Option<Vec<u32>> {
         self.chat_keys.clone()
     }
+
+    fn selected_language_key(&self) -> Result<u32, crate::initial::InstallUnsupported> {
+        self.base.selected_language_key()
+    }
+
+    fn name_rule_languages(
+        &self,
+        rule_key: u32,
+    ) -> Result<Vec<u32>, crate::initial::InstallUnsupported> {
+        self.base.name_rule_languages(rule_key)
+    }
+
+    fn archive_inventory(
+        &self,
+    ) -> Result<Vec<crate::initial::AdvertisedArchive>, crate::initial::InstallUnsupported> {
+        self.base.archive_inventory()
+    }
 }
 
 /// A driver in the world as "Aldo" over the typed install, on the login connection.

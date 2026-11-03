@@ -8,6 +8,7 @@ mod datagram_dump;
 mod deadlines;
 mod diagnostics;
 mod handshake;
+mod initial_negotiation;
 mod world_feed;
 
 use std::collections::{BTreeMap, VecDeque};
@@ -60,7 +61,8 @@ use crate::world::{
 use crate::{CompatBackend, CompatConfig};
 // The synthetic service's challenge, decoder and dictionary UUIDs.
 use super::test_support::{
-    INCOMING_UUID, OUTGOING_UUID, challenge_datagram, decode_client_datagram,
+    CHARACTER, INCOMING_UUID, OUTGOING_UUID, SYNTHETIC_LANGUAGE_KEY, SYNTHETIC_NAME_RULE,
+    SyntheticService, challenge_datagram, decode_client_datagram, synthetic_inventory,
 };
 
 const LOCAL: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 5000);
@@ -107,6 +109,27 @@ impl InstallData for Records {
 
     fn property_type(&self, _pid: u32) -> Option<PropertyType> {
         None
+    }
+
+    fn selected_language_key(&self) -> Result<u32, crate::initial::InstallUnsupported> {
+        Ok(SYNTHETIC_LANGUAGE_KEY)
+    }
+
+    fn name_rule_languages(
+        &self,
+        rule_key: u32,
+    ) -> Result<Vec<u32>, crate::initial::InstallUnsupported> {
+        if rule_key == SYNTHETIC_NAME_RULE {
+            Ok(vec![SYNTHETIC_LANGUAGE_KEY])
+        } else {
+            Err(crate::initial::InstallUnsupported::NameRuleMissing)
+        }
+    }
+
+    fn archive_inventory(
+        &self,
+    ) -> Result<Vec<crate::initial::AdvertisedArchive>, crate::initial::InstallUnsupported> {
+        Ok(synthetic_inventory())
     }
 }
 
@@ -1026,7 +1049,12 @@ impl Server {
         .expect("datagram")
     }
 
+    /// An event's datagram. The list `0x6C` has one shared flags byte, which its payload
+    /// already starts with (`official-session.md` §9.3.5).
     fn event(&mut self, opcode: u32, inner: &[u8]) -> Vec<u8> {
+        if opcode == CharacterListResponse::EVENT_ID {
+            return self.blob(opcode, inner);
+        }
         self.blob(opcode, &encode_event_envelope(inner))
     }
 
@@ -2140,8 +2168,9 @@ fn the_session_reaches_the_character_list_and_the_world() {
         .expect("enter");
     let (op, env) = run.wait_blob(LOGIN_SERVER);
     assert_eq!(op, 0x6F);
+    // One shared flags byte, then the ID (`official-session.md` §9.3.5, Vector 12).
     assert_eq!(
-        env.get(2..10),
+        env.get(1..9),
         Some(&0x0200_0000_0000_0042u64.to_le_bytes()[..])
     );
     // The referral: the world server assigns the client the recipient ID the login

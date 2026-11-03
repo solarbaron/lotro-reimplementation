@@ -9,8 +9,9 @@
 //! Current status: **partly done**. The stage-1 core specifications
 //! (`official-login.md`, `official-session.md`, `official-messages-world.md`,
 //! `official-messages-play.md`, `property-system.md` §10) are Accepted (decision 0042
-//! item 8); the gameplay messages of stage 2 are not built yet, and the client cannot take
-//! an official session past the character list yet.
+//! item 8), and the initial exchange follows the pass-10 policy of decision 0046; the
+//! gameplay messages of stage 2 are not built yet, and the client cannot take an official
+//! session past the character list yet.
 //! The crate contains:
 //!
 //! 1. [`consent`]: the ban-risk warning of decision 0034 §1 item 4
@@ -39,7 +40,10 @@
 //! 9. [`chat_session`]: the separate chat-server session (§6.1, §6.6): ticket
 //!    authentication, the login-status gate, heartbeat and retry policies, room
 //!    descriptors and its 59 events, over sockets made through [`net_access`].
-//! 10. [`connector`]: the live connector: the login (HTTPS first), the world list and queue,
+//! 10. [`initial`]: the initial exchange of the login connection (`official-session.md`
+//!     §9.3.1–§9.3.5, decision 0046): the `0xDD` decoder, the install advertisement `0xEC`,
+//!     the completion `0xF5` and the bounded wait for the character list. Sans I/O.
+//! 11. [`connector`]: the live connector: the login (HTTPS first), the world list and queue,
 //!     the UDP session to the character list and into the world, the play messages and the
 //!     chat server, on a thread of its own, every network operation through [`net_access`].
 //!
@@ -66,6 +70,7 @@ pub mod chat_session;
 pub mod connector;
 pub mod consent;
 pub mod credentials;
+pub mod initial;
 pub mod login;
 pub mod net_access;
 pub mod play;
@@ -103,6 +108,10 @@ pub enum CompatError {
     /// An error occurred in the official world-messages codec.
     #[error("official world message error: {0}")]
     World(#[from] world::WorldError),
+
+    /// An error occurred in the login connection's initial exchange.
+    #[error("official initial exchange error: {0}")]
+    Initial(#[from] initial::InitialError),
 
     /// An error occurred in the play messages or the chat-server session (both report
     /// [`play::PlayError`]).

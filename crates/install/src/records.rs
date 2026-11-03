@@ -11,6 +11,8 @@
 
 /// DID of the iteration record.
 pub const DID_ITERATION: u32 = 0xFFFF_0001;
+/// The directory-entry `stamp` of an iteration record that has a trailing part (§9.2.1).
+pub const ITERATION_STAMP_WITH_TRAILING: u16 = 2;
 /// DID of the install version stamp record.
 pub const DID_INSTALL_STAMP: u32 = 0xFFFF_0003;
 /// DID of the record at 0xFFFF0004 (meaning unknown; not used).
@@ -65,6 +67,12 @@ pub enum RecordError {
     /// The 0xFFFF0003 label length is out of range or not ASCII.
     #[error("bad label")]
     BadLabel,
+    /// The directory entry's `stamp` of a 0xFFFF0001 record is 3 or more (§9.2.1).
+    #[error("iteration record stamp {0} is not supported")]
+    UnsupportedStamp(u16),
+    /// A run's start is negative or its last iteration does not fit an i32 (§9.3).
+    #[error("iteration run out of range")]
+    RunOutOfRange,
 }
 
 struct Cursor<'a> {
@@ -142,8 +150,15 @@ pub struct IterationRecord {
 }
 
 impl IterationRecord {
-    /// Decode the record. Malformed input is an error, never a panic.
-    pub fn parse(bytes: &[u8]) -> Result<Self, RecordError> {
+    /// Decode the record, whose directory entry has `stamp` (`dat-container.md` §5.2):
+    /// `K` and the trailing entries are present only with `stamp` 2, a record with any
+    /// smaller stamp ends right after the run list, and `stamp` 3 or more is malformed
+    /// (§9.2.1, §9.3). Each trailing u64 is kept as its eight stored bytes. Malformed input
+    /// is an error, never a panic.
+    pub fn parse(bytes: &[u8], stamp: u16) -> Result<Self, RecordError> {
+        if stamp > ITERATION_STAMP_WITH_TRAILING {
+            return Err(RecordError::UnsupportedStamp(stamp));
+        }
         let mut c = Cursor { b: bytes, pos: 0 };
         let n = c.i32()?;
         if n < 0 {
@@ -156,6 +171,15 @@ impl IterationRecord {
             let range = if t < 0 {
                 let len = t.unsigned_abs();
                 let start = c.i32()?;
+                // §9.3: `t` = i32::MIN, a negative start, or a last iteration past i32::MAX.
+                let last = i64::from(start) + i64::from(len) - 1;
+                if t == i32::MIN || start < 0 || last > i64::from(i32::MAX) {
+                    // The run list covers more than N whenever the length itself does.
+                    if i64::from(len) > remaining {
+                        return Err(RecordError::CountOverrun);
+                    }
+                    return Err(RecordError::RunOutOfRange);
+                }
                 IterationRange {
                     start: i64::from(start),
                     len,
@@ -172,17 +196,20 @@ impl IterationRecord {
             }
             ranges.push(range);
         }
-        let k = c.u32()?;
-        if k > MAX_TRAILING_ENTRIES {
-            return Err(RecordError::TooManyTrailing(k));
-        }
-        let mut trailing = Vec::with_capacity(k as usize);
-        for _ in 0..k {
-            let iteration = c.u32()?;
-            let o = c.take(8)?;
-            let mut opaque = [0u8; 8];
-            opaque.copy_from_slice(o);
-            trailing.push(TrailingEntry { iteration, opaque });
+        let mut trailing = Vec::new();
+        if stamp == ITERATION_STAMP_WITH_TRAILING {
+            let k = c.u32()?;
+            if k > MAX_TRAILING_ENTRIES {
+                return Err(RecordError::TooManyTrailing(k));
+            }
+            trailing.reserve_exact(k as usize);
+            for _ in 0..k {
+                let iteration = c.u32()?;
+                let o = c.take(8)?;
+                let mut opaque = [0u8; 8];
+                opaque.copy_from_slice(o);
+                trailing.push(TrailingEntry { iteration, opaque });
+            }
         }
         if c.remaining() != 0 {
             return Err(RecordError::LeftOver(c.remaining()));
@@ -291,7 +318,7 @@ mod tests {
         b.extend([1u8; 8]);
         b.extend(le(&[20167]));
         b.extend([2u8; 8]);
-        let r = IterationRecord::parse(&b).unwrap();
+        let r = IterationRecord::parse(&b, 2).unwrap();
         assert_eq!(r.count, 10168);
         assert_eq!(r.highest(), Some(20167));
         assert_eq!(r.runs(), 2);
@@ -302,10 +329,10 @@ mod tests {
     #[test]
     fn iteration_singles_and_empty() {
         let b = le(&[3, 5, -2, 9, 0]);
-        let r = IterationRecord::parse(&b).unwrap();
+        let r = IterationRecord::parse(&b, 2).unwrap();
         assert_eq!(r.highest(), Some(10));
         assert_eq!(r.runs(), 2);
-        let empty = IterationRecord::parse(&le(&[0, 0])).unwrap();
+        let empty = IterationRecord::parse(&le(&[0, 0]), 2).unwrap();
         assert_eq!(empty.highest(), None);
         assert_eq!(empty.count, 0);
     }
@@ -313,29 +340,68 @@ mod tests {
     #[test]
     fn iteration_malformed() {
         assert_eq!(
-            IterationRecord::parse(&le(&[-1, 0])),
+            IterationRecord::parse(&le(&[-1, 0]), 2),
             Err(RecordError::NegativeCount(-1))
         );
         assert_eq!(
-            IterationRecord::parse(&le(&[2, -3, 1, 0])),
+            IterationRecord::parse(&le(&[2, -3, 1, 0]), 2),
             Err(RecordError::CountOverrun)
         );
         assert!(matches!(
-            IterationRecord::parse(&le(&[2, 1])),
+            IterationRecord::parse(&le(&[2, 1]), 2),
             Err(RecordError::Truncated { .. })
         ));
         assert_eq!(
-            IterationRecord::parse(&le(&[0, 65])),
+            IterationRecord::parse(&le(&[0, 65]), 2),
             Err(RecordError::TooManyTrailing(65))
         );
         assert_eq!(
-            IterationRecord::parse(&le(&[0, 0, 0])),
+            IterationRecord::parse(&le(&[0, 0, 0]), 2),
             Err(RecordError::LeftOver(4))
         );
         // i32::MIN run length must not overflow.
         assert_eq!(
-            IterationRecord::parse(&le(&[5, i32::MIN, 0, 0])),
+            IterationRecord::parse(&le(&[5, i32::MIN, 0, 0]), 2),
             Err(RecordError::CountOverrun)
+        );
+        // §9.3: a negative start, and a last iteration past i32::MAX.
+        assert_eq!(
+            IterationRecord::parse(&le(&[2, -2, -1, 0]), 2),
+            Err(RecordError::RunOutOfRange)
+        );
+        assert_eq!(
+            IterationRecord::parse(&le(&[2, -2, i32::MAX, 0]), 2),
+            Err(RecordError::RunOutOfRange)
+        );
+    }
+
+    #[test]
+    fn iteration_stamp_rule() {
+        // §9.2.1: `stamp` 1 ends after the run list, so `K` is 0 and four more bytes are
+        // left over; `stamp` 3 or more is malformed.
+        let runs = le(&[3, -3, 1]);
+        let r = IterationRecord::parse(&runs, 1).unwrap();
+        assert_eq!((r.count, r.trailing.len()), (3, 0));
+        assert_eq!(IterationRecord::parse(&runs, 0).unwrap(), r);
+        let with_k = le(&[3, -3, 1, 0]);
+        assert_eq!(
+            IterationRecord::parse(&with_k, 1),
+            Err(RecordError::LeftOver(4))
+        );
+        assert_eq!(IterationRecord::parse(&with_k, 2).unwrap().trailing, []);
+        for stamp in [3, 4, u16::MAX] {
+            assert_eq!(
+                IterationRecord::parse(&with_k, stamp),
+                Err(RecordError::UnsupportedStamp(stamp))
+            );
+        }
+        // The eight stored bytes are kept verbatim.
+        let mut b = le(&[1, 7, 1, 7]);
+        b.extend([0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04]);
+        let r = IterationRecord::parse(&b, 2).unwrap();
+        assert_eq!(
+            r.trailing[0].opaque,
+            [0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04]
         );
     }
 
@@ -368,7 +434,9 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn parsers_never_panic(b in proptest::collection::vec(proptest::num::u8::ANY, 0..400)) {
-            let _ = IterationRecord::parse(&b);
+            for stamp in [0, 1, 2, 3] {
+                let _ = IterationRecord::parse(&b, stamp);
+            }
             let _ = InstallStamp::parse(&b);
             let _ = SetMembership::parse(&b);
         }

@@ -54,6 +54,7 @@ use std::io::{ErrorKind, Write as _};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 
+use crate::initial::InitialStages;
 use crate::login::zeroize_vec;
 use crate::session::{
     AUTH_FLAG_HAS_EXTRA_BLOB, AUTH_FLAG_HAS_SECOND_STRING, ConnectionState, DATAGRAM_HEADER_BYTES,
@@ -265,6 +266,9 @@ pub struct AtClose {
     pub received_ok: Option<u64>,
     /// `ConnectChallengeHeader`s acted on.
     pub challenges: Option<u64>,
+    /// How far the initial exchange got (`official-session.md` §9.3.1): the login
+    /// connection's, `None` on the others.
+    pub initial: Option<InitialStages>,
 }
 
 /// The `.txt` file of a written dump, kept open for its [`AtClose`] section.
@@ -1127,12 +1131,19 @@ fn close_section(at: &AtClose) -> String {
     let state = at
         .state
         .map_or_else(|| "not known".to_owned(), |s| format!("{s:?}"));
+    let initial = at.initial.map_or_else(String::new, |i| {
+        format!(
+            "  initial exchange: DD seen {}, EC sent {}, F5 received {}, F5 sent {}, list \
+             received {}\n",
+            i.dd_seen, i.ec_sent, i.f5_received, i.f5_sent, i.list_received
+        )
+    });
     format!(
         "\nAt close\n  reason: {}\n  state: {state}\n  datagrams sent: {}\n  send failures: {}\n  \
          SessionAuthHeader or ReferralAuthHeader datagrams sent: {}\n    of those, retransmits: \
          {}\n  ConnectAcceptHeader datagrams sent: {}\n    of those, retransmits: {}\n  \
          datagrams received from the server: {}\n    of those, taken whole: {}\n  \
-         ConnectChallengeHeaders acted on: {}\n",
+         ConnectChallengeHeaders acted on: {}\n{initial}",
         at.reason,
         at.sent,
         at.send_failures,

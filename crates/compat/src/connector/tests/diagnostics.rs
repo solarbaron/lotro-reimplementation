@@ -42,7 +42,14 @@ pub(super) fn logs_of<T>(f: impl FnOnce() -> T) -> (T, String) {
         .with_max_level(tracing::Level::TRACE)
         .with_ansi(false)
         .finish();
-    let value = tracing::subscriber::with_default(sub, f);
+    // With a single registered subscriber `tracing` asks only the current thread's subscriber
+    // about a new callsite, so a callsite another test's thread reaches first would stay
+    // disabled here; a second one, never used, turns that shortcut off.
+    let _second = tracing::Dispatch::new(tracing_subscriber::fmt().finish());
+    let value = tracing::subscriber::with_default(sub, || {
+        tracing::callsite::rebuild_interest_cache();
+        f()
+    });
     let bytes = buf
         .0
         .lock()
@@ -478,7 +485,7 @@ impl SendOracle {
 fn every_datagram_sent_fits_an_independent_checksum_oracle() {
     // The login connection from its first datagram: the `SessionAuthHeader`, the
     // `ConnectAcceptHeader`, the `0x12C` (queue 4) after the version request, acks with a
-    // `FlowControlHeader`, and the `0x6F` (queue 3, group 0x13), resends included.
+    // `FlowControlHeader`, and the `0x6F` (queue 2, implicit group 0), resends included.
     let start = session_start(0, None, Arc::default());
     let world = new_world(Service::default());
     let mut net = FakeNet(world.clone());
@@ -558,7 +565,7 @@ fn every_datagram_sent_fits_an_independent_checksum_oracle() {
     );
     assert!(oracle.resent >= 1, "a resend reuses its word");
     assert!(opcodes.contains(&(0x12C, 4, 0)), "{opcodes:?}");
-    assert!(opcodes.contains(&(0x6F, 3, 0x13)), "{opcodes:?}");
+    assert!(opcodes.contains(&(0x6F, 2, 0)), "{opcodes:?}");
 }
 
 /// The handshake datagrams of a connection: the `SessionAuthHeader`, the

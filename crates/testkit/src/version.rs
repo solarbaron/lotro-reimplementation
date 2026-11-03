@@ -79,7 +79,7 @@ fn record<T, E: std::fmt::Display>(
     a: &tessera_dat::Archive,
     path: &Path,
     did: u32,
-    parse: impl Fn(&[u8]) -> Result<T, E>,
+    parse: impl Fn(&[u8], u16) -> Result<T, E>,
 ) -> Result<Option<T>, CensusError> {
     let fail = |what: &str, e: &dyn std::fmt::Display| CensusError::VersionInput {
         archive: path.to_path_buf(),
@@ -89,7 +89,9 @@ fn record<T, E: std::fmt::Display>(
         return Ok(None);
     };
     let bytes = a.read_entry(&entry).map_err(|e| fail("read", &e))?;
-    parse(&bytes).map(Some).map_err(|e| fail("parse", &e))
+    parse(&bytes, entry.stamp)
+        .map(Some)
+        .map_err(|e| fail("parse", &e))
 }
 
 pub(crate) fn content_entry(path: &Path) -> Result<tessera_install::ContentEntry, CensusError> {
@@ -108,18 +110,12 @@ pub(crate) fn content_entry(path: &Path) -> Result<tessera_install::ContentEntry
             tessera_install::DID_ITERATION,
             tessera_install::IterationRecord::parse,
         )?,
-        membership: record(
-            &a,
-            path,
-            tessera_install::DID_SET_MEMBERSHIP,
-            tessera_install::SetMembership::parse,
-        )?,
-        install_stamp: record(
-            &a,
-            path,
-            tessera_install::DID_INSTALL_STAMP,
-            tessera_install::InstallStamp::parse,
-        )?,
+        membership: record(&a, path, tessera_install::DID_SET_MEMBERSHIP, |b, _| {
+            tessera_install::SetMembership::parse(b)
+        })?,
+        install_stamp: record(&a, path, tessera_install::DID_INSTALL_STAMP, |b, _| {
+            tessera_install::InstallStamp::parse(b)
+        })?,
         file_name,
     })
 }

@@ -11,10 +11,10 @@ use libfuzzer_sys::fuzz_target;
 use tessera_compat::session::{
     AuthConnection, BindPorts, BitTreeTable, BlobFragment, BlobFragmentHeader, BlobReassembler,
     CodecUuids, ConnectAcceptHeader, ConnectChallengeHeader, ControlMessage, DatagramHeader,
-    OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS,
-    OPCODE_SINGLE_WRAPPER, OPCODE_SYSTEM_NOTIFICATION, OPCODE_VERSION_REQUEST,
-    OPCODE_VERSION_STATUS, OptionalHeaders, SessionAuthHeader, SessionConnection,
-    SessionMultiplexer, WireCodecs, WorldReferralHeader, check_ticket_text,
+    MAX_BLOB_FRAG_PAYLOAD, OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION,
+    OPCODE_LOGIN_QUEUE_STATUS, OPCODE_SINGLE_WRAPPER, OPCODE_SYSTEM_NOTIFICATION,
+    OPCODE_VERSION_REQUEST, OPCODE_VERSION_STATUS, OptionalHeaders, SessionAuthHeader,
+    SessionConnection, SessionMultiplexer, WireCodecs, WorldReferralHeader, check_ticket_text,
     compute_datagram_checksum, decode_datagram, decode_message, decode_variable_u32,
     des3_cbc_decrypt, dispatch_message, encode_datagram, encode_variable_u32, guid_fields_swapped,
     is_valid_net_version, max_recv_rate_for_speed, parse_packet_payload, unique_port_candidates,
@@ -190,6 +190,37 @@ fuzz_target!(|data: &[u8]| {
             .is_ok()
     {
         let _ = negotiated.receive_datagram(data, peer, 0.5, codecs);
+        // The counters of §5.6.2 and a retained blob (§5.3; pending spec pass 10 fix 9): a
+        // send keeps every invariant whatever the input said, and a NAK of input-chosen
+        // sequence numbers finds what it finds.
+        let group = data.first().map_or(0, |b| u16::from(*b));
+        let len = data.len().min(2 * MAX_BLOB_FRAG_PAYLOAD);
+        let body = data.get(..len).unwrap_or_default();
+        for queue in 1..=4u8 {
+            let _ = negotiated.send_blob(queue, group, 0x10, body, 0.6, None);
+        }
+        let _ = negotiated.send_blob_retained(1, 0, 0xEC, body, 0.7, None);
+        while negotiated.pop_outbound_datagram().is_some() {}
+        for (i, chunk) in data.as_chunks::<4>().0.iter().take(4).enumerate() {
+            let seq = u32::from_le_bytes(*chunk);
+            let nak = OptionalHeaders {
+                sequence_nak: Some(vec![seq, 2 + u32::try_from(i).unwrap_or(0)]),
+                ..OptionalHeaders::default()
+            };
+            if let Ok(d) = encode_datagram(
+                DatagramHeader {
+                    rec_id: 0x0102,
+                    ..DatagramHeader::default()
+                },
+                &nak,
+                &[],
+                None,
+                None,
+            ) {
+                let _ = negotiated.receive_datagram(&d, peer, 1.0, WireCodecs::NONE);
+            }
+        }
+        while negotiated.pop_outbound_datagram().is_some() {}
     }
 
     let _ = decode_message(1, data, 65_536);

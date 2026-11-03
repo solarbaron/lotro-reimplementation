@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::chat_session::ChatCodecs;
+use crate::initial::{
+    AdvertisedArchive, InstallUnsupported, PreparedAdvertisement, UnsupportedNegotiation,
+};
 use crate::login::{
     DICT_KEY_CLIENT_TO_SERVER, DICT_KEY_SERVER_TO_CLIENT_DEFERRED, DataIdMap, LauncherConfig,
     LoginError, NetPreferences, NetworkVersionDiscovery, NetworkVersionQuery, UserPreferences,
@@ -139,6 +142,36 @@ pub trait InstallData: Send + Sync + std::fmt::Debug {
     fn chat_category_keys(&self) -> Option<Vec<u32>> {
         None
     }
+
+    /// The full 32-bit key of the selected language in the runtime Languages enum
+    /// (`official-session.md` §9.3.2). The default answers unsupported.
+    ///
+    /// # Errors
+    ///
+    /// [`InstallUnsupported`]: a kind, never a value.
+    fn selected_language_key(&self) -> Result<u32, InstallUnsupported> {
+        Err(InstallUnsupported::NotRead)
+    }
+
+    /// The `languages` list of the installed name rule `rule_key` (§9.3.4). The default
+    /// answers unsupported.
+    ///
+    /// # Errors
+    ///
+    /// [`InstallUnsupported`]: a kind, never a value.
+    fn name_rule_languages(&self, _rule_key: u32) -> Result<Vec<u32>, InstallUnsupported> {
+        Err(InstallUnsupported::NotRead)
+    }
+
+    /// One entry per mounted base archive the advertisement lists (§9.3.4 items 2 and 3),
+    /// computed on the connector's thread. The default answers unsupported.
+    ///
+    /// # Errors
+    ///
+    /// [`InstallUnsupported`]: a kind, never a value.
+    fn archive_inventory(&self) -> Result<Vec<AdvertisedArchive>, InstallUnsupported> {
+        Err(InstallUnsupported::NotRead)
+    }
 }
 
 /// The chat categories of the session (`official-messages-play.md` §6.7): every category
@@ -156,6 +189,25 @@ pub fn chat_categories(data: &dyn InstallData) -> ChatCategories {
         return ChatCategories::default();
     };
     ChatCategories::from_install_keys(Some(&keys))
+}
+
+/// The advertisement `0xEC` of this install (`official-session.md` §9.3.2, §9.3.4): what does
+/// not depend on the server's `0xDD`, so that a certain failure does not spend the ticket
+/// (pending spec pass 10 fix 2, labelled engineering choice).
+///
+/// # Errors
+///
+/// [`UnsupportedNegotiation`] when the install cannot answer truthfully; nothing is invented.
+pub fn prepare_advertisement(
+    data: &dyn InstallData,
+) -> Result<PreparedAdvertisement, UnsupportedNegotiation> {
+    let key = data
+        .selected_language_key()
+        .map_err(UnsupportedNegotiation::LanguageKey)?;
+    let archives = data
+        .archive_inventory()
+        .map_err(UnsupportedNegotiation::Inventory)?;
+    PreparedAdvertisement::new(key, &archives)
 }
 
 /// Makes the [`InstallData`] of the install root it is given, for the `<Lang>` token the

@@ -554,12 +554,14 @@ fn hostile_counts_depth_bools_and_unknown_pids() {
 fn vector_7_enter_world_delete_and_ready_ack() {
     let enter = CharacterEnterWorldRequest::new(0x0102_0304_0506_0708);
     let env = enter.to_envelope_bytes().unwrap();
+    // `official-session.md` §9.3.5, Vector 12's form: one shared flags byte, the ID and the
+    // empty client property table, with no second leading zero. World Vector 7's `0x6F` part
+    // (pending spec pass 10 fix 14) still shows the historical two-byte prefix.
     assert_eq!(
         env,
-        [
-            0x00, 0x00, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00
-        ]
+        [0x00, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00]
     );
+    assert_eq!(enter.to_bytes().unwrap(), env);
     let delete = CharacterDeleteRequest {
         character_id: 0x0102_0304_0506_0708,
         monster_play: false,
@@ -577,12 +579,36 @@ fn vector_7_enter_world_delete_and_ready_ack() {
     );
     assert_eq!(PortalReadyAck.to_bytes().unwrap(), [0x00]);
 
-    let decoded = decode_event_envelope(0x6F, 2, &env, 1024).unwrap();
-    assert_eq!(decoded.target_entity_id, 2);
+    // The complete reassembled data decodes as it is, and a second leading zero fails.
     assert_eq!(
-        CharacterEnterWorldRequest::from_bytes(&decoded.inner_payload, &schema()).unwrap(),
+        CharacterEnterWorldRequest::from_bytes(&env, &schema()).unwrap(),
         enter
     );
+    assert!(
+        CharacterEnterWorldRequest::from_bytes(&encode_event_envelope(&env), &schema()).is_err()
+    );
+}
+
+#[test]
+fn the_character_list_reads_its_count_after_the_one_flags_byte() {
+    // `official-session.md` §10.2 Vector 12: an empty `0x6C` with an empty account table.
+    let empty = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let s = schema();
+    let list = CharacterListResponse::from_bytes(&empty, &s).unwrap();
+    assert!(list.characters.is_empty());
+    assert_eq!(list.to_bytes().unwrap(), empty);
+    // What is left after `decode_message` consumed the flags byte.
+    assert_eq!(
+        CharacterListResponse::from_envelope_body(&empty[1..], &s).unwrap(),
+        list
+    );
+    // Reading a second base byte from the body would misframe it: the body has none.
+    assert!(CharacterListResponse::from_envelope_body(&empty, &s).is_err());
+    // Trailing bytes and a truncated count.
+    assert!(CharacterListResponse::from_envelope_body(&[0, 0, 0, 0, 0, 9], &s).is_err());
+    assert!(CharacterListResponse::from_envelope_body(&[0, 0, 0], &s).is_err());
+    // A count too large for the bytes left is refused before anything is allocated.
+    assert!(CharacterListResponse::from_envelope_body(&[0xFF, 0xFF, 0xFF, 0x7F, 0], &s).is_err());
 }
 
 #[test]

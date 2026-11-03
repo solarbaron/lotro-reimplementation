@@ -205,7 +205,7 @@ fn the_client_messages_go_on_the_queues_of_the_outbound_table() {
     // 0x12C answers 0x12F on queue 4 (ReliableUnordered).
     world.deliver(login.event(0x12F, &[]), LOGIN_SERVER);
     d.step(0.2, true, &go);
-    // 0x6F on queue 3, sequence group 0x13.
+    // 0x6F on queue 2, implicit group 0 (`official-session.md` §9.3.5).
     d.command(
         &Command::EnterWorld {
             character: "Aldo".to_owned(),
@@ -230,15 +230,21 @@ fn the_client_messages_go_on_the_queues_of_the_outbound_table() {
         .iter()
         .find(|h| h.blob_header_word == Some(0x6F))
         .expect("0x6F");
-    assert_eq!((select.queue_id, select.seq_group), (3, 0x13));
+    assert_eq!((select.queue_id, select.seq_group), (2, 0));
+    // The first queue-2 blob of the connection: order 1, blob 1 (§5.6.2 P10-23-POLICY).
+    assert_eq!((select.order_num, select.blob_id), (1, 1));
 }
 
 #[test]
 fn the_outbound_table_and_the_movement_rule() {
     use super::super::session_phase::{movement_is_discrete, outbound_queue};
     assert_eq!(outbound_queue(0x12C, &[]), (4, 0));
-    assert_eq!(outbound_queue(0x19E, &[]), (3, 0x13));
-    assert_eq!(outbound_queue(0x6F, &[]), (3, 0x13));
+    // §9.3.1, §9.3.5: the observed path supersedes these two historical rows.
+    assert_eq!(outbound_queue(0x19E, &[]), (1, 0));
+    assert_eq!(outbound_queue(0x6F, &[]), (2, 0));
+    // §9.3.2, §9.3.3.
+    assert_eq!(outbound_queue(0xEC, &[]), (1, 0));
+    assert_eq!(outbound_queue(0xF5, &[]), (1, 0));
     assert_eq!(outbound_queue(0xF4, &[]), (3, 0x05));
     assert_eq!(outbound_queue(0x30, &[]), (3, 0x0A));
     assert_eq!(outbound_queue(0x28, &[]), (3, 0x04));

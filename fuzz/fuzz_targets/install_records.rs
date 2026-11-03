@@ -56,7 +56,12 @@ fn header(data: &[u8]) -> Option<ArchiveHeader> {
 }
 
 fn records(data: &[u8]) -> ContentEntry {
-    let iteration = IterationRecord::parse(data).ok();
+    // The directory-entry stamp rule (install-layout.md §9.2.1): no trailing part with a stamp
+    // below 2, malformed from 3.
+    let no_trailing = IterationRecord::parse(data, 1).ok();
+    assert!(no_trailing.is_none_or(|it| it.trailing.is_empty()));
+    assert!(IterationRecord::parse(data, 3).is_err());
+    let iteration = IterationRecord::parse(data, 2).ok();
     if let Some(it) = &iteration {
         let covered: u64 = it.ranges.iter().map(|r| u64::from(r.len)).sum();
         assert_eq!(covered, u64::from(it.count), "ranges cover exactly N");

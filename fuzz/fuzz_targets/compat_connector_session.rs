@@ -19,8 +19,12 @@
 //! commands (`LeaveWorld` and `WorldLoaded` among them) and clock steps follow. A chunk
 //! whose kind byte has bit 7 set has a 2-byte length. The synthetic install types the
 //! entity and chat properties as the connector's test service does and has a baseline for
-//! one template. No panic, bounded state: the entity feed stays within its limits after
-//! every step.
+//! one template, and answers the initial exchange (`official-session.md` §9.3.2–§9.3.5): its
+//! language key, name rules (7, 8 empty, 9 another language) and two archives; the first byte
+//! `0xFF` asks for the unsupported answer instead. A message's selector byte with bit 7 set
+//! sends it on queue 1 (`0xDD`, `0xF5` and the window's other opcodes among them), as those
+//! come; otherwise on queue 2. No panic, bounded state: the entity feed stays within its limits
+//! after every step.
 #![no_main]
 
 use std::collections::VecDeque;
@@ -36,6 +40,7 @@ use tessera_compat::connector::entities::{
 };
 use tessera_compat::connector::net::{ConnectorNet, SendHttpClient};
 use tessera_compat::connector::session_phase::{SessionDriver, SessionStart};
+use tessera_compat::initial::{AdvertisedArchive, InstallUnsupported, IterationSpan};
 use tessera_compat::login::{
     HttpClient, HttpRequest, HttpResponse, LoginError, NetPreferences, SessionHandoff,
     TicketRefresher, VersionInfo,
@@ -86,7 +91,10 @@ const DICTIONARY: [(u32, PropertyType); 9] = [
 ];
 
 #[derive(Debug)]
-struct NoData;
+struct NoData {
+    /// The install answers the initial exchange's questions.
+    answers: bool,
+}
 
 impl InstallData for NoData {
     fn record(&self, _did: u32, _max: usize) -> Option<Vec<u8>> {
@@ -109,6 +117,34 @@ impl InstallData for NoData {
     /// Only the one template counts as decoded: the others go through the read budget.
     fn template_cached(&self, template_did: u32) -> bool {
         template_did == TEMPLATE
+    }
+
+    fn selected_language_key(&self) -> Result<u32, InstallUnsupported> {
+        if self.answers {
+            Ok(5)
+        } else {
+            Err(InstallUnsupported::LanguageAbsent)
+        }
+    }
+
+    fn name_rule_languages(&self, rule_key: u32) -> Result<Vec<u32>, InstallUnsupported> {
+        match rule_key {
+            7 => Ok(vec![5]),
+            8 => Ok(Vec::new()),
+            9 => Ok(vec![6]),
+            _ => Err(InstallUnsupported::NameRuleMissing),
+        }
+    }
+
+    fn archive_inventory(&self) -> Result<Vec<AdvertisedArchive>, InstallUnsupported> {
+        Ok((1u8..=2)
+            .map(|i| AdvertisedArchive {
+                resource_id: [0, 0, i, 1, 0, 0, 0, 0],
+                iteration_count: 3,
+                spans: vec![IterationSpan { start: 1, len: 3 }],
+                notes: Vec::new(),
+            })
+            .collect())
     }
 }
 
@@ -272,9 +308,15 @@ impl Server {
 
     /// A blob to `recipient` as sequenced datagrams of one fragment each, so a long
     /// message (a 2-byte length) still fits.
-    fn blob_to(&mut self, opcode: u32, recipient: Option<u64>, envelope: &[u8]) -> Vec<Vec<u8>> {
+    fn blob_to(
+        &mut self,
+        queue: u8,
+        opcode: u32,
+        recipient: Option<u64>,
+        envelope: &[u8],
+    ) -> Vec<Vec<u8>> {
         let blob_id = (self.seq.wrapping_add(1) & 0xFFFF) as u16;
-        let Ok(frags) = split_blob(2, blob_id, 1, 0, recipient, opcode, envelope) else {
+        let Ok(frags) = split_blob(queue, blob_id, 1, 0, recipient, opcode, envelope) else {
             return Vec::new();
         };
         let mut out = Vec::new();
@@ -302,7 +344,12 @@ impl Server {
         out
     }
 
+    /// The list `0x6C` has one shared flags byte, which its payload already starts with
+    /// (`official-session.md` §9.3.5).
     fn event(&mut self, opcode: u32, inner: &[u8]) -> Option<Vec<u8>> {
+        if opcode == 0x6C {
+            return self.blob(opcode, inner);
+        }
         self.blob(opcode, &encode_event_envelope(inner))
     }
 }
@@ -392,7 +439,9 @@ fn start(net: &mut Net, flags: u8) -> Option<SessionDriver<Net>> {
         version,
         codecs,
         codec_uuids,
-        schema: SchemaView(Arc::new(NoData)),
+        schema: SchemaView(Arc::new(NoData {
+            answers: flags != 0xFF,
+        })),
         cancel: Arc::new(AtomicBool::new(flags & 0x40 != 0)),
         // Bit 5 of the first byte: `Net.ComputeUniquePort` off (§3.2 Case C).
         net: NetPreferences {
@@ -526,7 +575,9 @@ fuzz_target!(|data: &[u8]| {
                 };
                 // The selector byte: no recipient, the player, the fixed entity, or eight
                 // bytes of the input.
-                let (recipient, body) = match chunk.get(1).copied().unwrap_or(0) % 4 {
+                let selector = chunk.get(1).copied().unwrap_or(0);
+                let queue = if selector & 0x80 != 0 { 1 } else { 2 };
+                let (recipient, body) = match selector % 4 {
                     0 => (None, chunk.get(2..)),
                     1 => (Some(PLAYER), chunk.get(2..)),
                     2 => (Some(ENTITY), chunk.get(2..)),
@@ -544,7 +595,7 @@ fuzz_target!(|data: &[u8]| {
                 } else {
                     (&mut login, LOGIN)
                 };
-                for d in server.blob_to(opcode, recipient, body) {
+                for d in server.blob_to(queue, opcode, recipient, body) {
                     deliver(&session, Some(d), src);
                 }
             }

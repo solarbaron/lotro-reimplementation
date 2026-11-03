@@ -23,6 +23,13 @@
 //!   `official session: handshake failed`, with the same counts, the reason and the state
 //!   it closed from. A cancel or a revoked network right during the handshake logs the same
 //!   line once, with `reason="cancelled"` or `reason="network right revoked"`.
+//! - While the login connection is past its handshake and before its character list
+//!   (`official-session.md` §9.3.1–§9.3.5), one `info` line,
+//!   `official session: initial exchange`, at each step ([`HandshakeReport::log_initial`]),
+//!   with the stages `dd_seen`, `ec_sent`, `f5_received`, `f5_sent` and `list_received` and
+//!   the counts of the messages skipped; never an identifier, an iteration value, a key or a
+//!   path. A login that ends before the list logs
+//!   `official session: login ended before the character list` with the same fields.
 //! - The chat-server connection (`official-messages-play.md` §6.6, the same session layer)
 //!   logs `official chat session: handshake failed` (`info`, [`log_chat_failed`]) when it
 //!   closes from its handshake, with the connection's own counts.
@@ -53,6 +60,7 @@
 use std::ffi::{OsStr, OsString};
 use std::net::Ipv4Addr;
 
+use crate::initial::InitialStages;
 use crate::session::{
     AUTH_FLAG_HAS_EXTRA_BLOB, AUTH_FLAG_HAS_SECOND_STRING, AUTH_TYPE_CHAT, AUTH_TYPE_PRIMARY,
     BindPorts, ConnectionState, HandshakeCounts, SessionError, decode_datagram,
@@ -502,6 +510,9 @@ pub struct HandshakeReport {
     pub remote_name: RemoteName,
     /// The authentication of the connection's first datagram.
     pub auth: AuthMode,
+    /// How far the initial exchange got (the login connection's; the world connection has
+    /// none, its stages all stay clear).
+    pub initial: InitialStages,
 }
 
 impl HandshakeReport {
@@ -525,6 +536,48 @@ impl HandshakeReport {
             auth = self.auth.label(),
             net_version = net_version.unwrap_or("none"),
             "official session: handshake started"
+        );
+    }
+
+    /// Logs the initial-exchange line (`info`, module docs).
+    pub fn log_initial(&self, what: &str) {
+        tracing::info!(
+            step = what,
+            dd_seen = self.initial.dd_seen,
+            ec_sent = self.initial.ec_sent,
+            f5_received = self.initial.f5_received,
+            f5_sent = self.initial.f5_sent,
+            list_received = self.initial.list_received,
+            skipped_149 = self.initial.skipped.op_149,
+            skipped_aa = self.initial.skipped.op_aa,
+            skipped_30000040 = self.initial.skipped.op_30000040,
+            skipped_43 = self.initial.skipped.op_43,
+            skipped_fe = self.initial.skipped.op_fe,
+            skipped_54 = self.initial.skipped.op_54,
+            skipped_other = self.initial.skipped.other,
+            ignored = self.initial.ignored,
+            refused = self.counts.refused_while_connected,
+            "official session: initial exchange"
+        );
+    }
+
+    /// Logs the end of a login before its character list (`info`, module docs).
+    pub fn log_login_ended(&self, reason: &str) {
+        tracing::info!(
+            reason = %reason,
+            state = ?self.state,
+            elapsed_s = self.elapsed_sec,
+            dd_seen = self.initial.dd_seen,
+            ec_sent = self.initial.ec_sent,
+            f5_received = self.initial.f5_received,
+            f5_sent = self.initial.f5_sent,
+            list_received = self.initial.list_received,
+            ignored = self.initial.ignored,
+            refused = self.counts.refused_while_connected,
+            sent = self.counts.sent,
+            received = self.link.received,
+            received_ok = self.counts.received_ok,
+            "official session: login ended before the character list"
         );
     }
 

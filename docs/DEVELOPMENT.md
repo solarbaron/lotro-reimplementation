@@ -511,6 +511,29 @@ handshake, never an address, port, account or ticket (`crates/compat/src/connect
   unsupported (`official-session.md` §7.3, OPEN-SESSION-1) one more line says so and the
   chat session stops for the rest of the run: the ticket is not sent to the chat server again.
 
+- `official session: initial exchange` (`info`, at each step of the login connection after
+  its handshake, `official-session.md` §9.3.1–§9.3.5, decision 0046): how far the login got
+  (`dd_seen`, `ec_sent`, `f5_received`, `f5_sent`, `list_received`), the messages of that
+  window skipped per opcode (`skipped_149`, `skipped_aa`, `skipped_30000040`, `skipped_43`,
+  `skipped_fe`, `skipped_54`, `skipped_other`), `ignored` (a later `0xDD` or `0xF5`, or one on
+  another connection or queue) and `refused` (datagrams refused before anything was committed;
+  64 of them on a connected connection end it, a labelled engineering limit). The advertisement
+  is sent once per login connection, from the real install, and is never retried with other
+  data; no line names an archive, an identifier, an iteration value, a language key or a path.
+- `official session: install advertisement sent` (`info`): how many archives it lists and its
+  size, no value.
+- `official session: not supported` and `official session: login ended before the character
+  list` (`info`): the login ended at one of those steps, with its reason as a label
+  (`crate::initial::UnsupportedNegotiation`) and the stages it reached. The checks that do not
+  depend on the server (the language key and the archive inventory) run before the first
+  datagram, so they end the attempt with `official session: not started` and the ticket unspent.
+
+A live run now tries to reach the character list through that exchange under interim policies
+that are known to differ from, or are not confirmed against, the official client
+(OPEN-SESSION-8 and 13; decision 0046, Consequences). `0x19E` and `0x13D` are not sent, nor is
+the first world `0x30`; a `0x6C` or `0x90` the client cannot read is reported as unsupported
+rather than guessed at. A rejected attempt does not say which rule caused it.
+
 `RUST_LOG=info,tessera_compat=debug` shows the waiting lines too.
 
 **Checksum rule.** Every datagram is sent and verified with the one per-buffer payload

@@ -380,6 +380,40 @@ entry = "tessera_compat::consent::check"
 input = "user file"
 exempt = "reads the record and key files and hands them to the record check that compat_consent_record fuzzes (through test_support::evaluate)"
 
+# =========================================================================================
+# The login's initial exchange (official-session.md §9.3.2–§9.3.5, decision 0046)
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/initial.rs"
+entry = [
+    "tessera_compat::initial::InstallRequest::from_data",
+    "tessera_compat::initial::InstallRequest::from_envelope_body",
+    "tessera_compat::initial::build_install_advertisement",
+]
+input = "network"
+target = "compat_initial_negotiation"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/official/install_data.rs"
+entry = [
+    "tessera_client::official::install_data::language_key_lookup",
+    "tessera_client::official::install_data::name_rules_lookup",
+    "tessera_client::official::install_data::region_keys_lookup",
+    "tessera_client::official::install_data::advertised_archive",
+]
+input = "install record"
+target = "compat_initial_negotiation"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/world.rs"
+entry = ["tessera_compat::world::CharacterListResponse::from_envelope_body"]
+input = "network"
+target = "compat_initial_negotiation"
+
 [[parser]]
 crate = "tessera-compat"
 file = "crates/compat/src/connector/session_phase.rs"

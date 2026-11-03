@@ -8,13 +8,16 @@
 //! order (`official-login.md` §5.1):
 //!
 //! 1. local discovery before any network operation (invariant `I1`; [`data`]): the launcher
-//!    configuration, the language, `netver` and `didver`, the compression dictionaries;
+//!    configuration, the language, `netver` and `didver`, the compression dictionaries, and
+//!    the inputs of the initial advertisement;
 //! 2. the HTTP exchanges ([`login_phase`]): datacenters, remote configuration,
 //!    `LoginAccount` (the one use of the credentials), the world list with each world's
 //!    status, then on `ChooseWorld` the status again, the billing-role check and the queue;
-//! 3. the UDP session ([`session_phase`]): `SessionAuthHeader`, the version exchange, the
-//!    character list (`Event::Connected`), `EnterWorld`, the referral to the world server,
-//!    the play messages, the chat server and the in-game ticket refresh.
+//! 3. the UDP session ([`session_phase`]): the checks of the install's initial advertisement
+//!    (a certain failure spends no ticket), `SessionAuthHeader`, the initial exchange
+//!    (`0xDD`, `0xEC`, `0xF5`; [`crate::initial`]), the character list (`Event::Connected`),
+//!    `EnterWorld`, the referral to the world server, the play messages, the chat server and
+//!    the in-game ticket refresh.
 //!
 //! Every network operation goes through the run's [`NetworkAccess`] ([`net::LiveNet`]),
 //! which is moved into the thread (there is no copy of it); endpoints come only from the

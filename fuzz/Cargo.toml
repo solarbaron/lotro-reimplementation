@@ -1447,6 +1447,15 @@ test = false
 doc = false
 bench = false
 
+# --- M8: the login's initial exchange (official-session.md §9.3.2–§9.3.5, decision 0046) ---
+
+[[bin]]
+name = "compat_initial_negotiation"
+path = "fuzz_targets/compat_initial_negotiation.rs"
+test = false
+doc = false
+bench = false
+
 # --- M8 cleanup: tessera-compat PE version-resource reader (decision 0042 item 1) ---
 
 [[bin]]

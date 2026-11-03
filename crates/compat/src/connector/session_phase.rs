@@ -1,10 +1,33 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The UDP part of the live session: the login connection with its version exchange
-//! (`official-session.md` §6, §9.3), the character list and world entry
+//! The UDP part of the live session: the login connection with its initial exchange
+//! (`official-session.md` §6, §9.3; "The initial exchange" below), the character list and world
+//! entry
 //! (`official-messages-world.md` §1.1.4, §3, §4), the world connection after the referral
 //! (`official-session.md` §6.5), the play messages through
 //! [`crate::play::adapter::PlayAdapter`] (`official-messages-play.md` §4–§8), the chat
 //! server (§6.6) and the in-game ticket refresh (`official-login.md` §4.3).
+//!
+//! # The initial exchange
+//!
+//! `official-session.md` §9.3.1–§9.3.5 and decision 0046 ([`crate::initial`]): after State 5
+//! the login connection waits for the server's `0xDD`, sends the install advertisement
+//! `0xEC` built before the first datagram from the user's own archives, answers the server's
+//! `0xF5` once, and waits for the character list. `0x149`, `0xAA`, `0x30000040`, `0x43`,
+//! `0xFE` and `0x54` in that window are skipped and counted per opcode: no dispatch, no reply
+//! and no decode error. An actual `0x12F` still gets its `0x12C` (§9.3: the historical path
+//! applies only when those opcodes arrive).
+//!
+//! Every local failure ends the attempt with one `LoginRefused` of
+//! [`LoginRefusal::UnsupportedStep`] ([`crate::initial::UnsupportedNegotiation`]) and sends
+//! the ticket no more. Not built, each marked where it would be:
+//! - pending spec pass 10 fix 17: neither `0x13D` nor `0x19E` is emitted; after `0x6C` the
+//!   client goes to selection (`SessionDriver::character_list`). The spec gives their order
+//!   and queue but no source for `0x13D` or for the platform ID.
+//! - pending spec pass 10 fix 14: `0x90` keeps its historical prefix; one that fails to decode
+//!   is a distinct unsupported result of the entry ([`UNSUPPORTED_SESSION_START`]), not the
+//!   entry deadline's message.
+//! - §6.5, OPEN-SESSION-16: the first world `0x30` is never emitted; its argument has no
+//!   specified source and no method's arguments are made up.
 //!
 //! # One multiplexer per connection
 //!
@@ -150,6 +173,11 @@ use tessera_net::{
 
 use crate::chat_session::state::INITIAL_CONNECT_POLICY;
 use crate::chat_session::{ChatClient, ChatCodecs, ChatConfig};
+use crate::initial::{
+    COMPLETION_DATA, InitialStages, InstallRequest, Negotiation, OPCODE_COMPLETION,
+    OPCODE_INSTALL_ADVERTISEMENT, OPCODE_INSTALL_REQUEST, PreparedAdvertisement,
+    UnsupportedNegotiation, check_language_allowed,
+};
 use crate::login::{
     HttpResponse, LoginError, NetPreferences, RefreshOutcome, SessionHandoff, TicketRefresher,
     VersionInfo, zeroize_vec,
@@ -165,7 +193,7 @@ use crate::session::{
     BindPlan, BindPorts, ClientVersionMessage, CodecUuids, ConnectionState, ControlMessage,
     DEFAULT_MAX_CONTAINER_DEPTH, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
     DisconnectReason as LinkEnd, LogonOutcome, MAX_DATAGRAM_BUF, MIN_DATAGRAM_BYTES,
-    OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS, SessionError, SessionEvent,
+    OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS, ReassembledBlob, SessionError, SessionEvent,
     SessionMultiplexer, UdpDatagramTransport, dispatch_message, max_recv_rate_for_speed,
 };
 use crate::world::{
@@ -175,7 +203,7 @@ use crate::world::{
     VisualDescriptionUpdate, WireReader, WorldError, active_target, encode_event_envelope,
 };
 
-use super::data::{SchemaView, chat_categories};
+use super::data::{SchemaView, chat_categories, prepare_advertisement};
 use super::diag::{
     AuthMode, BindCase, HANDSHAKE_REPORT_SEC, HandshakeReport, LinkDiag, LocalSource,
     LoginServerEntry, RejectKind, RemoteForm, RemoteName, carries_challenge,
@@ -203,6 +231,8 @@ pub const OPCODE_ENTITY_METHOD_CALL: u32 = 0x0000_0030;
 
 /// Queue `1`, `Unreliable` (`official-session.md` §5.6.2).
 pub const QUEUE_UNRELIABLE: u8 = 1;
+/// Queue `2`, `ReliableOrdered` (§5.6.2).
+pub const QUEUE_RELIABLE_ORDERED: u8 = 2;
 /// Queue `3`, `Sequenced` (§5.6.2).
 pub const QUEUE_SEQUENCED: u8 = 3;
 /// Queue `4`, `ReliableUnordered` (§5.6.2).
@@ -214,7 +244,9 @@ pub const QUEUE_RELIABLE_UNORDERED: u8 = 4;
 /// | Opcode | Queue | `seqGroup` |
 /// |---|---|---|
 /// | `0x12C` | 4 | — |
-/// | `0x19E`, `0x6F` | 3 | `0x13` |
+/// | `0xEC`, `0xF5` | 1 | — (§9.3.2, §9.3.3) |
+/// | `0x19E` | 1 | — (§9.3.1; superseding its historical row) |
+/// | `0x6F` | 2 | — (§9.3.5; superseding its historical row) |
 /// | `0x24` | 1, or 3 when discrete ([`movement_is_discrete`]) | `0x05` on queue 3 |
 /// | `0xF4` | 3 | `0x05` |
 /// | `0x30` | 3 | `0x0A` |
@@ -226,11 +258,18 @@ pub const QUEUE_RELIABLE_UNORDERED: u8 = 4;
 /// opcode the table does not list goes on queue 4 with group `0` (engineering choice, spec
 /// silent: reliable, with no sequence-group semantics; the spec lists no other client
 /// opcode).
+///
+/// pending spec pass 10 fix 18: that default for unlisted opcodes is unchanged.
+/// pending spec pass 10 fix 21: a `0x6F` after a return from the world (re-entry) stays on
+/// queue 2 like the first; only the first selection's queue is observed (§9.3.5).
 #[must_use]
 pub fn outbound_queue(opcode: u32, payload: &[u8]) -> (u8, u16) {
     match opcode {
         OPCODE_CLIENT_VERSION => (QUEUE_RELIABLE_UNORDERED, 0),
-        OPCODE_CLIENT_PLATFORM_ID | OPCODE_CHARACTER_SELECT => (QUEUE_SEQUENCED, 0x13),
+        OPCODE_INSTALL_ADVERTISEMENT | OPCODE_COMPLETION | OPCODE_CLIENT_PLATFORM_ID => {
+            (QUEUE_UNRELIABLE, 0)
+        }
+        OPCODE_CHARACTER_SELECT => (QUEUE_RELIABLE_ORDERED, 0),
         OPCODE_MOVEMENT_STEP if !movement_is_discrete(payload) => (QUEUE_UNRELIABLE, 0),
         OPCODE_MOVEMENT_STEP | OPCODE_PORTAL_READY_ACK => (QUEUE_SEQUENCED, 0x05),
         OPCODE_ENTITY_METHOD_CALL => (QUEUE_SEQUENCED, 0x0A),
@@ -270,6 +309,14 @@ pub const DRIVER_EVENT_CAP: usize = super::READ_PAUSE;
 /// the client saw the return (module docs "Leaving the world"). Tessera's text, an
 /// engineering choice (spec silent).
 pub const NOT_SENT_OUTSIDE_WORLD: &str = "Your line was not sent: you are no longer in the world.";
+
+/// The reason of the `EnterWorldFailed` when `0x90` does not decode.
+///
+/// pending spec pass 10 fix 14: its prefix is not changed by guesswork; a `0x90` that fails to
+/// decode is reported as this, distinct from the entry deadline's "The world did not answer."
+/// Tessera's text.
+pub const UNSUPPORTED_SESSION_START: &str =
+    "The world's session start could not be read by Tessera yet.";
 
 /// Most old world connections kept (a later referral replaces the world connection).
 pub const MAX_OLD_LINKS: usize = 4;
@@ -419,6 +466,11 @@ struct Link {
     remote: (RemoteForm, RemoteName),
     /// The datagram dump of this connection ([`super::dump`]), when it is on.
     dump: Option<ConnectionDump>,
+    /// The login connection's initial-exchange stages, for its dump; `None` on the others.
+    initial: Option<InitialStages>,
+    /// The ordering number the next queue-2 blob from the server would continue with
+    /// (`SessionDriver::note_queue2`).
+    queue2_next: Option<u16>,
 }
 
 impl Drop for Link {
@@ -471,6 +523,8 @@ impl Link {
             auth,
             remote,
             dump: dump.map(ConnectionDump::new),
+            initial: None,
+            queue2_next: None,
         })
     }
 
@@ -510,6 +564,7 @@ impl Link {
             received: self.diag.received,
             received_ok: Some(counts.received_ok),
             challenges: Some(counts.challenges),
+            initial: self.initial,
         });
     }
 
@@ -620,6 +675,12 @@ struct Inbound {
     recipient: u64,
     body: Vec<u8>,
     world: bool,
+    /// The fragment header's delivery queue.
+    queue: u8,
+    /// The envelope's flags byte (§9.1).
+    envelope_flags: u8,
+    /// The blob itself was this message, not a container around it (§9.4.2).
+    top_level: bool,
 }
 
 /// Where a received datagram goes (module docs).
@@ -723,6 +784,9 @@ pub enum StartFailure {
     Ticket,
     /// The attempt was cancelled before anything was sent.
     Cancelled,
+    /// The install cannot answer the initial exchange (`official-session.md` §9.3.4): nothing
+    /// was sent, so the ticket is not spent (pending spec pass 10 fix 2).
+    Unsupported(UnsupportedNegotiation),
 }
 
 /// Counters for diagnostics.
@@ -774,6 +838,13 @@ pub struct DriverCounters {
     /// Texts not looked up because their message had reached [`MAX_MESSAGE_PLAY_EVENTS`]
     /// (the play layer may count them as unresolved too).
     pub texts_skipped: u64,
+    /// Unsupported results that ended the login ([`UnsupportedNegotiation`]).
+    pub unsupported_results: u64,
+    /// Queue-2 blobs whose ordering word repeated or went back (pending spec pass 10 fix 19:
+    /// counted, not waited for).
+    pub queue2_repeats: u64,
+    /// Queue-2 blobs whose ordering word skipped ahead (as [`Self::queue2_repeats`]).
+    pub queue2_gaps: u64,
 }
 
 /// The resolver of a message past [`MAX_MESSAGE_PLAY_EVENTS`]: it looks nothing up and
@@ -800,6 +871,13 @@ pub struct SessionDriver<N: ConnectorNet> {
     old: Vec<Link>,
     version: VersionInfo,
     version_sent: bool,
+    /// How far the initial exchange got (`official-session.md` §9.3, [`crate::initial`]).
+    initial: Negotiation,
+    /// The advertisement built before the first datagram; taken once, when `0xEC` goes out
+    /// (one per primary login connection, decision 0046 item 2).
+    advertisement: Option<PreparedAdvertisement>,
+    /// When the progress screen last heard of the initial exchange ([`Self::keep_progress`]).
+    last_progress: f64,
     schema: SchemaView,
     stage: Stage,
     characters: Vec<(u64, String)>,
@@ -961,6 +1039,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if stop() {
             return Err(StartFailure::Cancelled);
         }
+        // pending spec pass 10 fix 2: the checks that do not depend on `0xDD` come first, so
+        // a certain failure does not spend the ticket (labelled engineering choice).
+        let advertisement =
+            prepare_advertisement(start.schema.0.as_ref()).map_err(StartFailure::Unsupported)?;
         // §3.2 item 2: the wildcard address unless the two-colon `-h` form's `localHost`
         // (which overrides) or `Net.BindInterface` selects one. A `localHost` segment that
         // is given still overrides `Net.BindInterface` when it is not an IPv4 literal (or
@@ -1026,6 +1108,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             now,
         )
         .map_err(|_| StartFailure::Bind)?;
+        login.initial = Some(InitialStages::default());
         if let Some(c) = login.mux.connection_mut(login.conn) {
             c.start_login(auth, now).map_err(|_| StartFailure::Ticket)?;
         }
@@ -1039,6 +1122,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             old: Vec::new(),
             version: start.version,
             version_sent: false,
+            initial: Negotiation::new(),
+            advertisement: Some(advertisement),
+            last_progress: now,
             schema: start.schema,
             stage: Stage::Login,
             characters: Vec::new(),
@@ -1183,6 +1269,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.first_local
     }
 
+    /// How far the initial exchange got (`official-session.md` §9.3, [`crate::initial`]).
+    #[must_use]
+    pub fn initial_stages(&self) -> InitialStages {
+        self.initial.stages()
+    }
+
     /// The states of the login and world connections (tests).
     #[must_use]
     pub fn connection_states(&self) -> (Option<ConnectionState>, Option<ConnectionState>) {
@@ -1265,6 +1357,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.run_chat(now);
         }
         self.enter_deadline(now);
+        self.initial_deadline(now);
         self.advance_paths();
         self.portal_step(now);
         self.send_pending(now);
@@ -1282,14 +1375,23 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// `0x6F` was sent and the world has not been entered within
     /// [`ENTER_WORLD_TIMEOUT_SEC`]: the entry fails and the character list is offered again.
     fn enter_deadline(&mut self, now: f64) {
-        let Stage::Entering { name, since, .. } = &self.stage else {
+        let Stage::Entering { since, .. } = &self.stage else {
             return;
         };
         if now - since < ENTER_WORLD_TIMEOUT_SEC {
             return;
         }
-        let character = name.clone();
         tracing::info!("official session: the world did not answer the entry");
+        self.fail_entry("The world did not answer.", now);
+    }
+
+    /// The entry failed with `reason`: the character list is offered again, or the session
+    /// ends when no connection is left for a later `0x6F`.
+    fn fail_entry(&mut self, reason: &str, now: f64) {
+        let Stage::Entering { name, .. } = &self.stage else {
+            return;
+        };
+        let character = name.clone();
         if let Some(mut w) = self.world.take() {
             w.end_session(now);
             self.keep_old(w);
@@ -1299,13 +1401,85 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.stage = Stage::Characters;
         self.events.push_back(Event::EnterWorldFailed {
             character,
-            reason: "The world did not answer.".to_owned(),
+            reason: reason.to_owned(),
         });
         if self.login_referred {
             // The login connection was disconnected on the referral (§6.5 step 2) and the
             // world connection is gone: no connection is left for a later `0x6F`, so the
             // session ends. Engineering choice, spec silent (`docs/m8-remediation.md` §15).
             self.end(DisconnectReason::TimedOut);
+        }
+    }
+
+    /// The initial exchange's wait ended (`crate::initial::Negotiation`, pending spec pass 10
+    /// fix 2): the attempt ends with that wait's own unsupported result.
+    fn initial_deadline(&mut self, now: f64) {
+        if self.stage != Stage::Login || self.ended {
+            return;
+        }
+        if let Some(why) = self.initial.expired(now) {
+            self.refuse_unsupported(why, now);
+        }
+    }
+
+    /// One explicit unsupported result ends the attempt (§9.3.4): the login connection says
+    /// goodbye when it is connected and closes (no stored ticket is left to resend, and its
+    /// queue is wiped), and the refusal goes out through the session's usual end. A second
+    /// call does nothing.
+    fn refuse_unsupported(&mut self, why: UnsupportedNegotiation, now: f64) {
+        if self.ended {
+            return;
+        }
+        self.counters.unsupported_results = self.counters.unsupported_results.saturating_add(1);
+        self.sync_initial();
+        tracing::info!(reason = why.label(), "official session: not supported");
+        self.report(&self.login, false, now)
+            .log_login_ended(why.label());
+        if self.login.state() == Some(ConnectionState::Connected) {
+            self.login.disconnect(now);
+            let outgoing = self.codecs.outgoing.clone();
+            let _ = self.login.mux.tick_with_codec(now, outgoing.as_deref());
+            self.flush(now);
+        }
+        self.login.close_dump(why.label());
+        self.login.close_quietly();
+        self.events
+            .push_back(Event::Account(AccountEvent::LoginRefused {
+                reason: LoginRefusal::UnsupportedStep,
+                retry_after_seconds: None,
+                detail: Some(why.detail().to_owned()),
+            }));
+        self.end(DisconnectReason::TransportFailed(
+            "official login refused".to_owned(),
+        ));
+    }
+
+    /// Copies the initial exchange's stages to the login connection, for its dump.
+    fn sync_initial(&mut self) {
+        self.login.initial = Some(self.initial.stages());
+    }
+
+    /// The stages after a step: synced, one log line and a progress event, so the progress
+    /// screen's watchdog (`official-entry.md` §8.3) stays alive through a slow exchange.
+    fn initial_step(&mut self, what: &str, now: f64) {
+        self.sync_initial();
+        self.report(&self.login, false, now).log_initial(what);
+        self.last_progress = now;
+        self.events
+            .push_back(Event::Account(AccountEvent::LoginProgress {
+                stage: LoginStage::JoiningWorld,
+            }));
+    }
+
+    /// A message passed over while the login waits: one progress event per
+    /// [`LOG_INTERVAL_SEC`], so the watchdog stays alive while a slow server does send.
+    fn keep_progress(&mut self, now: f64) {
+        if now - self.last_progress >= LOG_INTERVAL_SEC {
+            self.last_progress = now;
+            self.events
+                .push_back(Event::Account(AccountEvent::LoginProgress {
+                    stage: LoginStage::JoiningWorld,
+                }));
         }
     }
 
@@ -1432,6 +1606,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
             remote: link.remote.0,
             remote_name: link.remote.1,
             auth: link.auth,
+            initial: if world {
+                InitialStages::default()
+            } else {
+                self.initial.stages()
+            },
         }
     }
 
@@ -1604,7 +1783,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 return;
             }
             if let Some(m) = self.inbox.pop_front() {
-                self.message(m.opcode, m.recipient, &m.body, m.world, now);
+                self.message(&m, now);
                 continue;
             }
             let next = match self.login.pop_event() {
@@ -1627,6 +1806,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
             SessionEvent::Connected { .. } => {
                 tracing::info!(world, "official session: connection established");
                 if self.stage == Stage::Login {
+                    if !world {
+                        self.initial.connected(now);
+                        self.last_progress = now;
+                    }
                     // The progress screen's watchdog (`official-entry.md` §8.3) stays
                     // alive while the version exchange and the character list follow.
                     self.events
@@ -1636,6 +1819,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
             }
             SessionEvent::BlobReceived(blob) => {
+                if blob.queue_id == QUEUE_RELIABLE_ORDERED {
+                    self.note_queue2(world, blob.order_num);
+                }
                 match dispatch_message(
                     blob.blob_header_word,
                     &blob.payload,
@@ -1663,15 +1849,19 @@ impl<N: ConnectorNet> SessionDriver<N> {
                             );
                         }
                         self.inbox.extend(envelopes.into_iter().map(|env| Inbound {
+                            top_level: env.opcode == blob.blob_header_word,
                             opcode: env.opcode,
                             recipient: blob.recipient_id,
+                            envelope_flags: env.envelope_flags,
                             body: env.body,
                             world,
+                            queue: blob.queue_id,
                         }));
                     }
                     Err(e) => {
                         self.counters.decode_errors += 1;
                         tracing::debug!(error = %e, "official session: message refused");
+                        self.initial_envelope_refused(&blob, world, now);
                     }
                 }
             }
@@ -1692,8 +1882,48 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
+    /// pending spec pass 10 fix 19: a queue-2 blob is delivered when it is complete, in the
+    /// order it completes, and an ordering word that repeats, goes back or skips ahead is
+    /// counted, not waited for (labelled interim: repeated words occur in the observed stream
+    /// and their rule is `OPEN-SESSION-19`, so §5.6.2's strict order would stall).
+    fn note_queue2(&mut self, world: bool, order: u16) {
+        let link = if world {
+            self.world.as_mut()
+        } else {
+            Some(&mut self.login)
+        };
+        let Some(link) = link else {
+            return;
+        };
+        if let Some(next) = link.queue2_next {
+            let ahead = order.wrapping_sub(next);
+            if ahead >= 0x8000 {
+                self.counters.queue2_repeats = self.counters.queue2_repeats.saturating_add(1);
+                return;
+            }
+            if ahead != 0 {
+                self.counters.queue2_gaps = self.counters.queue2_gaps.saturating_add(1);
+            }
+        }
+        link.queue2_next = Some(order.wrapping_add(1));
+    }
+
     fn link_closed(&mut self, reason: LinkEnd, world: bool, now: f64) {
         tracing::info!(world, ?reason, "official session: connection closed");
+        if !world {
+            self.sync_initial();
+        }
+        if !world
+            && self.stage == Stage::Login
+            && !self.link_of(false).is_some_and(Link::closed_in_handshake)
+        {
+            if matches!(reason, LinkEnd::UnsupportedTraffic) {
+                self.refuse_unsupported(UnsupportedNegotiation::TrafficRefused, now);
+                return;
+            }
+            self.report(&self.login, false, now)
+                .log_login_ended(&format!("{reason:?}"));
+        }
         if let Some(l) = self.link_of(world).filter(|l| l.closed_in_handshake()) {
             self.report(l, world, now).log_failed(&reason);
         }
@@ -1806,7 +2036,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    fn message(&mut self, opcode: u32, recipient: u64, body: &[u8], world: bool, now: f64) {
+    fn message(&mut self, m: &Inbound, now: f64) {
+        let (opcode, recipient, body, world) = (m.opcode, m.recipient, m.body.as_slice(), m.world);
         if (OPCODE_CLIENT_VERSION..=OPCODE_LOGIN_QUEUE_STATUS).contains(&opcode) {
             match ControlMessage::decode(opcode, body) {
                 Ok(m) => self.control(m, now),
@@ -1817,21 +2048,186 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }
             return;
         }
+        // These have their own handling, in the current one-byte form (§9.1, §9.3.3–§9.3.5),
+        // or are skipped: none goes through the historical base-flags test below.
+        match opcode {
+            OPCODE_INSTALL_REQUEST => return self.install_request(m, now),
+            OPCODE_COMPLETION => return self.completion(m, now),
+            CharacterListResponse::EVENT_ID => return self.character_list(m, now),
+            PlayerSessionReady::EVENT_ID => return self.session_ready(body, now),
+            _ => {}
+        }
+        if self.login_window_skips(m, now) {
+            return;
+        }
         if body.first() != Some(&0) {
             self.counters.decode_errors += 1;
             return;
         }
         match opcode {
-            CharacterListResponse::EVENT_ID => self.character_list(body, world),
             CharacterOperationError::EVENT_ID => self.character_error(body),
-            PlayerSessionReady::EVENT_ID => self.session_ready(body),
             _ => self.play(opcode, recipient, body, world),
         }
+    }
+
+    /// Whether `m` is passed over while the login connection waits for its list (§9.3.1,
+    /// §9.3.5): bounded (reassembled already), counted per opcode, not dispatched, not
+    /// answered and no decode error. Before the list every opcode of the login connection
+    /// but the eviction is; after it, `0x149` (§9.3.1's rows after the list and before the
+    /// referral).
+    fn login_window_skips(&mut self, m: &Inbound, now: f64) -> bool {
+        if m.world {
+            return false;
+        }
+        let skips = match self.stage {
+            Stage::Login => m.opcode != AccountEvictionNotice::EVENT_ID,
+            Stage::Characters | Stage::Entering { .. } => m.opcode == 0x149,
+            Stage::InWorld { .. } => false,
+        };
+        if skips {
+            self.initial.skipped(m.opcode, m.body.len());
+            self.sync_initial();
+            if self.stage == Stage::Login {
+                self.keep_progress(now);
+            }
+        }
+        skips
+    }
+
+    /// A blob whose envelope did not decode (§9.1): when the initial exchange needed it, the
+    /// attempt ends as it would for its body (pending spec pass 10 fixes 4, 10 and 16).
+    fn initial_envelope_refused(&mut self, blob: &ReassembledBlob, world: bool, now: f64) {
+        if world || self.stage != Stage::Login {
+            return;
+        }
+        let why = match blob.blob_header_word {
+            OPCODE_INSTALL_REQUEST
+                if blob.queue_id == QUEUE_UNRELIABLE && self.initial.wants_request() =>
+            {
+                UnsupportedNegotiation::MalformedRequest
+            }
+            OPCODE_COMPLETION if !self.initial.stages().f5_sent => {
+                UnsupportedNegotiation::UnexpectedCompletion
+            }
+            CharacterListResponse::EVENT_ID => UnsupportedNegotiation::ListEnvelope,
+            _ => return,
+        };
+        self.refuse_unsupported(why, now);
+    }
+
+    /// The server's `0xDD` (§9.3.4). pending spec pass 10 fix 4: only the first valid one on
+    /// queue 1 of the primary login connection triggers `0xEC`; later ones, and ones
+    /// anywhere else, are counted and send nothing. A malformed first one, flags other than
+    /// `0` among it, ends the attempt.
+    fn install_request(&mut self, m: &Inbound, now: f64) {
+        let eligible = !m.world
+            && m.queue == QUEUE_UNRELIABLE
+            && m.top_level
+            && self.stage == Stage::Login
+            && self.initial.wants_request();
+        if !eligible {
+            self.initial.ignored();
+            return;
+        }
+        if m.envelope_flags != 0 {
+            self.refuse_unsupported(UnsupportedNegotiation::MalformedRequest, now);
+            return;
+        }
+        let request = match InstallRequest::from_envelope_body(&m.body) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!(error = %e, "official session: install request refused");
+                self.refuse_unsupported(UnsupportedNegotiation::MalformedRequest, now);
+                return;
+            }
+        };
+        self.initial.request_seen();
+        self.initial_step("install request", now);
+        if let Err(why) = self.send_advertisement(&request, now) {
+            self.refuse_unsupported(why, now);
+        }
+    }
+
+    /// The checks of §9.3.4 that depend on `0xDD`, then `0xEC` on queue 1.
+    fn send_advertisement(
+        &mut self,
+        request: &InstallRequest,
+        now: f64,
+    ) -> Result<(), UnsupportedNegotiation> {
+        if !request.trailing.is_empty() {
+            return Err(UnsupportedNegotiation::RequestArray);
+        }
+        let Some(prepared) = self.advertisement.take() else {
+            return Err(UnsupportedNegotiation::Advertisement);
+        };
+        let languages = self
+            .schema
+            .0
+            .name_rule_languages(request.name_rule_key)
+            .map_err(UnsupportedNegotiation::NameRule)?;
+        check_language_allowed(&languages, prepared.language_key)?;
+        let Some(connection) = self.login.mux.connection_mut(self.login.conn) else {
+            return Err(UnsupportedNegotiation::AdvertisementNotSent);
+        };
+        // pending spec pass 10 fix 11: `send_sequenced_packet` allocates the FlowControl-only
+        // packet first when it has not gone out (§5.5, §6.4.1), so `0xEC` follows it; the
+        // default recipient as in the spec's fixtures, its fragments by §5.6.4's path.
+        // pending spec pass 10 fix 9: its packets stay resendable for a bounded window.
+        let (queue, group) = outbound_queue(OPCODE_INSTALL_ADVERTISEMENT, &[]);
+        connection
+            .send_blob_retained(
+                queue,
+                group,
+                OPCODE_INSTALL_ADVERTISEMENT,
+                &prepared.data,
+                now,
+                self.codecs.outgoing.as_deref(),
+            )
+            .map_err(|e| {
+                self.counters.send_failures += 1;
+                tracing::debug!(error = %e, "official session: advertisement not queued");
+                UnsupportedNegotiation::AdvertisementNotSent
+            })?;
+        tracing::info!(
+            entries = prepared.entries,
+            bytes = prepared.data.len(),
+            "official session: install advertisement sent"
+        );
+        self.initial.advertisement_sent(now);
+        self.initial_step("advertisement sent", now);
+        Ok(())
+    }
+
+    /// The server's `0xF5` (§9.3.3). pending spec pass 10 fix 10: answered once, only after
+    /// `0xEC` was sent and only when its data is exactly `00` on queue 1; anything else is an
+    /// unsupported result, and nothing is fetched or applied. A later `0xF5`, or one outside
+    /// the login, is counted.
+    fn completion(&mut self, m: &Inbound, now: f64) {
+        if m.world || self.stage != Stage::Login || self.initial.stages().f5_sent {
+            self.initial.ignored();
+            return;
+        }
+        let exact = m.queue == QUEUE_UNRELIABLE
+            && m.top_level
+            && m.envelope_flags == 0
+            && m.body.is_empty();
+        if !self.initial.stages().ec_sent || !exact {
+            self.refuse_unsupported(UnsupportedNegotiation::UnexpectedCompletion, now);
+            return;
+        }
+        if !self.send_on_login(OPCODE_COMPLETION, &COMPLETION_DATA, now) {
+            self.refuse_unsupported(UnsupportedNegotiation::CompletionNotSent, now);
+            return;
+        }
+        self.initial.completion_sent(now);
+        self.initial_step("completion sent", now);
     }
 
     fn control(&mut self, m: ControlMessage, now: f64) {
         match m {
             ControlMessage::VersionRequest => {
+                // §9.3: only an actual `0x12F` asks for `0x12C`.
+                self.initial.version_requested();
                 if self.version_sent {
                     return;
                 }
@@ -1870,6 +2266,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             ControlMessage::LoginQueueStatus(q) => match q.outcome() {
                 // §9.3: queued; the position and total are shown when non-zero.
                 LogonOutcome::Queued(at) if self.stage == Stage::Login => {
+                    self.initial.queued(now);
                     self.events
                         .push_back(Event::Account(AccountEvent::LoginQueueChanged {
                             position: (at.position > 0).then_some(at.position),
@@ -1916,12 +2313,30 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    fn character_list(&mut self, body: &[u8], world: bool) {
-        let list = match CharacterListResponse::from_bytes(body, &self.schema) {
+    /// The character list (§9.3.5): the count straight after the one flags byte. A list the
+    /// login needs that cannot be read ends the attempt, and no character is invented.
+    ///
+    /// pending spec pass 10 fix 16: a compressed or routed `0x6C` is an unsupported result.
+    /// pending spec pass 10 fix 17: `0x13D` and `0x19E` are not emitted; the client goes to
+    /// selection after the list.
+    fn character_list(&mut self, m: &Inbound, now: f64) {
+        let world = m.world;
+        if m.envelope_flags != 0 {
+            self.counters.decode_errors += 1;
+            tracing::debug!("official session: compressed or routed character list refused");
+            if self.stage == Stage::Login {
+                self.refuse_unsupported(UnsupportedNegotiation::ListEnvelope, now);
+            }
+            return;
+        }
+        let list = match CharacterListResponse::from_envelope_body(&m.body, &self.schema) {
             Ok(l) => l,
             Err(e) => {
                 self.counters.decode_errors += 1;
                 tracing::debug!(error = %e, "official session: character list refused");
+                if self.stage == Stage::Login {
+                    self.refuse_unsupported(UnsupportedNegotiation::ListDecode, now);
+                }
                 return;
             }
         };
@@ -1964,6 +2379,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         // In the world the list is kept for the return (it counts as the latest).
         if self.stage == Stage::Login {
+            self.initial.list_received();
+            self.initial_step("character list", now);
             self.stage = Stage::Characters;
             let characters = self
                 .characters
@@ -2002,12 +2419,18 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    fn session_ready(&mut self, body: &[u8]) {
+    /// `0x90` (`official-messages-world.md` §4.2). pending spec pass 10 fix 14: decoded with
+    /// its historical prefix, unchanged; one that fails while the world is being entered ends
+    /// the entry with [`UNSUPPORTED_SESSION_START`], not the entry deadline's message.
+    fn session_ready(&mut self, body: &[u8], now: f64) {
         let ready = match PlayerSessionReady::from_bytes(body, &self.schema) {
             Ok(r) => r,
             Err(e) => {
                 self.counters.decode_errors += 1;
                 tracing::debug!(error = %e, "official session: session start refused");
+                if matches!(self.stage, Stage::Entering { .. }) {
+                    self.fail_entry(UNSUPPORTED_SESSION_START, now);
+                }
                 return;
             }
         };
@@ -3107,6 +3530,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if !self.ended {
             if let Stage::Entering { since, .. } = &self.stage {
                 at(since + ENTER_WORLD_TIMEOUT_SEC);
+            }
+            if self.stage == Stage::Login
+                && let Some(t) = self.initial.deadline()
+            {
+                at(t);
             }
             // Portal space's loading time-out (§4.5 item 4; `portal_step` notes when it
             // began on its first pass), until the client gate is set: then the exit waits

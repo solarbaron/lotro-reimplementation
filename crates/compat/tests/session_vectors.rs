@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The synthetic test vectors of `docs/specs/official-session.md` §10.2 (Vectors 1–8), byte
+//! The synthetic test vectors of `docs/specs/official-session.md` §10.2 (Vectors 1–12), byte
 //! for byte, with the "must fail" variants the spec states (a whole-payload sum, swapped
 //! seeds, recipients read from the cookie, sequence 1, the former high-bit mask flag, an
 //! unreversed referral cookie, a borrowed recipient, sequence or mask, an address family
-//! read at referral bytes 8–9).
+//! read at referral bytes 8–9, an advanced Ack sequence or word, an extra base byte, an
+//! unexchanged identifier, a token count, a missing terminal field), the `0xF5` fixture of
+//! §9.3.3 and the empty `0x6C`.
 
 use std::net::{Ipv4Addr, SocketAddrV4};
 
+use tessera_compat::initial::{
+    AdvertisedArchive, InitialError, InstallRequest, IterationNote, IterationSpan,
+    UnsupportedNegotiation, build_install_advertisement, check_language_allowed,
+};
 use tessera_compat::session::{
     AuthConnection, BLOB_FLAG_DEFAULT_RECIPIENT, BlobFragmentHeader, CHAT_MAX_RECV_RATE,
     CodecUuids, ConnectionState, DatagramHeader, FLAG_CUMULATIVE_ACK, FlowControlHeader,
@@ -186,9 +192,11 @@ const VECTOR_5_COOKIE: [u8; 8] = [0x9A, 0x71, 0xC5, 0x2E, 0xB8, 0x06, 0xD3, 0x4F
 const VECTOR_7_SERVER: &str = "00 00 01 02 00 19 01 00 00 06 00 00 00 02 B6 5D 79 93 33 44 11 22 40 8F 40 00 00 00 00 00 01 02 02 00 00 00 00 00 00 00 92 34 03 00 00 01 02";
 const VECTOR_7_CLIENT: &str =
     "00 00 03 04 00 06 08 00 00 02 00 00 00 02 30 71 6F E2 00 02 11 22 71 00 00 00 F4 01";
-const VECTOR_8_REFERRAL: &str = "9A 71 C5 2E B8 06 D3 4F C0 00 02 09 30 39 55 AA 66 00";
+const VECTOR_8_REFERRAL: &str = "D6 39 A0 7B 24 E1 58 92 C0 00 02 09 30 39 55 AA 66 00";
 const VECTOR_8_REFERRAL_AUTH: &str =
-    "00 00 00 00 00 08 00 02 00 00 00 00 00 00 39 93 E9 37 00 00 00 00 4F D3 06 B8 2E C5 71 9A";
+    "00 00 00 00 00 08 00 02 00 00 00 00 00 00 C8 F4 8B DF 00 00 00 00 92 58 E1 24 7B A0 39 D6";
+/// Vector 8's opaque synthetic cookie, unrelated to recipient IDs, seeds and Vector 5's.
+const VECTOR_8_COOKIE: [u8; 8] = [0xD6, 0x39, 0xA0, 0x7B, 0x24, 0xE1, 0x58, 0x92];
 
 /// A primary connection in State 1 with Vector 5's dictionaries.
 fn started() -> SessionConnection {
@@ -596,7 +604,7 @@ fn vector_7_with_directional_compression() {
 fn vector_8_referral_to_referral_auth() {
     let referral = hex(VECTOR_8_REFERRAL);
     let wr = WorldReferralHeader::decode(&referral).expect("18 bytes");
-    assert_eq!(wr.cookie, VECTOR_5_COOKIE);
+    assert_eq!(wr.cookie, VECTOR_8_COOKIE);
     assert_eq!(
         wr.target_addr,
         SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 9), 12345)
@@ -637,7 +645,7 @@ fn vector_8_referral_to_referral_auth() {
     assert_eq!(
         event,
         Some(SessionEvent::WorldReferralReceived {
-            cookie: VECTOR_5_COOKIE,
+            cookie: VECTOR_8_COOKIE,
             world_addr: SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 9), 12345),
         })
     );
@@ -648,18 +656,18 @@ fn vector_8_referral_to_referral_auth() {
     let mut world = SessionConnection::new(world_addr, 0.3);
     world.set_codec_uuids(UUIDS);
     world
-        .start_world_login(VECTOR_5_COOKIE, 0.3)
+        .start_world_login(VECTOR_8_COOKIE, 0.3)
         .expect("referral auth");
     let sent = world.pop_outbound_datagram().expect("ReferralAuthHeader");
     assert_eq!(sent, hex(VECTOR_8_REFERRAL_AUTH));
     assert_eq!(sent.len(), 30);
     let parsed = decode_datagram(&sent, false, None, true).expect("verifies");
     assert_eq!(parsed.header.header_checksum(), 0xBAF3_70E5);
-    assert_eq!(parsed.payload_sum, 0x7EA0_7852);
-    assert_eq!(parsed.header.checksum, 0x3993_E937);
+    assert_eq!(parsed.payload_sum, 0x0E01_1AFA);
+    assert_eq!(parsed.header.checksum, 0xC8F4_8BDF);
     assert_eq!(
         parsed.opt_headers.referral_auth,
-        Some(ReferralAuthHeader::for_cookie(VECTOR_5_COOKIE))
+        Some(ReferralAuthHeader::for_cookie(VECTOR_8_COOKIE))
     );
     // Its State 1 retransmit is the same datagram.
     world.tick(2.4).expect("tick");
@@ -671,7 +679,7 @@ fn vector_8_referral_to_referral_auth() {
         DatagramHeader::default(),
         &OptionalHeaders {
             referral_auth: Some(ReferralAuthHeader {
-                reversed_cookie: VECTOR_5_COOKIE,
+                reversed_cookie: VECTOR_8_COOKIE,
             }),
             ..OptionalHeaders::default()
         },
@@ -682,7 +690,7 @@ fn vector_8_referral_to_referral_auth() {
     .expect("encode");
     assert_ne!(unreversed, sent);
     let auth_only = OptionalHeaders {
-        referral_auth: Some(ReferralAuthHeader::for_cookie(VECTOR_5_COOKIE)),
+        referral_auth: Some(ReferralAuthHeader::for_cookie(VECTOR_8_COOKIE)),
         ..OptionalHeaders::default()
     };
     for borrowed in [
@@ -746,4 +754,291 @@ fn vector_8_referral_to_referral_auth() {
                 .any(|e| matches!(e, SessionEvent::WorldReferralReceived { .. }))
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Vector 9: a standalone Ack under the interim word policy (§4.2 P10-23-POLICY)
+// ---------------------------------------------------------------------------
+
+const VECTOR_9_ACK: &str =
+    "00 00 12 34 00 04 00 00 40 00 00 00 00 02 CD 2C 07 5E 00 02 56 78 00 00 00 03";
+
+#[test]
+fn vector_9_standalone_ack() {
+    let hdr = DatagramHeader {
+        rec_id: 0x1234,
+        seq_num: 2,
+        client_word: 2,
+        peer_word: 0x5678,
+        ..DatagramHeader::default()
+    };
+    let opt = OptionalHeaders {
+        cumulative_ack: Some(3),
+        ..OptionalHeaders::default()
+    };
+    let dgram = encode_datagram(hdr, &opt, &[], None, None).expect("encodes");
+    assert_eq!(dgram, hex(VECTOR_9_ACK));
+    assert_eq!(dgram.len(), 26);
+    let parsed = decode_datagram(&dgram, false, None, true).expect("verifies");
+    assert_eq!(parsed.header.header_checksum(), 0xCD28_075B);
+    assert_eq!(parsed.payload_sum, 0x0004_0003);
+    assert_eq!(parsed.header.checksum, 0xCD2C_075E);
+
+    // The connection's own Ack: after one sequenced packet (sequence 2, word 2) it repeats
+    // the sequence and word, consuming no mask and advancing neither.
+    let peer = SERVER;
+    let mut conn = started();
+    conn.receive_datagram(&hex(VECTOR_5_CHALLENGE), peer, 0.1, WireCodecs::NONE)
+        .expect("challenge");
+    conn.receive_datagram(&hex(VECTOR_7_SERVER), peer, 0.2, WireCodecs::NONE)
+        .expect("server packet");
+    while conn.pop_outbound_datagram().is_some() {}
+    conn.tick(0.3).expect("the flow-only packet");
+    let flow = conn.pop_outbound_datagram().expect("flow");
+    let flow = decode_datagram(&flow, false, None, false).expect("flow decodes");
+    assert_eq!((flow.header.seq_num, flow.header.client_word), (2, 2));
+    conn.tick(2.3).expect("the Ack");
+    let mut ack = None;
+    while let Some(d) = conn.pop_outbound_datagram() {
+        let p = decode_datagram(&d, false, None, false).expect("decodes");
+        if p.opt_headers.cumulative_ack.is_some() {
+            ack = Some(p);
+        }
+    }
+    let ack = ack.expect("a standalone Ack");
+    // The Ack's own header: the outgoing sequence, not the acknowledged one.
+    assert_eq!(ack.header.flags, FLAG_CUMULATIVE_ACK);
+    assert_eq!((ack.header.seq_num, ack.header.client_word), (2, 2));
+    assert_eq!(ack.opt_headers.cumulative_ack, Some(2));
+    assert_eq!(conn.send_seq_num(), 2, "no sequence allocated");
+
+    // Must fail: an advanced sequence or word, or the acknowledged sequence as the sequence.
+    for bad in [
+        DatagramHeader { seq_num: 3, ..hdr },
+        DatagramHeader {
+            client_word: 3,
+            ..hdr
+        },
+    ] {
+        assert_ne!(
+            encode_datagram(bad, &opt, &[], None, None).expect("encodes"),
+            hex(VECTOR_9_ACK)
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Vector 10: `0xEC` serialization only (§9.3.2)
+// ---------------------------------------------------------------------------
+
+const VECTOR_10_DATA: &str = "00 05 00 00 00 01 00 00 00 01 00 00 00 09 00 00 00 00 00 02 01 03 00 00 00 FD FF FF FF 07 00 00 00 01 00 00 00 08 00 00 00 56 34 12 EE FF C0 AD 0B 00 00 00 00 00 00 00 00";
+const VECTOR_10_HEADER: &str = "01 40 80 EC 39 00";
+
+fn vector_10_archive() -> AdvertisedArchive {
+    AdvertisedArchive {
+        resource_id: [0x00, 0x00, 0x02, 0x01, 0x09, 0x00, 0x00, 0x00],
+        iteration_count: 3,
+        spans: vec![IterationSpan { start: 7, len: 3 }],
+        notes: vec![IterationNote {
+            iteration: 8,
+            opaque: 0x0BAD_C0FF_EE12_3456u64.to_le_bytes(),
+        }],
+    }
+}
+
+#[test]
+fn vector_10_install_advertisement() {
+    let data = build_install_advertisement(5, &[vector_10_archive()]).expect("builds");
+    assert_eq!(data, hex(VECTOR_10_DATA));
+    assert_eq!(data.len(), 57);
+    // The offsets the spec lists.
+    assert_eq!(data[0], 0, "one flags byte");
+    assert_eq!(&data[1..5], &5u32.to_le_bytes(), "language key");
+    assert_eq!(&data[5..9], &1u32.to_le_bytes(), "status");
+    assert_eq!(&data[9..13], &1u32.to_le_bytes(), "N");
+    assert_eq!(&data[13..21], &[9, 0, 0, 0, 0, 0, 2, 1], "identifier");
+    assert_eq!(&data[21..25], &3u32.to_le_bytes(), "expanded count");
+    assert_eq!(&data[25..29], &(-3i32).to_le_bytes(), "run token");
+    assert_eq!(&data[29..33], &7u32.to_le_bytes(), "start");
+    assert_eq!(&data[33..37], &1u32.to_le_bytes(), "K");
+    assert_eq!(&data[37..41], &8u32.to_le_bytes(), "iteration");
+    assert_eq!(&data[49..53], &0u32.to_le_bytes(), "M");
+    assert_eq!(&data[53..57], &0u32.to_le_bytes(), "terminal");
+
+    // The small fixture's own fragment header.
+    let frags = tessera_compat::session::split_blob(1, 0xFFFF, 0, 0, None, 0xEC, &data).unwrap();
+    assert_eq!(frags.len(), 1);
+    let mut header = Vec::new();
+    frags[0].header.encode(&mut header).expect("encodes");
+    assert_eq!(header, hex(VECTOR_10_HEADER));
+
+    // Must fail: an unchanged half order and a token count instead of the expanded count.
+    let mut unchanged = vector_10_archive();
+    unchanged.resource_id = [0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x01];
+    assert_ne!(
+        build_install_advertisement(5, &[unchanged]).expect("builds"),
+        data
+    );
+    let mut token_count = vector_10_archive();
+    token_count.iteration_count = 1;
+    assert_eq!(
+        build_install_advertisement(5, &[token_count]),
+        Err(InitialError::UnusableIteration)
+    );
+    // An extra base byte and an omitted terminal field are not what the builder writes.
+    assert_ne!(data[1], 0);
+    assert_eq!(data.len(), 53 + 4);
+}
+
+// ---------------------------------------------------------------------------
+// Vector 11: a synthetic `0xDD` and the installed language rule (§9.3.4)
+// ---------------------------------------------------------------------------
+
+const VECTOR_11_DATA: &str = "00 04 03 02 01 07 00 00 00 00 00 00 00";
+
+#[test]
+fn vector_11_install_request_and_rule() {
+    let data = hex(VECTOR_11_DATA);
+    assert_eq!(data.len(), 13);
+    let dd = InstallRequest::from_data(&data).expect("decodes");
+    assert_eq!(dd.server_config, 0x0102_0304);
+    assert_eq!(dd.name_rule_key, 7);
+    assert!(dd.trailing.is_empty());
+    // The same fields from what `decode_message` leaves.
+    assert_eq!(InstallRequest::from_envelope_body(&data[1..]), Ok(dd));
+
+    // Rule 7 with the full key 5 passes; an empty list or key 6 fails and suppresses `0xEC`.
+    assert_eq!(check_language_allowed(&[5], 5), Ok(()));
+    assert_eq!(
+        check_language_allowed(&[], 5),
+        Err(UnsupportedNegotiation::NameRuleEmpty)
+    );
+    assert_eq!(
+        check_language_allowed(&[5], 6),
+        Err(UnsupportedNegotiation::LanguageNotAllowed)
+    );
+
+    // N = 1 without its four bytes: truncated. Four bytes more with N = 0: trailing bytes.
+    let mut n_one = data.clone();
+    n_one[9] = 1;
+    assert_eq!(
+        InstallRequest::from_data(&n_one),
+        Err(InitialError::TrailingCount { count: 1 })
+    );
+    let mut extra = data.clone();
+    extra.extend_from_slice(&[1, 0, 0, 0]);
+    assert_eq!(
+        InstallRequest::from_data(&extra),
+        Err(InitialError::TrailingBytes(4))
+    );
+    // A well-formed non-empty array decodes (outside `P10-10E`'s send policy).
+    let mut array = n_one.clone();
+    array.extend_from_slice(&[9, 0, 0, 0]);
+    assert_eq!(
+        InstallRequest::from_data(&array).expect("decodes").trailing,
+        [9]
+    );
+    // The count is checked against the bytes left and the cap before anything else.
+    let mut huge = data.clone();
+    huge[9..13].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(matches!(
+        InstallRequest::from_data(&huge),
+        Err(InitialError::TrailingCount { .. })
+    ));
+    let mut over_cap = data.clone();
+    over_cap[9..13].copy_from_slice(&4097u32.to_le_bytes());
+    over_cap.resize(13 + 4097 * 4, 0);
+    assert!(matches!(
+        InstallRequest::from_data(&over_cap),
+        Err(InitialError::TrailingCount { count: 4097 })
+    ));
+    // Other flags, and truncation at every length.
+    let mut flags = data.clone();
+    flags[0] = 1;
+    assert_eq!(
+        InstallRequest::from_data(&flags),
+        Err(InitialError::UnsupportedFlags(1))
+    );
+    for len in 0..data.len() {
+        assert!(InstallRequest::from_data(&data[..len]).is_err(), "{len}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Vector 12: the character-selection boundary and the empty list (§9.3.5)
+// ---------------------------------------------------------------------------
+
+const VECTOR_12_DATA: &str = "00 77 00 00 00 00 00 00 01 00";
+const VECTOR_12_HEADER: &str = "02 40 01 00 01 00 6F 0A";
+const VECTOR_12_EMPTY_LIST: &str = "00 00 00 00 00 00";
+
+/// A property schema with no property: the empty tables of these vectors need none.
+struct NoProperties;
+
+impl tessera_compat::world::PropertySchemaLookup for NoProperties {
+    fn property_type(&self, _pid: u32) -> Option<tessera_compat::world::PropertyType> {
+        None
+    }
+}
+
+#[test]
+fn vector_12_character_selection_and_empty_list() {
+    use tessera_compat::world::{CharacterEnterWorldRequest, CharacterListResponse};
+    let data = CharacterEnterWorldRequest::new(0x0100_0000_0000_0077)
+        .to_envelope_bytes()
+        .expect("encodes");
+    assert_eq!(data, hex(VECTOR_12_DATA));
+    assert_eq!(data.len(), 10);
+    let frags = tessera_compat::session::split_blob(2, 1, 1, 0, None, 0x6F, &data).unwrap();
+    assert_eq!(frags.len(), 1);
+    let mut header = Vec::new();
+    frags[0].header.encode(&mut header).expect("encodes");
+    assert_eq!(header, hex(VECTOR_12_HEADER));
+    // A second leading zero must fail the exact-length/ID comparison.
+    let mut second = vec![0u8];
+    second.extend_from_slice(&data);
+    assert!(CharacterEnterWorldRequest::from_bytes(&second, &NoProperties).is_err());
+
+    // The first queue-2 blob of a connection has order 1 and blob ID 1, on the driver's path.
+    let mut conn = started();
+    conn.receive_datagram(&hex(VECTOR_5_CHALLENGE), SERVER, 0.1, WireCodecs::NONE)
+        .expect("challenge");
+    conn.receive_datagram(&hex(VECTOR_7_SERVER), SERVER, 0.2, WireCodecs::NONE)
+        .expect("server packet");
+    while conn.pop_outbound_datagram().is_some() {}
+    conn.send_blob(2, 0, 0x6F, &data, 0.3, None).expect("sends");
+    let mut last = None;
+    while let Some(d) = conn.pop_outbound_datagram() {
+        last = Some(d);
+    }
+    let pkt = decode_datagram(&last.expect("the blob"), false, None, false).expect("decodes");
+    let mut wire = Vec::new();
+    pkt.fragments[0].header.encode(&mut wire).expect("encodes");
+    assert_eq!(wire, hex(VECTOR_12_HEADER));
+    assert_eq!(pkt.fragments[0].payload, data);
+
+    // The synthetic empty list: flags, u32 count zero, empty table.
+    let empty = hex(VECTOR_12_EMPTY_LIST);
+    let list = CharacterListResponse::from_bytes(&empty, &NoProperties).expect("decodes");
+    assert!(list.characters.is_empty());
+    assert_eq!(list.to_bytes().expect("encodes"), empty);
+    let body = CharacterListResponse::from_envelope_body(&empty[1..], &NoProperties);
+    assert_eq!(body.expect("decodes"), list);
+}
+
+// ---------------------------------------------------------------------------
+// The `0xF5` fixture (§9.3.3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_completion_fixture() {
+    use tessera_compat::initial::COMPLETION_DATA;
+    assert_eq!(COMPLETION_DATA, [0x00]);
+    let frags =
+        tessera_compat::session::split_blob(1, 0xFFFF, 0, 0, None, 0xF5, &COMPLETION_DATA).unwrap();
+    assert_eq!(frags.len(), 1);
+    let mut header = Vec::new();
+    frags[0].header.encode(&mut header).expect("encodes");
+    assert_eq!(header, hex("01 40 80 F5 01 00"));
+    assert_eq!(frags[0].payload, [0x00]);
 }

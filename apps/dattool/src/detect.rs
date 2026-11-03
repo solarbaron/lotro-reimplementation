@@ -52,7 +52,7 @@ fn record<T>(
     a: &Archive,
     name: &str,
     did: u32,
-    parse: impl Fn(&[u8]) -> Result<T, tessera_install::RecordError>,
+    parse: impl Fn(&[u8], u16) -> Result<T, tessera_install::RecordError>,
 ) -> Option<T> {
     let entry = match a.lookup(did) {
         Ok(Some(e)) => e,
@@ -66,7 +66,7 @@ fn record<T>(
         .read_entry(&entry)
         .map_err(|e| tracing::debug!(archive = name, did, error = %e, "read failed"))
         .ok()?;
-    parse(&bytes)
+    parse(&bytes, entry.stamp)
         .map_err(|e| tracing::debug!(archive = name, did, error = %e, "record malformed"))
         .ok()
 }
@@ -79,8 +79,12 @@ fn content_entry(path: &Path) -> ContentEntry {
     match Archive::open(path) {
         Ok(a) => ContentEntry {
             iteration: record(&a, &file_name, DID_ITERATION, IterationRecord::parse),
-            membership: record(&a, &file_name, DID_SET_MEMBERSHIP, SetMembership::parse),
-            install_stamp: record(&a, &file_name, DID_INSTALL_STAMP, InstallStamp::parse),
+            membership: record(&a, &file_name, DID_SET_MEMBERSHIP, |b, _| {
+                SetMembership::parse(b)
+            }),
+            install_stamp: record(&a, &file_name, DID_INSTALL_STAMP, |b, _| {
+                InstallStamp::parse(b)
+            }),
             file_name,
         },
         Err(e) => {

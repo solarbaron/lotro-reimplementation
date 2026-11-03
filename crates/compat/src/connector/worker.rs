@@ -422,6 +422,13 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
             out.refuse(LoginRefusal::Other, None);
             return;
         }
+        // Nothing was sent: the ticket is not spent on an install that cannot answer
+        // (`crate::initial`, pending spec pass 10 fix 2).
+        Err(StartFailure::Unsupported(why)) => {
+            tracing::info!(reason = why.label(), "official session: not started");
+            out.refuse(LoginRefusal::UnsupportedStep, Some(why.detail().to_owned()));
+            return;
+        }
     };
     session_loop(&mut net, &mut driver, &mut out, &commands, &control, now);
 }

@@ -16,6 +16,18 @@
 //! | `0x30` (an RPC: the logout request of `LeaveWorld`) | a world teardown `0x3000001B` and the list `0x6C` again |
 //! | `0xD0` (a missing-entity query) | nothing (counted) |
 //!
+//! [`SyntheticService::new`] is that historical script, for the tests of what follows the
+//! list. [`SyntheticService::observed_order`] plays the login in the order of
+//! `official-session.md` §9.3.1 and §9.3.5 instead, on queue 1, with synthetic bodies:
+//!
+//! | The client does | The synthetic server answers |
+//! |---|---|
+//! | `SessionAuthHeader` | the connect challenge |
+//! | `ConnectAcceptHeader` | `0x149` (with ClockSync), `0xAA`, five `0x149`, `0x30000040`, two `0xAA`, `0x43`, `0xDD` |
+//! | a complete `0xEC` | `0x149`, `0xF5` |
+//! | a complete `0xF5` | `0xFE`, `0xAA`, `0x54`, the list `0x6C` |
+//! | a complete `0x6F` | `0x149`, one queue-2 `0x30`, two queue-1 `0x30`; no referral, nothing more |
+//!
 //! A test plays the rest of the world with [`SyntheticService::send_world_event`] and the
 //! payload builders below ([`entity_batch`], [`position`], [`chat_line`]): other entities,
 //! their moves, chat lines and despawns. The synthetic install's property dictionary types
@@ -34,6 +46,7 @@ use super::LiveConfig;
 use super::data::{InstallData, LocalPaths};
 use super::net::{ConnectorNet, NetFactory, SendHttpClient};
 use crate::connector::entities::{PID_IS_INANIMATE_PROP, PID_IS_NPC_AGENT};
+use crate::initial::{AdvertisedArchive, InstallUnsupported, IterationNote, IterationSpan};
 use crate::login::soap_encoder::{GLS_NAMESPACE, SOAP_ENVELOPE_NAMESPACE};
 use crate::login::{HttpClient, HttpRequest, HttpResponse, LoginError};
 use crate::net_access::NetworkAccess;
@@ -42,8 +55,9 @@ use crate::play::chat::{
     UiPropertyEvent,
 };
 use crate::session::{
-    BindPlan, BitTreeTable, ConnectChallengeHeader, DatagramHeader, IsaacCipher, OptionalHeaders,
-    SessionError, UdpDatagramTransport, VersionStatusMessage, decode_datagram, encode_datagram,
+    BindPlan, BitTreeCodec, BitTreeTable, BlobFragmentHeader, BlobReassembler,
+    ConnectChallengeHeader, DatagramHeader, IsaacCipher, OptionalHeaders, SessionError,
+    UdpDatagramTransport, VersionStatusMessage, decode_datagram, encode_datagram,
     guid_fields_swapped, split_blob,
 };
 use crate::world::{
@@ -94,6 +108,38 @@ pub const INCOMING_UUID: [u8; 16] = [
 pub const OUTGOING_UUID: [u8; 16] = [
     0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00, 0xAB, 0xCD,
 ];
+
+/// The selected language's key of the synthetic install (`official-session.md` §10.2 Vector
+/// 10's synthetic key, never a value for the service).
+pub const SYNTHETIC_LANGUAGE_KEY: u32 = 5;
+/// The name-rule key of the synthetic server's `0xDD` and the synthetic install's rule
+/// (§10.2 Vector 11's synthetic key).
+pub const SYNTHETIC_NAME_RULE: u32 = 7;
+
+/// The synthetic install's archives: nine with invented identifiers and iteration lists, so
+/// their `0xEC` takes several fragments (§5.6.4).
+#[must_use]
+pub fn synthetic_inventory() -> Vec<AdvertisedArchive> {
+    (1u8..=9)
+        .map(|i| AdvertisedArchive {
+            resource_id: [0, 0, i, 1, 0, 0, 0, 0],
+            iteration_count: 40,
+            spans: vec![
+                IterationSpan { start: 1, len: 30 },
+                IterationSpan {
+                    start: 10_031,
+                    len: 10,
+                },
+            ],
+            notes: (0..11)
+                .map(|n| IterationNote {
+                    iteration: 10_030 + n,
+                    opaque: [i, 0xA5, 0x5A, 3, 4, 5, 6, u8::try_from(n).unwrap_or(0)],
+                })
+                .collect(),
+        })
+        .collect()
+}
 
 /// The name of the one character the synthetic account has.
 pub const CHARACTER: &str = "Aldo";
@@ -149,6 +195,17 @@ pub struct Seen {
     pub blobs: VecDeque<u32>,
     /// Datagrams with the transport disconnect.
     pub disconnects: usize,
+    /// The complete data of each `0xEC`, `0xF5` and `0x6F` of [`SyntheticService::observed_order`].
+    pub advertisements: Vec<Vec<u8>>,
+    /// See [`Self::advertisements`].
+    pub completions: Vec<Vec<u8>>,
+    /// See [`Self::advertisements`].
+    pub selections: Vec<Vec<u8>>,
+    /// The fragment headers of the client's blobs in that mode (the last [`MAX_KEPT`]).
+    pub fragment_headers: VecDeque<BlobFragmentHeader>,
+    /// The sequence numbers and flags of the client's sequenced datagrams in that mode (the
+    /// last [`MAX_KEPT`]).
+    pub sequenced: VecDeque<(u32, u32)>,
 }
 
 #[derive(Debug, Default)]
@@ -159,6 +216,10 @@ struct State {
     /// The attempt's network right, kept for its liveness (its own revocation and
     /// `revoke_all` both end it).
     access: Option<NetworkAccess>,
+    /// Plays [`SyntheticService::observed_order`]'s script.
+    observed: bool,
+    /// The client's blobs being put together in that mode.
+    reassembler: BlobReassembler,
 }
 
 impl State {
@@ -184,10 +245,19 @@ impl State {
 pub struct SyntheticService(Arc<Mutex<State>>);
 
 impl SyntheticService {
-    /// A fresh service.
+    /// A fresh service with the historical script (module docs).
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A fresh service with the observed order of `official-session.md` §9.3.1 and §9.3.5
+    /// (module docs).
+    #[must_use]
+    pub fn observed_order() -> Self {
+        let service = Self::default();
+        service.state().observed = true;
+        service
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -320,6 +390,10 @@ impl SyntheticService {
         }
         let mut st = self.state();
         let st = &mut *st;
+        if st.observed {
+            observed_answer(st, datagram);
+            return;
+        }
         let first = decode_client_datagram(datagram, true).ok();
         if first
             .as_ref()
@@ -458,11 +532,140 @@ pub fn challenge_datagram(
     .unwrap_or_default()
 }
 
+/// What the observed-order script answers to one client datagram (module docs).
+fn observed_answer(st: &mut State, datagram: &[u8]) {
+    let Ok(pkt) = decode_client_datagram(datagram, false) else {
+        return;
+    };
+    if pkt.opt_headers.session_auth.is_some() {
+        let server = Server::new();
+        st.deliver(server.challenge());
+        st.server = Some(server);
+        return;
+    }
+    if pkt.opt_headers.disconnect {
+        st.seen.disconnects += 1;
+    }
+    let Some(mut server) = st.server.take() else {
+        return;
+    };
+    if pkt.opt_headers.connect_accept.is_some() && !server.greeted {
+        server.greeted = true;
+        for (i, op) in [
+            0x149,
+            0xAA,
+            0x149,
+            0x149,
+            0x149,
+            0x149,
+            0x149,
+            0x3000_0040,
+            0xAA,
+            0xAA,
+            0x43,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let d = server.observed_blob(op, &opaque_body(op), i == 0);
+            if let Some(d) = d {
+                st.deliver(d);
+            }
+        }
+        if let Some(d) = server.observed_blob(0xDD, &install_request(), false) {
+            st.deliver(d);
+        }
+    }
+    if pkt.header.flags & crate::session::FLAG_MASKED_CHECKSUM != 0 {
+        if st.seen.sequenced.len() >= MAX_KEPT {
+            st.seen.sequenced.pop_front();
+        }
+        st.seen
+            .sequenced
+            .push_back((pkt.header.seq_num, pkt.header.flags));
+    }
+    let acked = pkt.header.seq_num;
+    let has_fragments = !pkt.fragments.is_empty();
+    for f in pkt.fragments {
+        if st.seen.fragment_headers.len() >= MAX_KEPT {
+            st.seen.fragment_headers.pop_front();
+        }
+        st.seen.fragment_headers.push_back(f.header.clone());
+        let Ok(Some(blob)) = st.reassembler.ingest(SERVER_REC_ID, f, 0.0) else {
+            continue;
+        };
+        st.saw_blob(blob.blob_header_word);
+        let answers: Vec<Option<Vec<u8>>> = match blob.blob_header_word {
+            0xEC => {
+                st.seen.advertisements.push(blob.payload);
+                vec![
+                    server.observed_blob(0x149, &opaque_body(0x149), false),
+                    server.observed_blob(0xF5, &[0], false),
+                ]
+            }
+            0xF5 => {
+                st.seen.completions.push(blob.payload);
+                vec![
+                    server.observed_blob(0xFE, &opaque_body(0xFE), false),
+                    server.observed_blob(0xAA, &opaque_body(0xAA), false),
+                    server.observed_blob(0x54, &opaque_body(0x54), false),
+                    server.observed_blob(0x6C, &character_list(), false),
+                ]
+            }
+            0x6F => {
+                st.seen.selections.push(blob.payload);
+                vec![
+                    server.observed_blob(0x149, &opaque_body(0x149), false),
+                    server.blob(0x30, &opaque_body(0x30)),
+                    server.observed_blob(0x30, &opaque_body(0x30), false),
+                    server.observed_blob(0x30, &opaque_body(0x30), false),
+                ]
+            }
+            _ => Vec::new(),
+        };
+        for d in answers.into_iter().flatten() {
+            st.deliver(d);
+        }
+    }
+    if has_fragments {
+        let ack = server.control(OptionalHeaders {
+            cumulative_ack: Some(acked),
+            ..OptionalHeaders::default()
+        });
+        st.deliver(ack);
+    }
+    st.server = Some(server);
+}
+
+/// A synthetic body of a message Tessera skips: one zero flags byte and opaque bytes whose
+/// first is not zero, so a false read of a second base byte would show.
+fn opaque_body(opcode: u32) -> Vec<u8> {
+    let tag = opcode.to_le_bytes();
+    vec![0x00, 0xA5, tag[0], tag[1], tag[2], tag[3]]
+}
+
+/// The synthetic `0xDD` (§10.2 Vector 11).
+fn install_request() -> Vec<u8> {
+    let mut out = vec![0x00];
+    out.extend_from_slice(&0x0102_0304u32.to_le_bytes());
+    out.extend_from_slice(&SYNTHETIC_NAME_RULE.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out
+}
+
+/// The server's dictionary the observed-order script compresses with; built once.
+fn server_to_client_codec() -> &'static BitTreeTable {
+    static CODEC: std::sync::OnceLock<BitTreeTable> = std::sync::OnceLock::new();
+    CODEC.get_or_init(|| BitTreeTable::synthetic_dictionary(INCOMING_UUID))
+}
+
 /// The synthetic login server's connection state.
 #[derive(Debug)]
 struct Server {
     isaac: IsaacCipher,
     seq: u32,
+    /// The observed-order script's first blobs went out.
+    greeted: bool,
 }
 
 impl Server {
@@ -470,7 +673,32 @@ impl Server {
         Self {
             isaac: IsaacCipher::from_seed(SEED),
             seq: 1,
+            greeted: false,
         }
+    }
+
+    /// A blob of the observed-order script: queue 1, the default recipient, compressed with
+    /// the incoming dictionary; `clock` adds the first packet's ClockSync (§6.4.1).
+    fn observed_blob(&mut self, opcode: u32, data: &[u8], clock: bool) -> Option<Vec<u8>> {
+        self.seq += 1;
+        let frags = split_blob(1, 0xFFFF, 0, 0, None, opcode, data).ok()?;
+        let mask = self.isaac.next_mask();
+        let codec: &dyn BitTreeCodec = server_to_client_codec();
+        encode_datagram(
+            DatagramHeader {
+                rec_id: REC_ID,
+                seq_num: self.seq,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders {
+                clock_sync: clock.then_some(1000.0),
+                ..OptionalHeaders::default()
+            },
+            &frags,
+            Some(mask),
+            Some(codec),
+        )
+        .ok()
     }
 
     fn challenge(&self) -> Vec<u8> {
@@ -530,7 +758,12 @@ impl Server {
         .ok()
     }
 
+    /// An event of the historical script. The list `0x6C` has one shared flags byte, which
+    /// its payload already starts with (`official-session.md` §9.3.5).
     fn event(&mut self, opcode: u32, inner: &[u8]) -> Option<Vec<u8>> {
+        if opcode == CharacterListResponse::EVENT_ID {
+            return self.blob(opcode, inner);
+        }
         self.blob(opcode, &encode_event_envelope(inner))
     }
 }
@@ -658,6 +891,22 @@ impl InstallData for Records {
 
     fn property_type(&self, pid: u32) -> Option<PropertyType> {
         DICTIONARY.iter().find(|(p, _)| *p == pid).map(|(_, t)| *t)
+    }
+
+    fn selected_language_key(&self) -> Result<u32, InstallUnsupported> {
+        Ok(SYNTHETIC_LANGUAGE_KEY)
+    }
+
+    fn name_rule_languages(&self, rule_key: u32) -> Result<Vec<u32>, InstallUnsupported> {
+        if rule_key == SYNTHETIC_NAME_RULE {
+            Ok(vec![SYNTHETIC_LANGUAGE_KEY])
+        } else {
+            Err(InstallUnsupported::NameRuleMissing)
+        }
+    }
+
+    fn archive_inventory(&self) -> Result<Vec<AdvertisedArchive>, InstallUnsupported> {
+        Ok(synthetic_inventory())
     }
 }
 

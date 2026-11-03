@@ -223,3 +223,121 @@ fn chat_categories_texts_and_templates_read_from_the_install() {
     // The builder is deterministic: built again, the same schemas.
     assert_eq!(&portal_state_schemas(&set, &registry), data.schemas());
 }
+
+/// The initial exchange's inputs (`official-session.md` §9.3.2, §9.3.4, decision 0046): built
+/// from the install on this thread, checked against the rules without printing a value.
+#[test]
+fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
+    use tessera_client::official::install_data::{advertised_archive, initial_inputs};
+    use tessera_compat::connector::data::prepare_advertisement;
+    use tessera_compat::initial::{
+        advertisement_order, build_install_advertisement, fold_language_code,
+    };
+    use tessera_dat::ArchiveKind;
+    use tessera_install::DID_ITERATION;
+
+    let Some(root) = game_dir() else {
+        eprintln!("TESSERA_GAME_DIR unset: skipped");
+        return;
+    };
+    let lang = language(&root);
+    let set = ArchiveSet::open(
+        &root,
+        SetOptions {
+            language: Some(lang.clone()),
+            ..SetOptions::default()
+        },
+    )
+    .expect("archives");
+    let inputs = initial_inputs(&set, &lang);
+
+    // The full key's fold is the selected language archive's subset.
+    let key = inputs.language_key.expect("the language key");
+    assert_ne!(key, 0);
+    let selected = set
+        .members()
+        .iter()
+        .find(|m| {
+            m.id.part == 0
+                && matches!(&m.id.kind, ArchiveKind::Local(l) if l.eq_ignore_ascii_case(&lang))
+        })
+        .expect("the language's base");
+    assert_eq!(selected.archive.header().subset, fold_language_code(key));
+
+    // Some installed name rule allows it; every rule's list is read.
+    let rules = inputs.name_rules.as_ref().expect("the name rules");
+    assert!(rules.iter().any(|(_, languages)| languages.contains(&key)));
+    eprintln!("name rules: {}", rules.len());
+
+    // One entry per mounted base of the policy, each with a unique identifier.
+    let inventory = inputs.inventory.as_ref().expect("the inventory");
+    let bases = set
+        .members()
+        .iter()
+        .filter(|m| {
+            m.id.part == 0
+                && match &m.id.kind {
+                    ArchiveKind::Local(l) => l.eq_ignore_ascii_case(&lang),
+                    _ => true,
+                }
+        })
+        .count();
+    assert_eq!(inventory.len(), bases);
+    eprintln!("advertised archives: {}", inventory.len());
+    let mut ids: Vec<[u8; 8]> = inventory.iter().map(|a| a.wire_identifier()).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), inventory.len(), "unique identifiers");
+    for archive in inventory {
+        assert!(archive.iteration_count > 0);
+    }
+
+    // Each entry's iteration description, written by the §9.3.2 serializer rule, equals the
+    // base's stored record; the entries come in decision 0046's order.
+    let data = build_install_advertisement(key, inventory).expect("builds");
+    let mut rewritten = 0usize;
+    for member in set.members().iter().filter(|m| m.id.part == 0) {
+        let entry = member.archive.lookup(DID_ITERATION).expect("lookup");
+        let Some(entry) = entry else { continue };
+        let raw = member.archive.read_entry(&entry).expect("record");
+        let mut id = [0u8; 8];
+        id[..4].copy_from_slice(&member.archive.header().dataset.to_le_bytes());
+        id[4..].copy_from_slice(&member.archive.header().subset.to_le_bytes());
+        let Some(listed) = inventory.iter().find(|a| a.resource_id == id) else {
+            continue;
+        };
+        assert_eq!(
+            &advertised_archive(id, &raw, entry.stamp).expect("parses"),
+            listed
+        );
+        // With a stamp-2 record the description is the record itself.
+        assert_eq!(entry.stamp, 2, "every iteration record has stamp 2 here");
+        let single = build_install_advertisement(key, std::slice::from_ref(listed)).expect("one");
+        assert_eq!(&single[21..single.len() - 8], raw.as_slice());
+        rewritten += 1;
+    }
+    assert_eq!(rewritten, inventory.len());
+    let mut at = 13usize;
+    let mut last = None;
+    for _ in 0..inventory.len() {
+        let wire: [u8; 8] = data[at..at + 8].try_into().expect("eight");
+        let order = advertisement_order(wire);
+        assert!(last.is_none_or(|l| l < order), "ascending remainder");
+        last = Some(order);
+        let listed = inventory
+            .iter()
+            .find(|a| a.wire_identifier() == wire)
+            .expect("listed");
+        let single = build_install_advertisement(key, std::slice::from_ref(listed)).expect("one");
+        at += single.len() - 21;
+    }
+    assert_eq!(at + 8, data.len(), "M and the terminal field end the data");
+    assert_eq!(&data[data.len() - 8..], &[0u8; 8]);
+
+    // The connector's preparation gets the same data through the trait.
+    let archive_data = install_data_at(&root, &lang).expect("the install opens");
+    let prepared = prepare_advertisement(&archive_data).expect("prepared");
+    assert_eq!(prepared.language_key, key);
+    assert_eq!(prepared.data, data);
+    eprintln!("advertisement bytes: {}", prepared.data.len());
+}

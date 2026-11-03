@@ -1435,6 +1435,9 @@ target = "install_records"
 [[parser]]
 crate = "tessera-install"
 file = "crates/install/src/records.rs"
+# `IterationRecord::parse` takes the directory entry's stamp (install-layout.md §9.2.1); the
+# target reaches it with stamps below, at and above the trailing part's, and
+# compat_initial_negotiation reaches it through the advertisement.
 entry = ["tessera_install::IterationRecord::parse", "tessera_install::InstallStamp::parse", "tessera_install::SetMembership::parse"]
 input = "install record"
 target = "install_records"

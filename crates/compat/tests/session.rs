@@ -2961,7 +2961,7 @@ fn an_occupied_slot_ignores_the_challenge() {
 
 /// §5.6.2–§5.6.4: queue 3 carries no `blobId`, fragmented or not, and its fragments are
 /// reassembled by sequence group and ordering number; queues 5 and 6 are OPEN-SESSION-12
-/// and a fragment on them is refused (the datagram is dropped and counted).
+/// and a fragment on them rejects the whole datagram, with no commit and no Ack, counted.
 #[test]
 fn queue_3_fragments_carry_no_blob_id_and_queues_5_and_6_are_dropped() {
     let frags = split_blob(3, 9, 0, 0x13, None, 0x6F, &vec![7u8; 500]).unwrap();
@@ -3418,4 +3418,349 @@ fn a_four_byte_server_redirect_ahead_of_clock_sync_and_fragments() {
         e,
         SessionEvent::Connected { .. } | SessionEvent::BlobReceived(_)
     )));
+}
+
+// ---------------------------------------------------------------------------
+// §4.2, §5.6.2, §5.6.3: the interim P10-23-POLICY rules
+// ---------------------------------------------------------------------------
+
+/// A connection in State 5 with its first FlowControl-only packet gone, its queues drained.
+fn connected_connection(peer: SocketAddrV4, seed: u32) -> SessionConnection {
+    let mut conn = challenged_connection(peer, 0x0100, seed);
+    conn.receive_datagram(&server_ack(0x0100), peer, 0.0, WireCodecs::NONE)
+        .unwrap();
+    assert_eq!(conn.state(), ConnectionState::Connected);
+    conn.tick(0.0).unwrap();
+    while conn.pop_outbound_datagram().is_some() {}
+    while conn.pop_event().is_some() {}
+    conn
+}
+
+fn drained_packets(conn: &mut SessionConnection) -> Vec<tessera_compat::session::DecodedPacket> {
+    std::iter::from_fn(|| conn.pop_outbound_datagram())
+        .map(|d| decode_datagram(&d, false, None, false).unwrap())
+        .collect()
+}
+
+/// §4.2: the client word advances once per newly allocated sequenced packet and wraps to 0
+/// after 65,535 (modulo 65,536, it does not skip 0).
+#[test]
+fn the_client_word_wraps_to_zero() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 60), 9000);
+    let mut conn = connected_connection(peer, 0x0000_0060);
+    // The accept took word 1 and the flow-only packet word 2.
+    let mut previous = 2u16;
+    let mut wrapped = false;
+    for _ in 0..65_536u32 {
+        conn.send_blob(1, 0, 0x10, &[0], 0.1, None).unwrap();
+        let word = drained_packets(&mut conn).pop().unwrap().header.client_word;
+        assert_eq!(word, previous.wrapping_add(1));
+        wrapped |= previous == u16::MAX && word == 0;
+        previous = word;
+    }
+    assert!(wrapped, "65,535 is followed by 0");
+}
+
+/// §4.2, §5.3: a retransmission keeps the saved word, sequence and ordering, and allocates
+/// nothing; later packets continue from the current counters.
+#[test]
+fn a_retransmit_keeps_its_saved_word_and_order() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 61), 9000);
+    let mut conn = connected_connection(peer, 0x0000_0062);
+    conn.send_blob(2, 0, 0x6F, &[0, 1, 2], 0.1, None).unwrap();
+    let first = drained_packets(&mut conn).pop().unwrap();
+    assert_eq!(
+        (
+            first.fragments[0].header.order_num,
+            first.fragments[0].header.blob_id
+        ),
+        (1, 1)
+    );
+    conn.send_blob(2, 0, 0x6F, &[3], 0.2, None).unwrap();
+    let second = drained_packets(&mut conn).pop().unwrap();
+    assert_eq!(
+        (
+            second.fragments[0].header.order_num,
+            second.fragments[0].header.blob_id
+        ),
+        (2, 2)
+    );
+    let word_before = conn.send_seq_num();
+    let nak = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0100,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders {
+            sequence_nak: Some(vec![first.header.seq_num]),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    conn.receive_datagram(&nak, peer, 0.3, WireCodecs::NONE)
+        .unwrap();
+    let again = drained_packets(&mut conn).pop().unwrap();
+    assert_eq!(again.header.seq_num, first.header.seq_num);
+    assert_eq!(again.header.client_word, first.header.client_word);
+    assert_eq!(again.fragments, first.fragments);
+    assert_eq!(conn.send_seq_num(), word_before, "nothing allocated");
+}
+
+/// §5.6.2: a rejected mixed datagram leaves the sequence, the generator, the Ack and the
+/// reassembly as they were, whole (§5.6.3 P10-23-POLICY).
+#[test]
+fn a_rejected_mixed_datagram_commits_nothing() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 62), 9000);
+    let seed = 0x0000_0063;
+    let mut conn = challenged_connection(peer, 0x0100, seed);
+    let mut server = IsaacCipher::from_seed(seed);
+    let mask_2 = server.next_mask();
+
+    // A good queue-1 fragment beside blobFlags 0x02 on queue 2 (OPEN-SESSION-14).
+    let good = split_blob(1, 0xFFFF, 0, 0, None, 0x149, &[0, 1])
+        .unwrap()
+        .remove(0);
+    let mut wire = Vec::new();
+    good.encode(&mut wire).unwrap();
+    let mut bad = Vec::new();
+    // queue 2, flags 0x02 | DefaultRecipient, order, blob, opcode, length, pad, payload.
+    bad.extend_from_slice(&[0x02, 0x42, 1, 0, 1, 0, 0x10, 0x01, 0xEE]);
+    wire.extend_from_slice(&bad);
+    // A fragment header's flags 0x02 is not encoded by Tessera's writer: built by hand. The
+    // rejection comes before the checksum is read, so the field stays zero.
+    let hdr = DatagramHeader {
+        rec_id: 0x0100,
+        pak_size: u16::try_from(wire.len()).unwrap(),
+        flags: FLAG_MASKED_CHECKSUM | FLAG_HAS_FRAGMENTED_BLOBS,
+        seq_num: 2,
+        ..DatagramHeader::default()
+    };
+    let mut datagram = vec![0, 0];
+    datagram.extend_from_slice(&hdr.to_wire_bytes());
+    datagram.extend_from_slice(&wire);
+    assert!(matches!(
+        conn.receive_datagram(&datagram, peer, 0.1, WireCodecs::NONE),
+        Err(SessionError::UnsupportedFragment { .. })
+    ));
+    assert_eq!(conn.recv_seq_expected(), 1, "the sequence did not move");
+    assert_eq!(conn.missing_gap_count(), 0);
+    assert_eq!(
+        conn.state(),
+        ConnectionState::ChallengeAcceptSent,
+        "not confirmed"
+    );
+    assert!(conn.pop_event().is_none(), "nothing delivered");
+    assert!(conn.pop_outbound_datagram().is_none(), "no Ack");
+
+    // The generator did not move: the good packet with sequence 2 and its mask is taken, and
+    // only it is delivered, so the rejected one left no reassembly state either.
+    let fine = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0100,
+            seq_num: 2,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders::default(),
+        std::slice::from_ref(&good),
+        Some(mask_2),
+        None,
+    )
+    .unwrap();
+    conn.receive_datagram(&fine, peer, 0.2, WireCodecs::NONE)
+        .expect("sequence 2 with the unchanged mask");
+    assert_eq!(conn.recv_seq_expected(), 2);
+    let delivered: Vec<u32> = std::iter::from_fn(|| conn.pop_event())
+        .filter_map(|e| match e {
+            SessionEvent::BlobReceived(b) => Some(b.blob_header_word),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(delivered, [0x149]);
+}
+
+/// §5.6.2 P10-23-POLICY: every counter starts at 1, queues and sequence groups are apart, an
+/// unfragmented queue-1 blob advances nothing, a fragmented queue-1 blob takes the next ID.
+#[test]
+fn counters_start_at_one_per_queue_and_per_group() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 63), 9000);
+    let mut conn = connected_connection(peer, 0x0000_0064);
+    let header_of = |conn: &mut SessionConnection, queue: u8, group: u16, len: usize| {
+        conn.send_blob(queue, group, 0x10, &vec![0u8; len], 0.1, None)
+            .unwrap();
+        drained_packets(conn)
+            .into_iter()
+            .flat_map(|p| p.fragments)
+            .map(|f| f.header)
+            .collect::<Vec<_>>()
+    };
+    // The first queue-2 and queue-4 blobs: order 1, blob 1, each.
+    let h = header_of(&mut conn, 2, 0, 4);
+    assert_eq!((h[0].order_num, h[0].blob_id), (1, 1));
+    let h = header_of(&mut conn, 4, 0, 4);
+    assert_eq!((h[0].order_num, h[0].blob_id), (1, 1));
+    let h = header_of(&mut conn, 2, 0, 4);
+    assert_eq!((h[0].order_num, h[0].blob_id), (2, 2));
+    // Queue 3: one counter per group, starting at 1, no blob ID.
+    let h = header_of(&mut conn, 3, 5, 4);
+    assert_eq!((h[0].order_num, h[0].seq_group, h[0].blob_id), (1, 5, 0));
+    let h = header_of(&mut conn, 3, 0x0A, 4);
+    assert_eq!((h[0].order_num, h[0].seq_group, h[0].blob_id), (1, 0x0A, 0));
+    let h = header_of(&mut conn, 3, 5, 4);
+    assert_eq!((h[0].order_num, h[0].seq_group), (2, 5));
+    // Queue 1: unfragmented has no ID and advances nothing; fragmented starts at 1 and every
+    // fragment keeps its identity (§5.6.4).
+    let h = header_of(&mut conn, 1, 0, 4);
+    assert_eq!((h[0].order_num, h[0].blob_id), (0xFFFF, 0));
+    let h = header_of(&mut conn, 1, 0, MAX_BLOB_FRAG_PAYLOAD * 2);
+    assert_eq!(h.len(), 2);
+    assert!(h.iter().all(|x| x.blob_id == 1 && x.order_num == 0xFFFF));
+    let h = header_of(&mut conn, 1, 0, 4);
+    assert_eq!(h[0].blob_id, 0);
+    let h = header_of(&mut conn, 1, 0, MAX_BLOB_FRAG_PAYLOAD + 1);
+    assert!(h.iter().all(|x| x.blob_id == 2));
+    // A fragmented queue-2 blob keeps its one order and ID on every fragment.
+    let h = header_of(&mut conn, 2, 0, MAX_BLOB_FRAG_PAYLOAD + 1);
+    assert_eq!(h.len(), 2);
+    assert!(h.iter().all(|x| (x.order_num, x.blob_id) == (3, 3)));
+}
+
+/// §5.6.2: an ordering number takes the value 0 after 65,535; a blob ID wraps 65,535 to 1.
+#[test]
+fn ordering_wraps_through_zero_and_blob_ids_skip_zero() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 64), 9000);
+    let mut conn = connected_connection(peer, 0x0000_0065);
+    let mut last = (0u16, 0u16);
+    for i in 0..65_537u32 {
+        conn.send_blob(2, 0, 0x10, &[0], 0.1, None).unwrap();
+        let pkt = drained_packets(&mut conn).pop().unwrap();
+        let h = &pkt.fragments[0].header;
+        last = (h.order_num, h.blob_id);
+        if i == 65_534 {
+            assert_eq!(last, (65_535, 65_535));
+        }
+        if i == 65_535 {
+            assert_eq!(last, (0, 1), "order 0, blob ID 1");
+        }
+        // The table stays small: the peer acknowledged it.
+        let ack = encode_datagram(
+            DatagramHeader {
+                rec_id: 0x0100,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders {
+                cumulative_ack: Some(pkt.header.seq_num),
+                ..OptionalHeaders::default()
+            },
+            &[],
+            None,
+            None,
+        )
+        .unwrap();
+        conn.receive_datagram(&ack, peer, 0.1, WireCodecs::NONE)
+            .unwrap();
+    }
+    assert_eq!(last, (1, 2));
+}
+
+/// pending spec pass 10 fix 9: a blob sent as retained is resent on a NAK inside its window
+/// with its saved header, and answered with `OutOfOrderAckHeader` after it.
+#[test]
+fn a_retained_blob_is_resent_inside_its_window_only() {
+    use tessera_compat::session::RETAINED_BLOB_RESEND_WINDOW_SEC;
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 65), 9000);
+    let mut conn = connected_connection(peer, 0x0000_0066);
+    let nak = |seq: u32| {
+        encode_datagram(
+            DatagramHeader {
+                rec_id: 0x0100,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders {
+                sequence_nak: Some(vec![seq]),
+                ..OptionalHeaders::default()
+            },
+            &[],
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    // An ordinary queue-1 blob is not resent (§5.3).
+    let plain = conn.send_blob(1, 0, 0x10, &[0], 0.1, None).unwrap()[0];
+    let _ = drained_packets(&mut conn);
+    conn.receive_datagram(&nak(plain), peer, 0.2, WireCodecs::NONE)
+        .unwrap();
+    assert!(conn.pop_outbound_datagram().is_none());
+    assert_eq!(conn.pending_out_of_order_acks(), 1);
+    conn.tick(0.2).unwrap();
+    while conn.pop_outbound_datagram().is_some() {}
+
+    let seqs = conn
+        .send_blob_retained(1, 0, 0xEC, &vec![7u8; MAX_BLOB_FRAG_PAYLOAD * 2], 1.0, None)
+        .unwrap();
+    assert_eq!(seqs.len(), 2);
+    let sent = drained_packets(&mut conn);
+    let first = sent
+        .iter()
+        .find(|p| p.header.seq_num == seqs[1])
+        .expect("the second fragment")
+        .clone();
+    conn.receive_datagram(&nak(seqs[1]), peer, 2.0, WireCodecs::NONE)
+        .unwrap();
+    let again = drained_packets(&mut conn).pop().expect("a resend");
+    assert_eq!(again.header.seq_num, first.header.seq_num);
+    assert_eq!(again.header.client_word, first.header.client_word);
+    assert_eq!(again.fragments, first.fragments);
+    assert_eq!(conn.handshake_counts().retained_resends, 1);
+
+    // After the window: the §5.3 answer.
+    let late = 1.0 + RETAINED_BLOB_RESEND_WINDOW_SEC + 0.5;
+    conn.receive_datagram(&nak(seqs[1]), peer, late, WireCodecs::NONE)
+        .unwrap();
+    assert!(conn.pop_outbound_datagram().is_none());
+    assert_eq!(conn.pending_out_of_order_acks(), 1);
+    // A retained packet does not hold a disconnect's flush.
+    conn.request_disconnect(late);
+    conn.tick(late).unwrap();
+    assert_eq!(conn.state(), ConnectionState::DisconnectSent);
+}
+
+/// pending spec pass 10 fix 13: refused datagrams are counted, and at the labelled limit the
+/// connection closes rather than NAK forever.
+#[test]
+fn too_many_refused_datagrams_close_the_connection() {
+    use tessera_compat::session::MAX_REFUSED_DATAGRAMS;
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 66), 9000);
+    let mut conn = connected_connection(peer, 0x0000_0067);
+    // A fragment on queue 5 (OPEN-SESSION-12), sequence 2.
+    let mut wire = vec![0u8; 22];
+    wire[2..4].copy_from_slice(&0x0100u16.to_be_bytes());
+    wire[4..6].copy_from_slice(&2u16.to_be_bytes());
+    let flags = FLAG_MASKED_CHECKSUM | FLAG_HAS_FRAGMENTED_BLOBS;
+    wire[6..10].copy_from_slice(&flags.to_be_bytes());
+    wire[10..14].copy_from_slice(&2u32.to_be_bytes());
+    wire.extend_from_slice(&[0x05, 0x40]);
+    for i in 1..MAX_REFUSED_DATAGRAMS {
+        assert!(matches!(
+            conn.receive_datagram(&wire, peer, 0.1, WireCodecs::NONE),
+            Err(SessionError::UnsupportedReceiveQueue { .. })
+        ));
+        assert_eq!(conn.handshake_counts().refused_while_connected, i);
+        assert_eq!(conn.state(), ConnectionState::Connected, "{i}");
+    }
+    assert_eq!(conn.recv_seq_expected(), 1, "nothing committed");
+    assert!(
+        conn.receive_datagram(&wire, peer, 0.1, WireCodecs::NONE)
+            .is_err()
+    );
+    assert_eq!(conn.state(), ConnectionState::Closing);
+    assert_eq!(
+        conn.pop_event(),
+        Some(SessionEvent::Disconnected {
+            reason: DisconnectReason::UnsupportedTraffic
+        })
+    );
 }

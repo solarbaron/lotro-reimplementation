@@ -152,6 +152,8 @@ fn the_login_datagram_is_written_as_sent_with_its_credentials_replaced() {
         "datagrams sent: 10",
         "SessionAuthHeader or ReferralAuthHeader datagrams sent: 10\n    of those, retransmits: 9",
         "datagrams received from the server: 0",
+        "initial exchange: DD seen false, EC sent false, F5 received false, F5 sent false, list \
+         received false",
     ] {
         assert!(txt.contains(part), "{part} missing:\n{txt}");
     }

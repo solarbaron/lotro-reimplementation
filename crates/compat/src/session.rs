@@ -163,6 +163,30 @@ pub const MAX_UNPACKED_MESSAGES: usize = 65_536;
 /// Default defensive cap on recursive container depth (`8`, §3.5, §9.4).
 pub const DEFAULT_MAX_CONTAINER_DEPTH: usize = 8;
 
+/// Most queue-3 sequence groups one connection keeps an ordering counter for (§5.6.2
+/// P10-23-POLICY, "each queue-3 sequence group"). The client's own outbound table names
+/// five; a send on a group past this bound is refused before anything is allocated.
+/// Engineering choice, spec silent.
+pub const MAX_ORDER_GROUPS: usize = 256;
+
+// pending spec pass 10 fix 9: how long a sent queue-1 blob stays resendable.
+/// How long a blob sent with [`SessionConnection::send_blob_retained`] stays resendable on a
+/// `SequenceNakHeader`, from its send. §5.3 expires unreliable fragments and sends
+/// `OutOfOrderAckHeader` instead; for the initial `0xEC`, one lost fragment would then stall
+/// the login, so its packets stay eligible for this window. Labelled engineering choice, not
+/// an observed official rule, generous against the `0.6` s NAK interval of §5.3.
+pub const RETAINED_BLOB_RESEND_WINDOW_SEC: f64 = 30.0;
+
+// pending spec pass 10 fix 13: rejected datagrams can stall a connection.
+/// Datagrams a connected connection refuses before committing anything (§5.6.3, §6.5:
+/// no sequence, generator, reassembly or Ack change) until it closes with
+/// [`DisconnectReason::UnsupportedTraffic`]. Such a datagram's sequence number stays missing,
+/// so the gap would otherwise be NAKed for as long as the peer keeps answering and its
+/// retransmission keeps being refused. At the `0.6` s NAK interval this is at least about
+/// 38 s for one stuck packet; a healthy connection has none. Labelled engineering choice,
+/// not an observed official rule.
+pub const MAX_REFUSED_DATAGRAMS: u64 = 64;
+
 // Session timers. [`SessionConnection::tick`] (and the multiplexer's cleanup) acts on them
 // and [`SessionConnection::next_deadline`] reports them: both read these constants, so the
 // two cannot drift apart.
@@ -446,7 +470,9 @@ pub enum SessionError {
         count: usize,
     },
     /// A fragment on receiver queue `5` or `6`, whose framing is `OPEN-SESSION-12`
-    /// (§5.6.2, §5.6.3): the datagram is dropped and counted
+    /// (§5.6.2, §5.6.3): the whole datagram is rejected before anything is committed
+    /// (checksum generator, sequence, Ack, reassembly, delivery) and it is not acknowledged;
+    /// the connection goes on under its timeouts. Counted
     /// ([`HandshakeCounts::unsupported_queue_drops`]).
     #[error("fragment on receiver queue {queue_id}, whose framing is unspecified")]
     UnsupportedReceiveQueue {
@@ -463,7 +489,8 @@ pub enum SessionError {
     /// A fragment Tessera does not support (§5.6.3): one with an attachment
     /// (`HasAttachment`, its checksum boundary is `OPEN-SESSION-10`; Tessera never sends
     /// one either), or with `blobFlags` bit `0x02` on a queue other than `1`
-    /// (`OPEN-SESSION-14`). A received datagram with one is dropped and counted
+    /// (`OPEN-SESSION-14`). A received datagram with one is rejected whole before anything
+    /// is committed and is not acknowledged. Counted
     /// ([`HandshakeCounts::unsupported_fragment_drops`]).
     #[error("unsupported fragment on queue {queue_id} with blobFlags {blob_flags:#04x}")]
     UnsupportedFragment {
@@ -471,6 +498,13 @@ pub enum SessionError {
         queue_id: u8,
         /// The fragment's `blobFlags`.
         blob_flags: u8,
+    },
+    /// A send on more queue-3 sequence groups than [`MAX_ORDER_GROUPS`]; nothing was
+    /// allocated (§5.6.2 P10-23-POLICY keeps a counter per group).
+    #[error("too many queue-3 sequence groups ({limit})")]
+    TooManyOrderGroups {
+        /// The bound.
+        limit: usize,
     },
     /// The fragments of one multi-fragment blob name different recipients (§5.6.4 rule 3).
     #[error("fragments of one blob with different recipients")]
@@ -3762,8 +3796,8 @@ pub struct FragmentAttachment {
 pub const MAX_SEND_QUEUE_ID: u8 = 4;
 
 /// The highest delivery queue a receiver accepts (`4`): receiver slots `5` and `6` are
-/// `OPEN-SESSION-12`, so a datagram with a fragment on them is dropped and counted
-/// ([`SessionError::UnsupportedReceiveQueue`]) (§5.6.2, §5.6.3).
+/// `OPEN-SESSION-12`, so a datagram with a fragment on them is rejected whole, with no commit
+/// and no Ack, and counted ([`SessionError::UnsupportedReceiveQueue`]) (§5.6.2, §5.6.3).
 pub const MAX_RECEIVE_QUEUE_ID: u8 = 4;
 
 /// `blobFlags` bit 1 (`0x02`): an observed control bit without wire fields whose meaning is
@@ -3968,7 +4002,7 @@ impl BlobFragmentHeader {
         let queue_id = queue_and_opt & 0x7F;
         if matches!(queue_id, 5 | 6) {
             // Queues 5/6 framing is OPEN-SESSION-12: the header's length is unknown, so the
-            // datagram is dropped (and counted).
+            // whole datagram is rejected with no commit and no Ack (§5.6.3), and counted.
             return Err(SessionError::UnsupportedReceiveQueue { queue_id });
         }
         if !(1..=MAX_RECEIVE_QUEUE_ID).contains(&queue_id) {
@@ -4904,6 +4938,9 @@ pub enum DisconnectReason {
     /// A local disconnect finished: `DisconnectHeader` was retransmitted for `20.0` s in
     /// State `7` (§6.1, §8.2).
     LocalDisconnect,
+    /// The connection refused [`MAX_REFUSED_DATAGRAMS`] datagrams it cannot take (§5.6.3,
+    /// §6.5): labelled engineering limit, pending spec pass 10 fix 13.
+    UnsupportedTraffic,
 }
 
 /// High-level events emitted by a [`SessionConnection`] when processing incoming datagrams or timers.
@@ -4970,6 +5007,9 @@ pub struct SentPacketRecord {
     /// True if the packet still has reliable content that should be retransmitted on `SequenceNakHeader`
     /// (false if it only carried ephemeral `queueId == 1` fragments that have expired, §5.3).
     pub retransmit_eligible: bool,
+    /// When [`Self::retransmit_eligible`] is false: until when the packet is resent on a
+    /// `SequenceNakHeader` all the same ([`SessionConnection::send_blob_retained`]).
+    pub retain_until_sec: Option<f64>,
 }
 
 /// What one connection counted of its handshake and its datagrams, for diagnostics: counts
@@ -5000,13 +5040,20 @@ pub struct HandshakeCounts {
     /// optional headers acted on and their fragments ingested); a datagram refused at any
     /// step is not counted.
     pub received_ok: u64,
-    /// Received datagrams dropped because a fragment was on receiver queue `5` or `6`,
-    /// whose framing is `OPEN-SESSION-12` ([`SessionError::UnsupportedReceiveQueue`]).
+    /// Received datagrams rejected whole, with no commit and no Ack, because a fragment was
+    /// on receiver queue `5` or `6`, whose framing is `OPEN-SESSION-12`
+    /// ([`SessionError::UnsupportedReceiveQueue`]).
     pub unsupported_queue_drops: u64,
-    /// Received datagrams dropped because a fragment had an attachment
-    /// (`OPEN-SESSION-10`) or `blobFlags` bit `0x02` outside queue `1`
+    /// Received datagrams rejected whole, with no commit and no Ack, because a fragment had
+    /// an attachment (`OPEN-SESSION-10`) or `blobFlags` bit `0x02` outside queue `1`
     /// (`OPEN-SESSION-14`) ([`SessionError::UnsupportedFragment`]).
     pub unsupported_fragment_drops: u64,
+    /// Received datagrams a connected connection refused before committing anything,
+    /// whatever the reason; [`MAX_REFUSED_DATAGRAMS`] of them close it.
+    pub refused_while_connected: u64,
+    /// Sent packets resent on a `SequenceNakHeader` inside their retained window
+    /// ([`SessionConnection::send_blob_retained`]).
+    pub retained_resends: u64,
 }
 
 /// The install's two directional dictionary UUIDs, each the raw on-disk bytes `16..31` of
@@ -5027,7 +5074,8 @@ pub struct CodecUuids {
 /// official service, `OPEN-SESSION-8`): it advances by one (modulo 65,536) for each newly
 /// allocated sequenced packet, so sequences `2` and `3` carry `2` and `3`, and a
 /// retransmission keeps the packet's saved word. Unsequenced packets after the accept carry
-/// the word of the last allocated packet (engineering choice, spec silent).
+/// the word of the last allocated packet without advancing it (§4.2 P10-23-POLICY, §10.2
+/// Vector 9).
 pub const INITIAL_CLIENT_WORD: u16 = 1;
 
 /// The interim flow-report counters of §5.5 (P10-22-POLICY, `OPEN-SESSION-13`).
@@ -5079,6 +5127,102 @@ impl FlowReport {
     }
 }
 
+/// The ordering and blob-ID counters of one connection and direction (§5.6.2 P10-23-POLICY,
+/// interim and unverified on the official service, `OPEN-SESSION-19`): nothing is shared
+/// between queues or between queue-3 sequence groups. Fresh on every connection.
+#[derive(Debug, Clone)]
+struct OrderCounters {
+    /// The next ordering number of queues `2` and `4`.
+    order_2: u16,
+    order_4: u16,
+    /// The next ordering number of each queue-3 sequence group used so far, at most
+    /// [`MAX_ORDER_GROUPS`]; a group not here starts at `1`.
+    order_groups: BTreeMap<u16, u16>,
+    /// The next blob ID of queues `1` (fragmented blobs only), `2` and `4`.
+    blob_1: u16,
+    blob_2: u16,
+    blob_4: u16,
+}
+
+/// A blob's allocated `orderNum` and `blobId`, committed only once its fragments are built.
+#[derive(Debug, Clone, Copy)]
+struct OrderAllocation {
+    order_num: u16,
+    blob_id: u16,
+}
+
+impl OrderCounters {
+    /// Every counter starts at `1` (§5.6.2).
+    fn new() -> Self {
+        Self {
+            order_2: 1,
+            order_4: 1,
+            order_groups: BTreeMap::new(),
+            blob_1: 1,
+            blob_2: 1,
+            blob_4: 1,
+        }
+    }
+
+    /// The values the next logical blob of `queue_id` takes (nothing changes yet). Queue `1`
+    /// carries no ordering word on the wire (`0xFFFF`), an unfragmented queue-1 blob has the
+    /// implicit blob ID `0`, and queue `3` never has one (§5.6.3 field 4).
+    fn peek(
+        &self,
+        queue_id: u8,
+        seq_group: u16,
+        fragmented: bool,
+    ) -> Result<OrderAllocation, SessionError> {
+        let order_num = match queue_id {
+            2 => self.order_2,
+            3 => match self.order_groups.get(&seq_group) {
+                Some(&next) => next,
+                None if self.order_groups.len() >= MAX_ORDER_GROUPS => {
+                    return Err(SessionError::TooManyOrderGroups {
+                        limit: MAX_ORDER_GROUPS,
+                    });
+                }
+                None => 1,
+            },
+            4 => self.order_4,
+            _ => 0xFFFF,
+        };
+        let blob_id = if has_blob_id(queue_id, fragmented) {
+            match queue_id {
+                1 => self.blob_1,
+                2 => self.blob_2,
+                _ => self.blob_4,
+            }
+        } else {
+            0
+        };
+        Ok(OrderAllocation { order_num, blob_id })
+    }
+
+    /// Commits [`Self::peek`]'s values: an ordering number advances modulo 65,536 and may be
+    /// `0`; a blob ID wraps 65,535 to `1` and skips `0`; an unfragmented queue-1 blob
+    /// advances nothing (§5.6.2).
+    fn commit(&mut self, queue_id: u8, seq_group: u16, fragmented: bool) {
+        match queue_id {
+            2 => self.order_2 = self.order_2.wrapping_add(1),
+            3 => {
+                let next = self.order_groups.entry(seq_group).or_insert(1);
+                *next = next.wrapping_add(1);
+            }
+            4 => self.order_4 = self.order_4.wrapping_add(1),
+            _ => {}
+        }
+        if has_blob_id(queue_id, fragmented) {
+            let id = match queue_id {
+                1 => &mut self.blob_1,
+                2 => &mut self.blob_2,
+                _ => &mut self.blob_4,
+            };
+            *id = if *id == u16::MAX { 1 } else { *id + 1 };
+        }
+    }
+}
+
 /// Per-connection state machine, sequence window, ISAAC generators, and fragmented blob reassembler (§3.4, §5–§8).
 pub struct SessionConnection {
     local_rec_id: u16,
@@ -5113,8 +5257,7 @@ pub struct SessionConnection {
     stored_referral_auth: Option<ReferralAuthHeader>,
     stored_connect_accept: Option<ConnectAcceptHeader>,
 
-    next_order_num: [u16; 5],
-    next_blob_id: u16,
+    order_counters: OrderCounters,
     reassembler: BlobReassembler,
     outbound_datagrams: VecDeque<Vec<u8>>,
     events: VecDeque<SessionEvent>,
@@ -5194,8 +5337,7 @@ impl SessionConnection {
             stored_referral_auth: None,
             stored_connect_accept: None,
 
-            next_order_num: [0; 5],
-            next_blob_id: 1,
+            order_counters: OrderCounters::new(),
             reassembler: BlobReassembler::default(),
             outbound_datagrams: VecDeque::new(),
             events: VecDeque::new(),
@@ -5656,6 +5798,7 @@ impl SessionConnection {
                 opt_headers,
                 fragments,
                 retransmit_eligible,
+                retain_until_sec: None,
             },
         );
         self.outbound_datagrams.push_back(dgram);
@@ -5708,6 +5851,62 @@ impl SessionConnection {
         now_sec: f64,
         outgoing_codec: Option<&dyn BitTreeCodec>,
     ) -> Result<Vec<u32>, SessionError> {
+        self.send_blob_inner(
+            queue_id,
+            seq_group,
+            recipient_id,
+            blob_header_word,
+            payload,
+            now_sec,
+            outgoing_codec,
+            None,
+        )
+    }
+
+    /// [`Self::send_blob`] whose packets stay resendable on a `SequenceNakHeader` for
+    /// [`RETAINED_BLOB_RESEND_WINDOW_SEC`] even on an unreliable queue, with their saved
+    /// sequence number, mask and client word (§4.2, §5.3); after the window a request for
+    /// one is answered with `OutOfOrderAckHeader` as for any expired fragment (§5.4).
+    ///
+    /// pending spec pass 10 fix 9: labelled engineering choice for the initial `0xEC`
+    /// (§9.3.2), whose loss would otherwise stall the login.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError`] if fragmentation or packet queueing fails.
+    pub fn send_blob_retained(
+        &mut self,
+        queue_id: u8,
+        seq_group: u16,
+        blob_header_word: u32,
+        payload: &[u8],
+        now_sec: f64,
+        outgoing_codec: Option<&dyn BitTreeCodec>,
+    ) -> Result<Vec<u32>, SessionError> {
+        self.send_blob_inner(
+            queue_id,
+            seq_group,
+            DEFAULT_BLOB_RECIPIENT_ID,
+            blob_header_word,
+            payload,
+            now_sec,
+            outgoing_codec,
+            Some(now_sec + RETAINED_BLOB_RESEND_WINDOW_SEC),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_blob_inner(
+        &mut self,
+        queue_id: u8,
+        seq_group: u16,
+        recipient_id: u64,
+        blob_header_word: u32,
+        payload: &[u8],
+        now_sec: f64,
+        outgoing_codec: Option<&dyn BitTreeCodec>,
+        retain_until_sec: Option<f64>,
+    ) -> Result<Vec<u32>, SessionError> {
         if !(1..=4).contains(&queue_id) {
             return Err(SessionError::InvalidQueueId { queue_id });
         }
@@ -5728,33 +5927,20 @@ impl SessionConnection {
                 limit: MAX_BLOB_BYTES,
             });
         }
-        let order_num = if (2..=4).contains(&queue_id) {
-            let on = self.next_order_num[usize::from(queue_id)];
-            self.next_order_num[usize::from(queue_id)] = on.wrapping_add(1);
-            on
-        } else {
-            0xFFFF
-        };
         let is_multi = payload.len() > MAX_BLOB_FRAG_PAYLOAD;
-        // `blobId` is on the wire for queues 2 and 4, and for queue 1 when the blob is
-        // fragmented; never for queue 3 (§5.6.2, §5.6.3 field 4).
-        let blob_id = if has_blob_id(queue_id, is_multi) {
-            let bid = self.next_blob_id;
-            self.next_blob_id = if bid == u16::MAX { 1 } else { bid + 1 };
-            bid
-        } else {
-            0
-        };
-
+        // §5.6.2 P10-23-POLICY: allocated once per logical blob, retained on every fragment
+        // and retransmission, and committed only once the fragments are built.
+        let allocated = self.order_counters.peek(queue_id, seq_group, is_multi)?;
         let frags = split_blob(
             queue_id,
-            order_num,
-            blob_id,
+            allocated.order_num,
+            allocated.blob_id,
             seq_group,
             Some(recipient_id),
             blob_header_word,
             payload,
         )?;
+        self.order_counters.commit(queue_id, seq_group, is_multi);
 
         let retransmit_eligible = queue_id == 2 || queue_id == 4;
         let mut seqs = Vec::with_capacity(frags.len());
@@ -5766,6 +5952,9 @@ impl SessionConnection {
                 now_sec,
                 outgoing_codec,
             )?;
+            if let Some(rec) = self.retransmit_table.get_mut(&seq) {
+                rec.retain_until_sec = retain_until_sec;
+            }
             seqs.push(seq);
         }
         Ok(seqs)
@@ -5776,6 +5965,7 @@ impl SessionConnection {
     pub fn expire_unreliable_sent_packet(&mut self, seq_num: u32) {
         if let Some(rec) = self.retransmit_table.get_mut(&seq_num) {
             rec.retransmit_eligible = false;
+            rec.retain_until_sec = None;
         }
     }
 
@@ -5831,23 +6021,16 @@ impl SessionConnection {
             });
         }
 
-        // Decode framing & structural bounds first without mutating connection state
+        // Decode framing & structural bounds first without mutating connection state: a
+        // datagram refused here commits no checksum generator, sequence, Ack, reassembly or
+        // delivery state and is not acknowledged; the connection goes on under its timeouts
+        // (§5.6.3 P10-23-POLICY).
         let pkt = match decode_datagram(datagram, true, self.receive_codec(codecs.incoming), true) {
             Ok(pkt) => pkt,
-            Err(err @ SessionError::UnsupportedReceiveQueue { .. }) => {
-                // §5.6.2, §5.6.3: queues 5/6 are dropped and counted (OPEN-SESSION-12).
-                self.counts.unsupported_queue_drops =
-                    self.counts.unsupported_queue_drops.saturating_add(1);
+            Err(err) => {
+                self.count_refused(&err, now_sec);
                 return Err(err);
             }
-            Err(err @ SessionError::UnsupportedFragment { .. }) => {
-                // §5.6.3: attachment-bearing packets (OPEN-SESSION-10) and blobFlags 0x02
-                // outside queue 1 (OPEN-SESSION-14) are dropped and counted.
-                self.counts.unsupported_fragment_drops =
-                    self.counts.unsupported_fragment_drops.saturating_add(1);
-                return Err(err);
-            }
-            Err(err) => return Err(err),
         };
         let hdr = pkt.header;
 
@@ -5961,6 +6144,39 @@ impl SessionConnection {
         // Counted only once the whole datagram was taken (diagnostics, `HandshakeCounts`).
         self.counts.received_ok = self.counts.received_ok.saturating_add(1);
         Ok(pkt)
+    }
+
+    /// Counts a datagram refused before anything was committed. pending spec pass 10 fix 13:
+    /// its sequence number stays missing, and with a peer that keeps retransmitting it the
+    /// gap would be NAKed forever, so [`MAX_REFUSED_DATAGRAMS`] of them on a connected
+    /// connection close it with [`DisconnectReason::UnsupportedTraffic`] (labelled engineering
+    /// limit). Only State `5` counts: the handshake has its own `20.0` s timeout.
+    fn count_refused(&mut self, err: &SessionError, now_sec: f64) {
+        match err {
+            // §5.6.2, §5.6.3: queues 5/6 (OPEN-SESSION-12).
+            SessionError::UnsupportedReceiveQueue { .. } => {
+                self.counts.unsupported_queue_drops =
+                    self.counts.unsupported_queue_drops.saturating_add(1);
+            }
+            // §5.6.3: attachment-bearing packets (OPEN-SESSION-10) and blobFlags 0x02
+            // outside queue 1 (OPEN-SESSION-14).
+            SessionError::UnsupportedFragment { .. } => {
+                self.counts.unsupported_fragment_drops =
+                    self.counts.unsupported_fragment_drops.saturating_add(1);
+            }
+            _ => {}
+        }
+        if self.state != ConnectionState::Connected {
+            return;
+        }
+        self.counts.refused_while_connected = self.counts.refused_while_connected.saturating_add(1);
+        if self.counts.refused_while_connected >= MAX_REFUSED_DATAGRAMS {
+            tracing::info!(
+                refused = self.counts.refused_while_connected,
+                "official session: too many datagrams refused; closing the connection"
+            );
+            self.close(DisconnectReason::UnsupportedTraffic, now_sec);
+        }
     }
 
     /// Checks a masked (sequenced) packet against the window, the gap table and its ISAAC
@@ -6167,9 +6383,15 @@ impl SessionConnection {
             // Resends go out with the outgoing (client-to-server) dictionary (§4.1.2).
             let codec = self.data_codec(outgoing_codec);
             for &s in nak_seqs {
-                if let Some(rec) = self.retransmit_table.get(&s)
-                    && rec.retransmit_eligible
-                {
+                let resend = self.retransmit_table.get(&s).filter(|rec| {
+                    rec.retransmit_eligible
+                        || rec.retain_until_sec.is_some_and(|until| now_sec <= until)
+                });
+                if let Some(rec) = resend {
+                    if !rec.retransmit_eligible {
+                        self.counts.retained_resends =
+                            self.counts.retained_resends.saturating_add(1);
+                    }
                     // The saved sequence number, mask and client word (§4.2, §5.3).
                     let mut hdr = self.base_datagram_header(rec.seq_num);
                     hdr.client_word = rec.client_word;
@@ -6514,9 +6736,12 @@ impl SessionConnection {
     /// Queues an unsequenced control packet that goes out uncompressed without
     /// `MaskedChecksumFlag` (§4.1.1). It repeats the current allocated outgoing sequence
     /// number and allocates none and draws no mask: the standalone acknowledgement rule of
-    /// §5.2 and §6.4.1. The other standalone controls Tessera sends (negative
-    /// acknowledgements, out-of-order acknowledgements, disconnects) follow it too: the
-    /// spec infers no rule for them (`OPEN-SESSION-9`), so this is an engineering choice.
+    /// §5.2 and §6.4.1, and it carries the current client word without advancing it (§4.2
+    /// P10-23-POLICY, §10.2 Vector 9).
+    ///
+    /// pending spec pass 10 fix 12: `seqNum` on the other standalone controls Tessera sends
+    /// (negative acknowledgements, out-of-order acknowledgements, disconnects): the spec
+    /// infers no rule for them (`OPEN-SESSION-9`); they keep following the Ack rule.
     fn queue_control(&mut self, opt: OptionalHeaders) -> Result<(), SessionError> {
         let hdr = self.base_datagram_header(self.send_seq_num);
         let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;

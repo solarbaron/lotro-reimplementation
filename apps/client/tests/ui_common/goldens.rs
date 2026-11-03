@@ -249,11 +249,11 @@ pub fn install_version(game_dir: &Path) -> String {
 fn record<T>(
     a: &tessera_dat::Archive,
     did: u32,
-    parse: impl Fn(&[u8]) -> Result<T, tessera_install::RecordError>,
+    parse: impl Fn(&[u8], u16) -> Result<T, tessera_install::RecordError>,
 ) -> Option<T> {
     let entry = a.lookup(did).ok()??;
     let bytes = a.read_entry(&entry).ok()?;
-    parse(&bytes).ok()
+    parse(&bytes, entry.stamp).ok()
 }
 
 fn content_entry(path: &Path) -> tessera_install::ContentEntry {
@@ -268,16 +268,12 @@ fn content_entry(path: &Path) -> tessera_install::ContentEntry {
                 tessera_install::DID_ITERATION,
                 tessera_install::IterationRecord::parse,
             ),
-            membership: record(
-                &a,
-                tessera_install::DID_SET_MEMBERSHIP,
-                tessera_install::SetMembership::parse,
-            ),
-            install_stamp: record(
-                &a,
-                tessera_install::DID_INSTALL_STAMP,
-                tessera_install::InstallStamp::parse,
-            ),
+            membership: record(&a, tessera_install::DID_SET_MEMBERSHIP, |b, _| {
+                tessera_install::SetMembership::parse(b)
+            }),
+            install_stamp: record(&a, tessera_install::DID_INSTALL_STAMP, |b, _| {
+                tessera_install::InstallStamp::parse(b)
+            }),
             file_name,
         },
         Err(_) => tessera_install::ContentEntry {

@@ -3134,7 +3134,13 @@ impl CharacterSummaryEntry {
 }
 
 /// Event `0x6C` (`character_list_response`, S→C): the account's characters and account
-/// properties (§3.1.1).
+/// properties (§3.1.1). The current top level has one shared flags byte (`official-session.md`
+/// §9.1, §9.3.5): [`Self::encode`], [`Self::decode`] and `from_bytes` work on the complete
+/// reassembled data, flags byte included, and [`Self::from_envelope_body`] on what is left
+/// after [`crate::session::decode_message`] consumed that byte.
+///
+/// pending spec pass 10 fix 16: a compressed or routed `0x6C` has no specified boundary; the
+/// driver reports it as unsupported and never reads a list out of it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CharacterListResponse {
     /// `characters` (`u32` LE count + entries).
@@ -3175,6 +3181,30 @@ impl CharacterListResponse {
         schema: &dyn PropertySchemaLookup,
     ) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
+        Self::decode_after_flags(reader, schema)
+    }
+
+    /// Reads an uncompressed, unrouted `0x6C` from the body after its one shared flags byte
+    /// (`official-session.md` §9.3.5): the count comes straight after that byte. Trailing
+    /// bytes are an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldError`] on any framing or schema error.
+    pub fn from_envelope_body(
+        body: &[u8],
+        schema: &dyn PropertySchemaLookup,
+    ) -> Result<Self, WorldError> {
+        let mut reader = WireReader::new(body);
+        let list = Self::decode_after_flags(&mut reader, schema)?;
+        reader.finish()?;
+        Ok(list)
+    }
+
+    fn decode_after_flags(
+        reader: &mut WireReader<'_>,
+        schema: &dyn PropertySchemaLookup,
+    ) -> Result<Self, WorldError> {
         let count = reader.read_u32_le()? as usize;
         reader.ensure_count(count, CharacterSummaryEntry::MIN_WIRE_LEN)?;
         let mut characters = Vec::with_capacity(count.min(MAX_PREALLOC_ENTRIES));
@@ -3556,6 +3586,10 @@ impl AccountEvictionNotice {
 plain_codec!(AccountEvictionNotice);
 
 /// Event `0x19E` (`platform_account_id_report`, C→S, 9 bytes, §3.4).
+///
+/// pending spec pass 10 fix 17: layout unchanged, and the driver does not emit it (the source
+/// of the platform ID and the companion `0x13D` are not specified; `official-session.md` §9.3.1
+/// gives only their order and queue).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlatformAccountIdReport {
     /// `platform_id` (`u64` LE).
@@ -3640,13 +3674,16 @@ impl CharacterEnterWorldRequest {
         })
     }
 
-    /// The outgoing `MessageEnvelope` (`envelopeFlags = 0x00` + inner payload; §7.2 Vector 7).
+    /// The complete reassembled data of an uncompressed, unrouted `0x6F`
+    /// (`official-session.md` §9.3.5, §10.2 Vector 12): the one shared flags byte, the
+    /// character ID and the client property table, with no second leading byte. This is
+    /// [`Self::to_bytes`] exactly: nothing is prepended.
     ///
     /// # Errors
     ///
     /// Propagates value encoding errors.
     pub fn to_envelope_bytes(&self) -> Result<Vec<u8>, WorldError> {
-        Ok(encode_event_envelope(&self.to_bytes()?))
+        self.to_bytes()
     }
 }
 schema_codec!(CharacterEnterWorldRequest);
@@ -3800,6 +3837,10 @@ impl ServerShutdownText {
 plain_codec!(ServerShutdownText);
 
 /// Event `0x90` (`player_session_ready`, S→C, §4.2).
+///
+/// pending spec pass 10 fix 14: decoded with its historical prefix, unchanged by guesswork
+/// (`official-session.md` §9.1 rechecks only `0x6C` and `0x6F`; the world §1.1.4 OPEN-WORLD-9
+/// remains). A failure is a distinct unsupported result of the entry (the session driver).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlayerSessionReady {
     /// `player_id`: the active player avatar's `InstanceID`.

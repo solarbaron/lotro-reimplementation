@@ -688,7 +688,7 @@ fn sample_appearance() -> EntityAppearanceDesc {
                 7,
                 SubPartTable {
                     hint: 1,
-                    entries: vec![SubPartEntry { k: 1, v1: 2, v2: 3 }],
+                    entries: vec![SubPartEntry { key: 1, value: 2 }],
                 },
             )]),
         }),
@@ -706,7 +706,7 @@ fn entity_appearance_desc_layout_and_open_gate() {
     let back = EntityAppearanceDesc::decode(&mut WireReader::new(w.as_slice())).unwrap();
     assert_eq!(back, desc);
 
-    // Bit 0 (base_model) is one unconditional u32 (§2.8), whatever its high byte.
+    // Bit 0 (base_model) has no settled form (§2.8, OPEN-WORLD-9): refused, however it is written.
     for model in [0x3100_0001u32, 0x3200_0002, 0x0100_0001] {
         let with_model = EntityAppearanceDesc {
             base_model: Some(model),
@@ -722,8 +722,8 @@ fn entity_appearance_desc_layout_and_open_gate() {
         }
         assert_eq!(w.as_slice(), expected.as_slice());
         assert_eq!(
-            EntityAppearanceDesc::decode(&mut WireReader::new(w.as_slice())).unwrap(),
-            with_model
+            EntityAppearanceDesc::decode(&mut WireReader::new(w.as_slice())),
+            Err(WorldError::UnsupportedAppearanceVariant)
         );
     }
     // A full descriptor with a base model round-trips.
@@ -735,14 +735,14 @@ fn entity_appearance_desc_layout_and_open_gate() {
     let mut w = WireWriter::new();
     full.encode(&mut w).unwrap();
     assert_eq!(
-        EntityAppearanceDesc::decode(&mut WireReader::new(w.as_slice())).unwrap(),
-        full
+        EntityAppearanceDesc::decode(&mut WireReader::new(w.as_slice())),
+        Err(WorldError::UnsupportedAppearanceVariant)
     );
-    // A truncated base model is a framing error, not a refusal.
-    assert!(matches!(
+    // Whatever follows the bit.
+    assert_eq!(
         EntityAppearanceDesc::decode(&mut WireReader::new(&[0x01, 0, 0, 0, 0x31])),
-        Err(WorldError::UnexpectedEof { .. })
-    ));
+        Err(WorldError::UnsupportedAppearanceVariant)
+    );
     // Undefined flag bits are refused.
     assert_eq!(
         EntityAppearanceDesc::decode(&mut WireReader::new(&0x0800u32.to_le_bytes())),

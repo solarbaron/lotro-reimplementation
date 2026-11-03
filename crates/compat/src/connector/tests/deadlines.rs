@@ -100,9 +100,10 @@ fn the_entry_deadline_fires_on_time() {
         world.take_sent();
         if d.take_events()
             .iter()
-            .any(|e| matches!(e, Event::EnterWorldFailed { .. }))
+            .any(|e| matches!(e, Event::Disconnected { .. }))
         {
             failed_at = Some(t);
+            break;
         } else {
             let deadline = d.next_deadline(t).expect("timed work");
             assert!(

@@ -9,6 +9,7 @@ mod deadlines;
 mod diagnostics;
 mod handshake;
 mod initial_negotiation;
+mod world_entry;
 mod world_feed;
 
 use std::collections::{BTreeMap, VecDeque};
@@ -62,8 +63,7 @@ use crate::{CompatBackend, CompatConfig};
 // The synthetic service's challenge, decoder and dictionary UUIDs.
 use super::test_support::{
     CHARACTER, INCOMING_UUID, OUTGOING_UUID, SYNTHETIC_LANGUAGE_KEY, SYNTHETIC_NAME_RULE,
-    SyntheticService, TEST_ENTRY_DESTINATION, challenge_datagram, decode_client_datagram,
-    synthetic_inventory,
+    SyntheticService, challenge_datagram, decode_client_datagram, synthetic_inventory,
 };
 
 const LOCAL: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 5000);
@@ -114,6 +114,10 @@ impl InstallData for Records {
 
     fn selected_language_key(&self) -> Result<u32, crate::initial::InstallUnsupported> {
         Ok(SYNTHETIC_LANGUAGE_KEY)
+    }
+
+    fn check_name_table(&self) -> Result<(), crate::initial::InstallUnsupported> {
+        Ok(())
     }
 
     fn name_rule_languages(
@@ -309,7 +313,10 @@ impl Gate {
 #[derive(Debug, Clone)]
 struct Service {
     /// The network answers no destination for `0x6F`, as every production path does.
-    no_entry_destination: bool,
+    /// Like every production path: no source for readiness (OPEN-WORLD-9).
+    no_readiness: bool,
+    /// Like every production path: no source for the chat codec (OPEN-SESSION-1).
+    no_chat_codec: bool,
     auth: String,
     login: String,
     login_server: String,
@@ -355,7 +362,8 @@ struct Service {
 impl Default for Service {
     fn default() -> Self {
         Self {
-            no_entry_destination: false,
+            no_readiness: false,
+            no_chat_codec: false,
             auth: "https://auth.example.invalid/login".to_owned(),
             login: login_ok(1),
             login_server: "login.example.invalid:9001".to_owned(),
@@ -703,8 +711,12 @@ impl Drop for FakeNet {
 impl ConnectorNet for FakeNet {
     type Udp = FakeUdp;
 
-    fn entry_destination(&self) -> Option<u64> {
-        (!self.0.service.no_entry_destination).then_some(TEST_ENTRY_DESTINATION)
+    fn readiness_specified(&self) -> bool {
+        !self.0.service.no_readiness
+    }
+
+    fn chat_codec_specified(&self) -> bool {
+        !self.0.service.no_chat_codec
     }
 
     fn http(&mut self, request: &HttpRequest) -> Result<HttpResponse, LoginError> {
@@ -1055,7 +1067,7 @@ impl Server {
         let frags = split_blob(
             2,
             (self.seq & 0xFFFF) as u16,
-            1,
+            (self.seq & 0xFFFF) as u16,
             0,
             recipient,
             opcode,
@@ -1080,7 +1092,7 @@ impl Server {
     /// An event's datagram. `0x6C`, `0x90`, `0x6D` and `0xB3` have one shared flags byte, which
     /// their payloads already start with (`official-session.md` §9.3.7).
     fn event(&mut self, opcode: u32, inner: &[u8]) -> Vec<u8> {
-        if matches!(opcode, 0x6C | 0x90 | 0x6D | 0xB3) {
+        if matches!(opcode, 0x6C | 0x90 | 0x6D | 0xB3) || crate::world::one_shared_prefix(opcode) {
             return self.blob(opcode, inner);
         }
         self.blob(opcode, &encode_event_envelope(inner))
@@ -1088,6 +1100,9 @@ impl Server {
 
     /// An event addressed to `recipient` (`FragmentedBlob` field 7).
     fn event_to(&mut self, opcode: u32, recipient: u64, inner: &[u8]) -> Vec<u8> {
+        if crate::world::one_shared_prefix(opcode) {
+            return self.blob_to(opcode, Some(recipient), inner);
+        }
         self.blob_to(opcode, Some(recipient), &encode_event_envelope(inner))
     }
 
@@ -1320,7 +1335,7 @@ fn i1_local_discovery_failure_reaches_no_network() {
     let mut run = start(Service::default(), false);
     run.wait_event(is_disconnected);
     // Not a refusal of the credentials and not the service's answer: the start screen's category
-    // (§8.6), with Tessera's own line (decision 0046 item 6; pending §25 fix 7).
+    // (§8.6), with Tessera's own line (decision 0046 item 6; `official-login.md` §5.1).
     assert_eq!(run.refused(), Some((LoginRefusal::UnsupportedStep, None)));
     assert_eq!(
         run.refused_note().as_deref(),
@@ -2477,7 +2492,7 @@ fn a_transport_refusal_during_login_is_account_not_allowed() {
         LOGIN_SERVER,
     );
     run.wait_event(is_disconnected);
-    assert_eq!(run.refused(), Some((LoginRefusal::AccountNotAllowed, None)));
+    assert_eq!(run.refused(), Some((LoginRefusal::ClientNotAccepted, None)));
 }
 
 // ---------------------------------------------------------------------------
@@ -2588,6 +2603,15 @@ fn driver_at_characters_from(
     service: Service,
     start: SessionStart,
 ) -> (World, SessionDriver<FakeNet>, Server) {
+    driver_at_characters_after(service, start, |_, _, _| {})
+}
+
+/// [`driver_at_characters_from`], with `before_list` run between State 5 and the list.
+fn driver_at_characters_after(
+    service: Service,
+    start: SessionStart,
+    before_list: impl FnOnce(&World, &mut Server, &mut SessionDriver<FakeNet>),
+) -> (World, SessionDriver<FakeNet>, Server) {
     let world = new_world(service);
     let mut net = FakeNet(world.clone());
     let mut d = SessionDriver::start(&mut net, start, 0.0, &go).expect("start");
@@ -2601,6 +2625,7 @@ fn driver_at_characters_from(
         LOGIN_SERVER,
     );
     d.step(0.0, true, &go);
+    before_list(&world, &mut login, &mut d);
     world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
     d.step(0.1, true, &go);
     assert!(
@@ -2611,41 +2636,37 @@ fn driver_at_characters_from(
     (world, d, login)
 }
 
+/// §9.3.8: the wait from `0x6F` to the referral is 30 s, other traffic does not reset it, and its
+/// end is `Disconnected` with Tessera's text naming the stage: no Account event, no retry.
 #[test]
-fn a_world_that_never_answers_the_entry_returns_to_the_character_list() {
-    let (world, mut d, login) = driver_at_characters(Service::default(), 0);
+fn a_world_that_never_answers_the_entry_ends_with_a_named_deadline() {
+    let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
     let enter = Command::EnterWorld {
         character: "Aldo".to_owned(),
     };
-    d.command(&enter, 1.0).expect("enter");
+    d.command(&enter, 1.0).expect("sent");
     for t in [10.0, 20.0, 30.0] {
-        // The login server stays alive meanwhile.
-        world.deliver(
-            login.control(OptionalHeaders {
-                cumulative_ack: Some(0),
-                ..OptionalHeaders::default()
-            }),
-            LOGIN_SERVER,
-        );
+        world.deliver(login.event(0x149, &[0x00, 0x7F]), LOGIN_SERVER);
         d.step(t, true, &go);
-        assert!(
-            !d.take_events()
-                .iter()
-                .any(|e| matches!(e, Event::EnterWorldFailed { .. })),
-            "too early at {t}"
-        );
+        assert!(!d.ended(), "too early at {t}");
     }
-    d.step(31.5, true, &go);
+    let _ = d.take_events();
+    d.step(31.0, true, &go);
     let events = d.take_events();
     assert!(
         events.iter().any(|e| matches!(
             e,
-            Event::EnterWorldFailed { character, .. } if character == "Aldo"
+            Event::Disconnected { reason: DisconnectReason::TimedOutLocally(text) }
+                if text == super::session_phase::EntryWait::Referral.deadline_text()
         )),
         "{events:?}"
     );
-    // Back at the character list: the character can be entered again.
-    d.command(&enter, 62.0).expect("again");
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::EnterWorldFailed { .. } | Event::Account(_)))
+    );
+    assert!(d.ended());
 }
 
 #[test]
@@ -2711,20 +2732,14 @@ fn the_referral_disconnects_the_login_connection_gracefully() {
         d.connection_states().0,
         Some(ConnectionState::Connected)
     ));
-    // The world never answers the entry: no connection is left for a later `0x6F`.
+    // The world never answers the entry: the wait for its session start names the stage.
     d.step(31.5, true, &go);
     let events = d.take_events();
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, Event::EnterWorldFailed { .. })),
-        "{events:?}"
-    );
     assert!(
         events.iter().any(|e| matches!(
             e,
             Event::Disconnected {
-                reason: DisconnectReason::TimedOut
+                reason: DisconnectReason::TimedOutLocally(_)
             }
         )),
         "{events:?}"
@@ -2785,7 +2800,9 @@ fn notifications(server: &mut Server, from: usize, n: usize) -> Vec<u8> {
 
 fn notice_text(e: Event) -> Option<String> {
     match e {
-        Event::ServerNotice { text, .. } => Some(text),
+        Event::ServerNotice { text, .. } | Event::Account(AccountEvent::LoginNotice { text }) => {
+            Some(text)
+        }
         _ => None,
     }
 }
@@ -2948,7 +2965,7 @@ fn a_datagram_naming_a_connection_from_another_address_is_discarded() {
 
 #[test]
 fn after_a_cancel_no_referral_is_followed_and_no_refresh_starts() {
-    let (world, mut d, login) = driver_at_characters(Service::default(), 60);
+    let (world, mut d, mut login) = driver_at_characters(Service::default(), 60);
     let enter = Command::EnterWorld {
         character: "Aldo".to_owned(),
     };
@@ -2967,7 +2984,10 @@ fn after_a_cancel_no_referral_is_followed_and_no_refresh_starts() {
     while let Some((_, dst)) = world.pop_sent() {
         assert_ne!(dst, WORLD_SERVER);
     }
-    // The refresh is due at half the lifetime; the stop holds it back.
+    // Back at the list, where no entry wait runs. The refresh is due at half the lifetime; the
+    // stop holds it back.
+    world.deliver(login.event(0x6D, &[0x00, 1, 0, 0, 0]), LOGIN_SERVER);
+    d.step(1.0, true, &go);
     d.step(31.0, true, &cancelled);
     assert!(!d.refresh_running());
     d.step(31.5, true, &go);
@@ -4275,7 +4295,8 @@ fn leaving_the_world_returns_to_the_character_list_on_the_same_session() {
         d.command(&Command::LeaveWorld, 3.6),
         Err(tessera_net::NetError::InvalidCommand(_))
     ));
-    // §9.3.7, OPEN-SESSION-16: entering again is not supported: reported, and nothing is sent.
+    // §9.3.8, OPEN-SESSION-16: entering again has no settled queue or body: the unsupported row,
+    // and no `0x6F` is sent.
     d.command(
         &Command::EnterWorld {
             character: "Aldo".to_owned(),
@@ -4283,14 +4304,13 @@ fn leaving_the_world_returns_to_the_character_list_on_the_same_session() {
         4.0,
     )
     .expect("reported");
-    d.step(4.1, true, &go);
     assert!(!sent_blobs(&world).iter().any(|(op, _)| *op == 0x6F));
     assert!(d.take_events().iter().any(|e| matches!(
         e,
-        Event::EnterWorldFailed { reason, .. }
-            if reason == super::session_phase::ENTRY_NOT_SUPPORTED
+        Event::Disconnected { reason: DisconnectReason::TransportFailed(text) }
+            if text == super::session_phase::ENTRY_NOT_SUPPORTED
     )));
-    assert!(!d.ended());
+    assert!(d.ended());
 }
 
 #[test]
@@ -4395,8 +4415,10 @@ fn moves_and_chat_after_the_teardown_are_refused_and_counted_and_chat_is_noticed
     );
 }
 
+/// §9.3.8: before `WorldEntered` what the login connection brings is counted and skipped, never
+/// held for a later replay.
 #[test]
-fn a_teardown_held_during_the_entry_is_replayed_after_the_session_start() {
+fn a_login_message_during_the_entry_is_skipped_and_not_replayed() {
     let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
     d.command(
         &Command::EnterWorld {
@@ -4405,25 +4427,23 @@ fn a_teardown_held_during_the_entry_is_replayed_after_the_session_start() {
         1.0,
     )
     .expect("enter");
-    // The teardown arrives before `0x90` (kept for the session start).
     world.deliver(login.event(0x3000_001D, &[0]), LOGIN_SERVER);
     d.step(1.05, true, &go);
     assert!(d.take_events().is_empty());
+    assert_eq!(d.skip_counters().count(0x3000_001D), 1);
     world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
     d.step(1.1, true, &go);
     let events = d.take_events();
-    let entered = events
-        .iter()
-        .position(|e| matches!(e, Event::WorldEntered { .. }));
-    let back = events
-        .iter()
-        .position(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }));
     assert!(
-        matches!((entered, back), (Some(a), Some(b)) if a < b),
-        "{events:?}"
+        events
+            .iter()
+            .any(|e| matches!(e, Event::WorldEntered { .. }))
     );
-    assert!(!d.in_world());
-    assert!(!d.ended());
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }))
+    );
 }
 
 #[test]
@@ -4507,11 +4527,10 @@ fn the_live_connector_returns_to_character_selection() {
     run.wait_event(|e| {
         matches!(
             e,
-            Event::EnterWorldFailed { reason, .. }
-                if reason == super::session_phase::ENTRY_NOT_SUPPORTED
+            Event::Disconnected { reason: DisconnectReason::TransportFailed(text) }
+                if text == super::session_phase::ENTRY_NOT_SUPPORTED
         )
     });
-    assert_eq!(run.session.state(), tessera_net::SessionState::Connected);
     let mut sent = Vec::new();
     while let Some(d) = run.world.pop_sent() {
         sent.push(d);

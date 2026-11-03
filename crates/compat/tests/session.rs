@@ -3024,14 +3024,15 @@ fn queue_3_fragments_carry_no_blob_id_and_queues_5_and_6_are_dropped() {
     let mut strange = frags[1].clone();
     strange.header.recipient_id = 7;
     strange.header.blob_flags &= !0x40;
+    // (Past the first one's 30-second tombstone, §9.3.8, so the identity is fresh again.)
     assert!(
         table
-            .ingest(0x0304, frags[0].clone(), 0.0)
+            .ingest(0x0304, frags[0].clone(), 100.0)
             .unwrap()
             .is_none()
     );
     assert_eq!(
-        table.ingest(0x0304, strange, 0.0),
+        table.ingest(0x0304, strange, 100.0),
         Err(SessionError::FragmentRecipientMismatch)
     );
 
@@ -3530,7 +3531,7 @@ fn a_rejected_mixed_datagram_commits_nothing() {
     bad.extend_from_slice(&[0x02, 0x42, 1, 0, 1, 0, 0x10, 0x01, 0xEE]);
     wire.extend_from_slice(&bad);
     // A fragment header's flags 0x02 is not encoded by Tessera's writer: built by hand. The
-    // rejection comes before the checksum is read, so the field stays zero.
+    // checksum field stays zero, so §9.3.8 makes this a checksum failure: dropped, nothing else.
     let hdr = DatagramHeader {
         rec_id: 0x0100,
         pak_size: u16::try_from(wire.len()).unwrap(),
@@ -3541,10 +3542,10 @@ fn a_rejected_mixed_datagram_commits_nothing() {
     let mut datagram = vec![0, 0];
     datagram.extend_from_slice(&hdr.to_wire_bytes());
     datagram.extend_from_slice(&wire);
-    assert!(matches!(
-        conn.receive_datagram(&datagram, peer, 0.1, WireCodecs::NONE),
-        Err(SessionError::UnsupportedFragment { .. })
-    ));
+    assert!(
+        conn.receive_datagram(&datagram, peer, 0.1, WireCodecs::NONE)
+            .is_err()
+    );
     assert_eq!(conn.recv_seq_expected(), 1, "the sequence did not move");
     assert_eq!(conn.missing_gap_count(), 0);
     assert_eq!(
@@ -3878,7 +3879,7 @@ fn peer_packet(server: &mut IsaacCipher, seq: u32) -> Vec<u8> {
     .unwrap()
 }
 
-/// pending §25 fix 12: a refused packet leaves a sequence gap, and a gap that stays
+/// §9.3.8: a refused packet leaves a sequence gap, and a gap that stays
 /// open while the peer keeps sending closes the connection rather than NAK forever. Each of the
 /// three kinds of refusal counts, a plain duplicate does not.
 #[test]
@@ -3965,7 +3966,7 @@ fn a_gap_that_stays_open_closes_the_connection() {
     assert_eq!(conn.state(), ConnectionState::Closing);
     assert!(std::iter::from_fn(|| conn.pop_event()).any(|e| e
         == SessionEvent::Disconnected {
-            reason: DisconnectReason::UnsupportedTraffic
+            reason: DisconnectReason::GapDeadline
         }));
 }
 
@@ -3985,7 +3986,7 @@ fn refused_duplicate(seq: u32) -> Vec<u8> {
     .unwrap()
 }
 
-/// pending §25 fix 12: datagrams that match only the source address and recipient are
+/// §9.3.8: datagrams that match only the source address and recipient are
 /// not authenticated: however many arrive they are only counted, and nothing closes.
 #[test]
 fn unauthenticated_junk_is_counted_and_closes_nothing() {

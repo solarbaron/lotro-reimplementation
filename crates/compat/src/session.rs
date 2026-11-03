@@ -169,21 +169,11 @@ pub const DEFAULT_MAX_CONTAINER_DEPTH: usize = 8;
 /// Engineering choice, spec silent.
 pub const MAX_ORDER_GROUPS: usize = 256;
 
-// pending §25 fix 12: §9.3.7 makes the first refused form terminal, but does not settle the
-// validation order or scope: one unverified datagram matching the address and recipient must not
-// end a login. Until the fix says, refusals are counted and this gap is what ends a stall.
-/// How long a connected connection keeps a sequence gap open before it sends one standalone
-/// Disconnect and closes with [`DisconnectReason::UnsupportedTraffic`]. A datagram refused before anything was committed
-/// (§9.3.7: no sequence, generator, reassembly or Ack change) leaves its sequence number
-/// missing, so while later packets keep arriving the gap would be NAKed for as long as the peer
-/// keeps answering and its retransmission keeps being refused. A gap opens only after a later
-/// packet passed its masked checksum, so datagrams from anyone else cannot start this clock.
-///
-/// Labelled engineering choice, not an observed official rule: longer than
-/// [`SILENCE_TIMEOUT_SEC`], so a peer that went silent is still reported as silent. The login's
-/// own waits (§9.3.7) are shorter, so during them they decide first. A peer that cannot resend
-/// says so with `OutOfOrderAckHeader` (§5.4), which closes the gap.
-pub const MAX_GAP_AGE_SEC: f64 = 90.0;
+/// §9.3.8: the one non-resetting deadline of an incoming sequence gap. Only a later fully
+/// checksum-valid sequenced packet opens a gap, so datagrams from anyone else cannot start, reset
+/// or end this clock. At its end the connection sends one standalone Disconnect and closes with
+/// [`DisconnectReason::GapDeadline`] (Tessera policy, not an observed official rule).
+pub const MAX_GAP_AGE_SEC: f64 = 30.0;
 
 // Session timers. [`SessionConnection::tick`] (and the multiplexer's cleanup) acts on them
 // and [`SessionConnection::next_deadline`] reports them: both read these constants, so the
@@ -628,6 +618,11 @@ pub enum SessionError {
         /// Raw `envelopeFlags` byte.
         flags: u8,
     },
+    /// A checksum-valid fragment conflicts with an active or remembered identity on queues 2–4:
+    /// another body, count or recipient (§9.3.8).
+    #[error("a fragment conflicts with its blob identity")]
+    ConflictingBlobIdentity,
+
     /// `MessageEnvelope` optional routing header (`envelopeFlags & 0x02`) is truncated or has invalid flags (§9.1).
     #[error("invalid MessageEnvelope routing header")]
     InvalidRoutingHeader,
@@ -3816,10 +3811,11 @@ pub const DEFINED_BLOB_FLAGS: u8 = BLOB_FLAG_HAS_ATTACHMENT
     | BLOB_FLAG_DEFAULT_RECIPIENT
     | BLOB_FLAG_OMIT_CHUNK_INFO;
 
-/// The receive policy of §5.6.3 for one decoded fragment header (P10-22-POLICY):
-/// undefined bits `0x04` and `0x20` reject the datagram, an attachment
-/// (`OPEN-SESSION-10`) and bit `0x02` outside queue `1` (`OPEN-SESSION-14`) are
-/// unsupported.
+/// The framing part of the receive policy (§5.6.3, §9.3.8) for one decoded fragment header:
+/// undefined bits `0x04` and `0x20` and an attachment (`OPEN-SESSION-10`) cannot be verified, so
+/// the datagram is dropped and counted, with no Ack and no state committed. Bit `0x02` outside
+/// queue `1` has known framing: it is judged once the checksum held
+/// ([`unsupported_control_bit`]).
 ///
 /// # Errors
 ///
@@ -3829,15 +3825,20 @@ pub fn check_fragment_receive_policy(header: &BlobFragmentHeader) -> Result<(), 
     if (flags & UNDEFINED_BLOB_FLAGS) != 0 {
         return Err(SessionError::UndefinedBlobFlags { blob_flags: flags });
     }
-    if (flags & BLOB_FLAG_HAS_ATTACHMENT) != 0
-        || ((flags & BLOB_FLAG_CONTROL_02) != 0 && header.queue_id != 1)
-    {
+    if (flags & BLOB_FLAG_HAS_ATTACHMENT) != 0 {
         return Err(SessionError::UnsupportedFragment {
             queue_id: header.queue_id,
             blob_flags: flags,
         });
     }
     Ok(())
+}
+
+/// §9.3.8: `blobFlags` `0x02` on queues `2..=4`, with complete known framing. Once the packet's
+/// checksum held this is one terminal unsupported result, without an Ack (`OPEN-SESSION-14`).
+#[must_use]
+pub const fn unsupported_control_bit(header: &BlobFragmentHeader) -> bool {
+    header.blob_flags & BLOB_FLAG_CONTROL_02 != 0 && matches!(header.queue_id, 2..=4)
 }
 
 /// Whether a fragment of queue `queue_id` carries `orderNum` (field 3b, §5.6.3): queues
@@ -4339,6 +4340,50 @@ struct IncompleteBlob {
     buffer: Vec<u8>,
     trimmed_len: Option<usize>,
     created_at_sec: f64,
+    /// The hash of each fragment taken ([`fragment_hash`]), `0` for one not yet taken.
+    hashes: Vec<u64>,
+}
+
+/// §9.3.8: how long a completed identity is remembered, and how many are.
+pub const BLOB_TOMBSTONE_SEC: f64 = 30.0;
+/// §9.3.8's cap on completed identities remembered per connection.
+pub const MAX_BLOB_TOMBSTONES: usize = 64;
+
+/// A completed identity on queues `2..=4` (§9.3.8): enough to tell an exact retransmission from
+/// a conflicting body or count, without keeping the body.
+#[derive(Debug, Clone)]
+struct BlobTombstone {
+    key: BlobKey,
+    at: f64,
+    num_frags: u32,
+    recipient_id: u64,
+    hashes: Vec<u64>,
+}
+
+/// What the reassembler did with what it did not deliver, and its anomalies (§9.3.8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ReassemblyCounts {
+    /// Exact retransmissions of a remembered identity, ignored.
+    pub duplicates: u64,
+    /// Completed queue-3 blobs older than the latest accepted of their group, discarded.
+    pub queue3_older: u64,
+    /// Fresh completed queue-3 blobs whose word equals the latest accepted one.
+    pub queue3_equal: u64,
+    /// Completed queue-3 blobs at distance 32,768, delivered once without replacing the baseline.
+    pub queue3_ambiguous: u64,
+    /// Queue-3 sequence groups past [`MAX_ORDER_GROUPS`], delivered without a comparison.
+    pub queue3_groups_over: u64,
+}
+
+/// The hash a fragment is compared by: its index, its opcode word and its data.
+fn fragment_hash(hdr: &BlobFragmentHeader, data: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    hdr.frag_index.hash(&mut h);
+    hdr.blob_header_word.hash(&mut h);
+    data.hash(&mut h);
+    // `0` means "not taken yet".
+    h.finish().max(1)
 }
 
 /// The identity of an incomplete blob (§5.6.4 rule 3): the sender's recipient ID, the
@@ -4361,11 +4406,15 @@ pub struct BlobReassembler {
     max_concurrent_blobs: usize,
     max_blob_bytes: usize,
     superseded: u64,
+    /// Completed identities on queues `2..=4`, oldest first (§9.3.8).
+    tombstones: VecDeque<BlobTombstone>,
+    /// The latest accepted word per queue-3 group of a sender (§9.3.8).
+    queue3_latest: HashMap<(u16, u16), u16>,
+    counts: ReassemblyCounts,
 }
 
-/// Where a queue-3 ordering word lies from another of its sequence group (§9.3.7): the
-/// modulo-65,536 distance. pending §25 fix 20: the text states no operands; labelled, the distance
-/// is the new word minus the word it is compared with.
+/// Where a queue-3 ordering word lies from another of its sequence group (§9.3.8): the
+/// candidate word minus the latest accepted word, modulo 65,536.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderBand {
     /// Distance 1 through 32,767.
@@ -4408,6 +4457,113 @@ impl BlobReassembler {
             max_concurrent_blobs: max_concurrent_blobs.max(1),
             max_blob_bytes: max_blob_bytes.min(MAX_BLOB_BYTES),
             superseded: 0,
+            tombstones: VecDeque::new(),
+            queue3_latest: HashMap::new(),
+            counts: ReassemblyCounts::default(),
+        }
+    }
+
+    /// The counts of what was ignored, discarded or odd (§9.3.8).
+    #[must_use]
+    pub const fn counts(&self) -> ReassemblyCounts {
+        self.counts
+    }
+
+    /// The live tombstone of `key`, if any.
+    fn tombstone(&self, key: &BlobKey, now_sec: f64) -> Option<&BlobTombstone> {
+        self.tombstones
+            .iter()
+            .find(|t| t.key == *key && now_sec - t.at <= BLOB_TOMBSTONE_SEC)
+    }
+
+    /// Remembers a completed identity; the oldest goes past [`MAX_BLOB_TOMBSTONES`].
+    fn remember(&mut self, tombstone: BlobTombstone) {
+        self.tombstones.retain(|t| t.key != tombstone.key);
+        if self.tombstones.len() >= MAX_BLOB_TOMBSTONES {
+            self.tombstones.pop_front();
+        }
+        self.tombstones.push_back(tombstone);
+    }
+
+    /// §9.3.8: whether a fragment of this packet conflicts with an active or remembered identity
+    /// on queues `2..=4` or with another of this packet: a different body or count, or another
+    /// recipient. Asked only after the packet's checksum held, because such a conflict is a
+    /// checksum-validated ambiguity and ends the connection, and nothing changes here.
+    #[must_use]
+    pub fn conflicts(&self, sender_rec_id: u16, fragments: &[BlobFragment], now_sec: f64) -> bool {
+        let live =
+            |entry: &IncompleteBlob| now_sec - entry.created_at_sec <= BLOB_REASSEMBLY_EXPIRY_SEC;
+        let mut seen: Vec<(BlobKey, u32, u32, u64, u64)> = Vec::new();
+        for frag in fragments {
+            let hdr = &frag.header;
+            if !matches!(hdr.queue_id, 2..=4) {
+                continue;
+            }
+            let key = blob_key(sender_rec_id, hdr);
+            let hash = fragment_hash(hdr, &frag.payload);
+            let index = hdr.frag_index as usize;
+            let clash = |num_frags: u32, recipient: u64, hashes: &[u64]| {
+                num_frags != hdr.num_frags
+                    || recipient != hdr.recipient_id
+                    || hashes
+                        .get(index)
+                        .is_some_and(|known| *known != 0 && *known != hash)
+            };
+            if let Some(t) = self.tombstone(&key, now_sec)
+                && clash(t.num_frags, t.recipient_id, &t.hashes)
+            {
+                return true;
+            }
+            if let Some(e) = self.incomplete.get(&key).filter(|e| live(e))
+                && clash(e.num_frags, e.recipient_id, &e.hashes)
+            {
+                return true;
+            }
+            let other = seen.iter().any(|(k, n, i, r, h)| {
+                *k == key
+                    && (*n != hdr.num_frags
+                        || *r != hdr.recipient_id
+                        || (*i == hdr.frag_index && *h != hash))
+            });
+            if other {
+                return true;
+            }
+            seen.push((key, hdr.num_frags, hdr.frag_index, hdr.recipient_id, hash));
+        }
+        false
+    }
+
+    /// §9.3.8's queue-3 gate for a completed identity: whether it is delivered, with the latest
+    /// accepted word and the superseding of older incomplete ones done.
+    fn queue3_gate(&mut self, sender_rec_id: u16, group: u16, order: u16) -> bool {
+        let slot = (sender_rec_id, group);
+        let Some(&latest) = self.queue3_latest.get(&slot) else {
+            if self.queue3_latest.len() < MAX_ORDER_GROUPS {
+                self.queue3_latest.insert(slot, order);
+            } else {
+                self.counts.queue3_groups_over = self.counts.queue3_groups_over.saturating_add(1);
+            }
+            self.supersede_older(sender_rec_id, group, order);
+            return true;
+        };
+        match order_band(order, latest) {
+            OrderBand::Newer => {
+                self.queue3_latest.insert(slot, order);
+                self.supersede_older(sender_rec_id, group, order);
+                true
+            }
+            OrderBand::Equal => {
+                self.counts.queue3_equal = self.counts.queue3_equal.saturating_add(1);
+                true
+            }
+            OrderBand::Ambiguous => {
+                self.counts.queue3_ambiguous = self.counts.queue3_ambiguous.saturating_add(1);
+                true
+            }
+            OrderBand::Older => {
+                self.counts.queue3_older = self.counts.queue3_older.saturating_add(1);
+                false
+            }
         }
     }
 
@@ -4417,9 +4573,8 @@ impl BlobReassembler {
         self.superseded
     }
 
-    /// A queue-3 blob of `group` completed with `order`: an older incomplete one of its group
-    /// is superseded (§9.3.7, the interim latest-only choice). Equal and ambiguous words are
-    /// not; a completed blob is not touched.
+    /// A queue-3 blob of `group` completed with `order` as the newest: an older incomplete one
+    /// of its group is superseded (§9.3.8). A completed blob is not touched.
     fn supersede_older(&mut self, sender_rec_id: u16, group: u16, order: u16) {
         let before = self.incomplete.len();
         self.incomplete.retain(|&(sender, queue, g, o), _| {
@@ -4451,6 +4606,8 @@ impl BlobReassembler {
     pub fn purge_expired(&mut self, now_sec: f64) {
         self.incomplete
             .retain(|_, entry| now_sec - entry.created_at_sec <= BLOB_REASSEMBLY_EXPIRY_SEC);
+        self.tombstones
+            .retain(|t| now_sec - t.at <= BLOB_TOMBSTONE_SEC);
     }
 
     /// The checks of one fragment that need no table state (§5.6.4 rules 1, 4, 5; §7.1;
@@ -4535,6 +4692,10 @@ impl BlobReassembler {
                 continue;
             }
             let key = blob_key(sender_rec_id, hdr);
+            // §9.3.8: a repeat of a completed identity opens nothing.
+            if matches!(hdr.queue_id, 2..=4) && self.tombstone(&key, now_sec).is_some() {
+                continue;
+            }
             let open = self
                 .incomplete
                 .get(&key)
@@ -4547,6 +4708,8 @@ impl BlobReassembler {
                         .map(|&(_, n, r)| (n, r))
                 });
             match open {
+                // On queues 2–4 this is a conflict: judged after the checksum (`conflicts`).
+                Some(_) if matches!(hdr.queue_id, 2..=4) => {}
                 Some((n, _)) if n != hdr.num_frags => {
                     return Err(SessionError::InvalidFragmentBounds {
                         frag_index: hdr.frag_index,
@@ -4588,11 +4751,34 @@ impl BlobReassembler {
         self.check_fragment(&frag)?;
         let hdr = &frag.header;
         let alloc_size = (hdr.num_frags as usize).saturating_mul(MAX_BLOB_FRAG_PAYLOAD);
+        let remembered = matches!(hdr.queue_id, 2..=4);
+
+        // §9.3.8: an exact retransmission of a remembered identity is ignored ([`Self::conflicts`]
+        // has refused any other repeat).
+        if remembered {
+            self.purge_expired(now_sec);
+            if self
+                .tombstone(&blob_key(sender_rec_id, hdr), now_sec)
+                .is_some()
+            {
+                self.counts.duplicates = self.counts.duplicates.saturating_add(1);
+                return Ok(None);
+            }
+        }
 
         // Fast path for single-fragment blobs (numFrags == 1, fragIndex == 0, §5.6.4 rule 2)
         if hdr.num_frags == 1 {
-            if hdr.queue_id == 3 {
-                self.supersede_older(sender_rec_id, hdr.seq_group, hdr.order_num);
+            if remembered {
+                self.remember(BlobTombstone {
+                    key: blob_key(sender_rec_id, hdr),
+                    at: now_sec,
+                    num_frags: 1,
+                    recipient_id: hdr.recipient_id,
+                    hashes: vec![fragment_hash(hdr, &frag.payload)],
+                });
+            }
+            if hdr.queue_id == 3 && !self.queue3_gate(sender_rec_id, hdr.seq_group, hdr.order_num) {
+                return Ok(None);
             }
             return Ok(Some(ReassembledBlob {
                 queue_id: hdr.queue_id,
@@ -4630,6 +4816,7 @@ impl BlobReassembler {
                 buffer: vec![0u8; alloc_size],
                 trimmed_len: None,
                 created_at_sec: now_sec,
+                hashes: vec![0u64; hdr.num_frags as usize],
             }
         });
 
@@ -4648,6 +4835,9 @@ impl BlobReassembler {
         if (entry.received_mask[word_idx] & bit_mask) == 0 {
             entry.received_mask[word_idx] |= bit_mask;
             entry.received_count += 1;
+            if let Some(slot) = entry.hashes.get_mut(hdr.frag_index as usize) {
+                *slot = fragment_hash(hdr, &frag.payload);
+            }
 
             let offset = (hdr.frag_index as usize) * MAX_BLOB_FRAG_PAYLOAD;
             entry.buffer[offset..offset + frag.payload.len()].copy_from_slice(&frag.payload);
@@ -4666,8 +4856,19 @@ impl BlobReassembler {
             if let Some(final_len) = completed.trimmed_len {
                 completed.buffer.truncate(final_len);
             }
-            if completed.queue_id == 3 {
-                self.supersede_older(sender_rec_id, completed.seq_group, completed.order_num);
+            if matches!(completed.queue_id, 2..=4) {
+                self.remember(BlobTombstone {
+                    key: key_tuple,
+                    at: now_sec,
+                    num_frags: completed.num_frags,
+                    recipient_id: completed.recipient_id,
+                    hashes: std::mem::take(&mut completed.hashes),
+                });
+            }
+            if completed.queue_id == 3
+                && !self.queue3_gate(sender_rec_id, completed.seq_group, completed.order_num)
+            {
+                return Ok(None);
             }
             return Ok(Some(ReassembledBlob {
                 queue_id: completed.queue_id,
@@ -4991,9 +5192,31 @@ pub enum DisconnectReason {
     /// A local disconnect finished: `DisconnectHeader` was retransmitted for `20.0` s in
     /// State `7` (§6.1, §8.2).
     LocalDisconnect,
-    /// A sequence gap stayed open for [`MAX_GAP_AGE_SEC`] with the peer still sending (§5.6.3,
-    /// §6.5): labelled engineering limit, pending §25 fix 12.
+    /// A checksum-valid later packet opened a sequence gap that stayed open for
+    /// [`MAX_GAP_AGE_SEC`] (§9.3.8: the phase table's deadline row).
+    GapDeadline,
+    /// A checksum-valid form the session cannot take: `blobFlags` `0x02` on queues 2–4, or a
+    /// conflicting body or count for one identity (§9.3.8: the phase table's unsupported row).
     UnsupportedTraffic,
+}
+
+impl DisconnectReason {
+    /// A neutral label for a log line: a kind, never a server's number (§9.3.8).
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::HandshakeTimeout => "handshake timeout",
+            Self::SilenceTimeout => "silence timeout",
+            Self::ServerDisconnect => "server disconnect",
+            Self::TransportError { fatal: true, .. } => "server fatal error",
+            Self::TransportError { fatal: false, .. } => "server transport error",
+            Self::LocalDisconnect => "local disconnect",
+            Self::UnsupportedCodec => "unsupported dictionary",
+            Self::GapDeadline => "sequence gap deadline",
+            Self::OutboundWindowOverflow => "outbound window overflow",
+            Self::UnsupportedTraffic => "unsupported packet form",
+        }
+    }
 }
 
 /// High-level events emitted by a [`SessionConnection`] when processing incoming datagrams or timers.
@@ -5933,8 +6156,8 @@ impl SessionConnection {
     /// §5.3), until they are acknowledged or the connection ends. Once one is gone a request
     /// for it is answered with `OutOfOrderAckHeader` as for any expired fragment (§5.4).
     ///
-    /// For the initial `0xEC` and the client's `0xF5` (§9.3.7, "Queue-1 retention"): they stay
-    /// for the entire active negotiation, not for a fixed time.
+    /// For the initial `0xEC` and the client's `0xF5` (§9.3.7): they stay for the entire active
+    /// negotiation, not for a fixed time, and they always carry the explicit recipient field.
     ///
     /// # Errors
     ///
@@ -6011,7 +6234,12 @@ impl SessionConnection {
 
         let retransmit_eligible = queue_id == 2 || queue_id == 4;
         let mut seqs = Vec::with_capacity(frags.len());
-        for frag in frags {
+        for mut frag in frags {
+            // §9.3.7 (P10-10F): `0xEC` and the client's `0xF5` always carry the eight-byte
+            // recipient field, also for the default recipient `2`.
+            if retained {
+                frag.header.blob_flags &= !BLOB_FLAG_DEFAULT_RECIPIENT;
+            }
             let seq = self.send_sequenced_packet(
                 OptionalHeaders::default(),
                 vec![frag],
@@ -6061,7 +6289,13 @@ impl SessionConnection {
         })
     }
 
-    /// How many incomplete queue-3 blobs a newer completed one superseded (§9.3.7).
+    /// What the reassembler ignored, discarded or found odd (§9.3.8).
+    #[must_use]
+    pub const fn reassembly_counts(&self) -> ReassemblyCounts {
+        self.reassembler.counts()
+    }
+
+    /// How many incomplete queue-3 blobs a newer completed one superseded (§9.3.8).
     #[must_use]
     pub fn superseded_blobs(&self) -> u64 {
         self.reassembler.superseded()
@@ -6188,6 +6422,32 @@ impl SessionConnection {
             SequenceCommit::Unsequenced
         };
 
+        // §9.3.8: a known-layout unsupported form or a conflicting identity is judged here, with
+        // the checksum verified and nothing committed: one terminal result, no Ack. An unmasked
+        // packet proves nothing about its sender, so it is only dropped and counted.
+        let bit = pkt
+            .fragments
+            .iter()
+            .find(|f| unsupported_control_bit(&f.header));
+        let conflict = self
+            .reassembler
+            .conflicts(sender_rec_id, &pkt.fragments, now_sec);
+        if bit.is_some() || conflict {
+            let err = bit.map_or(SessionError::ConflictingBlobIdentity, |f| {
+                SessionError::UnsupportedFragment {
+                    queue_id: f.header.queue_id,
+                    blob_flags: f.header.blob_flags,
+                }
+            });
+            if (hdr.flags & FLAG_MASKED_CHECKSUM) != 0 {
+                if self.queue_standalone_disconnect().is_err() {
+                    tracing::debug!("official session: the closing Disconnect was not encoded");
+                }
+                self.close(DisconnectReason::UnsupportedTraffic, now_sec);
+            }
+            return Err(self.refused(err));
+        }
+
         // Every check passed: commit the sequence state.
         match commit {
             SequenceCommit::Unsequenced => {}
@@ -6249,9 +6509,9 @@ impl SessionConnection {
     }
 
     /// Counts a datagram refused before anything was committed, for the diagnostics, and hands
-    /// the error back. pending §25 fix 12: the count closes nothing, because such a datagram is
-    /// not authenticated: what ends a stalled connection is the age of its sequence gap
-    /// ([`MAX_GAP_AGE_SEC`]). A duplicate of a sequence number already taken is ordinary
+    /// the error back (§9.3.8). The count closes nothing, because such a datagram is not
+    /// authenticated: what ends a stall is a stage's deadline, the silence timeout or the
+    /// deadline of a sequence gap ([`MAX_GAP_AGE_SEC`]). A duplicate of a sequence number already taken is ordinary
     /// retransmission overlap and is not a refusal; only State `5` counts, since the handshake
     /// has its own `20.0` s timeout.
     fn refused(&mut self, err: SessionError) -> SessionError {
@@ -6560,7 +6820,8 @@ impl SessionConnection {
             if let Some(ne) = err
                 && self.state != ConnectionState::Closing
             {
-                tracing::warn!(
+                // §9.3.8: the numbers are for the local debug log only.
+                tracing::debug!(
                     fatal,
                     error_code = format_args!("{:#010x}", ne.error_code),
                     error_subcode = format_args!("{:#010x}", ne.error_subcode),
@@ -6678,8 +6939,8 @@ impl SessionConnection {
                     return Ok(());
                 }
 
-                // pending §25 fix 12: a gap that stays open while later packets keep arriving
-                // ends the connection rather than being NAKed forever.
+                // §9.3.8: one non-resetting deadline; a gap that stays open ends the connection
+                // rather than being NAKed forever.
                 if self
                     .oldest_gap_opened_at()
                     .is_some_and(|t| now_sec - t > MAX_GAP_AGE_SEC)
@@ -6689,12 +6950,12 @@ impl SessionConnection {
                         gaps = self.missing_gaps.len(),
                         "official session: a sequence gap stayed open; closing the connection"
                     );
-                    // §9.3.7's unsupported-transport row: one Disconnect if possible, and this is
-                    // the last moment it is, before the connection stops being State 5.
+                    // §9.3.8: one Disconnect if established, and this is the last moment it is,
+                    // before the connection stops being State 5.
                     if self.queue_standalone_disconnect().is_err() {
                         tracing::debug!("official session: the closing Disconnect was not encoded");
                     }
-                    self.close(DisconnectReason::UnsupportedTraffic, now_sec);
+                    self.close(DisconnectReason::GapDeadline, now_sec);
                     return Ok(());
                 }
 
@@ -6865,8 +7126,9 @@ impl SessionConnection {
     /// copy the last allocated outgoing sequence number and the current client word, advance
     /// neither and draw no mask (§9.3.7 "Unsequenced controls", P10-23-POLICY; Vectors 9 and 13).
     ///
-    /// pending §25 fix 13: before any sequence is allocated this copies the counter's initial
-    /// `1` (§5.2), where §9.3.7 says zero; the two give different bytes.
+    /// §9.3.8: before any sequenced send this is the initialized counter `1` (Vector 17), later
+    /// the last allocated sequence; the current interim local word is kept and not advanced, and
+    /// no ISAAC word is consumed.
     fn queue_control(&mut self, opt: OptionalHeaders) -> Result<(), SessionError> {
         let hdr = self.base_datagram_header(self.send_seq_num);
         let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;
@@ -7468,6 +7730,11 @@ pub fn decode_message(
         limited
             .read_to_end(&mut out)
             .map_err(|_| SessionError::ZlibDecompressionFailed)?;
+        // §9.3.8: the stream finishes exactly at the end of its slice; trailing bytes and
+        // concatenated streams fail.
+        if limited.get_ref().total_in() != z_stream.len() as u64 {
+            return Err(SessionError::ZlibDecompressionFailed);
+        }
         if out.len() > effective_limit {
             return Err(SessionError::DecompressedMessageTooLarge {
                 size: out.len(),

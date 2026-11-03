@@ -68,17 +68,24 @@ pub trait ConnectorNet: Send + std::fmt::Debug + 'static {
         first_local: Option<Ipv4Addr>,
     ) -> Option<Box<dyn FnMut() -> Result<Self::Udp, crate::play::PlayError> + Send>>;
 
-    /// The recipient a requested `0x6F` goes to. `official-session.md` §9.3.7 specifies no
-    /// source (OPEN-SESSION-15/20), so there is none on any production path: [`LiveNet`] keeps
-    /// this default and the selection reports that it is not supported. Only the synthetic
-    /// networks of the tests answer, so that the world-entry path can be tested; nothing here
-    /// or in a release graph can make one up (`tools/check-release-features.sh`).
-    fn entry_destination(&self) -> Option<u64> {
-        None
+    /// Whether a source for the server's readiness and the `0xF4` target exists. They are
+    /// OPEN-WORLD-9 and OPEN-SESSION-18 (`official-session.md` §9.3.8), so there is none on any
+    /// production path: [`LiveNet`] keeps this default, and an entry stops at the readiness wait
+    /// after `0x90`. Only the synthetic networks of the tests answer `true`, so that the in-world
+    /// code keeps being tested; nothing in a release graph can (`tools/check-release-features.sh`).
+    fn readiness_specified(&self) -> bool {
+        false
     }
 
-    /// Whether a `0x6F` may go after a return from the world. §9.3.7 leaves re-entry unsupported
-    /// (OPEN-SESSION-16), so it may not on any production path: [`LiveNet`] keeps this default.
+    /// Whether the chat server's codec has a source. It is OPEN-SESSION-1, so no chat connection,
+    /// open or retry happens on any production path: [`LiveNet`] keeps this default (§9.3.8). Only
+    /// the synthetic networks of the tests answer `true`.
+    fn chat_codec_specified(&self) -> bool {
+        false
+    }
+
+    /// Whether a `0x6F` may go after a return from the world. Re-entry stays unsupported
+    /// (OPEN-SESSION-16, §9.3.8), so it may not on any production path: [`LiveNet`] keeps this default.
     /// Only a test's synthetic network answers `true`, to reach what a second world must not
     /// inherit from the first.
     fn re_entry_allowed(&self) -> bool {

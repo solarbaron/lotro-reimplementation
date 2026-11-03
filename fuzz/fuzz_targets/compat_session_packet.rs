@@ -129,7 +129,13 @@ fuzz_target!(|data: &[u8]| {
 
     if let Ok((frag, _)) = BlobFragment::decode(data) {
         let mut reassembler = BlobReassembler::new(8, 65_536);
-        let _ = reassembler.ingest(0x0100, frag, 1.0);
+        // §9.3.8: the identity check holds whatever the fragment, and asks nothing to change.
+        let _ = reassembler.conflicts(0x0100, std::slice::from_ref(&frag), 1.0);
+        let _ = reassembler.ingest(0x0100, frag.clone(), 1.0);
+        // An exact repeat, and the same identity past its tombstone.
+        let _ = reassembler.conflicts(0x0100, std::slice::from_ref(&frag), 1.5);
+        let _ = reassembler.ingest(0x0100, frag.clone(), 1.5);
+        let _ = reassembler.ingest(0x0100, frag, 40.0);
     }
 
     let key = [0x3Cu8; 24];

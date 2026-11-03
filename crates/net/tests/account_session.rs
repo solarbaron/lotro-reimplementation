@@ -120,6 +120,31 @@ fn account_events_surface_only_while_connecting() {
     assert!(s.poll(now + Duration::from_secs(1)).is_empty());
 }
 
+/// §8.2: the notice alone is also surfaced at the character list; a bound is a bound.
+#[test]
+fn a_login_notice_is_surfaced_in_connected_too() {
+    let notice = |text: &str| {
+        Event::Account(AccountEvent::LoginNotice {
+            text: text.to_owned(),
+        })
+    };
+    let (mut s, b, now) = connecting();
+    b.push(notice("One."));
+    assert_eq!(s.poll(now).len(), 1);
+    b.push(Event::Connected {
+        characters: vec![CharacterSummary { name: "A".into() }],
+    });
+    b.push(notice("Two."));
+    b.push(progress());
+    b.push(notice(&"x".repeat(257)));
+    let events = s.poll(now);
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert!(matches!(
+        events.get(1),
+        Some(Event::Account(AccountEvent::LoginNotice { text })) if text == "Two."
+    ));
+}
+
 #[test]
 fn choose_world_needs_an_id_of_the_latest_list() {
     let (mut s, b, now) = connecting();

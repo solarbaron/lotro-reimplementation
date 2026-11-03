@@ -127,6 +127,10 @@ impl InstallData for NoData {
         }
     }
 
+    fn check_name_table(&self) -> Result<(), InstallUnsupported> {
+        Ok(())
+    }
+
     fn name_rule_languages(&self, rule_key: u32) -> Result<Vec<u32>, InstallUnsupported> {
         match rule_key {
             7 => Ok(vec![5]),
@@ -194,15 +198,21 @@ impl HttpClient for NoHttp {
 struct Net {
     session: Arc<Mutex<Queues>>,
     chat: Option<Arc<Mutex<Queues>>>,
+    /// Off, like every production path: the entry stops at its readiness wait.
+    readiness: bool,
 }
 
 impl ConnectorNet for Net {
     type Udp = Udp;
 
-    // The test-only destination of `0x6F`, so the fuzzer reaches the world (no production path
-    // has one, `official-session.md` §9.3.7).
-    fn entry_destination(&self) -> Option<u64> {
-        Some(0x0A0B_0C0D_0E0F_1113)
+    // The test-only source of readiness, so the fuzzer reaches the world (no production path has
+    // one, `official-session.md` §9.3.8) and also the chat server's code.
+    fn readiness_specified(&self) -> bool {
+        self.readiness
+    }
+
+    fn chat_codec_specified(&self) -> bool {
+        true
     }
 
     fn http(&mut self, _request: &HttpRequest) -> Result<HttpResponse, LoginError> {
@@ -476,6 +486,7 @@ fuzz_target!(|data: &[u8]| {
     let mut net = Net {
         session: Arc::clone(&session),
         chat: chat.clone(),
+        readiness: flags & 0x20 == 0,
     };
     let Some(mut driver) = start(&mut net, flags) else {
         return;

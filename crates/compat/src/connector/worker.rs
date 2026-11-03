@@ -147,7 +147,7 @@ impl Out {
                 note: None,
             }),
             Event::Disconnected {
-                reason: DisconnectReason::TransportFailed("official login refused".to_owned()),
+                reason: DisconnectReason::TransportFailed(String::new()),
             },
         ]);
     }
@@ -161,8 +161,9 @@ impl Out {
                 detail: None,
                 note: Some(note.to_owned()),
             }),
+            // §9.3.8's unsupported row: the same Tessera text.
             Event::Disconnected {
-                reason: DisconnectReason::TransportFailed("official login refused".to_owned()),
+                reason: DisconnectReason::TransportFailed(note.to_owned()),
             },
         ]);
     }
@@ -207,7 +208,9 @@ struct Joined {
 /// §5.5): nothing more can be sent.
 fn revoked() -> Event {
     Event::Disconnected {
-        reason: DisconnectReason::TransportFailed("the network access was revoked".to_owned()),
+        reason: DisconnectReason::TransportFailed(
+            crate::backend::NETWORK_ACCESS_REVOKED.to_owned(),
+        ),
     }
 }
 
@@ -428,12 +431,9 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
             out.refuse(LoginRefusal::ServiceUnavailable, None);
             return;
         }
+        // §9.3.8: an I/O failure before `Connected`.
         Err(StartFailure::Bind) => {
-            out.one(Event::Disconnected {
-                reason: DisconnectReason::TransportFailed(
-                    "the official connection could not be opened".to_owned(),
-                ),
-            });
+            out.refuse(LoginRefusal::ServiceUnavailable, None);
             return;
         }
         Err(StartFailure::Ticket) => {
@@ -441,7 +441,8 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
             return;
         }
         // Nothing was sent: the ticket is not spent on an install that cannot answer
-        // (`crate::initial`, the preflight of `official-session.md` §9.3.7).
+        // (`crate::initial`, the preflight of `official-session.md` §9.3.7–§9.3.8 and
+        // `official-login.md` §5.1's `F02_CONFIG_INVALID`).
         Err(StartFailure::Unsupported(why)) => {
             tracing::info!(reason = %why, "official session: not started");
             out.refuse_locally(LoginRefusal::UnsupportedStep, why.detail());

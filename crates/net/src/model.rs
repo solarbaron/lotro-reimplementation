@@ -212,6 +212,10 @@ pub enum DisconnectReason {
     ServerClosed(String),
     /// The connection timed out or the peer stopped responding.
     TimedOut,
+    /// A time limit of this client's own ended the session, with Tessera's text naming the stage
+    /// (`official-session.md` §9.3.8: `TimedOut` with a locally worded deadline), so that it does
+    /// not read as a service that stopped answering.
+    TimedOutLocally(String),
     /// The transport failed (I/O error or protocol violation), with detail.
     TransportFailed(String),
     /// The session reached a step this client does not support, with Tessera's own text. The

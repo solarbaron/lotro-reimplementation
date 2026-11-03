@@ -82,14 +82,12 @@ impl std::fmt::Display for OwnText {
                 "Delete the character {name}? Click Delete again to confirm."
             ),
             Self::ListFull => f.write_str("The character list is full."),
-            Self::OfficialCreationUnavailable => f.write_str(
-                "Creating characters on the official servers is not available in this \
-                 version of Tessera yet.",
-            ),
-            Self::OfficialDeletionUnavailable => f.write_str(
-                "Deleting characters on the official servers is not available in this \
-                 version of Tessera yet.",
-            ),
+            Self::OfficialCreationUnavailable => {
+                f.write_str("Not supported by this version of Tessera yet")
+            }
+            Self::OfficialDeletionUnavailable => {
+                f.write_str("Not supported by this version of Tessera yet")
+            }
         }
     }
 }

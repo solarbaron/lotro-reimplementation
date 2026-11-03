@@ -138,6 +138,13 @@ pub enum LoginRefusal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AccountEvent {
+    /// An informational system line of the service, at most [`MAX_ACCOUNT_DETAIL_LEN`] bytes: no
+    /// action, no endpoint, account or local diagnostic (`official-entry.md` §8.1). The one Account
+    /// event allowed in `Connected` and `EnteringWorld` too (§8.2).
+    LoginNotice {
+        /// The text.
+        text: String,
+    },
     /// The login reached a stage.
     LoginProgress {
         /// The stage.
@@ -197,6 +204,7 @@ impl AccountEvent {
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
+            Self::LoginNotice { .. } => "LoginNotice",
             Self::LoginProgress { .. } => "LoginProgress",
             Self::WorldList { .. } => "WorldList",
             Self::LoginQueueChanged { .. } => "LoginQueueChanged",
@@ -213,6 +221,7 @@ impl AccountEvent {
             Self::LoginQueueChanged { .. } => 2,
             Self::WorldRefused { .. } => 3,
             Self::LoginRefused { .. } => 4,
+            Self::LoginNotice { .. } => 5,
         }
     }
 
@@ -224,6 +233,7 @@ impl AccountEvent {
     pub fn is_valid(&self) -> bool {
         match self {
             Self::LoginProgress { .. } => true,
+            Self::LoginNotice { text } => text.len() <= MAX_ACCOUNT_DETAIL_LEN,
             Self::WorldList { worlds } => {
                 if worlds.is_empty() || worlds.len() > MAX_WORLDS {
                     return false;
@@ -282,6 +292,7 @@ impl AccountEvent {
                 }
                 changed
             }
+            Self::LoginNotice { text } => fix(text, MAX_ACCOUNT_DETAIL_LEN),
             Self::WorldRefused {
                 detail: Some(d), ..
             } => fix(d, MAX_ACCOUNT_DETAIL_LEN),

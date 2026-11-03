@@ -638,7 +638,7 @@ impl HandshakeReport {
 
     /// Logs the failure line (`info`, module docs) for a close with `reason`.
     pub fn log_failed(&self, reason: &crate::session::DisconnectReason) {
-        self.log_ended(&format!("{reason:?}"));
+        self.log_ended(reason.label());
     }
 
     /// Logs the failure line (`info`, module docs) for an end the session layer did not

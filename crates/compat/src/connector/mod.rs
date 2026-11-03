@@ -365,9 +365,7 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
         if closed && !self.ended {
             self.ended = true;
             out.push(Event::Disconnected {
-                reason: DisconnectReason::TransportFailed(
-                    "the official connection ended".to_owned(),
-                ),
+                reason: DisconnectReason::TransportFailed(String::new()),
             });
         }
         if self.ended {

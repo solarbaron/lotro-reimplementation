@@ -17,14 +17,13 @@ use crate::initial::{
     UnsupportedNegotiation, VERSION_PATH_WAIT_SEC, build_install_advertisement,
 };
 use crate::session::{
-    DEFAULT_BLOB_RECIPIENT_ID, FLAG_MASKED_CHECKSUM, FlowControlHeader, MAX_GAP_AGE_SEC,
-    encode_message_with_routing,
+    FLAG_MASKED_CHECKSUM, FlowControlHeader, MAX_GAP_AGE_SEC, encode_message_with_routing,
 };
 
-const RULE: u32 = SYNTHETIC_NAME_RULE;
+pub(super) const RULE: u32 = SYNTHETIC_NAME_RULE;
 
 /// The data of a synthetic `0xDD` naming `rule`, with `trailing`.
-fn install_request(rule: u32, trailing: &[u32]) -> Vec<u8> {
+pub(super) fn install_request(rule: u32, trailing: &[u32]) -> Vec<u8> {
     let mut out = vec![0x00];
     out.extend_from_slice(&0x0102_0304u32.to_le_bytes());
     out.extend_from_slice(&rule.to_le_bytes());
@@ -36,7 +35,7 @@ fn install_request(rule: u32, trailing: &[u32]) -> Vec<u8> {
 }
 
 /// A blob on queue 1 to the default recipient, unfragmented.
-fn queue1(login: &mut Server, opcode: u32, data: &[u8]) -> Vec<u8> {
+pub(super) fn queue1(login: &mut Server, opcode: u32, data: &[u8]) -> Vec<u8> {
     login.seq += 1;
     let frags = split_blob(1, 0xFFFF, 0, 0, None, opcode, data).expect("split");
     let mask = login.isaac.next_mask();
@@ -70,7 +69,7 @@ fn connected_over(data: Arc<dyn InstallData>) -> (World, SessionDriver<FakeNet>,
     (world, d, login)
 }
 
-fn connected() -> (World, SessionDriver<FakeNet>, Server) {
+pub(super) fn connected() -> (World, SessionDriver<FakeNet>, Server) {
     connected_over(Arc::new(records()))
 }
 
@@ -92,15 +91,12 @@ fn opcodes(packets: &[crate::session::DecodedPacket]) -> Vec<u32> {
         .collect()
 }
 
-/// The refusal of the attempt: one `LoginRefused` with its `Disconnected`, `ServiceUnavailable`
-/// at a wait's end and `UnsupportedStep` otherwise (§9.3.7), and the driver has ended.
+/// The refusal of the attempt under §9.3.8's phase table: one `LoginRefused { UnsupportedStep }`
+/// with Tessera's note, then `Disconnected`: `TimedOut` at a wait's end, `TransportFailed` with the
+/// same text otherwise; and the driver has ended.
 fn assert_refused(d: &mut SessionDriver<FakeNet>, why: UnsupportedNegotiation) {
     let events = d.take_events();
-    let want = if why.is_deadline() {
-        LoginRefusal::ServiceUnavailable
-    } else {
-        LoginRefusal::UnsupportedStep
-    };
+    let want = LoginRefusal::UnsupportedStep;
     let refused: Vec<(&Option<String>, &Option<String>)> = events
         .iter()
         .filter_map(|e| match e {
@@ -116,10 +112,28 @@ fn assert_refused(d: &mut SessionDriver<FakeNet>, why: UnsupportedNegotiation) {
     assert_eq!(refused.len(), 1, "{events:?}");
     assert_eq!(refused[0].0, &None, "nothing here is the service's words");
     assert_eq!(refused[0].1.as_deref(), Some(why.detail()));
-    assert!(events.iter().any(is_disconnected), "{events:?}");
+    let ended = DisconnectReason::TransportFailed(why.detail().to_owned());
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::Disconnected { reason }
+                if if why.is_deadline() {
+                    *reason == DisconnectReason::TimedOut
+                } else {
+                    *reason == ended
+                }
+        )),
+        "{events:?}"
+    );
     assert!(d.ended());
     assert_eq!(d.counters().unsupported_results, 1);
-    assert_eq!(d.connection_states().0, None, "the login connection closed");
+    assert!(
+        matches!(
+            d.connection_states().0,
+            None | Some(crate::session::ConnectionState::Closing)
+        ),
+        "the login connection closed"
+    );
 }
 
 /// After the refusal nothing carrying the ticket goes out, however long the clock runs: the
@@ -168,6 +182,10 @@ impl InstallData for Answers {
 
     fn selected_language_key(&self) -> Result<u32, InstallUnsupported> {
         self.language
+    }
+
+    fn check_name_table(&self) -> Result<(), InstallUnsupported> {
+        Ok(())
     }
 
     fn name_rule_languages(&self, _rule_key: u32) -> Result<Vec<u32>, InstallUnsupported> {
@@ -281,10 +299,61 @@ fn a_full_run_in_the_observed_order_reaches_the_list_and_sends_the_selection() {
         (selection.queue_id, selection.order_num, selection.blob_id),
         (2, 1, 1)
     );
-    // Only the test-only source gives a destination; never the default or the list's.
-    assert_eq!(selection.recipient_id, TEST_ENTRY_DESTINATION);
+    // §9.3.8: the fixed reserved destination, never the default or the list's.
+    assert_eq!(selection.recipient_id, 0x0600_0000_0000_0401);
     // §6.5: the first world `0x30` (no documented argument source) is never emitted.
     assert!(!seen.blobs.contains(&0x30), "{:x?}", seen.blobs);
+    // §9.3.8: the explicit forms of `0xEC` and `0xF5`, recipient 2 resolved from the default.
+    for h in seen
+        .fragment_headers
+        .iter()
+        .filter(|h| h.queue_id == 1 && h.num_frags > 1)
+    {
+        assert_eq!(h.blob_flags & 0x40, 0, "explicit");
+        assert_eq!(h.blob_flags & 0x10, 0x10);
+        assert_eq!(h.ext_word, None);
+    }
+
+    // The referral, the world handshake and the world's stages: the real decoders run on the
+    // list, the appearance and the world messages. No readiness comes, as on every production
+    // path, so nothing is entered and no `0xF4`, `0x30` or chat traffic goes out.
+    let until = Instant::now() + Duration::from_secs(10);
+    while service.seen().referral_auths == 0 {
+        for e in s.poll(Instant::now()) {
+            assert!(
+                !matches!(e, Event::WorldEntered { .. } | Event::Disconnected { .. }),
+                "{e:?}"
+            );
+        }
+        assert!(Instant::now() < until, "no referral");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let settle = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < settle {
+        for e in s.poll(Instant::now()) {
+            assert!(
+                !matches!(e, Event::WorldEntered { .. } | Event::Disconnected { .. }),
+                "{e:?}"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(s.state(), SessionState::EnteringWorld);
+    let seen = service.seen();
+    assert!(
+        !seen
+            .world_blobs
+            .iter()
+            .any(|op| matches!(op, 0xF4 | 0x30 | 0x19E | 0x13D)),
+        "{:x?}",
+        seen.world_blobs
+    );
+    assert!(
+        !seen
+            .blobs
+            .iter()
+            .any(|op| matches!(op, 0x19E | 0x13D | 0x154 | 0xDC | 0x7A | 0xD1))
+    );
 }
 
 /// One whole exchange at driver level: the stages advance, the first client packet is
@@ -674,11 +743,13 @@ fn a_completion_out_of_place_ends_the_attempt() {
     assert_refused(&mut d, UnsupportedNegotiation::UnexpectedCompletion);
     assert_no_ticket_after(&world, &mut d, 0.3);
 
+    // On another queue it is counted and skipped, with no state or timer change.
     let (world, mut d, mut login) = at_advertisement();
     world.deliver(login.blob(0xF5, &[0]), LOGIN_SERVER);
     d.step(0.2, true, &go);
-    assert_refused(&mut d, UnsupportedNegotiation::UnexpectedCompletion);
-    assert_no_ticket_after(&world, &mut d, 0.3);
+    assert!(!d.ended());
+    assert!(opcodes(&sent_packets(&world)).is_empty());
+    assert_eq!(d.initial_stages().ignored, 1);
 }
 
 #[test]
@@ -841,7 +912,7 @@ fn the_waits_are_thirty_seconds_and_do_not_start_again() {
 }
 
 #[test]
-fn a_queued_login_restarts_the_wait() {
+fn a_queued_login_has_one_absolute_limit() {
     let (world, mut d, mut login) = connected();
     let queued = LoginQueueStatusMessage {
         login_result: crate::session::LOGON_RESULT_QUEUED,
@@ -856,7 +927,15 @@ fn a_queued_login_restarts_the_wait() {
     world.deliver(queue1(&mut login, 0x130, &env), LOGIN_SERVER);
     d.step(DD_WAIT_SEC - 0.5, true, &go);
     slow_server(&world, &mut d, &mut login, DD_WAIT_SEC, DD_WAIT_SEC + 30.0);
-    assert!(!d.ended(), "the wait began again at the queue message");
+    assert!(!d.ended(), "the queue limit replaced the wait");
+    // Another queued status does not extend it.
+    let first = DD_WAIT_SEC - 0.5;
+    let later = first + crate::initial::QUEUE_WAIT_SEC - 1.0;
+    world.deliver(queue1(&mut login, 0x130, &env), LOGIN_SERVER);
+    d.step(later, true, &go);
+    assert!(!d.ended());
+    d.step(first + crate::initial::QUEUE_WAIT_SEC, false, &go);
+    assert_refused(&mut d, UnsupportedNegotiation::QueueDeadline);
 }
 
 /// Valid unsequenced traffic only: it keeps the silence timeout (§8.2) from firing and carries
@@ -892,7 +971,7 @@ fn transport_only_server(
 
 /// The client's watchdog runs out at 60 s without an event (`official-entry.md` §8.3), and the
 /// three stages together can pass it: a server that only keeps the transport alive still gets
-/// each whole wait and the wait's own result (pending §25 fix 9: the progress timer).
+/// each whole wait and the wait's own result: each real stage emits its progress event (§9.3.8).
 #[test]
 fn the_deadlines_decide_when_the_server_sends_only_transport_traffic() {
     const WATCHDOG_SEC: f64 = 60.0;
@@ -948,66 +1027,21 @@ fn the_deadlines_decide_when_the_server_sends_only_transport_traffic() {
     assert_refused(&mut d, UnsupportedNegotiation::ListDeadline);
 }
 
-/// The driver asks to be woken for the keep-alive, whether or not anything arrives.
-#[test]
-fn the_loop_is_woken_for_the_keep_alive() {
-    let (_world, d, _login) = connected();
-    let next = d.next_deadline(1.0).expect("a deadline");
-    assert!(
-        next <= super::super::session_phase::LOG_INTERVAL_SEC,
-        "{next}"
-    );
-}
-
-/// While the queue panel shows (`official-entry.md` §8.4), no progress event replaces it;
-/// its end, or the next step, brings the keep-alive back.
-#[test]
-fn the_keep_alive_leaves_the_queue_panel_alone() {
-    let queue_status = |result: u32, queue: Option<crate::session::LoginQueuePosition>| {
-        let status = LoginQueueStatusMessage {
-            login_result: result,
-            detail_text: String::new(),
-            queue,
-        };
-        encode_event_envelope(&status.encode().expect("encode"))
-    };
-    let (world, mut d, mut login) = connected();
-    let queued = queue_status(
-        crate::session::LOGON_RESULT_QUEUED,
-        Some(crate::session::LoginQueuePosition {
-            position: 3,
-            total: 9,
-        }),
-    );
-    world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
-    d.step(1.0, true, &go);
-    let events = d.take_events();
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, Event::Account(AccountEvent::LoginQueueChanged { .. }))),
-        "{events:?}"
-    );
-    // A skipped message and the passing time make no progress event while queued.
-    world.deliver(queue1(&mut login, 0x149, &[0x00, 0x7F]), LOGIN_SERVER);
-    let progress = transport_only_server(&world, &mut d, &login, 12.0, 50.0);
-    assert_eq!(progress, [] as [f64; 0]);
-
-    // Accepted: the progress screen, and the keep-alive after it.
-    let accepted = queue_status(0, None);
-    world.deliver(queue1(&mut login, 0x130, &accepted), LOGIN_SERVER);
-    let progress = transport_only_server(&world, &mut d, &login, 50.0, 75.0);
-    assert!(progress.len() >= 3, "{progress:?}");
-    assert_eq!(progress[0], 50.0, "the acceptance's own event");
-}
-
-/// pending §25 fix 12: a packet that stays refused while the server keeps sending ends the
-/// attempt, by the age of its gap, with §9.3.7's one Disconnect. Reached on the version path, whose
-/// wait is longer than the gap's: on the `0xDD` path §9.3.7's waits end the attempt first.
+/// §9.3.8: a gap a checksum-valid later packet opened has one non-resetting deadline, and its end
+/// is the deadline row, with one Disconnect. Reached in the login queue, whose limit is longer.
 #[test]
 fn a_gap_that_stays_open_ends_the_attempt() {
     let (world, mut d, mut login) = connected();
-    world.deliver(login.event(0x12F, &[]), LOGIN_SERVER);
+    let queued = LoginQueueStatusMessage {
+        login_result: crate::session::LOGON_RESULT_QUEUED,
+        detail_text: String::new(),
+        queue: Some(crate::session::LoginQueuePosition {
+            position: 3,
+            total: 9,
+        }),
+    };
+    let env = encode_event_envelope(&queued.encode().expect("encode"));
+    world.deliver(queue1(&mut login, 0x130, &env), LOGIN_SERVER);
     d.step(0.5, true, &go);
     world.take_sent();
     // Sequence number of the packet that cannot be taken: a later valid one opens the gap.
@@ -1031,7 +1065,7 @@ fn a_gap_that_stays_open_ends_the_attempt() {
         1,
         "{sent:?}"
     );
-    assert_refused(&mut d, UnsupportedNegotiation::TrafficRefused);
+    assert_refused(&mut d, UnsupportedNegotiation::GapDeadline);
     assert_no_ticket_after(&world, &mut d, 1.0 + MAX_GAP_AGE_SEC + 1.0);
 }
 
@@ -1065,7 +1099,7 @@ fn a_gap_that_stays_open_at_the_list_sends_one_disconnect() {
     assert!(d.take_events().iter().any(is_disconnected));
 }
 
-/// pending §25 fix 12: datagrams that match only the source and recipient are counted and end
+/// §9.3.8: datagrams that match only the source and recipient are counted and end
 /// nothing: until the fix settles the validation order, one unverified datagram cannot end a
 /// login.
 #[test]
@@ -1196,7 +1230,9 @@ fn queue_2_repeats_and_gaps_are_counted_not_waited_for() {
     // The test server's order follows its sequence; two blobs by hand.
     let send = |login: &mut Server, order: u16| {
         login.seq += 1;
-        let frags = split_blob(2, order, 1, 0, None, 0x6C, &list).expect("split");
+        // Each a fresh identity: a repeat of the word is not a repeat of the blob (§9.3.8).
+        let blob = u16::try_from(login.seq).expect("small");
+        let frags = split_blob(2, order, blob, 0, None, 0x6C, &list).expect("split");
         let mask = login.isaac.next_mask();
         encode_datagram(
             DatagramHeader {
@@ -1216,6 +1252,7 @@ fn queue_2_repeats_and_gaps_are_counted_not_waited_for() {
     }
     d.step(0.1, true, &go);
     let counters = d.counters();
+    assert_eq!(counters.reassembly.duplicates, 0);
     assert_eq!(counters.queue2_repeats, 1, "the second 5");
     assert_eq!(counters.queue2_gaps, 1, "5 to 9");
     assert!(
@@ -1227,7 +1264,6 @@ fn queue_2_repeats_and_gaps_are_counted_not_waited_for() {
 }
 
 /// §9.3.7, world §4.2: a `0x90` that does not decode is terminal, with Tessera's own reason.
-/// pending §25 fix 4: the event.
 #[test]
 fn an_unreadable_session_start_has_its_own_result_and_ends_the_session() {
     let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
@@ -1246,7 +1282,8 @@ fn an_unreadable_session_start_has_its_own_result_and_ends_the_session() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            Event::EnterWorldFailed { reason, .. } if reason == UNSUPPORTED_SESSION_START
+            Event::Disconnected { reason: DisconnectReason::TransportFailed(reason) }
+                if reason == UNSUPPORTED_SESSION_START
         )),
         "{events:?}"
     );
@@ -1254,7 +1291,7 @@ fn an_unreadable_session_start_has_its_own_result_and_ends_the_session() {
         events.iter().any(|e| matches!(
             e,
             Event::Disconnected {
-                reason: DisconnectReason::Unsupported(text)
+                reason: DisconnectReason::TransportFailed(text)
             } if text == UNSUPPORTED_SESSION_START
         )),
         "{events:?}"
@@ -1334,7 +1371,9 @@ fn the_refusal_of_an_entry_has_one_shared_byte() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            Event::EnterWorldFailed { reason, .. } if reason.contains(&0x0102_0304u32.to_string())
+            Event::EnterWorldFailed { reason, .. }
+                if reason == super::super::session_phase::ENTRY_REFUSED
+                    && !reason.contains(&0x0102_0304u32.to_string())
         )),
         "{events:?}"
     );
@@ -1344,7 +1383,8 @@ fn the_refusal_of_an_entry_has_one_shared_byte() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            Event::EnterWorldFailed { reason, .. } if reason == UNSUPPORTED_ENTRY_ANSWER
+            Event::Disconnected { reason: DisconnectReason::TransportFailed(reason) }
+                if reason == UNSUPPORTED_ENTRY_ANSWER
         )),
         "{events:?}"
     );
@@ -1371,42 +1411,6 @@ fn an_eviction_reads_its_reason_and_dispatches_no_text() {
     assert_eq!(d.counters().decode_errors, 0);
 }
 
-/// §9.3.7: no destination is specified for `0x6F`, so on every production path a requested
-/// selection reports that it is not supported and sends nothing; the list stays.
-#[test]
-fn a_selection_without_a_specified_destination_sends_nothing() {
-    let (world, mut d, _login) = driver_at_characters(
-        Service {
-            no_entry_destination: true,
-            ..Service::default()
-        },
-        0,
-    );
-    world.take_sent();
-    d.command(
-        &Command::EnterWorld {
-            character: "Aldo".to_owned(),
-        },
-        1.0,
-    )
-    .expect("reported, not refused");
-    d.step(1.1, true, &go);
-    assert!(
-        opcodes(&sent_packets(&world)).is_empty(),
-        "no 0x6F of any recipient"
-    );
-    let events = d.take_events();
-    assert!(
-        events.iter().any(|e| matches!(
-            e,
-            Event::EnterWorldFailed { reason, .. } if reason == ENTRY_NOT_SUPPORTED
-        )),
-        "{events:?}"
-    );
-    assert_eq!(d.counters().entries_not_sent, 1);
-    assert!(!d.ended());
-}
-
 /// The live network keeps the traits' defaults: nothing in a production path can answer.
 #[test]
 fn the_live_network_has_no_destination_and_no_re_entry() {
@@ -1419,32 +1423,41 @@ fn the_live_network_has_no_destination_and_no_re_entry() {
     assert!(!live.contains("fn re_entry_allowed"));
 }
 
-/// A destination equal to the default recipient or to the list's is the guess §9.3.7 forbids.
+/// §9.3.8, Vector 12: the selection goes to the fixed reserved destination, with the explicit
+/// header of the vector and the empty table, whatever recipient the list named.
 #[test]
-fn the_selection_never_goes_to_the_default_or_the_list_recipient() {
-    for destination in [DEFAULT_BLOB_RECIPIENT_ID, 0x0100_0000_0000_0099] {
-        let (world, mut d, mut login) = connected();
-        d.set_entry_destination_for_tests(destination);
-        let list = login.blob_to(0x6C, Some(destination), &character_list());
-        world.deliver(list, LOGIN_SERVER);
-        d.step(0.1, true, &go);
-        assert!(d.initial_stages().list_received);
-        let _ = d.take_events();
-        world.take_sent();
-        d.command(
-            &Command::EnterWorld {
-                character: "Aldo".to_owned(),
-            },
-            1.0,
-        )
-        .expect("reported");
-        d.step(1.1, true, &go);
-        assert!(opcodes(&sent_packets(&world)).is_empty(), "{destination:x}");
-        assert!(d.take_events().iter().any(|e| matches!(
-            e,
-            Event::EnterWorldFailed { reason, .. } if reason == ENTRY_NOT_SUPPORTED
-        )));
-    }
+fn the_selection_goes_to_the_reserved_destination_in_the_vector_form() {
+    let (world, mut d, mut login) = connected();
+    let list = login.blob_to(0x6C, Some(0x0100_0000_0000_0099), &character_list());
+    world.deliver(list, LOGIN_SERVER);
+    d.step(0.1, true, &go);
+    assert!(d.initial_stages().list_received);
+    let _ = d.take_events();
+    world.take_sent();
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("sent");
+    d.step(1.1, true, &go);
+    let sent = sent_packets(&world);
+    let selection = sent
+        .iter()
+        .flat_map(|p| &p.fragments)
+        .find(|f| f.header.blob_header_word == Some(0x6F))
+        .expect("the selection");
+    assert_eq!(selection.header.recipient_id, 0x0600_0000_0000_0401);
+    assert_eq!(selection.header.blob_flags, 0x00, "explicit, no extension");
+    let mut header = Vec::new();
+    selection.header.encode(&mut header).expect("encode");
+    assert_eq!(
+        header,
+        [
+            0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x04, 0, 0, 0, 0, 0, 0x06, 0x6F, 0x0A
+        ]
+    );
 }
 
 /// `0x6F` keeps its body and goes on queue 2 to the destination, with `blobFlags` `0x00`.
@@ -1468,7 +1481,10 @@ fn the_selection_goes_to_the_destination_on_queue_2() {
         .expect("the selection");
     assert_eq!(selection.header.queue_id, 2);
     assert_eq!(selection.header.blob_flags, 0x00);
-    assert_eq!(selection.header.recipient_id, TEST_ENTRY_DESTINATION);
+    assert_eq!(
+        selection.header.recipient_id,
+        super::super::session_phase::SELECTION_DESTINATION
+    );
     assert_eq!(selection.payload.len(), 10);
     assert_eq!(selection.payload[0], 0x00);
     assert_eq!(selection.payload[9], 0x00, "the empty client table");
@@ -1503,7 +1519,8 @@ fn an_unreadable_session_start_after_the_referral_ends_with_its_own_reason() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            Event::EnterWorldFailed { reason, .. } if reason == UNSUPPORTED_SESSION_START
+            Event::Disconnected { reason: DisconnectReason::TransportFailed(reason) }
+                if reason == UNSUPPORTED_SESSION_START
         )),
         "{events:?}"
     );
@@ -1511,7 +1528,7 @@ fn an_unreadable_session_start_after_the_referral_ends_with_its_own_reason() {
         events.iter().any(|e| matches!(
             e,
             Event::Disconnected {
-                reason: DisconnectReason::Unsupported(text)
+                reason: DisconnectReason::TransportFailed(text)
             } if text == UNSUPPORTED_SESSION_START
         )),
         "{events:?}"
@@ -1553,7 +1570,7 @@ fn the_entry_deadline_after_the_referral_is_a_time_out() {
     assert!(d.take_events().iter().any(|e| matches!(
         e,
         Event::Disconnected {
-            reason: DisconnectReason::TimedOut
+            reason: DisconnectReason::TimedOutLocally(_)
         }
     )));
 }
@@ -1703,63 +1720,45 @@ fn a_request_on_the_world_connection_sends_nothing() {
     assert!(opcodes(&sent_packets(&world)).is_empty());
 }
 
-/// §9.3.7's guard: while `0xF5` is awaited, a message outside its list ends the attempt once its
-/// body is discarded, and the enumerated ones are skipped. pending §25 fixes 8 and 10: the
-/// window, and that §9.3's known messages stay outside it.
+/// §9.3.7–§9.3.8: in the `0xF5` window an unknown message is discarded and counted under the
+/// bounded unknown-message policy, resetting no clock, and a notice is shown and ends nothing.
 #[test]
-fn a_message_outside_the_list_breaks_the_completion_guard() {
-    let at_advertisement = || {
-        let (world, mut d, mut login) = connected();
-        world.deliver(
-            queue1(&mut login, 0xDD, &install_request(RULE, &[])),
-            LOGIN_SERVER,
-        );
-        d.step(0.1, true, &go);
-        world.take_sent();
-        (world, d, login)
-    };
-    // The enumerated messages do not.
-    let (world, mut d, mut login) = at_advertisement();
-    for op in [0x149u32, 0xAA, 0x43, 0xFE, 0x54, 0x3000_0040] {
-        world.deliver(queue1(&mut login, op, &[0x00, 0x7F]), LOGIN_SERVER);
+fn unknown_messages_in_the_completion_window_are_counted_and_end_nothing() {
+    let (world, mut d, mut login) = connected();
+    world.deliver(
+        queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+        LOGIN_SERVER,
+    );
+    d.step(0.1, true, &go);
+    world.take_sent();
+    for (op, data) in [
+        (0x149u32, vec![0x00, 0x7F]),
+        (0x1234, vec![0x00, 0x7F]),
+        (0x90, vec![0x00, 0x7F]),
+        (0x1234, vec![0x80]),
+    ] {
+        world.deliver(queue1(&mut login, op, &data), LOGIN_SERVER);
     }
     d.step(0.2, true, &go);
     assert!(!d.ended());
-    // Neither does a shutdown notice.
+    assert!(opcodes(&sent_packets(&world)).is_empty());
+    assert_eq!(d.skip_counters().count(0x1234), 1);
+    assert_eq!(d.skip_counters().count(0x90), 1);
+    let _ = d.take_events();
     world.deliver(
         queue1(&mut login, 0x12E, &[0x00, 0x01, 0x41, 0x00]),
         LOGIN_SERVER,
     );
     d.step(0.3, true, &go);
     assert!(!d.ended());
-
-    // An unknown opcode, `0x90` and an undecodable envelope of an unknown opcode do.
-    for (op, data) in [
-        (0x1234u32, vec![0x00, 0x7F]),
-        (0x90, vec![0x00, 0x7F]),
-        (0x1234, vec![0x80]),
-    ] {
-        let (world, mut d, mut login) = at_advertisement();
-        world.deliver(queue1(&mut login, op, &data), LOGIN_SERVER);
-        d.step(0.2, true, &go);
-        assert_refused(&mut d, UnsupportedNegotiation::UnsupportedPreparation);
-        assert_no_ticket_after(&world, &mut d, 0.3);
-    }
-
-    // Before `0xEC` and after `0xF5` an unknown opcode is only skipped and counted.
-    let (world, mut d, mut login) = connected();
-    world.deliver(queue1(&mut login, 0x1234, &[0x00, 0x7F]), LOGIN_SERVER);
-    d.step(0.1, true, &go);
-    assert!(!d.ended());
-    world.deliver(
-        queue1(&mut login, 0xDD, &install_request(RULE, &[])),
-        LOGIN_SERVER,
+    assert!(
+        d.take_events().iter().any(
+            |e| matches!(e, Event::Account(AccountEvent::LoginNotice { text }) if text == "A")
+        )
     );
-    world.deliver(queue1(&mut login, 0xF5, &[0]), LOGIN_SERVER);
-    world.deliver(queue1(&mut login, 0x1234, &[0x00, 0x7F]), LOGIN_SERVER);
-    d.step(0.2, true, &go);
-    assert!(!d.ended());
-    assert_eq!(d.skip_counters().count(0x1234), 2);
+    // The window's clock did not move.
+    d.step(30.11, true, &go);
+    assert_refused(&mut d, UnsupportedNegotiation::CompletionDeadline);
 }
 
 /// §9.3.7: the skip counter keeps at most 256 opcodes and counts the others together.
@@ -1777,8 +1776,8 @@ fn the_skip_counter_is_bounded() {
     assert_eq!(counters.count(0x2000 + 299), 0);
 }
 
-/// §9.3.7: queue-3 blobs by modulo-65,536 distance: equal and ambiguous ones are delivered and
-/// counted, and a newer completed one supersedes an older incomplete one.
+/// §9.3.8: queue-3 blobs by modulo-65,536 distance: the older one is discarded, an exact repeat
+/// ignored, and the ambiguous one delivered once without replacing the baseline.
 #[test]
 fn queue_3_words_are_compared_by_distance() {
     let (world, mut d, mut login) = connected();
@@ -1801,11 +1800,18 @@ fn queue_3_words_are_compared_by_distance() {
         world.deliver(datagram, LOGIN_SERVER);
     }
     d.step(0.1, true, &go);
-    let counters = d.counters();
-    assert_eq!(counters.queue3_equal, 1, "the second 10");
+    let counters = d.counters().reassembly;
+    assert_eq!(
+        counters.duplicates, 1,
+        "the second 10: an exact retransmission"
+    );
     assert_eq!(counters.queue3_ambiguous, 1, "32,768 from 11");
-    assert_eq!(counters.queue3_older, 1, "9 from 11");
-    assert_eq!(d.initial_stages().skipped.op_149, 5, "all delivered once");
+    assert_eq!(counters.queue3_older, 1, "9 from 11: discarded");
+    assert_eq!(
+        d.initial_stages().skipped.op_149,
+        3,
+        "10, 11 and the ambiguous one, once each"
+    );
 }
 
 /// The failure texts: a local install fault or a Tessera limit does not read as an account fault
@@ -1826,7 +1832,6 @@ fn the_failure_texts_blame_no_account() {
         U::LanguageNotAllowed,
         U::AdvertisementNotSent,
         U::UnexpectedCompletion,
-        U::UnsupportedPreparation,
         U::CompletionNotSent,
         U::ListDecode,
         U::ListEnvelope,
@@ -1840,7 +1845,7 @@ fn the_failure_texts_blame_no_account() {
     assert!(
         U::ListDecode
             .detail()
-            .contains("cannot read the character list yet")
+            .contains("cannot read this character list yet")
     );
     for text in [
         UNSUPPORTED_SESSION_START,
@@ -2191,41 +2196,6 @@ fn leaving_the_queue_panel_ends_the_session_and_sends_no_advertisement() {
     assert!(d.take_events().is_empty());
 }
 
-/// §9.3.7's list is of opcodes, so a container is outside it, whatever it holds: it ends the wait
-/// for `0xF5` before what it holds is looked at, and nothing answers an `0xF5` after it.
-#[test]
-fn a_container_is_outside_the_completion_guard_whatever_it_holds() {
-    let batch_of_listed = encode_batch_container(&[(0x149, vec![0x00, 0x7F])], false).expect("one");
-    let empty_batch = encode_batch_container(&[], false).expect("empty");
-    let wrapped = crate::session::encode_single_wrapper(0x149, &[0x00, 0x7F], false).expect("one");
-    for (opcode, data) in [
-        (OPCODE_BATCH_CONTAINER, batch_of_listed),
-        (OPCODE_BATCH_CONTAINER, empty_batch),
-        (crate::session::OPCODE_SINGLE_WRAPPER, wrapped),
-        // Malformed: the same result.
-        (OPCODE_BATCH_CONTAINER, vec![0x00, 0xFF]),
-    ] {
-        let (world, mut d, mut login) = connected();
-        world.deliver(
-            queue1(&mut login, 0xDD, &install_request(RULE, &[])),
-            LOGIN_SERVER,
-        );
-        d.step(0.1, true, &go);
-        world.take_sent();
-        world.deliver(queue1(&mut login, opcode, &data), LOGIN_SERVER);
-        world.deliver(queue1(&mut login, 0xF5, &[0]), LOGIN_SERVER);
-        d.step(0.2, true, &go);
-        let sent = sent_packets(&world);
-        assert!(opcodes(&sent).is_empty(), "{opcode:#x} {data:x?}");
-        assert_eq!(
-            sent.iter().filter(|p| p.opt_headers.disconnect).count(),
-            1,
-            "{opcode:#x} {data:x?}"
-        );
-        assert_refused(&mut d, UnsupportedNegotiation::UnsupportedPreparation);
-    }
-}
-
 /// §9.3.7's bounded counter: outside the guard a container's own opcode is counted once, also when
 /// it holds nothing and so reaches no per-message count, and what it holds is counted too.
 #[test]
@@ -2274,7 +2244,8 @@ fn an_unreadable_envelope_of_an_entry_answer_ends_the_entry() {
             assert!(
                 events.iter().any(|e| matches!(
                     e,
-                    Event::EnterWorldFailed { reason: r, .. } if r == reason
+                    Event::Disconnected { reason: DisconnectReason::TransportFailed(r) }
+                        if r == reason
                 )),
                 "{opcode:#x} {events:?}"
             );
@@ -2294,8 +2265,8 @@ fn an_unreadable_envelope_of_an_eviction_ends_the_session_at_the_list() {
         events.iter().any(|e| matches!(
             e,
             Event::Disconnected {
-                reason: DisconnectReason::ServerClosed(_)
-            }
+                reason: DisconnectReason::TransportFailed(text)
+            } if text == UNSUPPORTED_ENTRY_ANSWER
         )),
         "{events:?}"
     );

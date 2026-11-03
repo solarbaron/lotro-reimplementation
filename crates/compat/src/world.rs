@@ -249,6 +249,10 @@ pub enum WorldError {
     /// (`0x000007E3` / `0x0000002F`, §2.8).
     #[error("undefined EntityAppearanceDesc flag bits {0:#010x}")]
     InvalidAppearanceFlags(u32),
+    /// An `EntityAppearanceDesc` with the base-model bit `0x0001`: its format selector is
+    /// OPEN-WORLD-9 (§2.8), so it is unsupported rather than read as a guessed form.
+    #[error("the appearance base-model variant is not supported")]
+    UnsupportedAppearanceVariant,
     /// A `0xCC` packet referenced a `state_schema_id` the schema lookup does not know (§4.3.1).
     #[error("unknown 0xCC state_schema_id 0x{0:08X}")]
     UnknownPortalStateSchema(u32),
@@ -2707,6 +2711,27 @@ impl WireBitfield {
     }
 }
 
+/// Whether the current top-level form of `opcode` has one shared flags byte, consumed once
+/// (`official-session.md` §9.3.8, Vectors 15 and 16): `0x4C`, `0x98`, `0x52`, `0xCE`, `0xCC`,
+/// `0x5E` and `0x89`. `0x7C` and `0x0D` are not in it (OPEN-WORLD-9), and neither is any other
+/// opcode whose boundary nobody checked.
+#[must_use]
+pub const fn one_shared_prefix(opcode: u32) -> bool {
+    matches!(opcode, 0x4C | 0x98 | 0x52 | 0xCE | 0xCC | 0x5E | 0x89)
+}
+
+/// The complete data of a [`one_shared_prefix`] message from what
+/// [`crate::session::decode_message`] leaves of it: the shared byte put back, so that the decoders
+/// of this module, which consume `base_flags` once at the start of a slice, read it as they read
+/// a batch's embedded sub-event. No second byte is expected or added.
+#[must_use]
+pub fn rebuild_shared_prefix(body: &[u8]) -> Vec<u8> {
+    let mut data = Vec::with_capacity(body.len().saturating_add(1));
+    data.push(0);
+    data.extend_from_slice(body);
+    data
+}
+
 // ---------------------------------------------------------------------------
 // EntityAppearanceDesc (§2.8)
 // ---------------------------------------------------------------------------
@@ -2732,18 +2757,16 @@ pub struct AppearanceTint {
     pub field_e: u32,
 }
 
-/// One `(k, v1, v2)` entry of a `SubPartTable` (§2.8).
+/// One `(key, value)` record of a `SubPartTable` (§2.8: two words, 8 bytes per record).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SubPartEntry {
-    /// `k`.
-    pub k: u32,
-    /// `v1`.
-    pub v1: u32,
-    /// `v2`.
-    pub v2: u32,
+    /// `key`.
+    pub key: u32,
+    /// `value`.
+    pub value: u32,
 }
 
-/// A `SubPartTable`: TSize (`u8` hint + 3-tier VLE count) of `(u32 k, u32 v1, u32 v2)`.
+/// A `SubPartTable`: TSize (`u8` hint + 3-tier VLE count) of `(u32 key, u32 value)`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SubPartTable {
     /// TSize hint (`0..=22`), kept for byte-exact rewriting.
@@ -2793,9 +2816,8 @@ impl PartEntry {
                     })?;
                 writer.write_vle3(n)?;
                 for e in &table.entries {
-                    writer.write_u32_le(e.k);
-                    writer.write_u32_le(e.v1);
-                    writer.write_u32_le(e.v2);
+                    writer.write_u32_le(e.key);
+                    writer.write_u32_le(e.value);
                 }
             }
         }
@@ -2825,13 +2847,13 @@ impl PartEntry {
                     return Err(WorldError::InvalidTSizeHint(hint));
                 }
                 let n = reader.read_vle3()? as usize;
-                reader.ensure_count(n, 12)?;
+                // §2.8: the record count is bounded by the bytes left over 8.
+                reader.ensure_count(n, 8)?;
                 let mut entries = Vec::with_capacity(n.min(MAX_PREALLOC_ENTRIES));
                 for _ in 0..n {
                     entries.push(SubPartEntry {
-                        k: reader.read_u32_le()?,
-                        v1: reader.read_u32_le()?,
-                        v2: reader.read_u32_le()?,
+                        key: reader.read_u32_le()?,
+                        value: reader.read_u32_le()?,
                     });
                 }
                 map.push((key, SubPartTable { hint, entries }));
@@ -2848,12 +2870,15 @@ impl PartEntry {
 /// [`CharacterSummaryEntry`] and `0x89`). Each `Option` field is present exactly when its
 /// `flags` bit is set; the encoder derives `flags` from the fields.
 ///
-/// Bit 0 (`base_model`) is one unconditional 4-byte `u32` (`model_a`, no second word;
-/// §2.8). The rendering meaning of `secondary_did`, the tints, `param_a` and `param_b` is
-/// `OPEN`; they are decoded and kept.
+/// Bit 0 (`base_model`) has no settled current form: the reader adds a word conditionally and
+/// the selector is OPEN-WORLD-9, so a descriptor with that bit is refused
+/// ([`WorldError::UnsupportedAppearanceVariant`]), never read as one guessed form. The
+/// rendering meaning of `secondary_did`, the tints, `param_a` and `param_b` is `OPEN`; they are
+/// decoded and kept.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct EntityAppearanceDesc {
-    /// Bit 0 (`0x0001`): the base model Data ID (`model_a`).
+    /// Bit 0 (`0x0001`): never decoded (OPEN-WORLD-9). A value here is a test's: the encoder
+    /// writes the bit and one word, and the decoder refuses it.
     pub base_model: Option<u32>,
     /// Bit 1 (`0x0002`): `secondary_did`.
     pub secondary_did: Option<u32>,
@@ -2925,6 +2950,10 @@ impl EntityAppearanceDesc {
         if let Some(a) = self.param_a {
             writer.write_f32_le(a);
         }
+        // §2.8: scalar B comes here, before the tint and part collections.
+        if let Some(b) = self.param_b {
+            writer.write_f32_le(b);
+        }
         if let Some(tints) = &self.tint_entries {
             let count = u32::try_from(tints.len())
                 .map_err(|_| WorldError::CountOverflow { count: tints.len() })?;
@@ -2948,9 +2977,6 @@ impl EntityAppearanceDesc {
                 part.encode(writer)?;
             }
         }
-        if let Some(b) = self.param_b {
-            writer.write_f32_le(b);
-        }
         Ok(())
     }
 
@@ -2965,9 +2991,10 @@ impl EntityAppearanceDesc {
         if flags & !APPEARANCE_FLAGS_VALID != 0 {
             return Err(WorldError::InvalidAppearanceFlags(flags));
         }
-        let base_model = (flags & 0x0001 != 0)
-            .then(|| reader.read_u32_le())
-            .transpose()?;
+        // §2.8, OPEN-WORLD-9: the base-model branch's format selector is not settled.
+        if flags & 0x0001 != 0 {
+            return Err(WorldError::UnsupportedAppearanceVariant);
+        }
         let secondary_did = (flags & 0x0002 != 0)
             .then(|| reader.read_u32_le())
             .transpose()?;
@@ -2981,6 +3008,9 @@ impl EntityAppearanceDesc {
             None
         };
         let param_a = (flags & 0x0040 != 0)
+            .then(|| reader.read_f32_le())
+            .transpose()?;
+        let param_b = (flags & 0x0400 != 0)
             .then(|| reader.read_f32_le())
             .transpose()?;
         let tint_entries = if flags & 0x0080 != 0 {
@@ -3019,11 +3049,8 @@ impl EntityAppearanceDesc {
         } else {
             None
         };
-        let param_b = (flags & 0x0400 != 0)
-            .then(|| reader.read_f32_le())
-            .transpose()?;
         Ok(Self {
-            base_model,
+            base_model: None,
             secondary_did,
             scale,
             param_a,

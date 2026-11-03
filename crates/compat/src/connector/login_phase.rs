@@ -119,9 +119,8 @@ pub fn login_refusal(err: &LoginError) -> LoginRefusal {
 /// operation): the start screen's `UnsupportedStep`, as §9.3.7 gives a language that is absent or
 /// unreadable, with [`LOCAL_INSTALL_NOTE`] as Tessera's own line. It is not a refusal of the
 /// credentials and nothing came from the service, so it does not read as an account fault or as
-/// the service's answer (decision 0046 item 6). The class stays in the log. pending §25 fix 7:
-/// `official-login.md` §5.1 has no preflight step and `official-entry.md` §8.6 no row for it;
-/// labelled until the fix places them.
+/// the service's answer (decision 0046 item 6). The class stays in the log (`official-login.md`
+/// §5.1: `F02_CONFIG_INVALID`, before any auth datagram; `official-entry.md` §8.6).
 #[must_use]
 pub const fn local_refusal() -> LoginRefusal {
     LoginRefusal::UnsupportedStep

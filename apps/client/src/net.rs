@@ -2135,6 +2135,10 @@ fn system_line(ev: &Event) -> Option<String> {
             Some(text.clone())
         }
         Event::EnterWorldFailed { reason, .. } => Some(reason.clone()),
+        // `official-entry.md` §8.1: an informational line, no action.
+        Event::Account(tessera_net::account::AccountEvent::LoginNotice { text }) => {
+            Some(text.clone())
+        }
         Event::ServerNotice {
             level,
             seconds,

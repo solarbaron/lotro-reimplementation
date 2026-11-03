@@ -802,7 +802,7 @@ impl FakeServer {
         let frags = split_blob(
             2,
             (self.seq & 0xFFFF) as u16,
-            1,
+            (self.seq & 0xFFFF) as u16,
             0,
             None,
             opcode,

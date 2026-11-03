@@ -200,11 +200,15 @@ fn the_accept_carries_the_connection_speed_rate() {
 
 #[test]
 fn the_client_messages_go_on_the_queues_of_the_outbound_table() {
-    let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
-    world.take_sent();
-    // 0x12C answers 0x12F on queue 4 (ReliableUnordered).
-    world.deliver(login.event(0x12F, &[]), LOGIN_SERVER);
-    d.step(0.2, true, &go);
+    let (world, mut d, _login) = driver_at_characters_after(
+        Service::default(),
+        session_start(0, None, Arc::default()),
+        |world, login, d| {
+            // 0x12C answers 0x12F on queue 4 (ReliableUnordered).
+            world.deliver(login.event(0x12F, &[]), LOGIN_SERVER);
+            d.step(0.05, true, &go);
+        },
+    );
     // 0x6F on queue 2, implicit group 0 (`official-session.md` §9.3.5).
     d.command(
         &Command::EnterWorld {
@@ -245,7 +249,7 @@ fn the_outbound_table_and_the_movement_rule() {
     // §9.3.2, §9.3.3.
     assert_eq!(outbound_queue(0xEC, &[]), (1, 0));
     assert_eq!(outbound_queue(0xF5, &[]), (1, 0));
-    assert_eq!(outbound_queue(0xF4, &[]), (3, 0x05));
+    assert_eq!(outbound_queue(0xF4, &[]), (1, 0));
     assert_eq!(outbound_queue(0x30, &[]), (3, 0x0A));
     assert_eq!(outbound_queue(0x28, &[]), (3, 0x04));
     assert_eq!(outbound_queue(0x5F, &[]), (3, 0x08));
@@ -333,7 +337,7 @@ fn a_negative_logon_result_ends_the_session_and_zero_is_accepted() {
     assert!(events.iter().any(|e| matches!(
         e,
         Event::Account(AccountEvent::LoginRefused {
-            reason: LoginRefusal::AccountNotAllowed,
+            reason: LoginRefusal::Other,
             ..
         })
     )));

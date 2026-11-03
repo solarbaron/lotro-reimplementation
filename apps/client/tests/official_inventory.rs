@@ -1039,8 +1039,8 @@ fn an_overlay_next_to_a_listed_base_is_refused() {
     assert_eq!(inventory_of(dir.path()), Ok(10));
 }
 
-/// Region 1 is required. pending §25 fix 14: half of another pair stays a labelled refusal, and so
-/// does a region archive outside the map's keys.
+/// Region 1 is required, and half of another pair is unsupported (§9.3.8). A region archive outside
+/// the map's keys is not a candidate.
 #[test]
 fn the_regions_are_complete_or_unsupported() {
     let missing = InstallUnsupported::ArchiveMissing;
@@ -1068,14 +1068,10 @@ fn the_regions_are_complete_or_unsupported() {
     write(dir.path(), "client_cell_2.dat", &base(0x0203_0000, 2, 1));
     write(dir.path(), "client_map_2.dat", &base(0x020A_0000, 2, 1));
     assert_eq!(inventory_of(dir.path()), Ok(12));
-    // A region archive outside the map's keys is not one the policy knows.
-    refused(
-        |d| {
-            write(d, "client_cell_9.dat", &base(0x0203_0000, 9, 1));
-            write(d, "client_map_9.dat", &base(0x020A_0000, 9, 1));
-        },
-        InstallUnsupported::ArchiveUnknown,
-    );
+    // A region archive outside the map's keys is not a candidate: ignored, not advertised.
+    write(dir.path(), "client_cell_9.dat", &base(0x0203_0000, 9, 1));
+    write(dir.path(), "client_map_9.dat", &base(0x020A_0000, 9, 1));
+    assert_eq!(inventory_of(dir.path()), Ok(12));
 }
 
 #[test]

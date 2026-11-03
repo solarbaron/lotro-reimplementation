@@ -62,6 +62,10 @@ impl InstallData for Typed {
         self.base.selected_language_key()
     }
 
+    fn check_name_table(&self) -> Result<(), crate::initial::InstallUnsupported> {
+        Ok(())
+    }
+
     fn name_rule_languages(
         &self,
         rule_key: u32,
@@ -663,7 +667,7 @@ fn appearance_updates_take_a_uniform_scale_and_count_the_rest() {
     );
     assert!(events.is_empty(), "{events:?}");
     assert_eq!(counters(&d).appearance_fields_skipped, 2);
-    // A base model is one u32 (§2.8): decoded, not shown, counted as a skipped field.
+    // §2.8, OPEN-WORLD-9: the base-model variant is unsupported: no visual dispatch.
     let base_model = visual(EntityAppearanceDesc {
         base_model: Some(0x3100_0001),
         scale: Some([1.5; 3]),
@@ -673,8 +677,8 @@ fn appearance_updates_take_a_uniform_scale_and_count_the_rest() {
     let skipped = counters(&d).appearance_fields_skipped;
     let events = deliver(&world, &mut d, login.event_to(0x89, NPC, &base_model), 2.3);
     assert!(events.is_empty());
-    assert_eq!(d.counters().decode_errors, before.decode_errors);
-    assert_eq!(counters(&d).appearance_fields_skipped, skipped + 1);
+    assert_eq!(d.counters().decode_errors, before.decode_errors + 1);
+    assert_eq!(counters(&d).appearance_fields_skipped, skipped);
 }
 
 #[test]
@@ -1028,11 +1032,16 @@ fn event_datagrams(login: &mut Server, opcode: u32, inner: &[u8]) -> Vec<Vec<u8>
     let frags = split_blob(
         2,
         (login.seq & 0xFFFF) as u16,
-        1,
+        (login.seq & 0xFFFF) as u16,
         0,
         None,
         opcode,
-        &encode_event_envelope(inner),
+        // §9.3.8: one shared byte for the checked family.
+        &if crate::world::one_shared_prefix(opcode) {
+            inner.to_vec()
+        } else {
+            encode_event_envelope(inner)
+        },
     )
     .expect("split");
     let mut out = Vec::new();

@@ -122,7 +122,7 @@ fn a_handshake_timeout_logs_its_counts_and_no_endpoint() {
     let line = failed.first().copied().unwrap_or_default();
     for field in [
         " INFO ",
-        "reason=HandshakeTimeout",
+        "reason=handshake timeout",
         "state=Some(SessionAuthSent)",
         "auth_sent=1",
         "auth_retransmits=9",
@@ -267,16 +267,18 @@ fn rules_fitting(datagram: &[u8], masks: &[u32]) -> (bool, bool) {
 /// client sent to the login server.
 fn connected_traffic() -> Vec<Vec<u8>> {
     let start = session_start(0, None, Arc::default());
-    let (world, mut d, mut login) = driver_at_characters_from(Service::default(), start);
     // Datagrams received, then a blob sent in answer in the same pass (the `0x12C` that
     // answers a `0x12F`): it carries the pending `FlowControlHeader` (6 bytes) before its
     // fragment (`official-session.md` §5.5 P10-22-POLICY), buffers whose per-buffer sum
     // differs from the whole-payload one.
-    for _ in 0..30 {
-        world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
-    }
-    world.deliver(login.event(0x12F, &[]), LOGIN_SERVER);
-    d.step(0.2, true, &go);
+    let (world, mut d, _login) =
+        driver_at_characters_after(Service::default(), start, |world, login, d| {
+            for _ in 0..30 {
+                world.deliver(login.event(0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+            }
+            world.deliver(login.event(0x12F, &[]), LOGIN_SERVER);
+            d.step(0.05, true, &go);
+        });
     let _ = d.take_events();
     d.command(
         &Command::EnterWorld {
@@ -717,7 +719,7 @@ fn an_unsupported_codec_challenge_is_counted_once() {
     assert_eq!(failed.len(), 1, "{logs}");
     let line = failed.first().copied().unwrap_or_default();
     for field in [
-        "reason=UnsupportedCodec",
+        "reason=unsupported dictionary",
         "received_ok=0",
         "rejected_codec=1",
         "rejected_other=0",

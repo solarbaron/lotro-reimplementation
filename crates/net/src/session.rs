@@ -561,7 +561,7 @@ pub struct Session {
     login_refused: bool,
     /// When a dropped Account event of each variant was last logged (one line per variant
     /// per [`ACCOUNT_LOG_INTERVAL`], §8.2).
-    account_logged: [Option<Instant>; 5],
+    account_logged: [Option<Instant>; 6],
 }
 
 /// One log line per Account variant at most this often for dropped events
@@ -598,7 +598,7 @@ impl Session {
             scratch: Vec::new(),
             world_ids: Vec::new(),
             login_refused: false,
-            account_logged: [None; 5],
+            account_logged: [None; 6],
         }
     }
 
@@ -1064,6 +1064,12 @@ impl Session {
                     return true;
                 }
                 S::Closing if self.closing_from == S::Connecting => "overtaken by Disconnect",
+                // §8.2: the notice is also surfaced at the character list and while entering.
+                S::Connected | S::EnteringWorld
+                    if matches!(event, AccountEvent::LoginNotice { .. }) =>
+                {
+                    return true;
+                }
                 _ => "outside the login",
             }
         };

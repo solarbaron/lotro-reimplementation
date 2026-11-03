@@ -617,6 +617,10 @@ fn login(b: &mut B<'_>, flow: &Flow) {
         return;
     };
     let (x, cw) = b.column(900);
+    // `official-entry.md` §8.1: the service's informational line, plain text, no action.
+    if let Some(line) = p.notice() {
+        b.para(x, 24, cw, Face::Small, line, DIM_TEXT);
+    }
     match p.screen() {
         LoginScreen::Progress { text: t } => {
             let lh = b.line(Face::Body);

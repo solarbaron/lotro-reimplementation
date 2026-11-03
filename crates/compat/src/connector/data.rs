@@ -163,6 +163,17 @@ pub trait InstallData: Send + Sync + std::fmt::Debug {
         Err(InstallUnsupported::NotRead)
     }
 
+    /// Resolves and decodes the installed name-filter table (§9.3.7–§9.3.8's preflight): the
+    /// answer is known before the ticket is spent, and only the rule `0xDD` selects waits for
+    /// `0xDD`. The default answers unsupported.
+    ///
+    /// # Errors
+    ///
+    /// [`InstallUnsupported`]: a kind, never a value.
+    fn check_name_table(&self) -> Result<(), InstallUnsupported> {
+        Err(InstallUnsupported::NotRead)
+    }
+
     /// One entry per mounted base archive the advertisement lists (§9.3.7's preflight),
     /// computed on the connector's thread. The default answers unsupported.
     ///
@@ -191,10 +202,10 @@ pub fn chat_categories(data: &dyn InstallData) -> ChatCategories {
     ChatCategories::from_install_keys(Some(&keys))
 }
 
-/// The advertisement `0xEC` of this install (`official-session.md` §9.3.2, §9.3.7): what does
-/// not depend on the server's `0xDD`, so that a failure does not spend the ticket. pending §25
-/// fix 14: the name-filter table's check will move here when the spec moves it; it still comes
-/// with `0xDD`.
+/// The advertisement `0xEC` of this install (`official-session.md` §9.3.2, §9.3.7–§9.3.8): what
+/// does not depend on the server's `0xDD`, the name-filter table's resolution and decoding among
+/// it, so that a failure does not spend the ticket. Only the rule `0xDD` selects and its membership
+/// test wait for `0xDD`. `official-login.md` §5.1 classes a failure `F02_CONFIG_INVALID`.
 ///
 /// # Errors
 ///
@@ -208,6 +219,8 @@ pub fn prepare_advertisement(
     let archives = data
         .archive_inventory()
         .map_err(UnsupportedNegotiation::Inventory)?;
+    data.check_name_table()
+        .map_err(UnsupportedNegotiation::NameRule)?;
     PreparedAdvertisement::new(key, &archives)
 }
 

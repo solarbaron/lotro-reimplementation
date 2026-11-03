@@ -441,4 +441,31 @@ mod tests {
             let _ = SetMembership::parse(&b);
         }
     }
+
+    /// `install-layout.md` §9.3's stored forms (pass-10g): a stamp-1 all-singles record, an empty
+    /// one, and stored runs of two and one are valid input; a stamp-3 record is malformed.
+    #[test]
+    fn stored_iteration_forms_of_the_layout_fixtures() {
+        let singles = [2, 0, 0, 0, 13, 0, 0, 0, 14, 0, 0, 0];
+        let record = IterationRecord::parse(&singles, 1).expect("stamp 1, all singles");
+        assert!(record.trailing.is_empty());
+        assert!(
+            IterationRecord::parse(&[0, 0, 0, 0], 1).is_ok(),
+            "empty stamp 1"
+        );
+        let two = [2, 0, 0, 0, 0xFE, 0xFF, 0xFF, 0xFF, 13, 0, 0, 0];
+        assert!(
+            IterationRecord::parse(&two, 1).is_ok(),
+            "a stored run of two"
+        );
+        let one = [1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 20, 0, 0, 0];
+        assert!(
+            IterationRecord::parse(&one, 1).is_ok(),
+            "a stored run of one"
+        );
+        assert_eq!(
+            IterationRecord::parse(&[0, 0, 0, 0], 3),
+            Err(RecordError::UnsupportedStamp(3))
+        );
+    }
 }

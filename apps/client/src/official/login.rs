@@ -130,6 +130,8 @@ pub struct LoginPresenter {
     queue_shown: Option<Instant>,
     queue_pending: Option<Vec<String>>,
     refused: Option<Refused>,
+    /// The latest `LoginNotice` (`official-entry.md` §8.1), shown under the panel.
+    notice: Option<String>,
     /// The user left the queue: a `Disconnected { ClientRequested }` ends at the form.
     leaving_queue: bool,
     end: Option<LoginEnd>,
@@ -179,6 +181,21 @@ pub fn disconnect_message(reason: &DisconnectReason) -> Option<Message> {
             text: text("official.error.no_answer").to_owned(),
             detail: None,
         },
+        // Tessera's own time limit, in Tessera's words naming the stage (`official-session.md`
+        // §9.3.8): no service text and no "no answer".
+        DisconnectReason::TimedOutLocally(why) => Message {
+            text: plain(why, MAX_ACCOUNT_DETAIL_LEN),
+            detail: None,
+        },
+        // A Tessera limit (§9.3.8's unsupported row): the fixed text, and Tessera's line under it.
+        DisconnectReason::TransportFailed(why)
+            if tessera_compat::backend::names_tessera_limit(why) =>
+        {
+            Message {
+                text: text("official.error.tessera_limit").to_owned(),
+                detail: Some(plain(why, MAX_ACCOUNT_DETAIL_LEN)),
+            }
+        }
         DisconnectReason::ServerClosed(why) => Message {
             text: text("official.error.server_closed").to_owned(),
             detail: (!why.trim().is_empty()).then(|| detail_line(why)),
@@ -252,6 +269,7 @@ impl LoginPresenter {
             queue_shown: None,
             queue_pending: None,
             refused: None,
+            notice: None,
             leaving_queue: false,
             end: None,
             commands: Vec::new(),
@@ -274,6 +292,12 @@ impl LoginPresenter {
     #[must_use]
     pub fn selected(&self) -> Option<usize> {
         self.selected
+    }
+
+    /// The latest informational line of the service (`official-entry.md` §8.1), if one came.
+    #[must_use]
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
     }
 
     /// The world list's message (a refusal), if one shows.
@@ -338,6 +362,10 @@ impl LoginPresenter {
 
     fn on_account(&mut self, e: &AccountEvent, now: Instant) {
         match e {
+            // §8.1: a line for the user, no action. It stops no wait and starts none.
+            AccountEvent::LoginNotice { text } => {
+                self.notice = Some(plain(text, MAX_ACCOUNT_DETAIL_LEN));
+            }
             AccountEvent::LoginProgress { stage } => {
                 let t = match stage {
                     LoginStage::Authenticating => text("official.login.authenticating").to_owned(),
@@ -647,15 +675,6 @@ pub fn refusal_end(
     } else {
         FAILURE_WAIT
     };
-    // Tessera's own note on `UnsupportedStep` means a local install fault or a Tessera limit, not
-    // a step the account's login needs: §8.6's row would read as an account fault (decision 0046
-    // item 6). That row stays for a login that really asks for such a step.
-    let id =
-        if reason == LoginRefusal::UnsupportedStep && note.is_some_and(|n| !n.trim().is_empty()) {
-            "official.error.tessera_limit"
-        } else {
-            id
-        };
     let msg_text = if rate_limited {
         fill(text(id), &[("seconds", &wait.as_secs().to_string())])
     } else {

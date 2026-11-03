@@ -1043,6 +1043,37 @@ fn vector_11_install_request_and_rule() {
         InstallRequest::from_data(&wrong_length),
         Err(InitialError::Decompression)
     );
+    // Any byte after the zlib stream fails, and so does a second stream after it.
+    let mut trailing = compressed.clone();
+    trailing.push(0x00);
+    assert_eq!(
+        InstallRequest::from_data(&trailing),
+        Err(InitialError::Decompression)
+    );
+    let mut concatenated = compressed.clone();
+    concatenated.extend_from_slice(&compressed[5..]);
+    assert_eq!(
+        InstallRequest::from_data(&concatenated),
+        Err(InitialError::Decompression)
+    );
+    // Measuring `13 + 4N` on the compressed buffer is not what passes: the rebuilt body is 13.
+    assert_eq!(inflated.trailing, Vec::<u32>::new());
+    // `N` = 4,096 with its bytes passes the decoder and `N` = 4,097 fails the count bound.
+    let mut at_cap = hex("00 04 03 02 01 07 00 00 00 00 10 00 00");
+    at_cap.extend_from_slice(&[0u8; 16_384]);
+    assert_eq!(
+        InstallRequest::from_data(&at_cap)
+            .expect("at the cap")
+            .trailing
+            .len(),
+        4096
+    );
+    let mut over = hex("00 04 03 02 01 07 00 00 00 01 10 00 00");
+    over.extend_from_slice(&[0u8; 16_388]);
+    assert_eq!(
+        InstallRequest::from_data(&over),
+        Err(InitialError::TrailingCount { count: 4097 })
+    );
     for len in 0..data.len() {
         assert!(InstallRequest::from_data(&data[..len]).is_err(), "{len}");
     }
@@ -1221,7 +1252,7 @@ fn vector_13_standalone_nak() {
 // Vector 14: `0xEC` ordering, runs and two-fragment framing (§9.3.7)
 // ---------------------------------------------------------------------------
 
-const VECTOR_14_DATA: &str = "00 05 00 00 10 01 00 00 00 04 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 1A 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 02 02 00 00 00 00 00 00 00 00 09 00 00 00 00 00 02 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00";
+const VECTOR_14_DATA: &str = "00 05 00 00 10 01 00 00 00 06 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 1A 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 02 02 00 00 00 00 00 00 00 00 14 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 09 00 00 00 00 00 02 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00";
 
 /// An archive with the given eight wire bytes and an empty iteration list.
 fn wire_archive(wire: [u8; 8]) -> AdvertisedArchive {
@@ -1236,25 +1267,28 @@ fn wire_archive(wire: [u8; 8]) -> AdvertisedArchive {
 
 #[test]
 fn vector_14_order_and_empty_lists() {
-    let a = wire_archive([0x09, 0, 0, 0, 0, 0, 0x02, 0x01]);
-    let b = wire_archive([0x02, 0, 0, 0, 0, 0, 0x02, 0x02]);
-    let c = wire_archive([0x03, 0, 0, 0, 0, 0, 0, 0]);
-    let d = wire_archive([0x1A, 0, 0, 0, 0, 0, 0, 0]);
+    let entries = [
+        wire_archive([0x09, 0, 0, 0, 0, 0, 0x02, 0x01]),
+        wire_archive([0x02, 0, 0, 0, 0, 0, 0x02, 0x02]),
+        wire_archive([0x03, 0, 0, 0, 0, 0, 0, 0]),
+        wire_archive([0x1A, 0, 0, 0, 0, 0, 0, 0]),
+        wire_archive([0x00, 0x01, 0, 0, 0, 0, 0, 0]),
+        wire_archive([0x14, 0, 0, 0, 0, 0, 0, 0]),
+    ];
     let expected = hex(VECTOR_14_DATA);
-    assert_eq!(expected.len(), 85);
-    // The result holds for any input order.
-    for input in [
-        [&a, &b, &c, &d],
-        [&d, &c, &b, &a],
-        [&b, &d, &a, &c],
-        [&c, &a, &d, &b],
-    ] {
-        let archives: Vec<AdvertisedArchive> = input.into_iter().cloned().collect();
+    assert_eq!(expected.len(), 117);
+    // The result holds for EVERY input order: all 720 permutations of the six.
+    let mut order = [0usize, 1, 2, 3, 4, 5];
+    let mut seen = 0;
+    permute(&mut order, 0, &mut |perm| {
+        seen += 1;
+        let archives: Vec<AdvertisedArchive> = perm.iter().map(|i| entries[*i].clone()).collect();
         let data = build_install_advertisement(VECTOR_LANGUAGE_KEY, &archives).expect("builds");
-        assert_eq!(data, expected);
-    }
+        assert_eq!(data, expected, "{perm:?}");
+    });
+    assert_eq!(seen, 720);
     // The fixture's remainders.
-    for (archive, want) in [(&a, 20), (&b, 15), (&c, 3), (&d, 3)] {
+    for (archive, want) in entries.iter().zip([20, 15, 3, 3, 3, 20]) {
         assert_eq!(advertisement_order(archive.wire_identifier()).0, want);
     }
     // Its unfragmented default-recipient header.
@@ -1262,10 +1296,37 @@ fn vector_14_order_and_empty_lists() {
         tessera_compat::session::split_blob(1, 0xFFFF, 0, 0, None, 0xEC, &expected).unwrap();
     let mut header = Vec::new();
     frags[0].header.encode(&mut header).expect("encodes");
-    assert_eq!(header, hex("01 40 80 EC 55 00"));
-    // Plain numeric and bytewise orders are not it.
-    let ids = |data: &[u8]| -> Vec<u8> { (0..4).map(|i| data[13 + i * 16]).collect() };
-    assert_eq!(ids(&expected), [0x03, 0x1A, 0x02, 0x09]);
+    assert_eq!(header, hex("01 40 80 EC 75 00"));
+    // C, D, E, B, F, A: none of the spec's counterexamples.
+    let ids = |data: &[u8]| -> Vec<[u8; 2]> {
+        (0..6)
+            .map(|i| [data[13 + i * 16], data[14 + i * 16]])
+            .collect()
+    };
+    assert_eq!(
+        ids(&expected),
+        [
+            [0x03, 0],
+            [0x1A, 0],
+            [0x00, 0x01],
+            [0x02, 0],
+            [0x14, 0],
+            [0x09, 0]
+        ]
+    );
+}
+
+/// Calls `f` with every permutation of `items[from..]`.
+fn permute(items: &mut [usize; 6], from: usize, f: &mut dyn FnMut(&[usize; 6])) {
+    if from == items.len() {
+        f(items);
+        return;
+    }
+    for i in from..items.len() {
+        items.swap(from, i);
+        permute(items, from + 1, f);
+        items.swap(from, i);
+    }
 }
 
 /// `official-session.md` Vector 14's run-threshold fixture, in EC bytes after the identifier.
@@ -1339,7 +1400,7 @@ fn vector_14_run_threshold() {
         too_many.check_invariant(),
         Err(InitialError::UnusableIteration)
     );
-    // pending §25 fix 17: a list that repeats an iteration is refused.
+    // §9.3.7: a list that repeats an iteration is malformed under Tessera's input policy.
     let repeated = run_archive(
         vec![
             IterationSpan { start: 7, len: 3 },
@@ -1351,6 +1412,36 @@ fn vector_14_run_threshold() {
         repeated.check_invariant(),
         Err(InitialError::UnusableIteration)
     );
+
+    // Listed 7/8/9 with `K` = 2: trailing 8/9 passes; 9/9, 9/8 and 7/9 fail (install-layout §9.3).
+    let listed = |notes: Vec<IterationNote>| {
+        let mut a = run_archive(vec![IterationSpan { start: 7, len: 3 }], notes);
+        a.iteration_count = 3;
+        a
+    };
+    assert_eq!(listed(vec![note(8), note(9)]).check_invariant(), Ok(()));
+    for bad in [[9, 9], [9, 8], [7, 9]] {
+        assert_eq!(
+            listed(vec![note(bad[0]), note(bad[1])]).check_invariant(),
+            Err(InitialError::UnusableIteration),
+            "{bad:?}"
+        );
+    }
+    // A stored run of two or of one is valid input and goes out as singles.
+    for (stored, want) in [
+        (
+            IterationSpan { start: 13, len: 2 },
+            "0D 00 00 00 0E 00 00 00",
+        ),
+        (IterationSpan { start: 20, len: 1 }, "14 00 00 00"),
+    ] {
+        let mut a = run_archive(vec![stored], Vec::new());
+        a.iteration_count = stored.len;
+        let mut tokens = stored.len.to_le_bytes().to_vec();
+        tokens.extend_from_slice(&hex(want));
+        tokens.extend_from_slice(&[0, 0, 0, 0]);
+        assert_eq!(entry_tail(a), tokens);
+    }
 
     // A stamp-1 record with those runs and no trailing list: the same `N` and tokens, an explicit
     // zero `K`.
@@ -1480,6 +1571,155 @@ fn vector_15_one_prefix_boundaries() {
 // ---------------------------------------------------------------------------
 // The `0xF5` fixture (§9.3.3)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Vector 16: the corrected appearance and a nonempty list (§9.3.8, world §2.8, §3.1.2)
+// ---------------------------------------------------------------------------
+
+const VECTOR_16_APPEARANCE: &str = "00 40 07 00 00 00 00 C0 3F 00 00 80 3E 20 00 00 00 01 00 00 00 03 00 00 00 01 01 DF 9B 57 13 E0 AC 68 24 01 00";
+const VECTOR_16_LIST: &str = "00 01 00 00 00 77 00 00 00 00 00 00 01 07 46 00 69 00 78 00 74 00 75 00 72 00 65 00 00 00 00 00 00 00 00 00 00 00 40 07 00 00 00 00 C0 3F 00 00 80 3E 20 00 00 00 01 00 00 00 03 00 00 00 01 01 DF 9B 57 13 E0 AC 68 24 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00";
+
+#[test]
+fn vector_16_appearance_and_list() {
+    use tessera_compat::world::{
+        CharacterListResponse, EntityAppearanceDesc, VisualDescriptionUpdate, WireReader,
+        WireWriter, WorldError,
+    };
+    let data = hex(VECTOR_16_APPEARANCE);
+    assert_eq!(data.len(), 37);
+    let update = VisualDescriptionUpdate::from_bytes(&data).expect("decodes");
+    let desc = &update.visual_desc;
+    assert_eq!(desc.flags(), 0x0740);
+    assert_eq!(desc.param_a, Some(1.5));
+    assert_eq!(desc.param_b, Some(0.25));
+    let part = desc.primary_part.as_ref().expect("the part");
+    let map = part.sub_map.as_ref().expect("the sub-map");
+    assert_eq!(map[0].0, 3);
+    assert_eq!(map[0].1.entries[0].key, 0x1357_9BDF);
+    assert_eq!(map[0].1.entries[0].value, 0x2468_ACE0);
+    assert_eq!(desc.part_map.as_ref().expect("empty map").1.len(), 0);
+    // The encoder writes the same order.
+    let mut w = WireWriter::new();
+    update.encode(&mut w).expect("encodes");
+    assert_eq!(w.as_slice(), data.as_slice());
+
+    // Must fail: a third nested word, or scalar B at the end.
+    let mut third = hex(
+        "00 40 07 00 00 00 00 C0 3F 00 00 80 3E 20 00 00 00 01 00 00 00 03 00 00 00 01 01 DF 9B 57 13 E0 AC 68 24 00 00 00 00 01 00",
+    );
+    assert!(VisualDescriptionUpdate::from_bytes(&third).is_err());
+    third.truncate(1);
+    assert!(VisualDescriptionUpdate::from_bytes(&third).is_err());
+    let scalar_b_last = hex(
+        "00 40 07 00 00 00 00 C0 3F 20 00 00 00 01 00 00 00 03 00 00 00 01 01 DF 9B 57 13 E0 AC 68 24 01 00 00 00 80 3E",
+    );
+    let read = VisualDescriptionUpdate::from_bytes(&scalar_b_last);
+    assert!(
+        read.map_or(true, |u| u.visual_desc.param_b != Some(0.25)),
+        "scalar B comes before the collections"
+    );
+    // The base-model branch is unsupported (OPEN-WORLD-9), whatever follows it.
+    for tail in [&[][..], &[1, 0, 0, 0], &[1, 0, 0, 0, 2, 0, 0, 0]] {
+        let mut bytes = 0x0001u32.to_le_bytes().to_vec();
+        bytes.extend_from_slice(tail);
+        assert_eq!(
+            EntityAppearanceDesc::decode(&mut WireReader::new(&bytes)),
+            Err(WorldError::UnsupportedAppearanceVariant)
+        );
+    }
+
+    // The nonempty list, to exact exhaustion, through the one shared byte.
+    let list = hex(VECTOR_16_LIST);
+    assert_eq!(list.len(), 99);
+    let decoded =
+        CharacterListResponse::from_envelope_body(&list[1..], &NoProperties).expect("decodes");
+    assert_eq!(decoded.characters.len(), 1);
+    assert_eq!(decoded.characters[0].character_id, 0x0100_0000_0000_0077);
+    assert_eq!(decoded.characters[0].name, "Fixture");
+    assert_eq!(decoded.characters[0].visual_desc, *desc);
+    assert_eq!(decoded.to_bytes().expect("encodes"), list);
+    // A byte over, a byte short, or a second leading byte fails: no partial list.
+    let mut over = list[1..].to_vec();
+    over.push(0);
+    assert!(CharacterListResponse::from_envelope_body(&over, &NoProperties).is_err());
+    assert!(
+        CharacterListResponse::from_envelope_body(&list[1..list.len() - 1], &NoProperties).is_err()
+    );
+    assert!(CharacterListResponse::from_envelope_body(&list, &NoProperties).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Vector 17: a standalone Ack before any sequenced send (§9.3.8)
+// ---------------------------------------------------------------------------
+
+const VECTOR_17_ACK: &str =
+    "00 00 12 34 00 04 00 00 40 00 00 00 00 01 CD 2B 07 5C 00 01 56 78 00 00 00 02";
+
+#[test]
+fn vector_17_standalone_ack_before_any_sequenced_send() {
+    let hdr = DatagramHeader {
+        rec_id: 0x1234,
+        seq_num: 1,
+        client_word: 1,
+        peer_word: 0x5678,
+        ..DatagramHeader::default()
+    };
+    let opt = OptionalHeaders {
+        cumulative_ack: Some(2),
+        ..OptionalHeaders::default()
+    };
+    let dgram = encode_datagram(hdr, &opt, &[], None, None).expect("encodes");
+    assert_eq!(dgram, hex(VECTOR_17_ACK));
+    let parsed = decode_datagram(&dgram, false, None, true).expect("verifies");
+    assert_eq!(parsed.header.header_checksum(), 0xCD27_075A);
+    assert_eq!(parsed.payload_sum, 0x0004_0002);
+    assert_eq!(parsed.header.checksum, 0xCD2B_075C);
+    // Must fail: outgoing sequence zero (SessionAuth's wire zero is not this counter).
+    assert_ne!(
+        encode_datagram(DatagramHeader { seq_num: 0, ..hdr }, &opt, &[], None, None)
+            .expect("encodes"),
+        hex(VECTOR_17_ACK)
+    );
+    // The connection itself: before any sequenced send its early control copies the counter's
+    // initial 1, also for the closing Disconnect.
+    let mut conn = started();
+    conn.receive_datagram(&hex(VECTOR_5_CHALLENGE), SERVER, 0.1, WireCodecs::NONE)
+        .expect("challenge");
+    conn.receive_datagram(&hex(VECTOR_7_SERVER), SERVER, 0.2, WireCodecs::NONE)
+        .expect("server packet");
+    while conn.pop_outbound_datagram().is_some() {}
+    assert_eq!(conn.send_seq_num(), 1);
+    conn.queue_standalone_disconnect().expect("queued");
+    let end = conn.pop_outbound_datagram().expect("the Disconnect");
+    let end = decode_datagram(&end, false, None, false).expect("decodes");
+    assert!(end.opt_headers.disconnect);
+    assert_eq!(end.header.seq_num, 1);
+    assert_eq!(conn.send_seq_num(), 1, "no sequence allocated");
+}
+
+// ---------------------------------------------------------------------------
+// Vector 12's explicit form of the current `0x6F` (§9.3.8)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn vector_12_explicit_selection_header() {
+    let data = hex("00 77 00 00 00 00 00 00 01 00");
+    let frags =
+        tessera_compat::session::split_blob(2, 1, 1, 0, Some(0x0600_0000_0000_0401), 0x6F, &data)
+            .expect("split");
+    let mut header = Vec::new();
+    frags[0].header.encode(&mut header).expect("encodes");
+    assert_eq!(
+        header,
+        hex("02 00 01 00 01 00 01 04 00 00 00 00 00 06 6F 0A")
+    );
+    // The generic default-recipient form is an alternate, not the service's destination.
+    let generic =
+        tessera_compat::session::split_blob(2, 1, 1, 0, None, 0x6F, &data).expect("split");
+    let mut header = Vec::new();
+    generic[0].header.encode(&mut header).expect("encodes");
+    assert_eq!(header, hex("02 40 01 00 01 00 6F 0A"));
+}
 
 #[test]
 fn the_completion_fixture() {

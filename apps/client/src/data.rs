@@ -265,7 +265,13 @@ fn run(config: &LoaderConfig, ctx: &Ctx) {
     };
     for p in set.problems() {
         tracing::warn!(
-            path = %p.path.as_deref().map(Path::display).map(|d| d.to_string()).unwrap_or_default(),
+            // The file's name, never its directory: an install's path can name the user.
+            file = %p
+                .path
+                .as_deref()
+                .and_then(Path::file_name)
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             "archive set problem: {}",
             p.message
         );
@@ -331,8 +337,17 @@ pub fn find_install(explicit: Option<&Path>) -> Result<GameInstall, String> {
     let discovery = tessera_install::discover_with(&env, explicit)
         .map_err(|e| format!("install not usable: {e}"))?;
     for r in &discovery.rejected {
-        let problems: Vec<String> = r.problems.iter().map(ToString::to_string).collect();
-        tracing::info!(path = %r.path.display(), "rejected install candidate: {}", problems.join("; "));
+        // The folder's own name, and the kinds' count: a candidate's path can name the user, and
+        // the problems' texts can hold it.
+        tracing::info!(
+            folder = %r
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            problems = r.problems.len(),
+            "rejected install candidate"
+        );
     }
     discovery
         .installs

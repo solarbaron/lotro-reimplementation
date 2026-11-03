@@ -30,10 +30,6 @@
 //!   rules and one entry per mounted base archive, read once on the connector's thread, each
 //!   of them answering "unsupported" as a kind when it cannot be read truthfully.
 //!
-//! Open questions of the spec are told apart from Tessera's own choices at each place: a
-//! `pending §25 fix N` comment names a question waiting for the spec writer, with the labelled
-//! engineering choice taken meanwhile.
-//!
 //! The in-game calendar (`official-messages-world.md` §4.4.2) is not read here: the spec's
 //! lookup (key `0x96` of directory `0x0F000002`) contradicts `environment.md` §3, which
 //! makes `0x0F000002` region 3's descriptor (question in `docs/m8-remediation.md` §15). A
@@ -582,6 +578,10 @@ impl InstallData for ArchiveData {
         self.initial.name_rule(rule_key)
     }
 
+    fn check_name_table(&self) -> Result<(), InstallUnsupported> {
+        self.initial.name_rules.as_ref().map(|_| ()).map_err(|e| *e)
+    }
+
     fn archive_inventory(&self) -> Result<Vec<AdvertisedArchive>, InstallUnsupported> {
         self.initial.inventory.clone()
     }
@@ -646,8 +646,8 @@ impl InitialInputs {
 
 /// Reads the inputs from an open set, for the language actually mounted after the fallback of
 /// `install-layout.md` §3.5 ([`ArchiveSet::language`]), not the requested label, which a fallback
-/// never replaces (`official-session.md` §9.3.7). pending §25 fix 15: the request is the login's
-/// §2.2 selection, passed to the set as `--language`, as `open` does.
+/// never replaces (`official-session.md` §9.3.7–§9.3.8). The request is the login's §2.2 selection,
+/// passed to the set as `--language`, as `open` does.
 #[must_use]
 pub fn initial_inputs(set: &ArchiveSet) -> InitialInputs {
     let read = |did: Did| bounded_record(set, did.0, MAX_TABLE_RECORD);
@@ -875,15 +875,18 @@ const REQUIRED_PORTAL_KINDS: [ArchiveKind; 5] = [
 /// A chosen language that is present but unreadable is unsupported: only an absent label falls
 /// back (§9.3.7's first row, `install-layout.md` §3.5).
 ///
-/// pending §25 fix 14: §9.3.7's row passes a non-region-1 set that fails to open, and "fails to
-/// open" has no test. Until the fix these stay labelled refusals, on the side of not sending:
+/// §9.3.8 also makes these unsupported:
 ///
 /// - any other problem [`ArchiveSet`] recorded for a named file of these sets, whatever its
-///   severity: a file that failed to open, two names differing only in case;
-/// - half of a region pair (`install-layout.md` §3.3);
-/// - an overlay next to a listed base (`dat-container.md` §2.5: the set's records may be out of
-///   date);
-/// - a region archive outside the region keys.
+///   severity: a present set whose metadata fails is never tolerated as absent, except for a
+///   non-region-1 pair whose two files both failed to be read by the OS before their metadata
+///   could be validated, which counts as absent, with a warning;
+/// - half of a region pair (`install-layout.md` §3.3), and region 1 absent;
+/// - an overlay or journal next to a listed base (`dat-container.md` §2.5: the set's records may be
+///   out of date).
+///
+/// A region archive outside the map's nonzero keys is not a candidate: it is ignored, as is an
+/// unrelated file.
 ///
 /// Other languages stay members of the set (`crates/dat/src/set.rs`) and are filtered here.
 ///
@@ -907,10 +910,9 @@ pub fn archive_inventory(
         if member.id.part != 0 || other_language(kind) {
             continue;
         }
-        if let Some(r) = kind.region()
-            && !region_keys.contains(&r)
-        {
-            return Err(InstallUnsupported::ArchiveUnknown);
+        // Not a candidate (§9.3.7): only the map's nonzero keys are enumerated.
+        if kind.region().is_some_and(|r| !region_keys.contains(&r)) {
+            continue;
         }
         bases.push(member);
     }
@@ -925,7 +927,7 @@ pub fn archive_inventory(
     }
     check_region_pairs(&bases, region_keys)?;
     check_set_parts(set, &bases, &other_language)?;
-    check_set_problems(set, &bases, &other_language)?;
+    check_set_problems(set, &bases, &other_language, region_keys)?;
     check_stray_parts(set, &bases, &other_language)?;
     bases.into_iter().map(advertised_base).collect()
 }
@@ -935,12 +937,13 @@ pub fn archive_inventory(
 ///
 /// - A file of the requested language, not a stale part of a mounted one, makes the inventory
 ///   unsupported: a language that is present but unreadable does not fall back to another.
-///   `install-layout.md` §3.5's fallback is for a label with no file. Which label is requested is
-///   pending §25 fix 15; this is what happens once that label's own file fails.
+///   `install-layout.md` §3.5's fallback is for a label with no file.
 /// - A part at or past its verified family's count is stale and left out with a warning, also
 ///   when it does not open.
 /// - Another language's file is not this login's.
-/// - pending §25 fix 14: any other named file of the listed sets makes it unsupported.
+/// - A non-region-1 pair whose two files the OS could not read counts as absent (§9.3.8), and a
+///   region file outside the map's keys is not a candidate.
+/// - Any other named file of the listed sets makes it unsupported.
 ///
 /// A problem naming no file says nothing here: the requested language being absent, where §9.3.7
 /// goes on with the label actually mounted, or a family's missing part or implausible count, which
@@ -950,7 +953,21 @@ fn check_set_problems(
     set: &ArchiveSet,
     bases: &[&SetMember],
     other_language: &dyn Fn(&ArchiveKind) -> bool,
+    region_keys: &[u32],
 ) -> Result<(), InstallUnsupported> {
+    // §9.3.8's "fails to open" of a region set: an OS read failure before its metadata could be
+    // validated. `tessera_dat`'s invariant 24 on a base file is that; a header failure has its own.
+    let os_failed = |want: &ArchiveKind| {
+        set.problems().iter().any(|p| {
+            p.invariant == 24
+                && p.path
+                    .as_deref()
+                    .and_then(|path| path.file_name())
+                    .and_then(|n| n.to_str())
+                    .and_then(tessera_dat::ArchiveId::from_file_name)
+                    .is_some_and(|id| id.part == 0 && id.kind == *want)
+        })
+    };
     let requested = |kind: &ArchiveKind| {
         matches!((kind, set.requested_language()),
             (ArchiveKind::Local(l), Some(r)) if l.eq_ignore_ascii_case(r))
@@ -971,6 +988,15 @@ fn check_set_problems(
             }
             continue;
         }
+        if let Some(r) = id.kind.region() {
+            if !region_keys.contains(&r) {
+                continue;
+            }
+            if r != 1 && os_failed(&ArchiveKind::Cell(r)) && os_failed(&ArchiveKind::Map(r)) {
+                tracing::warn!("official login: a region pair cannot be read and is left out");
+                continue;
+            }
+        }
         if requested(&id.kind) || !other_language(&id.kind) {
             return Err(InstallUnsupported::ArchiveFailed);
         }
@@ -988,11 +1014,15 @@ fn is_stale_part(id: &tessera_dat::ArchiveId, bases: &[&SetMember]) -> bool {
             .is_some_and(|(count, _)| id.part >= count)
 }
 
-/// pending §25 fix 14: each region key's two bases, both or neither, and both for region 1.
+/// §9.3.7–§9.3.8: each region key's two bases, both or neither (with a warning), and both for
+/// region 1.
 fn check_region_pairs(bases: &[&SetMember], region_keys: &[u32]) -> Result<(), InstallUnsupported> {
     for &r in region_keys {
         let cell = bases.iter().any(|m| m.id.kind == ArchiveKind::Cell(r));
         let map = bases.iter().any(|m| m.id.kind == ArchiveKind::Map(r));
+        if !cell && !map && r != 1 {
+            tracing::warn!("official login: a region pair is absent; no entries for it");
+        }
         if cell != map || (r == 1 && !cell) {
             return Err(InstallUnsupported::ArchiveMissing);
         }
@@ -1087,8 +1117,8 @@ fn check_set_parts(
 /// `client_<name>_aux_*.datx` with no canonical part number (`dat-container.md` §2.1, §2.3) is a
 /// stray: left out with a warning when its family has a verified base ([`active_parts`] holds for
 /// every listed base by now), unsupported when it has none, and of no concern for another
-/// language. pending §25 fix 14: an overlay next to a listed base (§2.5, matched ASCII
-/// case-insensitively as the names of the set are) is a labelled refusal. A listing that fails
+/// language. An overlay next to a listed base (§2.5, matched ASCII case-insensitively as the names
+/// of the set are) is unsupported (§9.3.8). A listing that fails
 /// answers the same way: nothing is known about those files.
 fn check_stray_parts(
     set: &ArchiveSet,

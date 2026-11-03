@@ -2655,8 +2655,7 @@ fn oe_t14_every_row_of_8_6_and_the_watchdog() {
         ),
         (
             LoginRefusal::UnsupportedStep,
-            "This login needs a step that Tessera does not support. Tessera cannot log in to \
-             this account.",
+            "This version of Tessera does not support this step yet.",
             Target::StartScreen,
             true,
         ),
@@ -2732,7 +2731,7 @@ fn oe_t14_every_row_of_8_6_and_the_watchdog() {
             Some("No answer from the official service."),
         ),
         (
-            DisconnectReason::TransportFailed("io".into()),
+            DisconnectReason::TransportFailed(String::new()),
             Some("The connection to the official service failed."),
         ),
         (
@@ -4411,7 +4410,7 @@ fn a_local_refusal_is_not_attributed_to_the_service() {
         assert!(!text.contains("cannot log in"), "{text}");
     }
     assert!(
-        note.contains("cannot read the character list yet"),
+        note.contains("cannot read this character list yet"),
         "{note}"
     );
     assert!(note.contains("Tessera limit"), "{note}");
@@ -4451,4 +4450,48 @@ fn an_unsupported_end_of_the_session_has_its_own_message() {
     let timed_out =
         super::login::disconnect_message(&tessera_net::DisconnectReason::TimedOut).expect("one");
     assert_ne!(m.text, timed_out.text);
+}
+
+/// `official-session.md` §9.3.8: Tessera's own deadline names the stage in Tessera's words, and a
+/// Tessera limit carries its line; an ordinary I/O failure keeps the plain row.
+#[test]
+fn the_session_ends_after_the_hand_over_say_whose_limit_it_is() {
+    use tessera_net::DisconnectReason as R;
+    let stage = "Tessera reached the world server, but this version cannot finish entering.";
+    let m = super::login::disconnect_message(&R::TimedOutLocally(stage.to_owned())).expect("one");
+    assert_eq!(m.text, stage);
+    assert_ne!(
+        m.text,
+        tessera_compat::consent::strings::text("official.error.no_answer")
+    );
+    let m =
+        super::login::disconnect_message(&R::TransportFailed("A limit.".to_owned())).expect("one");
+    assert_eq!(
+        m.text,
+        tessera_compat::consent::strings::text("official.error.tessera_limit")
+    );
+    assert_eq!(m.detail.as_deref(), Some("A limit."));
+    let m = super::login::disconnect_message(&R::TransportFailed(String::new())).expect("one");
+    assert_eq!(
+        m.text,
+        tessera_compat::consent::strings::text("official.error.transport")
+    );
+    assert_eq!(m.detail, None);
+}
+
+/// `official-entry.md` §8.1: a notice is a line for the user: no state changes and no end.
+#[test]
+fn a_login_notice_is_a_line_and_nothing_else() {
+    let now = std::time::Instant::now();
+    let mut p = super::login::LoginPresenter::new(now, None);
+    let before = format!("{:?}", p.screen());
+    p.on_event(
+        &tessera_net::Event::Account(tessera_net::account::AccountEvent::LoginNotice {
+            text: "Maintenance tonight.".to_owned(),
+        }),
+        now,
+    );
+    assert_eq!(p.notice(), Some("Maintenance tonight."));
+    assert_eq!(format!("{:?}", p.screen()), before);
+    assert!(p.end().is_none());
 }

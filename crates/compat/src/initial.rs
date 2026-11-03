@@ -1,41 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The initial exchange of the login connection (`official-session.md` §9.3.1–§9.3.7, decision
+//! The initial exchange of the login connection (`official-session.md` §9.3.1–§9.3.8, decision
 //! 0046): the server's `0xDD`, the client's install advertisement `0xEC`, the completion
-//! exchange `0xF5` and the bounded wait for the character list `0x6C`. Sans I/O: the session
-//! driver ([`crate::connector::session_phase`]) sends what this module builds, and the install's
-//! values reach it through [`crate::connector::data::InstallData`].
+//! exchange `0xF5`, the historical `0x12F` path and the bounded wait for the character list
+//! `0x6C`. Sans I/O: the session driver ([`crate::connector::session_phase`]) sends what this
+//! module builds, and the install's values reach it through
+//! [`crate::connector::data::InstallData`].
 //!
 //! # What is whose
 //!
-//! `official-session.md` §9.3.7 states the rules this module follows. Its descriptions of how
-//! the original walks its archives (§9.3.4–§9.3.6) are not rules and nothing here comes from
+//! `official-session.md` §9.3.7–§9.3.8 state the rules this module follows. Its descriptions of
+//! how the original walks its archives (§9.3.4–§9.3.6) are not rules and nothing here comes from
 //! them (decision 0046 item 4). Everything sent is the user's real data (decision 0046 item 2);
 //! a rejected attempt is not retried with varied data.
 //!
-//! Where §9.3.7 leaves a choice open, the code keeps a labelled one, marked
-//! `pending §25 fix N` with the number of the writer fix that will settle it:
-//!
-//! - fix 8: a queued `0x130` starts the current wait again, and an actual `0x12F` has its own
-//!   wait ([`VERSION_PATH_WAIT_SEC`]).
-//! - fix 9: a list that completed cancels every wait; a progress timer keeps the client's
-//!   watchdog from running out between the stages.
-//! - fix 10: the `0xF5` guard's window runs from the last `0xEC` fragment's allocation to the
-//!   first valid `0xF5`; a known message of §9.3 stays outside the guard.
-//! - fix 11: a later well-formed non-empty `0xDD` updates the word like any other; the `0xDD`
-//!   rules end with the login stage; bytes after a `0xDD` zlib stream are not looked at.
-//! - fix 12: refused transport forms are counted and only a sequence gap that stays open ends
-//!   the attempt ([`crate::session::MAX_GAP_AGE_SEC`]).
-//! - fix 17: a run list that repeats an iteration is refused, as the invariant does not say how
-//!   a repeat counts, and a stored run of one or two values is taken as stored input and written
-//!   again by the §9.3.7 run rule, though Vector 14 names that form a must-fail
-//!   ([`AdvertisedArchive::check_invariant`]).
-//! - The client's own preflight refusals beyond §9.3.7's table: fix 14 (`archive_inventory` in
-//!   the client).
+//! Every wait here is Tessera policy on the monotonic clock: 30 s from the first State 5 to `0xDD`,
+//! from `0xEC`'s last fragment to the server's `0xF5` and from the client's `0xF5` to the list; on
+//! the historical path 30 s for an answer to `0x12C` and for the list, and one absolute five-minute
+//! limit for a queued login, never extended. Other traffic restarts none of them, and a complete
+//! list cancels every one.
 //!
 //! # Hostile input
 //!
 //! Every count is checked against the bytes left before anything is read or allocated. A
-//! message that fails is rejected whole: the transport has already taken its datagram (§9.3.7).
+//! message that fails is rejected whole: the transport has already taken its datagram (§9.3.8).
 
 use std::collections::BTreeMap;
 
@@ -66,22 +53,19 @@ pub const MAX_ADVERTISED_ARCHIVES: usize = 256;
 /// unsupported, never cut.
 pub const MAX_ADVERTISEMENT_BYTES: usize = 1024 * 1024;
 
-/// Wait from State 5 to the first valid `0xDD` (§9.3.7: Tessera policy, not a captured timing).
+/// Wait from the first State 5 to the first valid `0xDD` (§9.3.8: Tessera policy).
 pub const DD_WAIT_SEC: f64 = 30.0;
-/// Wait from the last initial `0xEC` fragment's allocation to the server's `0xF5` (§9.3.7).
+/// Wait from `0xEC`'s last fragment to the server's `0xF5` (§9.3.8).
 pub const COMPLETION_WAIT_SEC: f64 = 30.0;
-/// Wait from the allocation of the client's `0xF5` to a complete `0x6C` (§9.3.7).
+/// Wait from the client's `0xF5` to a complete `0x6C` (§9.3.8).
 pub const LIST_WAIT_SEC: f64 = 30.0;
-/// Wait from an actual `0x12F` to `0xDD` or `0x6C` on the historical version path (§9.3).
-/// pending §25 fix 8: labelled engineering choice; §9.3.7's waits are for the `0xDD` path, and
-/// §9.3 does not lift the rule against waiting indefinitely for a character list.
-pub const VERSION_PATH_WAIT_SEC: f64 = 180.0;
-
-/// Wait while the queue panel shows, from the latest queue status. pending §25 fix 8: §9.3 keeps a
-/// queued session waiting, §9.3.7's deadlines have no exemption and neither names a bound for it;
-/// labelled engineering choice, longer than §9.3.7's waits so that the queue place is not lost
-/// between statuses.
-pub const QUEUE_WAIT_SEC: f64 = 180.0;
+/// Wait from an actual `0x12F` for the historical answer (§9.3.8).
+pub const VERSION_PATH_WAIT_SEC: f64 = 30.0;
+/// Wait from `0x12D` status `1` or a ready `0x130` to a complete `0x6C` (§9.3.8).
+pub const HISTORICAL_LIST_WAIT_SEC: f64 = 30.0;
+/// The one absolute limit of a queued login, from its first queued `0x130`; another `0x130` never
+/// extends it (§9.3.8).
+pub const QUEUE_WAIT_SEC: f64 = 300.0;
 
 /// Most distinct opcodes the skip counter keeps; the others are counted together (§9.3.7:
 /// Tessera policy).
@@ -279,15 +263,11 @@ impl AdvertisedArchive {
         [e, f, g, h, a, b, c, d]
     }
 
-    /// `install-layout.md` §9.6 invariant 7, for §9.3.7's sender and inventory check: the runs
-    /// add up to the count and the trailing list is the `K` highest listed iterations in
-    /// increasing order. Nothing is repaired.
-    ///
-    /// pending §25 fix 17: the invariant does not say how a repeated iteration counts; a run
-    /// list that repeats one is refused, on the side of not sending. Vector 14 says a two-value
-    /// negative run or a run of one must fail, while `install-layout.md` treats that stored form as
-    /// valid and §9.3.7 re-serializes it; labelled, it passes as stored input, and what is sent is
-    /// the canonical form.
+    /// `install-layout.md` §9.3/§9.6 invariant 7, for §9.3.7's sender and inventory check: the
+    /// runs add up to the count, a repeated expanded or trailing iteration is malformed (Tessera's
+    /// bounded input policy), and the trailing list is the `K` highest listed iterations in strict
+    /// increasing order. Stored runs of one or two values are valid input; what is sent is the
+    /// canonical form (`write_run`). Nothing is repaired.
     ///
     /// # Errors
     ///
@@ -577,7 +557,7 @@ pub enum UnsupportedNegotiation {
     /// `0xDD` is malformed, or has an envelope other than plain.
     #[error("malformed install request")]
     MalformedRequest,
-    /// `0xDD` has a non-empty trailing array (§9.3.7).
+    /// The triggering `0xDD` has a non-empty trailing array (§9.3.8).
     #[error("install request with a trailing array")]
     RequestArray,
     /// The name-rule table or rule of `0xDD` cannot be used.
@@ -592,17 +572,25 @@ pub enum UnsupportedNegotiation {
     /// `0xEC` could not be queued.
     #[error("the advertisement could not be sent")]
     AdvertisementNotSent,
-    /// A server `0xF5` before `0xEC`, or not exactly `00` on queue 1 (§9.3.7).
+    /// A queue-1 `0xF5` before `0xEC`, or not exactly `00` in the guard window (§9.3.8).
     #[error("unexpected completion message")]
     UnexpectedCompletion,
-    /// While `0xF5` is awaited, a message outside §9.3.7's list arrived: the preparation is not
-    /// one this policy supports (OPEN-SESSION-21; its body was discarded).
-    #[error("a message outside the completion guard")]
-    UnsupportedPreparation,
+    /// An actual `0x12F` after `0xEC` (§9.3.8: no second or mixed advertisement).
+    #[error("a version request after the advertisement")]
+    LateVersionRequest,
     /// The client's `0xF5` could not be queued.
     #[error("the completion reply could not be sent")]
     CompletionNotSent,
-    /// No `0xDD` within [`DD_WAIT_SEC`] of State 5.
+    /// A dictionary the handshake names is not the install's (§9.3.8: before establishment).
+    #[error("the connection's dictionary is not the install's")]
+    Dictionary,
+    /// `0x6D` before the list (§9.3.8: no selection exists).
+    #[error("a selection refusal with no selection")]
+    RefusalWithoutSelection,
+    /// A `0x6D` or `0xB3` body that cannot be read (§9.3.8).
+    #[error("a refusal that cannot be read")]
+    MalformedRefusal,
+    /// No `0xDD` within [`DD_WAIT_SEC`] of the first State 5.
     #[error("no install request arrived in time")]
     RequestDeadline,
     /// No server `0xF5` within [`COMPLETION_WAIT_SEC`] of `0xEC`.
@@ -611,19 +599,27 @@ pub enum UnsupportedNegotiation {
     /// No `0x6C` within [`LIST_WAIT_SEC`] of the client's `0xF5`.
     #[error("no character list arrived in time")]
     ListDeadline,
-    /// No `0xDD` or `0x6C` within [`VERSION_PATH_WAIT_SEC`] of an actual `0x12F`.
-    #[error("the version exchange did not lead to a character list in time")]
+    /// No historical answer within [`VERSION_PATH_WAIT_SEC`] of an actual `0x12F`.
+    #[error("no answer to the version exchange arrived in time")]
     VersionPathDeadline,
-    /// `0x6C` did not decode (§9.3.7, OPEN-WORLD-10: no scan and no partial list; no character
-    /// is invented).
+    /// No `0x6C` within [`HISTORICAL_LIST_WAIT_SEC`] of `0x12D` or a ready `0x130`.
+    #[error("no character list arrived in time after the version exchange")]
+    HistoricalListDeadline,
+    /// The login queue did not end within [`QUEUE_WAIT_SEC`].
+    #[error("the login queue did not end in time")]
+    QueueDeadline,
+    /// A sequence gap a checksum-valid packet opened stayed open for its deadline (§9.3.8).
+    #[error("a packet of the server could not be taken in time")]
+    GapDeadline,
+    /// `0x6C` did not decode (§9.3.8: no scan and no partial list; no character is invented).
     #[error("the character list cannot be read")]
     ListDecode,
-    /// `0x6C` is compressed or routed (§9.3.7: unsupported, never shifted by a guessed byte).
+    /// `0x6C` is compressed or routed (§9.3.8: unsupported, never shifted by a guessed byte).
     #[error("a compressed or routed character list is not supported")]
     ListEnvelope,
-    /// A sequence gap stayed open because its packet cannot be taken, while the server kept
-    /// sending (pending §25 fix 12).
-    #[error("a packet of the server could not be taken")]
+    /// A checksum-valid form the session cannot take: `blobFlags` `0x02` on queues 2–4, or a
+    /// conflicting body or count for one identity (§9.3.8).
+    #[error("a packet of the server has a form Tessera cannot take")]
     TrafficRefused,
 }
 
@@ -642,20 +638,27 @@ impl UnsupportedNegotiation {
             Self::LanguageNotAllowed => "language not allowed",
             Self::AdvertisementNotSent => "advertisement not sent",
             Self::UnexpectedCompletion => "unexpected completion",
-            Self::UnsupportedPreparation => "outside the completion guard",
+            Self::LateVersionRequest => "version request after the advertisement",
             Self::CompletionNotSent => "completion not sent",
+            Self::Dictionary => "dictionary",
+            Self::RefusalWithoutSelection => "refusal without a selection",
+            Self::MalformedRefusal => "malformed refusal",
             Self::RequestDeadline => "install request deadline",
             Self::CompletionDeadline => "completion deadline",
             Self::ListDeadline => "character list deadline",
             Self::VersionPathDeadline => "version path deadline",
+            Self::HistoricalListDeadline => "historical list deadline",
+            Self::QueueDeadline => "queue deadline",
+            Self::GapDeadline => "sequence gap deadline",
             Self::ListDecode => "character list decode",
             Self::ListEnvelope => "character list envelope",
-            Self::TrafficRefused => "sequence gap stayed open",
+            Self::TrafficRefused => "unsupported packet form",
         }
     }
 
-    /// Whether this is one of the waits of §9.3.7: `ServiceUnavailable`, where every other
-    /// result is `UnsupportedStep`.
+    /// Whether this is §9.3.8's deadline row: `LoginRefused { UnsupportedStep }`, then
+    /// `Disconnected { TimedOut }`. Every other result here is its local-unsupported row, with
+    /// `Disconnected { TransportFailed }`.
     #[must_use]
     pub const fn is_deadline(self) -> bool {
         matches!(
@@ -664,14 +667,17 @@ impl UnsupportedNegotiation {
                 | Self::CompletionDeadline
                 | Self::ListDeadline
                 | Self::VersionPathDeadline
+                | Self::HistoricalListDeadline
+                | Self::QueueDeadline
+                | Self::GapDeadline
         )
     }
 
     /// The line under the refusal on the client's error screen. Tessera's own text, never the
-    /// service's: it goes in `LoginRefused`'s `note`, not its `detail`. A local install fault or
-    /// a Tessera limit says what Tessera could not do and never reads as an account fault
-    /// (decision 0046 item 6); the diagnostic is the log's ([`Self::label`]), and no path,
-    /// identifier, iteration value or account data is in either.
+    /// service's: it goes in `LoginRefused`'s `note`, not its `detail`. It says which step
+    /// Tessera could not go past and never reads as an account fault (decision 0046 item 6); the
+    /// diagnostic is the log's ([`Self::label`]), and no path, identifier, iteration value or
+    /// account data is in either.
     #[must_use]
     pub const fn detail(self) -> &'static str {
         match self {
@@ -679,10 +685,17 @@ impl UnsupportedNegotiation {
                 "Tessera could not read what the official login needs from this install. This is \
                  a Tessera limit or a problem with the local files, not a fault of your account."
             }
+            Self::Dictionary => {
+                "This install's connection tables are not the ones the server uses, so Tessera \
+                 stopped. This is a Tessera limit or a problem with the local files, not a fault \
+                 of your account."
+            }
             Self::MalformedRequest
             | Self::RequestArray
             | Self::UnexpectedCompletion
-            | Self::UnsupportedPreparation
+            | Self::LateVersionRequest
+            | Self::RefusalWithoutSelection
+            | Self::MalformedRefusal
             | Self::TrafficRefused => {
                 "The server sent a message of the official login that Tessera cannot handle yet. \
                  This is a Tessera limit, not a fault of your account."
@@ -708,14 +721,32 @@ impl UnsupportedNegotiation {
                 "Tessera could not send a message of the official login. This is a Tessera limit, \
                  not a fault of your account."
             }
-            Self::RequestDeadline
-            | Self::CompletionDeadline
-            | Self::ListDeadline
-            | Self::VersionPathDeadline => {
-                "The server did not continue the official login in time."
+            Self::RequestDeadline => {
+                "Tessera stopped waiting for the server's request for this install's details: \
+                 Tessera's own time limit for this step passed."
+            }
+            Self::CompletionDeadline => {
+                "Tessera stopped waiting for the server to accept this install's details: \
+                 Tessera's own time limit for this step passed."
+            }
+            Self::ListDeadline | Self::HistoricalListDeadline => {
+                "Tessera stopped waiting for the character list: Tessera's own time limit for this \
+                 step passed."
+            }
+            Self::VersionPathDeadline => {
+                "Tessera stopped waiting for the answer to its version: Tessera's own time limit \
+                 for this step passed."
+            }
+            Self::QueueDeadline => {
+                "Tessera stopped waiting in the login queue: Tessera's own time limit for the queue \
+                 passed."
+            }
+            Self::GapDeadline => {
+                "A packet of the official login that Tessera could not take stayed missing past \
+                 Tessera's own time limit. This is a Tessera limit, not a fault of your account."
             }
             Self::ListDecode | Self::ListEnvelope => {
-                "Tessera cannot read the character list yet. This is a Tessera limit, not a fault \
+                "Tessera cannot read this character list yet. This is a Tessera limit, not a fault \
                  of your account."
             }
         }
@@ -874,15 +905,29 @@ enum Phase {
     Connecting,
     /// State 5; waiting for `0xDD` since the time held.
     AwaitingRequest(f64),
-    /// `0xEC` sent; waiting for the server's `0xF5` since the time held.
+    /// `0xEC` sent; waiting for the server's `0xF5` since the time held: the guard window.
     AwaitingCompletion(f64),
     /// The client's `0xF5` sent; waiting for `0x6C` since the time held.
     AwaitingList(f64),
-    /// An actual `0x12F` arrived at the time held: the historical version path (§9.3, pending
-    /// §25 fix 8).
+    /// An actual `0x12F` arrived at the time held: waiting for its answer.
     Historical(f64),
+    /// `0x12D` status `1` or a ready `0x130` at the time held: waiting for `0x6C`.
+    HistoricalList(f64),
+    /// Queued since the first queued `0x130`, at the time held (one absolute limit).
+    Queued(f64),
     /// The list arrived.
     Finished,
+}
+
+/// What to do with a queue-1 `0xF5` of the login connection while the exchange runs (§9.3.8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionStep {
+    /// In the guard window: exactly `00` gets the one reply, anything else fails.
+    Guarded,
+    /// Before `0xEC`, or on the historical path where `0xEC` is suppressed: unsupported.
+    Unsupported,
+    /// After the one reply: counted and ignored.
+    Repeat,
 }
 
 /// The initial exchange's state on the login connection (sans I/O, the driver acts).
@@ -891,11 +936,12 @@ pub struct Negotiation {
     phase: Phase,
     stages: InitialStages,
     skips: SkipCounters,
-    /// The latest opaque configuration word of a valid `0xDD`: kept, never compared (§9.3.7).
+    /// The latest opaque configuration word of a valid `0xDD`: kept, never compared (§9.3.8).
     server_config: Option<u32>,
-    /// The login queue says the account waits: the client shows its queue panel, whose watchdog
-    /// does not run (`official-entry.md` §8.4), until the queue ends or the next step.
-    in_queue: bool,
+    /// When the queued login first queued: the base of its one absolute limit.
+    queued_since: Option<f64>,
+    /// An actual `0x12F` arrived before `0xEC`: `0xEC` is suppressed (§9.3.8).
+    historical: bool,
 }
 
 impl Default for Negotiation {
@@ -933,7 +979,8 @@ impl Negotiation {
                 },
                 ignored: 0,
             },
-            in_queue: false,
+            queued_since: None,
+            historical: false,
         }
     }
 
@@ -943,7 +990,7 @@ impl Negotiation {
         self.stages
     }
 
-    /// The skipped messages by opcode (§9.3.7).
+    /// The skipped messages by opcode (§9.3.8).
     #[must_use]
     pub const fn skip_counters(&self) -> &SkipCounters {
         &self.skips
@@ -955,101 +1002,111 @@ impl Negotiation {
         self.server_config
     }
 
-    /// Whether `0xF5` is awaited: the window of §9.3.7's guard. pending §25 fix 10: "while
-    /// awaiting F5" has no start in the text; labelled as from the last `0xEC` fragment's
-    /// allocation to the first valid `0xF5`.
+    /// Where a queue-1 `0xF5` of the login connection stands (§9.3.8).
     #[must_use]
-    pub const fn awaiting_completion(&self) -> bool {
-        matches!(self.phase, Phase::AwaitingCompletion(_))
+    pub const fn completion_step(&self) -> CompletionStep {
+        if self.stages.f5_sent {
+            CompletionStep::Repeat
+        } else if matches!(self.phase, Phase::AwaitingCompletion(_)) {
+            CompletionStep::Guarded
+        } else if self.stages.ec_sent {
+            // `0xEC` went and a queue status replaced the wait: still the guard window.
+            CompletionStep::Guarded
+        } else {
+            CompletionStep::Unsupported
+        }
     }
 
-    /// Whether a first `0xDD` may still trigger `0xEC` (§9.3.7: one per primary connection).
+    /// Whether a valid `0xDD` on queue 1 of the primary connection triggers `0xEC` now: only the
+    /// first, and never on the historical path (§9.3.8).
     #[must_use]
     pub const fn wants_request(&self) -> bool {
-        !self.stages.dd_seen && !matches!(self.phase, Phase::Finished)
+        !self.stages.dd_seen && !self.historical && !matches!(self.phase, Phase::Finished)
     }
 
-    /// The login connection reached State 5 at `now`.
+    /// The login connection first reached State 5 at `now`.
     pub fn connected(&mut self, now: f64) {
         if matches!(self.phase, Phase::Connecting) {
             self.phase = Phase::AwaitingRequest(now);
         }
     }
 
-    /// An actual `0x12F` arrived at `now`: only then does the historical version path apply
-    /// (§9.3), with a wait of its own.
-    pub fn version_requested(&mut self, now: f64) {
-        if matches!(self.phase, Phase::Connecting | Phase::AwaitingRequest(_)) {
-            self.phase = Phase::Historical(now);
+    /// An actual `0x12F` arrived at `now`. The first before `0xEC` switches to the historical
+    /// path and answers `true` (one `0x12C`). A repeat answers `false` and changes no timer.
+    /// After `0xEC` the driver reports it unsupported ([`Self::version_request_too_late`]).
+    pub fn version_requested(&mut self, now: f64) -> bool {
+        if self.historical {
+            self.ignored();
+            return false;
         }
+        self.historical = true;
+        self.phase = Phase::Historical(now);
+        true
     }
 
-    /// The current wait starts again at `now`. Only for the login queue (pending §25 fix 8).
-    fn restart_wait(&mut self, now: f64) {
-        self.phase = match self.phase {
-            Phase::AwaitingRequest(_) => Phase::AwaitingRequest(now),
-            Phase::AwaitingCompletion(_) => Phase::AwaitingCompletion(now),
-            Phase::AwaitingList(_) => Phase::AwaitingList(now),
-            Phase::Historical(_) => Phase::Historical(now),
-            other => other,
-        };
+    /// Whether a `0x12F` now comes after `0xEC`, which is unsupported (§9.3.8).
+    #[must_use]
+    pub const fn version_request_too_late(&self) -> bool {
+        self.stages.ec_sent
     }
 
-    /// The login queue says the account still waits. pending §25 fix 8: §9.3 keeps the session
-    /// waiting and §9.3.7 has no exemption and no bound for it; labelled, the current wait starts
-    /// again and is [`QUEUE_WAIT_SEC`] while the queue panel shows, so a queued login is bounded
-    /// by its gaps between statuses.
-    pub fn queued(&mut self, now: f64) {
-        self.in_queue = true;
-        self.restart_wait(now);
+    /// `0x12D` status `1` at `now`: the 30-second list wait starts.
+    pub fn version_accepted(&mut self, now: f64) {
+        self.queued_since = None;
+        self.phase = Phase::HistoricalList(now);
     }
 
-    /// The login queue accepted the account: the wait of a queued login starts again at `now`.
-    pub fn queue_left(&mut self, now: f64) {
-        if self.in_queue {
-            self.in_queue = false;
-            self.restart_wait(now);
-        }
+    /// A queued `0x130` at `now` replaces the running wait by one absolute limit, which another
+    /// `0x130` never extends (§9.3.8). Answers whether this was the first.
+    pub fn queued(&mut self, now: f64) -> bool {
+        let first = self.queued_since.is_none();
+        let since = *self.queued_since.get_or_insert(now);
+        self.phase = Phase::Queued(since);
+        first
+    }
+
+    /// A ready `0x130` at `now`: the 30-second list wait starts (§9.3.8).
+    pub fn queue_ready(&mut self, now: f64) {
+        self.queued_since = None;
+        self.phase = Phase::HistoricalList(now);
     }
 
     /// The first valid `0xDD` arrived, with its opaque word.
     pub fn request_seen(&mut self, server_config: u32) {
         self.stages.dd_seen = true;
         self.server_config = Some(server_config);
-        self.in_queue = false;
     }
 
-    /// A later valid `0xDD` (§9.3.7): only its word is kept, and it is counted. No wait starts
-    /// again and nothing is sent.
+    /// A later valid `0xDD` (§9.3.8): only its word is kept, and it is counted. No wait starts
+    /// again, nothing is sent, and the install is not looked at again.
     pub fn later_request(&mut self, server_config: u32) {
         self.server_config = Some(server_config);
         self.ignored();
     }
 
-    /// The last fragment of `0xEC` was allocated at `now`.
+    /// The last fragment of `0xEC` first went out at `now`: the guard window opens.
     pub fn advertisement_sent(&mut self, now: f64) {
         self.stages.ec_sent = true;
-        self.in_queue = false;
+        self.queued_since = None;
         self.phase = Phase::AwaitingCompletion(now);
     }
 
-    /// A server `0xF5` of the login connection arrived, whether or not it can be answered.
+    /// A queue-1 server `0xF5` of the login connection arrived, whether or not it can be answered.
     pub fn completion_seen(&mut self) {
         self.stages.f5_received = true;
     }
 
-    /// The client's `0xF5` was allocated at `now`.
+    /// The client's one `0xF5` was allocated at `now`.
     pub fn completion_sent(&mut self, now: f64) {
         self.stages.f5_sent = true;
-        self.in_queue = false;
+        self.queued_since = None;
         self.phase = Phase::AwaitingList(now);
     }
 
-    /// The character list was decoded. pending §25 fix 9: every wait ends with it, the labelled
-    /// reading of "unless a valid list already completed".
+    /// The character list was decoded: every wait ends (§9.3.8).
     pub fn list_received(&mut self) {
         self.stages.list_received = true;
-        self.in_queue = false;
+        self.queued_since = None;
         self.phase = Phase::Finished;
     }
 
@@ -1067,28 +1124,19 @@ impl Negotiation {
     /// When the current wait ends, `None` when nothing is awaited.
     #[must_use]
     pub fn deadline(&self) -> Option<f64> {
-        let queued = |wait: f64| if self.in_queue { QUEUE_WAIT_SEC } else { wait };
         match self.phase {
-            Phase::AwaitingRequest(t) => Some(t + queued(DD_WAIT_SEC)),
-            Phase::AwaitingCompletion(t) => Some(t + queued(COMPLETION_WAIT_SEC)),
-            Phase::AwaitingList(t) => Some(t + queued(LIST_WAIT_SEC)),
-            Phase::Historical(t) => Some(t + queued(VERSION_PATH_WAIT_SEC)),
+            Phase::AwaitingRequest(t) => Some(t + DD_WAIT_SEC),
+            Phase::AwaitingCompletion(t) => Some(t + COMPLETION_WAIT_SEC),
+            Phase::AwaitingList(t) => Some(t + LIST_WAIT_SEC),
+            Phase::Historical(t) => Some(t + VERSION_PATH_WAIT_SEC),
+            Phase::HistoricalList(t) => Some(t + HISTORICAL_LIST_WAIT_SEC),
+            Phase::Queued(t) => Some(t + QUEUE_WAIT_SEC),
             Phase::Connecting | Phase::Finished => None,
         }
     }
 
-    /// Whether the driver keeps the client's progress screen alive: a wait of this module is
-    /// the bound, not the screen's own watchdog (`official-entry.md` §8.3), which three stages
-    /// in a row could pass (pending §25 fix 9). Not while the queue panel shows, which a
-    /// progress event would replace (§8.4).
-    #[must_use]
-    pub fn keeps_progress(&self) -> bool {
-        self.deadline().is_some() && !self.in_queue
-    }
-
-    /// The result of a wait that ended by `now`. None of them starts again for other traffic,
-    /// a repeated `0xDD` or `0xF5`, or a retransmission (§9.3.7). pending §25 fix 8: a queue
-    /// status does; this result does not look at the queue panel.
+    /// The result of a wait that ended by `now`. None of them starts again for other traffic, a
+    /// notice, a repeated `0xDD`, `0xF5` or `0x130`, or a retransmission (§9.3.8).
     #[must_use]
     pub fn expired(&self, now: f64) -> Option<UnsupportedNegotiation> {
         if self.deadline().is_none_or(|t| now < t) {
@@ -1099,6 +1147,8 @@ impl Negotiation {
             Phase::AwaitingCompletion(_) => Some(UnsupportedNegotiation::CompletionDeadline),
             Phase::AwaitingList(_) => Some(UnsupportedNegotiation::ListDeadline),
             Phase::Historical(_) => Some(UnsupportedNegotiation::VersionPathDeadline),
+            Phase::HistoricalList(_) => Some(UnsupportedNegotiation::HistoricalListDeadline),
+            Phase::Queued(_) => Some(UnsupportedNegotiation::QueueDeadline),
             Phase::Connecting | Phase::Finished => None,
         }
     }
@@ -1243,8 +1293,7 @@ mod tests {
         assert_eq!(c.overflow(), 300 - 256);
     }
 
-    /// Only a queue status starts a wait again, with its own bound; a later `0xDD` does not, and
-    /// only updates the word.
+    /// A later `0xDD` starts no wait again and only updates the word.
     #[test]
     fn a_later_request_starts_no_wait_again() {
         let mut n = Negotiation::new();
@@ -1278,57 +1327,67 @@ mod tests {
         let mut n = Negotiation::new();
         assert_eq!(n.deadline(), None);
         n.connected(10.0);
-        assert_eq!(n.deadline(), Some(10.0 + DD_WAIT_SEC));
-        assert_eq!(n.expired(10.0 + DD_WAIT_SEC - 1.0), None);
+        assert_eq!(n.deadline(), Some(40.0));
+        assert_eq!(n.expired(39.0), None);
         assert_eq!(
-            n.expired(10.0 + DD_WAIT_SEC),
+            n.expired(40.0),
             Some(UnsupportedNegotiation::RequestDeadline)
         );
-        n.queued(50.0);
-        assert_eq!(n.deadline(), Some(50.0 + QUEUE_WAIT_SEC));
+        n.request_seen(0);
         n.advertisement_sent(60.0);
+        assert_eq!(n.completion_step(), CompletionStep::Guarded);
         assert_eq!(
-            n.expired(60.0 + COMPLETION_WAIT_SEC),
+            n.expired(90.0),
             Some(UnsupportedNegotiation::CompletionDeadline)
         );
         n.completion_sent(70.0);
-        assert_eq!(
-            n.expired(70.0 + LIST_WAIT_SEC),
-            Some(UnsupportedNegotiation::ListDeadline)
-        );
+        assert_eq!(n.completion_step(), CompletionStep::Repeat);
+        assert_eq!(n.expired(100.0), Some(UnsupportedNegotiation::ListDeadline));
         n.list_received();
         assert_eq!(n.deadline(), None);
-        let mut h = Negotiation::new();
-        h.connected(0.0);
-        h.version_requested(5.0);
-        assert_eq!(h.deadline(), Some(5.0 + VERSION_PATH_WAIT_SEC));
-        assert_eq!(
-            h.expired(5.0 + VERSION_PATH_WAIT_SEC),
-            Some(UnsupportedNegotiation::VersionPathDeadline)
-        );
-        h.queued(50.0);
-        assert_eq!(h.deadline(), Some(50.0 + QUEUE_WAIT_SEC));
     }
 
+    /// §9.3.8: the historical path: one `0x12C`, `0xEC` suppressed, and a replacement clock.
     #[test]
-    fn the_queue_panel_holds_the_keep_alive_until_the_queue_or_the_next_step_ends_it() {
+    fn the_historical_path_has_its_own_clocks() {
+        let mut h = Negotiation::new();
+        h.connected(0.0);
+        assert_eq!(h.completion_step(), CompletionStep::Unsupported);
+        assert!(h.version_requested(5.0));
+        assert!(!h.wants_request(), "`0xEC` is suppressed");
+        assert_eq!(h.deadline(), Some(35.0));
+        // A repeat counts and restarts nothing.
+        assert!(!h.version_requested(20.0));
+        assert_eq!(h.deadline(), Some(35.0));
+        assert_eq!(
+            h.expired(35.0),
+            Some(UnsupportedNegotiation::VersionPathDeadline)
+        );
+        h.version_accepted(30.0);
+        assert_eq!(h.deadline(), Some(60.0));
+        assert_eq!(
+            h.expired(60.0),
+            Some(UnsupportedNegotiation::HistoricalListDeadline)
+        );
+    }
+
+    /// §9.3.8: the queue has one absolute limit; another queued status never extends it.
+    #[test]
+    fn the_queue_has_one_absolute_limit() {
         let mut n = Negotiation::new();
-        assert!(!n.keeps_progress(), "nothing awaited yet");
         n.connected(0.0);
-        assert!(n.keeps_progress());
-        n.queued(10.0);
-        assert!(!n.keeps_progress());
-        n.queue_left(20.0);
-        assert!(n.keeps_progress());
-        assert_eq!(n.deadline(), Some(20.0 + DD_WAIT_SEC));
-        // Leaving a queue that never began changes no wait.
-        n.queue_left(25.0);
-        assert_eq!(n.deadline(), Some(20.0 + DD_WAIT_SEC));
-        n.queued(30.0);
-        n.request_seen(0);
-        assert!(n.keeps_progress());
+        assert!(n.queued(50.0));
+        assert_eq!(n.deadline(), Some(350.0));
+        assert!(!n.queued(200.0));
+        assert_eq!(n.deadline(), Some(350.0));
+        assert_eq!(
+            n.expired(350.0),
+            Some(UnsupportedNegotiation::QueueDeadline)
+        );
+        n.queue_ready(300.0);
+        assert_eq!(n.deadline(), Some(330.0));
         n.list_received();
-        assert!(!n.keeps_progress(), "nothing awaited any more");
+        assert_eq!(n.deadline(), None);
     }
 
     #[test]

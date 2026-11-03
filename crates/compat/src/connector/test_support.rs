@@ -86,6 +86,16 @@ fn entry_portal_space() -> Vec<u8> {
 const LOCAL: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 5000);
 /// The synthetic login server.
 const LOGIN_SERVER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 10), 9001);
+/// The world server the observed-order script refers the client to.
+const OBSERVED_WORLD_SERVER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 11), 9002);
+/// Its synthetic referral cookie.
+const OBSERVED_COOKIE: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+/// `official-session.md` Vector 16's synthetic `0x89` data.
+const OBSERVED_APPEARANCE: [u8; 37] = [
+    0x00, 0x40, 0x07, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x3F, 0x00, 0x00, 0x80, 0x3E, 0x20, 0x00, 0x00,
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x01, 0xDF, 0x9B, 0x57, 0x13, 0xE0,
+    0xAC, 0x68, 0x24, 0x01, 0x00,
+];
 /// The synthetic ticket.
 const TICKET: &str = "AAECAwQFBgcICQ==";
 /// The install's datacenter URL.
@@ -114,7 +124,6 @@ pub const OUTGOING_UUID: [u8; 16] = [
 pub const SYNTHETIC_LANGUAGE_KEY: u32 = 0x1000_0005;
 /// The test-only destination of a requested `0x6F`: invented, neither the default recipient nor
 /// the list's. No production path has one ([`ConnectorNet::entry_destination`]).
-pub const TEST_ENTRY_DESTINATION: u64 = 0x0A0B_0C0D_0E0F_1113;
 /// The name-rule key of the synthetic server's `0xDD` and the synthetic install's rule
 /// (§10.2 Vector 11's synthetic key).
 pub const SYNTHETIC_NAME_RULE: u32 = 7;
@@ -199,6 +208,10 @@ pub struct Seen {
     pub blobs: VecDeque<u32>,
     /// Datagrams with the transport disconnect.
     pub disconnects: usize,
+    /// `ReferralAuth`s the observed-order world server saw.
+    pub referral_auths: u64,
+    /// Opcodes the client sent on that world connection.
+    pub world_blobs: Vec<u32>,
     /// The complete data of each `0xEC`, `0xF5` and `0x6F` of [`SyntheticService::observed_order`].
     pub advertisements: Vec<Vec<u8>>,
     /// See [`Self::advertisements`].
@@ -224,6 +237,11 @@ struct State {
     observed: bool,
     /// [`SyntheticService::allow_re_entry`].
     re_entry: bool,
+    /// Whether this service's network has a source for readiness: the historical script's in-world
+    /// tests do; [`SyntheticService::observed_order`] does not, like every production path.
+    readiness: bool,
+    /// The world server of the observed-order script, after its referral.
+    world_server: Option<Server>,
     /// The client's blobs being put together in that mode.
     reassembler: BlobReassembler,
 }
@@ -254,7 +272,9 @@ impl SyntheticService {
     /// A fresh service with the historical script (module docs).
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        let service = Self::default();
+        service.state().readiness = true;
+        service
     }
 
     /// A fresh service with the observed order of `official-session.md` §9.3.1 and §9.3.5
@@ -263,6 +283,7 @@ impl SyntheticService {
     pub fn observed_order() -> Self {
         let service = Self::default();
         service.state().observed = true;
+        service.state().readiness = false;
         service
     }
 
@@ -353,7 +374,12 @@ impl SyntheticService {
         let Some(server) = st.server.as_mut() else {
             return false;
         };
-        let Some(d) = server.blob_to(opcode, recipient, &encode_event_envelope(inner)) else {
+        let envelope = if crate::world::one_shared_prefix(opcode) {
+            inner.to_vec()
+        } else {
+            encode_event_envelope(inner)
+        };
+        let Some(d) = server.blob_to(opcode, recipient, &envelope) else {
             return false;
         };
         st.deliver(d);
@@ -398,11 +424,17 @@ impl SyntheticService {
 
     /// A datagram from the client: the synthetic login server's answers (module docs).
     fn client_sent(&self, datagram: &[u8], to: SocketAddrV4) {
+        let mut st = self.state();
+        let st = &mut *st;
+        if to == OBSERVED_WORLD_SERVER {
+            if st.observed {
+                observed_world_answer(st, datagram);
+            }
+            return;
+        }
         if to != LOGIN_SERVER {
             return;
         }
-        let mut st = self.state();
-        let st = &mut *st;
         if st.observed {
             observed_answer(st, datagram);
             return;
@@ -632,6 +664,14 @@ fn observed_answer(st: &mut State, datagram: &[u8]) {
                     server.blob(0x30, &opaque_body(0x30)),
                     server.observed_blob(0x30, &opaque_body(0x30), false),
                     server.observed_blob(0x30, &opaque_body(0x30), false),
+                    Some(server.control(OptionalHeaders {
+                        world_referral: Some(crate::session::WorldReferralHeader {
+                            cookie: OBSERVED_COOKIE,
+                            target_addr: OBSERVED_WORLD_SERVER,
+                            metadata: [0; 4],
+                        }),
+                        ..OptionalHeaders::default()
+                    })),
                 ]
             }
             _ => Vec::new(),
@@ -648,6 +688,92 @@ fn observed_answer(st: &mut State, datagram: &[u8]) {
         st.deliver(ack);
     }
     st.server = Some(server);
+}
+
+/// The world server's answers in the observed-order script (§9.3.1, §9.3.8): its handshake after
+/// the `ReferralAuth`, then the observed complete messages up to `0x90` and the checked messages
+/// after it, and nothing else: no readiness (OPEN-WORLD-9), so an entry stops at that stage.
+fn observed_world_answer(st: &mut State, datagram: &[u8]) {
+    let Ok(pkt) = decode_client_datagram(datagram, false) else {
+        return;
+    };
+    if pkt.opt_headers.referral_auth.is_some() {
+        st.seen.referral_auths += 1;
+        let server = Server::new();
+        st.deliver(server.challenge());
+        st.world_server = Some(server);
+        return;
+    }
+    if pkt.opt_headers.disconnect {
+        st.seen.disconnects += 1;
+    }
+    let Some(mut server) = st.world_server.take() else {
+        return;
+    };
+    if pkt.opt_headers.connect_accept.is_some() && !server.greeted {
+        server.greeted = true;
+        let stream: [(u8, u32, Vec<u8>); 13] = [
+            (1, 0x149, opaque_body(0x149)),
+            (2, 0x88, opaque_body(0x88)),
+            (4, 0x92, opaque_body(0x92)),
+            (4, 0xA8, opaque_body(0xA8)),
+            (4, 0x89, OBSERVED_APPEARANCE.to_vec()),
+            (4, 0x92, opaque_body(0x92)),
+            (2, 0x88, opaque_body(0x88)),
+            (1, 0x90, session_ready()),
+            (2, 0x4C, observed_batch()),
+            (1, PositionUpdate::EVENT_ID, placement()),
+            (1, 0x149, opaque_body(0x149)),
+            (1, 0x7C, vec![0x00]),
+            (1, 0x0D, vec![0x00]),
+        ];
+        for (queue, opcode, data) in stream {
+            if let Some(d) = server.observed_on(queue, opcode, &data) {
+                st.deliver(d);
+            }
+        }
+    }
+    for f in pkt.fragments {
+        if let Some(op) = f.header.blob_header_word {
+            st.seen.world_blobs.push(op);
+        }
+    }
+    st.world_server = Some(server);
+}
+
+/// A `0x4C` with an embedded `0x98` and `0x52`, each with its own one shared byte (§9.3.8).
+fn observed_batch() -> Vec<u8> {
+    let create = EntityCreate {
+        template_did: NPC_TEMPLATE,
+        entity_id: NPC,
+    }
+    .to_bytes()
+    .unwrap_or_default();
+    let props = PropertyTableUpdate {
+        scope: crate::world::PropertyScope::Entity,
+        properties: EncodedPropertyTable::new(),
+    };
+    let mut w = crate::world::WireWriter::new();
+    let props = props
+        .encode(&mut w)
+        .map(|()| w.into_vec())
+        .unwrap_or_default();
+    SubEventBatch {
+        event_id: SubEventBatch::EVENT_ID_SUB_EVENT,
+        frames: vec![
+            SubEventFrame::Event {
+                sub_event_id: EntityCreate::EVENT_ID,
+                payload: create,
+            },
+            SubEventFrame::Event {
+                sub_event_id: PropertyTableUpdate::EVENT_ID_ENTITY,
+                payload: props,
+            },
+        ],
+        entry_batch_tail_flag: None,
+    }
+    .to_bytes()
+    .unwrap_or_default()
 }
 
 /// A synthetic body of a message Tessera skips: one zero flags byte and opaque bytes whose
@@ -714,6 +840,27 @@ impl Server {
         .ok()
     }
 
+    /// One complete message of the world connection in the observed-order script, on `queue`.
+    fn observed_on(&mut self, queue: u8, opcode: u32, data: &[u8]) -> Option<Vec<u8>> {
+        self.seq += 1;
+        let word = u16::try_from(self.seq & 0xFFFF).unwrap_or(0);
+        let frags = split_blob(queue, word, word, 0, None, opcode, data).ok()?;
+        let mask = self.isaac.next_mask();
+        let codec: &dyn BitTreeCodec = server_to_client_codec();
+        encode_datagram(
+            DatagramHeader {
+                rec_id: REC_ID,
+                seq_num: self.seq,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders::default(),
+            &frags,
+            Some(mask),
+            Some(codec),
+        )
+        .ok()
+    }
+
     fn challenge(&self) -> Vec<u8> {
         challenge_datagram(
             REC_ID,
@@ -746,16 +893,8 @@ impl Server {
 
     fn blob_to(&mut self, opcode: u32, recipient: Option<u64>, envelope: &[u8]) -> Option<Vec<u8>> {
         self.seq += 1;
-        let frags = split_blob(
-            2,
-            u16::try_from(self.seq & 0xFFFF).unwrap_or(0),
-            1,
-            0,
-            recipient,
-            opcode,
-            envelope,
-        )
-        .ok()?;
+        let word = u16::try_from(self.seq & 0xFFFF).unwrap_or(0);
+        let frags = split_blob(2, word, word, 0, recipient, opcode, envelope).ok()?;
         let mask = self.isaac.next_mask();
         encode_datagram(
             DatagramHeader {
@@ -771,10 +910,11 @@ impl Server {
         .ok()
     }
 
-    /// An event of the historical script. `0x6C`, `0x90`, `0x6D` and `0xB3` have one shared
-    /// flags byte, which their payloads already start with (`official-session.md` §9.3.7).
+    /// An event of the historical script. `0x6C`, `0x90`, `0x6D`, `0xB3` and the checked world
+    /// family have one shared flags byte, which their payloads already start with
+    /// (`official-session.md` §9.3.8).
     fn event(&mut self, opcode: u32, inner: &[u8]) -> Option<Vec<u8>> {
-        if matches!(opcode, 0x6C | 0x90 | 0x6D | 0xB3) {
+        if matches!(opcode, 0x6C | 0x90 | 0x6D | 0xB3) || crate::world::one_shared_prefix(opcode) {
             return self.blob(opcode, inner);
         }
         self.blob(opcode, &encode_event_envelope(inner))
@@ -847,8 +987,12 @@ impl UdpDatagramTransport for SyntheticUdp {
 impl ConnectorNet for SyntheticNet {
     type Udp = SyntheticUdp;
 
-    fn entry_destination(&self) -> Option<u64> {
-        Some(TEST_ENTRY_DESTINATION)
+    fn readiness_specified(&self) -> bool {
+        self.0.state().readiness
+    }
+
+    fn chat_codec_specified(&self) -> bool {
+        self.0.state().readiness
     }
 
     fn re_entry_allowed(&self) -> bool {
@@ -916,6 +1060,10 @@ impl InstallData for Records {
 
     fn selected_language_key(&self) -> Result<u32, InstallUnsupported> {
         Ok(SYNTHETIC_LANGUAGE_KEY)
+    }
+
+    fn check_name_table(&self) -> Result<(), InstallUnsupported> {
+        Ok(())
     }
 
     fn name_rule_languages(&self, rule_key: u32) -> Result<Vec<u32>, InstallUnsupported> {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The login's initial exchange on hostile input (`official-session.md` §9.3.2–§9.3.5,
+//! The login's initial exchange on hostile input (`official-session.md` §9.3.2–§9.3.7,
 //! decision 0046): the `0xDD` decoder, `0xEC` built from hostile iteration records, the
 //! install's name-rule and language lookups over hostile DID maps, enum mappers and name
 //! tables, and the top level of `0x6C`.
@@ -105,8 +105,13 @@ fuzz_target!(|data: &[u8]| {
     // `0xDD`: atomic, exact, bounded.
     if let Ok(dd) = InstallRequest::from_data(data) {
         assert!(dd.trailing.len() <= MAX_DD_TRAILING);
-        assert_eq!(data.len(), 13 + dd.trailing.len() * 4);
-        assert_eq!(data.first(), Some(&0));
+        match data.first() {
+            // Measured on the data as it is.
+            Some(0) => assert_eq!(data.len(), 13 + dd.trailing.len() * 4),
+            // Measured after the bounded inflation.
+            Some(1) => {}
+            other => panic!("flags {other:?} decoded"),
+        }
     }
     let _ = InstallRequest::from_envelope_body(data);
 
@@ -126,6 +131,7 @@ fuzz_target!(|data: &[u8]| {
             if stamp < 2 {
                 assert!(archive.notes.is_empty(), "no trailing part below stamp 2");
             }
+            assert!(archive.check_invariant().is_ok(), "invariant 7 held");
             iteration_entries(&archive, part, stamp);
             if stamp == 2 {
                 archives.push(archive);

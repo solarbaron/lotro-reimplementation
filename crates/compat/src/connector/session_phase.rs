@@ -9,29 +9,32 @@
 //!
 //! # The initial exchange
 //!
-//! `official-session.md` §9.3.1–§9.3.5 and decision 0046 ([`crate::initial`]): after State 5
+//! `official-session.md` §9.3.1–§9.3.7 and decision 0046 ([`crate::initial`]): after State 5
 //! the login connection waits for the server's `0xDD`, sends the install advertisement
-//! `0xEC` built before the first datagram from the user's own archives, answers the server's
-//! `0xF5` once, and waits for the character list. `0x149`, `0xAA`, `0x30000040`, `0x43`,
-//! `0xFE` and `0x54` in that window are skipped and counted per opcode: no dispatch, no reply
-//! and no decode error. An actual `0x12F` still gets its `0x12C` (§9.3: the historical path
-//! applies only when those opcodes arrive).
+//! `0xEC` built before the first datagram from the user's own archives, to the recipient the
+//! valid `0xDD` named, answers the server's `0xF5` once, to the recipient that `0xF5` named, and
+//! waits for the character list. `0x149`, `0xAA`, `0x30000040`, `0x43`, `0xFE` and `0x54` in that
+//! window are skipped and counted per opcode: no dispatch, no reply and no decode error. An
+//! actual `0x12F` still gets its `0x12C` (§9.3: the historical path applies only when those
+//! opcodes arrive).
 //!
-//! Every local failure ends the attempt with one `LoginRefused` of
-//! [`LoginRefusal::UnsupportedStep`] ([`crate::initial::UnsupportedNegotiation`]), with Tessera's
-//! own text as its `note`, and sends the ticket no more. While a wait of the exchange runs the
-//! driver keeps the client's progress screen alive on a timer (not while its queue panel shows),
-//! so the wait is the bound. Once the attempt is cancelled the login answers nothing and what it
-//! queued in its last pass stays unsent. Not built, each marked where it would be:
-//! - pending spec pass 10 fix 17: neither `0x13D` nor `0x19E` is emitted; after `0x6C` the
-//!   client goes to selection (`SessionDriver::character_list`). The spec gives their order
-//!   and queue but no source for `0x13D` or for the platform ID.
-//! - pending spec pass 10 fix 14: `0x90` keeps its historical prefix; one that fails to decode
-//!   is a distinct unsupported result of the entry ([`UNSUPPORTED_SESSION_START`]), not the
-//!   entry deadline's message; after a referral the session ends with that result
-//!   ([`DisconnectReason::Unsupported`]), not as a time-out.
+//! Every local failure ends the attempt with one `LoginRefused`
+//! ([`crate::initial::UnsupportedNegotiation`]): [`LoginRefusal::ServiceUnavailable`] at a wait's
+//! end and [`LoginRefusal::UnsupportedStep`] otherwise, with Tessera's own text as its `note`.
+//! One standalone Disconnect goes out when the connection is established, then it closes locally
+//! with no flush wait and sends the ticket no more. While a wait of the exchange runs the driver
+//! keeps the client's progress screen alive on a timer (not while its queue panel shows), so the
+//! wait is the bound. Once the attempt is cancelled the login answers nothing and what it queued
+//! in its last pass stays unsent. Omitted, each marked where it would be:
+//! - OPEN-SESSION-20: neither `0x13D` nor `0x19E` is emitted; after `0x6C` the client goes to
+//!   selection (`SessionDriver::character_list`). No real platform ID, destination or `0x13D`
+//!   bit source is specified (decision 0046 item 5, a known difference from the observed client).
 //! - §6.5, OPEN-SESSION-16: the first world `0x30` is never emitted; its argument has no
 //!   specified source and no method's arguments are made up.
+//! - §9.3.7, OPEN-SESSION-15/20: `0x6F` has no specified destination, so a requested selection
+//!   reports that it is not supported and sends nothing; a re-entry after a teardown likewise
+//!   ([`ConnectorNet::entry_destination`] holds the tests' source). Character creation and
+//!   deletion are never sent (decision 0046 item 7).
 //!
 //! # One multiplexer per connection
 //!
@@ -79,7 +82,9 @@
 //! every later list at character selection does. That row mapping is an engineering choice
 //! pending a spec answer (`docs/m8-remediation.md` §15, P §8): §8 maps a later list only to
 //! `Connected` or `CharacterInfo`, and says neither whether a later list replaces the whole
-//! list nor how a name that is gone is surfaced. Moves and chat lines that reach the driver
+//! list nor how a name that is gone is surfaced. Entering the world again after a teardown is
+//! not supported (§9.3.7, OPEN-SESSION-16): nothing is sent and the entry fails with Tessera's
+//! own text. Moves and chat lines that reach the driver
 //! after the teardown (sent before the client saw the return) are refused and counted
 //! ([`DriverCounters::outside_world`]), never sent; a refused move stays silent, a refused
 //! chat line also gives a system notice (`Event::Notice`), so the player sees that the line
@@ -162,7 +167,7 @@
 //! it (credentials replaced), and the connection's counts are appended when it closes or is
 //! let go. Each chat-server socket does the same for its own connection ([`Metered`]).
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddrV4;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -195,10 +200,11 @@ use crate::play::movement::{MoveStep, PredictedState};
 use crate::play::{OutgoingEvent, clean_display_name};
 use crate::session::{
     BindPlan, BindPorts, ClientVersionMessage, CodecUuids, ConnectionState, ControlMessage,
-    DEFAULT_MAX_CONTAINER_DEPTH, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
-    DisconnectReason as LinkEnd, LogonOutcome, MAX_DATAGRAM_BUF, MIN_DATAGRAM_BYTES,
-    OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS, ReassembledBlob, SessionError, SessionEvent,
-    SessionMultiplexer, UdpDatagramTransport, dispatch_message, max_recv_rate_for_speed,
+    DEFAULT_BLOB_RECIPIENT_ID, DEFAULT_MAX_CONTAINER_DEPTH, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
+    DisconnectReason as LinkEnd, LogonOutcome, MAX_DATAGRAM_BUF, MAX_ORDER_GROUPS,
+    MIN_DATAGRAM_BYTES, OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS, OrderBand,
+    ReassembledBlob, SessionError, SessionEvent, SessionMultiplexer, UdpDatagramTransport,
+    dispatch_message, max_recv_rate_for_speed, order_band,
 };
 use crate::world::{
     AccountEvictionNotice, CharacterEnterWorldRequest, CharacterListResponse,
@@ -249,8 +255,8 @@ pub const QUEUE_RELIABLE_UNORDERED: u8 = 4;
 /// |---|---|---|
 /// | `0x12C` | 4 | — |
 /// | `0xEC`, `0xF5` | 1 | — (§9.3.2, §9.3.3) |
-/// | `0x19E` | 1 | — (§9.3.1; superseding its historical row) |
-/// | `0x6F` | 2 | — (§9.3.5; superseding its historical row) |
+/// | `0x19E` | 1 | — (§9.3.7; never sent yet, OPEN-SESSION-20) |
+/// | `0x6F` | 2 | — (§9.3.7; its destination is OPEN-SESSION-15/20) |
 /// | `0x24` | 1, or 3 when discrete ([`movement_is_discrete`]) | `0x05` on queue 3 |
 /// | `0xF4` | 3 | `0x05` |
 /// | `0x30` | 3 | `0x0A` |
@@ -262,10 +268,6 @@ pub const QUEUE_RELIABLE_UNORDERED: u8 = 4;
 /// opcode the table does not list goes on queue 4 with group `0` (engineering choice, spec
 /// silent: reliable, with no sequence-group semantics; the spec lists no other client
 /// opcode).
-///
-/// pending spec pass 10 fix 18: that default for unlisted opcodes is unchanged.
-/// pending spec pass 10 fix 21: a `0x6F` after a return from the world (re-entry) stays on
-/// queue 2 like the first; only the first selection's queue is observed (§9.3.5).
 #[must_use]
 pub fn outbound_queue(opcode: u32, payload: &[u8]) -> (u8, u16) {
     match opcode {
@@ -314,13 +316,21 @@ pub const DRIVER_EVENT_CAP: usize = super::READ_PAUSE;
 /// engineering choice (spec silent).
 pub const NOT_SENT_OUTSIDE_WORLD: &str = "Your line was not sent: you are no longer in the world.";
 
-/// The reason of the `EnterWorldFailed` when `0x90` does not decode.
-///
-/// pending spec pass 10 fix 14: its prefix is not changed by guesswork; a `0x90` that fails to
-/// decode is reported as this, distinct from the entry deadline's "The world did not answer."
-/// Tessera's text.
-pub const UNSUPPORTED_SESSION_START: &str =
-    "The world's session start could not be read by Tessera yet.";
+/// The reason of the `EnterWorldFailed` when `0x90` does not decode (§9.3.7, world §4.2: terminal,
+/// never shifted by a guessed second byte). Tessera's text.
+pub const UNSUPPORTED_SESSION_START: &str = "Tessera cannot read the world's session start yet. \
+     This is a Tessera limit, not a fault of your account.";
+
+/// The reason when `0x6D` or `0xB3` does not have its checked prefix while the world is being
+/// entered (§9.3.7: terminal rather than leaving the entry stuck). Tessera's text.
+pub const UNSUPPORTED_ENTRY_ANSWER: &str = "Tessera cannot read the server's answer to this entry \
+     yet. This is a Tessera limit, not a fault of your account.";
+
+/// The reason of the `EnterWorldFailed` of a requested `0x6F` no destination is specified for
+/// (§9.3.7, OPEN-SESSION-15/20), or of a re-entry after a teardown (OPEN-SESSION-16). Nothing was
+/// sent. Tessera's text.
+pub const ENTRY_NOT_SUPPORTED: &str = "Tessera cannot enter the world on the official service \
+     yet. This is a Tessera limit, not a fault of your account.";
 
 /// Most old world connections kept (a later referral replaces the world connection).
 pub const MAX_OLD_LINKS: usize = 4;
@@ -333,10 +343,10 @@ pub const MAX_CHARACTERS: usize = 256;
 /// authentication rejected during login" (`official-session.md` §6.7).
 pub const LOGIN_REFUSAL_CODES: [u32; 2] = [0x00A7_E948, 0x7DC4_1B4A];
 
-/// Longest wait for the world after `EnterWorld` (`0x6F`) before the entry fails and the
-/// character list is offered again. Engineering choice, spec silent (question with the spec
-/// writers).
-pub const ENTER_WORLD_TIMEOUT_SEC: f64 = 60.0;
+/// Longest wait for the world after `0x6F`'s allocation before the entry fails (§9.3.7: Tessera
+/// policy). pending §25 fix 6: "usable world-entry result" has no test; labelled, the wait runs
+/// until `0x90`, also across a referral. pending §25 fix 4: the result stays `EnterWorldFailed`.
+pub const ENTER_WORLD_TIMEOUT_SEC: f64 = 30.0;
 
 /// Longest wait in portal space for the client's [`Command::WorldLoaded`] before portal space
 /// ends anyway (`official-messages-play.md` §4.5 item 4: "or the portal-space loading timeout
@@ -475,6 +485,9 @@ struct Link {
     /// The ordering number the next queue-2 blob from the server would continue with
     /// (`SessionDriver::note_queue2`).
     queue2_next: Option<u16>,
+    /// The newest completed ordering word per queue-3 sequence group, for at most
+    /// [`MAX_ORDER_GROUPS`] groups (`SessionDriver::note_queue3`).
+    queue3_last: BTreeMap<u16, u16>,
 }
 
 impl Drop for Link {
@@ -529,6 +542,7 @@ impl Link {
             dump: dump.map(ConnectionDump::new),
             initial: None,
             queue2_next: None,
+            queue3_last: BTreeMap::new(),
         })
     }
 
@@ -788,8 +802,8 @@ pub enum StartFailure {
     Ticket,
     /// The attempt was cancelled before anything was sent.
     Cancelled,
-    /// The install cannot answer the initial exchange (`official-session.md` §9.3.4): nothing
-    /// was sent, so the ticket is not spent (pending spec pass 10 fix 2).
+    /// The install cannot answer the initial exchange (`official-session.md` §9.3.7's preflight):
+    /// nothing was sent, so the ticket is not spent.
     Unsupported(UnsupportedNegotiation),
 }
 
@@ -842,13 +856,26 @@ pub struct DriverCounters {
     /// Texts not looked up because their message had reached [`MAX_MESSAGE_PLAY_EVENTS`]
     /// (the play layer may count them as unresolved too).
     pub texts_skipped: u64,
-    /// Unsupported results that ended the login ([`UnsupportedNegotiation`]).
+    /// Results that ended the login ([`UnsupportedNegotiation`]): the waits' and the others'.
     pub unsupported_results: u64,
-    /// Queue-2 blobs whose ordering word repeated or went back (pending spec pass 10 fix 19:
-    /// counted, not waited for).
+    /// Selections not sent: no destination is specified, or a re-entry after a teardown.
+    pub entries_not_sent: u64,
+    /// Queue-2 blobs whose ordering word repeated or went back (§9.3.7: counted, not waited
+    /// for).
     pub queue2_repeats: u64,
     /// Queue-2 blobs whose ordering word skipped ahead (as [`Self::queue2_repeats`]).
     pub queue2_gaps: u64,
+    /// Completed queue-3 blobs whose word equals the newest of their group (§9.3.7: delivered
+    /// once and counted).
+    pub queue3_equal: u64,
+    /// Completed queue-3 blobs at distance 32,768 from the newest of their group (as
+    /// [`Self::queue3_equal`]).
+    pub queue3_ambiguous: u64,
+    /// Completed queue-3 blobs older than the newest of their group. pending §25 fix 20: no
+    /// action is stated for a completed older blob; labelled, it is delivered and counted.
+    pub queue3_older: u64,
+    /// Queue-3 sequence groups past [`MAX_ORDER_GROUPS`], delivered without a comparison.
+    pub queue3_groups_over: u64,
 }
 
 /// The resolver of a message past [`MAX_MESSAGE_PLAY_EVENTS`]: it looks nothing up and
@@ -885,9 +912,15 @@ pub struct SessionDriver<N: ConnectorNet> {
     schema: SchemaView,
     stage: Stage,
     characters: Vec<(u64, String)>,
-    /// The latest character list came on the world connection (after a return from the
-    /// world): `0x6F` goes there then.
-    list_on_world: bool,
+    /// The recipient the character list named on the login connection: never `0x6F`'s (§9.3.7).
+    list_recipient: Option<u64>,
+    /// [`ConnectorNet::entry_destination`]: `None` on every production path.
+    entry_destination: Option<u64>,
+    /// [`ConnectorNet::re_entry_allowed`]: `false` on every production path.
+    re_entry_allowed: bool,
+    /// The session has been in the world and left it: a re-entry is not supported (§9.3.7,
+    /// OPEN-SESSION-16).
+    returned_from_world: bool,
     /// A referral arrived, so the login connection was disconnected gracefully
     /// (`official-session.md` §6.5 step 2): its close no longer ends the session.
     login_referred: bool,
@@ -1043,8 +1076,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if stop() {
             return Err(StartFailure::Cancelled);
         }
-        // pending spec pass 10 fix 2: the checks that do not depend on `0xDD` come first, so
-        // a certain failure does not spend the ticket (labelled engineering choice).
+        // §9.3.7's preflight comes before the ticket: its failure spends nothing.
         let advertisement =
             prepare_advertisement(start.schema.0.as_ref()).map_err(StartFailure::Unsupported)?;
         // §3.2 item 2: the wildcard address unless the two-colon `-h` form's `localHost`
@@ -1132,7 +1164,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
             schema: start.schema,
             stage: Stage::Login,
             characters: Vec::new(),
-            list_on_world: false,
+            list_recipient: None,
+            entry_destination: net.entry_destination(),
+            re_entry_allowed: net.re_entry_allowed(),
+            returned_from_world: false,
             login_referred: false,
             loaded: None,
             portal_since: None,
@@ -1279,6 +1314,18 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.initial.stages()
     }
 
+    /// The latest valid `0xDD`'s opaque word (tests: it is kept and never compared).
+    #[must_use]
+    pub fn initial_server_config(&self) -> Option<u32> {
+        self.initial.server_config()
+    }
+
+    /// The skipped messages by opcode (§9.3.7).
+    #[must_use]
+    pub fn skip_counters(&self) -> &crate::initial::SkipCounters {
+        self.initial.skip_counters()
+    }
+
     /// The states of the login and world connections (tests).
     #[must_use]
     pub fn connection_states(&self) -> (Option<ConnectionState>, Option<ConnectionState>) {
@@ -1379,6 +1426,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     /// `0x6F` was sent and the world has not been entered within
     /// [`ENTER_WORLD_TIMEOUT_SEC`]: the entry fails and the character list is offered again.
+    /// pending §25 fix 4: §9.3.7 says `ServiceUnavailable` and closes, which `official-entry.md`
+    /// drops after `Connected`; the entry's own event stays until the fix.
     fn enter_deadline(&mut self, now: f64) {
         let Stage::Entering { since, .. } = &self.stage else {
             return;
@@ -1417,13 +1466,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// The initial exchange's wait ended (`crate::initial::Negotiation`, pending spec pass 10
-    /// fix 2): the attempt ends with that wait's own unsupported result.
+    /// The initial exchange's wait ended (`crate::initial::Negotiation`, §9.3.7): the attempt
+    /// ends with that wait's own result.
     ///
     /// While a wait runs this also keeps the client's progress screen alive, whether or not
-    /// anything arrives, so the wait is the bound and not the screen's shorter watchdog
-    /// (`official-entry.md` §8.3): an answer later than the watchdog is still taken, and a wait
-    /// that runs out ends with its own result.
+    /// anything arrives, so the wait is the bound and not the screen's own watchdog
+    /// (`official-entry.md` §8.3; pending §25 fix 9): three stages in a row can pass it.
     fn initial_deadline(&mut self, now: f64) {
         if self.stage != Stage::Login || self.ended {
             return;
@@ -1435,9 +1483,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// One explicit unsupported result ends the attempt (§9.3.4): the login connection says
-    /// goodbye when it is connected and closes (no stored ticket is left to resend, and its
-    /// queue is wiped), and the refusal goes out through the session's usual end. A second
+    /// One explicit result ends the attempt (§9.3.7): `ServiceUnavailable` at a wait's end and
+    /// `UnsupportedStep` otherwise. The login connection sends one standalone Disconnect when it
+    /// is established and closes at once, with no flush wait (no stored ticket is left to resend,
+    /// and its queue is wiped); the refusal goes out through the session's usual end. A second
     /// call does nothing.
     fn refuse_unsupported(&mut self, why: UnsupportedNegotiation, now: f64) {
         if self.ended {
@@ -1450,17 +1499,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
         tracing::info!(reason = %reason, "official session: not supported");
         self.report(&self.login, false, now)
             .log_login_ended(&reason);
-        if self.login.state() == Some(ConnectionState::Connected) {
-            self.login.disconnect(now);
-            let outgoing = self.codecs.outgoing.clone();
-            let _ = self.login.mux.tick_with_codec(now, outgoing.as_deref());
-            self.flush(now);
-        }
-        self.login.close_dump(why.label());
-        self.login.close_quietly();
+        self.say_goodbye(why.label(), now);
+        let refusal = if why.is_deadline() {
+            LoginRefusal::ServiceUnavailable
+        } else {
+            LoginRefusal::UnsupportedStep
+        };
         self.events
             .push_back(Event::Account(AccountEvent::LoginRefused {
-                reason: LoginRefusal::UnsupportedStep,
+                reason: refusal,
                 retry_after_seconds: None,
                 detail: None,
                 note: Some(why.detail().to_owned()),
@@ -1468,6 +1515,26 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.end(DisconnectReason::TransportFailed(
             "official login refused".to_owned(),
         ));
+    }
+
+    /// One standalone Disconnect on each established connection (none on a connection still in
+    /// its handshake), and every connection closes locally: no flush wait, no ticket resent
+    /// (§9.3.7).
+    fn say_goodbye(&mut self, why: &str, now: f64) {
+        for l in self.links_mut() {
+            if l.in_handshake() {
+                // Its queue may hold the ticket.
+                l.close_dump(why);
+                l.close_quietly();
+            } else if let Some(c) = l.mux.connection_mut(l.conn) {
+                let _ = c.queue_standalone_disconnect();
+            }
+        }
+        self.flush(now);
+        for l in self.links_mut() {
+            l.close_dump(why);
+            l.close_quietly();
+        }
     }
 
     /// Copies the initial exchange's stages to the login connection, for its dump.
@@ -1556,7 +1623,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         tracing::info!("official session: the world was left for character selection");
         self.log_world_end();
         self.stage = Stage::Characters;
-        self.list_on_world = self.world.is_some();
+        self.returned_from_world = true;
         self.entry_messages.clear();
         self.entry_bytes = 0;
         self.fresh_portal_loading();
@@ -1678,8 +1745,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// Logs the failure line once for each connection still in its handshake, which is
-    /// about to be closed without a `Disconnected` event (a cancel, a revoked right).
     /// The line of a login stopped from outside before its character list (a cancel, the
     /// client's watchdog or a revoked network right), past its handshake: the handshake's own
     /// line covers the rest. An attempt that already ended has logged its line.
@@ -1691,6 +1756,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.report(&self.login, false, now).log_login_ended(reason);
     }
 
+    /// Logs the failure line once for each connection still in its handshake, which is
+    /// about to be closed without a `Disconnected` event (a cancel, a revoked right).
     fn log_abandoned_handshakes(&self, reason: &str, now: f64) {
         for world in [false, true] {
             if let Some(l) = self.link_of(world).filter(|l| l.in_handshake()) {
@@ -1852,6 +1919,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             SessionEvent::BlobReceived(blob) => {
                 if blob.queue_id == QUEUE_RELIABLE_ORDERED {
                     self.note_queue2(world, blob.order_num);
+                } else if blob.queue_id == QUEUE_SEQUENCED {
+                    self.note_queue3(world, blob.seq_group, blob.order_num);
                 }
                 match dispatch_message(
                     blob.blob_header_word,
@@ -1915,10 +1984,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// pending spec pass 10 fix 19: a queue-2 blob is delivered when it is complete, in the
-    /// order it completes, and an ordering word that repeats, goes back or skips ahead is
-    /// counted, not waited for (labelled interim: repeated words occur in the observed stream
-    /// and their rule is `OPEN-SESSION-19`, so §5.6.2's strict order would stall).
+    /// §9.3.7: a queue-2 blob is delivered when it is complete, in the order it completes, and
+    /// an ordering word that repeats, goes back or skips ahead is counted, not waited for.
+    /// pending §25 fix 20: the first value and the baseline have no rule; labelled, the first word
+    /// of each connection is the baseline.
     fn note_queue2(&mut self, world: bool, order: u16) {
         let link = if world {
             self.world.as_mut()
@@ -1939,6 +2008,42 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }
         }
         link.queue2_next = Some(order.wrapping_add(1));
+    }
+
+    /// §9.3.7: a completed queue-3 blob is compared within its group by modulo-65,536 distance,
+    /// and an equal or ambiguous word is delivered once and counted. An older incomplete blob is
+    /// superseded in the session layer ([`crate::session::order_band`]). pending §25 fix 20: the
+    /// operands (this word from the newest completed one) and the first value (the baseline) are
+    /// labelled, and so is a completed older blob and a second blob of the same word, which are
+    /// delivered as they complete.
+    fn note_queue3(&mut self, world: bool, group: u16, order: u16) {
+        let link = if world {
+            self.world.as_mut()
+        } else {
+            Some(&mut self.login)
+        };
+        let Some(link) = link else {
+            return;
+        };
+        let Some(&last) = link.queue3_last.get(&group) else {
+            if link.queue3_last.len() < MAX_ORDER_GROUPS {
+                link.queue3_last.insert(group, order);
+            } else {
+                self.counters.queue3_groups_over =
+                    self.counters.queue3_groups_over.saturating_add(1);
+            }
+            return;
+        };
+        let counter = match order_band(order, last) {
+            OrderBand::Newer => {
+                link.queue3_last.insert(group, order);
+                return;
+            }
+            OrderBand::Equal => &mut self.counters.queue3_equal,
+            OrderBand::Ambiguous => &mut self.counters.queue3_ambiguous,
+            OrderBand::Older => &mut self.counters.queue3_older,
+        };
+        *counter = counter.saturating_add(1);
     }
 
     fn link_closed(&mut self, reason: LinkEnd, world: bool, now: f64) {
@@ -2081,13 +2186,27 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }
             return;
         }
-        // These have their own handling, in the current one-byte form (§9.1, §9.3.3–§9.3.5),
-        // or are skipped: none goes through the historical base-flags test below.
+        // These have their own handling, in the current one-byte form (§9.1, §9.3.7): none goes
+        // through the historical base-flags test below.
         match opcode {
             OPCODE_INSTALL_REQUEST => return self.install_request(m, now),
             OPCODE_COMPLETION => return self.completion(m, now),
             CharacterListResponse::EVENT_ID => return self.character_list(m, now),
-            PlayerSessionReady::EVENT_ID => return self.session_ready(body, now),
+            _ => {}
+        }
+        if self.outside_completion_guard(opcode, world) {
+            self.refuse_unsupported(UnsupportedNegotiation::UnsupportedPreparation, now);
+            return;
+        }
+        // `0x90` and `0x6D` before the list are for §9.3.7's skip below: no entry has begun.
+        match opcode {
+            PlayerSessionReady::EVENT_ID if self.stage != Stage::Login => {
+                return self.session_ready(m, now);
+            }
+            CharacterOperationError::EVENT_ID if self.stage != Stage::Login => {
+                return self.character_error(m, now);
+            }
+            AccountEvictionNotice::EVENT_ID => return self.eviction(m, now),
             _ => {}
         }
         if self.login_window_skips(m) {
@@ -2097,23 +2216,48 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.counters.decode_errors += 1;
             return;
         }
-        match opcode {
-            CharacterOperationError::EVENT_ID => self.character_error(body),
-            _ => self.play(opcode, recipient, body, world),
-        }
+        self.play(opcode, recipient, body, world);
     }
 
-    /// Whether `m` is passed over while the login connection waits for its list (§9.3.1,
-    /// §9.3.5): bounded (reassembled already), counted per opcode, not dispatched, not
-    /// answered and no decode error. Before the list every opcode of the login connection
-    /// but the eviction is; after it, `0x149` (§9.3.1's rows after the list and before the
-    /// referral).
+    /// Whether `opcode` breaks §9.3.7's `0xF5` guard: while `0xF5` is awaited, only the enumerated
+    /// messages are supported, and another ends the attempt once its bounded body is discarded.
+    /// This overrides the generic skip.
+    ///
+    /// pending §25 fix 10: the guard's window ([`Negotiation::awaiting_completion`]). pending §25
+    /// fix 8: `0x12E`, `0x12F`, `0x130` and `0xB3` are not on §9.3.7's list and a shutdown notice
+    /// must not end a login (decision 0042 item 2); labelled, they and the rest of §9.3's messages
+    /// keep their own handling, which `message` gives them before or after this test.
+    fn outside_completion_guard(&self, opcode: u32, world: bool) -> bool {
+        !world
+            && self.stage == Stage::Login
+            && self.initial.awaiting_completion()
+            && !matches!(
+                opcode,
+                OPCODE_INSTALL_REQUEST
+                    | 0x149
+                    | 0xAA
+                    | 0x43
+                    | 0xFE
+                    | 0x54
+                    | 0x3000_0040
+                    | OPCODE_COMPLETION
+                    | CharacterListResponse::EVENT_ID
+                    | AccountEvictionNotice::EVENT_ID
+            )
+            && !(OPCODE_CLIENT_VERSION..=OPCODE_LOGIN_QUEUE_STATUS).contains(&opcode)
+    }
+
+    /// Whether `m` is passed over while the login connection waits for its list (§9.3.7's bounded
+    /// unknown-message rule): bounded (reassembled already), counted per opcode, not dispatched,
+    /// not answered and no decode error. Before the list every opcode of the login connection
+    /// but the ones with their own handling is; after it, `0x149`. pending §25 fix 19: where this
+    /// skip ends after the list has no rule; labelled, as it was.
     fn login_window_skips(&mut self, m: &Inbound) -> bool {
         if m.world {
             return false;
         }
         let skips = match self.stage {
-            Stage::Login => m.opcode != AccountEvictionNotice::EVENT_ID,
+            Stage::Login => true,
             Stage::Characters | Stage::Entering { .. } => m.opcode == 0x149,
             Stage::InWorld { .. } => false,
         };
@@ -2125,15 +2269,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// A blob whose envelope did not decode (§9.1): when the initial exchange needed it, the
-    /// attempt ends as it would for its body (pending spec pass 10 fixes 4, 10 and 16).
+    /// attempt ends as it would for its body (§9.3.7).
     fn initial_envelope_refused(&mut self, blob: &ReassembledBlob, world: bool, now: f64) {
         if world || self.stage != Stage::Login {
             return;
         }
         let why = match blob.blob_header_word {
-            OPCODE_INSTALL_REQUEST
-                if blob.queue_id == QUEUE_UNRELIABLE && self.initial.wants_request() =>
-            {
+            OPCODE_INSTALL_REQUEST if blob.queue_id == QUEUE_UNRELIABLE => {
                 UnsupportedNegotiation::MalformedRequest
             }
             OPCODE_COMPLETION if !self.initial.stages().f5_sent => {
@@ -2141,26 +2283,33 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 UnsupportedNegotiation::UnexpectedCompletion
             }
             CharacterListResponse::EVENT_ID => UnsupportedNegotiation::ListEnvelope,
+            opcode if self.outside_completion_guard(opcode, world) => {
+                UnsupportedNegotiation::UnsupportedPreparation
+            }
             _ => return,
         };
         self.refuse_unsupported(why, now);
     }
 
-    /// The server's `0xDD` (§9.3.4). pending spec pass 10 fix 4: only the first valid one on
-    /// queue 1 of the primary login connection triggers `0xEC`; later ones, and ones
-    /// anywhere else, are counted and send nothing. A malformed first one, flags other than
-    /// `0` among it, ends the attempt.
+    /// The server's `0xDD` (§9.3.7). Only the first valid one on queue 1 of the primary login
+    /// connection triggers `0xEC`; flags `0x00` as it is, and `0x01` after `decode_message`'s
+    /// bounded inflation, with the layout measured on the inflated body. Flags `0x02` up, a
+    /// malformed one or (first or later) one that fails to parse ends the attempt. A later valid
+    /// one only updates the opaque word and is counted: nothing is sent and no wait starts again.
+    /// One on another connection is counted and skipped.
+    ///
+    /// pending §25 fix 11: where these rules end and a `0xDD` on queues 2–4 have no action;
+    /// labelled, they end with the login stage and such a one is counted. A later well-formed
+    /// non-empty one is treated like any later valid one. Bytes after a compressed one's zlib
+    /// stream are not looked at.
     fn install_request(&mut self, m: &Inbound, now: f64) {
-        let eligible = !m.world
-            && m.queue == QUEUE_UNRELIABLE
-            && m.top_level
-            && self.stage == Stage::Login
-            && self.initial.wants_request();
-        if !eligible {
+        let on_primary =
+            !m.world && m.queue == QUEUE_UNRELIABLE && m.top_level && self.stage == Stage::Login;
+        if !on_primary {
             self.initial.ignored();
             return;
         }
-        if m.envelope_flags != 0 {
+        if m.envelope_flags > 1 {
             self.refuse_unsupported(UnsupportedNegotiation::MalformedRequest, now);
             return;
         }
@@ -2172,17 +2321,23 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 return;
             }
         };
-        self.initial.request_seen();
+        if !self.initial.wants_request() {
+            self.initial.later_request(request.server_config);
+            return;
+        }
+        self.initial.request_seen(request.server_config);
         self.initial_step("install request", now);
-        if let Err(why) = self.send_advertisement(&request, now) {
+        if let Err(why) = self.send_advertisement(&request, m.recipient, now) {
             self.refuse_unsupported(why, now);
         }
     }
 
-    /// The checks of §9.3.4 that depend on `0xDD`, then `0xEC` on queue 1.
+    /// The checks of §9.3.7 that depend on `0xDD`, then `0xEC` on queue 1, to the recipient the
+    /// valid `0xDD` named.
     fn send_advertisement(
         &mut self,
         request: &InstallRequest,
+        recipient: u64,
         now: f64,
     ) -> Result<(), UnsupportedNegotiation> {
         if !request.trailing.is_empty() {
@@ -2197,10 +2352,17 @@ impl<N: ConnectorNet> SessionDriver<N> {
             .name_rule_languages(request.name_rule_key)
             .map_err(UnsupportedNegotiation::NameRule)?;
         check_language_allowed(&languages, prepared.language_key)?;
-        // pending spec pass 10 fix 11: `send_sequenced_packet` allocates the FlowControl-only
-        // packet first when it has not gone out (§5.5, §6.4.1), so `0xEC` follows it; the
-        // default recipient as in the spec's fixtures, its fragments by §5.6.4's path.
-        if !self.send_retained_on_login(OPCODE_INSTALL_ADVERTISEMENT, &prepared.data, now) {
+        // `send_sequenced_packet` allocates the FlowControl-only packet first when it has not
+        // gone out (§5.5, §6.4.1), so `0xEC` follows it. The recipient is copied, in the form it
+        // came in: pending the note on the default-recipient form in §25, a `0xDD` in default form
+        // gives an `0xEC` in default form (Vector 10's header), and an explicit one flags `0x10`
+        // when fragmented, no extension word (Vector 14).
+        if !self.send_retained_on_login(
+            OPCODE_INSTALL_ADVERTISEMENT,
+            recipient,
+            &prepared.data,
+            now,
+        ) {
             return Err(UnsupportedNegotiation::AdvertisementNotSent);
         }
         tracing::info!(
@@ -2213,10 +2375,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
         Ok(())
     }
 
-    /// The server's `0xF5` (§9.3.3). pending spec pass 10 fix 10: answered once, only after
-    /// `0xEC` was sent and only when its data is exactly `00` on queue 1; anything else is an
-    /// unsupported result, and nothing is fetched or applied. A later `0xF5`, or one outside
-    /// the login, is counted.
+    /// The server's `0xF5` (§9.3.7). Answered once, only after `0xEC` was sent and only when its
+    /// data is exactly `00` on queue 1, to the recipient it named, with `blobFlags` `0x00`;
+    /// anything else is an unsupported result, and nothing is fetched or applied. A later `0xF5`,
+    /// or one outside the login, is counted. pending §25 fix 10: `0xF5` after an early list and a
+    /// second one with another body are counted; the queue rule stays as it is.
     fn completion(&mut self, m: &Inbound, now: f64) {
         if m.world || self.stage != Stage::Login || self.initial.stages().f5_sent {
             self.initial.ignored();
@@ -2231,7 +2394,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.refuse_unsupported(UnsupportedNegotiation::UnexpectedCompletion, now);
             return;
         }
-        if !self.send_retained_on_login(OPCODE_COMPLETION, &COMPLETION_DATA, now) {
+        if !self.send_retained_on_login(OPCODE_COMPLETION, m.recipient, &COMPLETION_DATA, now) {
             self.refuse_unsupported(UnsupportedNegotiation::CompletionNotSent, now);
             return;
         }
@@ -2280,7 +2443,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
             },
             ControlMessage::LoginQueueStatus(q) => match q.outcome() {
-                // §9.3: queued; the position and total are shown when non-zero.
+                // §9.3: queued; the position and total are shown when non-zero. pending §25
+                // fix 8: this wait's bound.
                 LogonOutcome::Queued(at) if self.stage == Stage::Login => {
                     self.initial.queued(now);
                     self.events
@@ -2331,14 +2495,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// The character list (§9.3.5): the count straight after the one flags byte. A list the
-    /// login needs that cannot be read ends the attempt, and no character is invented.
-    ///
-    /// pending spec pass 10 fix 16: a compressed or routed `0x6C` is an unsupported result.
-    /// pending spec pass 10 fix 17: `0x13D` and `0x19E` are not emitted; the client goes to
-    /// selection after the list.
+    /// The character list (§9.3.7): the count straight after the one flags byte. A list the login
+    /// needs that cannot be read ends the attempt, with no forward scan, no partial list and no
+    /// character invented (OPEN-WORLD-10). So does a compressed or routed one.
+    /// OPEN-SESSION-20: `0x13D` and `0x19E` are not emitted; the client goes to selection after
+    /// the list.
     fn character_list(&mut self, m: &Inbound, now: f64) {
-        let world = m.world;
         if m.envelope_flags != 0 {
             self.counters.decode_errors += 1;
             tracing::debug!("official session: compressed or routed character list refused");
@@ -2365,7 +2527,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             .take(MAX_CHARACTERS)
             .collect();
         let old = std::mem::replace(&mut self.characters, fresh);
-        self.list_on_world = world && self.world.is_some();
+        if !m.world {
+            self.list_recipient = Some(m.recipient);
+        }
         if matches!(self.stage, Stage::Characters | Stage::Entering { .. }) {
             // A later list at character selection (the one after a teardown among them,
             // `official-messages-play.md` §8): its changes, names gone first.
@@ -2413,50 +2577,72 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    fn character_error(&mut self, body: &[u8]) {
-        let code = CharacterOperationError::from_bytes(body)
-            .map(|e| e.error_code)
-            .ok();
-        if let Stage::Entering { name, .. } = &self.stage {
-            let character = name.clone();
-            self.stage = Stage::Characters;
-            self.entry_messages.clear();
-            self.entry_bytes = 0;
-            self.events.push_back(Event::EnterWorldFailed {
-                character,
-                reason: match code {
-                    Some(c) => format!("The world refused the character (code {c})."),
-                    None => "The world refused the character.".to_owned(),
-                },
-            });
+    /// `0x6D` (§9.3.7, Vector 15): the shared byte and the `u32` reason, to exact exhaustion. The
+    /// entry fails without an automatic retry. pending §25 fix 4: §9.3.7's `WorldRefused` needs a
+    /// world and returns to the world list, so `EnterWorldFailed` stays until the fix. One that
+    /// cannot be read ends the session rather than leaving the entry stuck.
+    fn character_error(&mut self, m: &Inbound, now: f64) {
+        let code = if m.envelope_flags == 0 {
+            CharacterOperationError::from_envelope_body(&m.body)
+                .map(|e| e.error_code)
+                .ok()
         } else {
+            None
+        };
+        let Stage::Entering { name, .. } = &self.stage else {
             tracing::debug!(
                 ?code,
                 "official session: character error outside world entry"
             );
-        }
+            return;
+        };
+        let Some(code) = code else {
+            self.counters.decode_errors += 1;
+            self.entry_unsupported(UNSUPPORTED_ENTRY_ANSWER, now);
+            return;
+        };
+        let character = name.clone();
+        self.stage = Stage::Characters;
+        self.entry_messages.clear();
+        self.entry_bytes = 0;
+        self.events.push_back(Event::EnterWorldFailed {
+            character,
+            reason: format!("The world refused the character (code {code})."),
+        });
     }
 
-    /// `0x90` (`official-messages-world.md` §4.2). pending spec pass 10 fix 14: decoded with
-    /// its historical prefix, unchanged; one that fails while the world is being entered ends
-    /// the entry with [`UNSUPPORTED_SESSION_START`], not the entry deadline's message.
-    fn session_ready(&mut self, body: &[u8], now: f64) {
-        let ready = match PlayerSessionReady::from_bytes(body, &self.schema) {
-            Ok(r) => r,
-            Err(e) => {
-                self.counters.decode_errors += 1;
-                tracing::debug!(error = %e, "official session: session start refused");
-                if matches!(self.stage, Stage::Entering { .. }) {
-                    // pending spec pass 10 fix 14: its own result, also when the session
-                    // ends with it after a referral: the server did answer.
-                    self.fail_entry(
-                        UNSUPPORTED_SESSION_START,
-                        DisconnectReason::Unsupported(UNSUPPORTED_SESSION_START.to_owned()),
-                        now,
-                    );
-                }
-                return;
+    /// The world's answer cannot be read while it is being entered: terminal, with Tessera's own
+    /// `reason` and one Disconnect on each established connection (§9.3.7; `official-messages-
+    /// world.md` §4.2 for `0x90`). pending §25 fix 4: §9.3.7's `UnsupportedStep` is dropped by
+    /// `official-entry.md` after `Connected`, so the labelled result is `EnterWorldFailed` with
+    /// `Disconnected { Unsupported }`.
+    fn entry_unsupported(&mut self, reason: &str, now: f64) {
+        self.say_goodbye("the world's answer could not be read", now);
+        self.fail_entry(
+            reason,
+            DisconnectReason::Unsupported(reason.to_owned()),
+            now,
+        );
+        self.end(DisconnectReason::Unsupported(reason.to_owned()));
+    }
+
+    /// `0x90` (§9.3.7, Vector 15): the ID straight after the one shared flags byte, then the
+    /// property table to exact exhaustion. A compressed or routed one is unsupported, and one
+    /// that fails ends the entry with [`UNSUPPORTED_SESSION_START`], not the entry deadline's
+    /// message; the ID is never shifted by a guessed second byte.
+    fn session_ready(&mut self, m: &Inbound, now: f64) {
+        let decoded = if m.envelope_flags == 0 {
+            PlayerSessionReady::from_envelope_body(&m.body, &self.schema).ok()
+        } else {
+            None
+        };
+        let Some(ready) = decoded else {
+            self.counters.decode_errors += 1;
+            tracing::debug!("official session: session start refused");
+            if matches!(self.stage, Stage::Entering { .. }) {
+                self.entry_unsupported(UNSUPPORTED_SESSION_START, now);
             }
+            return;
         };
         let name = match &self.stage {
             Stage::Entering { name, .. } => name.clone(),
@@ -2491,19 +2677,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// A play message. `0xB3` (eviction) ends the session in every stage:
-    /// `official-messages-world.md` §3.4 has the server send it whenever it disconnects or
-    /// boots the account, in no particular stage (§3.6 draws it at the character list and
-    /// during world entry; ending the session on it during the login and in the world as
-    /// well is Tessera's reading, engineering choice). While the world is being entered the others are
-    /// kept for [`Self::session_ready`]; in the world they go to the play layer when they
-    /// come from the world connection, or from the login connection when there was no
-    /// referral.
+    /// A play message. While the world is being entered they are kept for
+    /// [`Self::session_ready`]; in the world they go to the play layer when they come from the
+    /// world connection, or from the login connection when there was no referral.
     fn play(&mut self, opcode: u32, recipient: u64, body: &[u8], world: bool) {
-        if opcode == AccountEvictionNotice::EVENT_ID {
-            self.eviction(opcode, recipient, body);
-            return;
-        }
         if !world && self.world.is_some() {
             self.counters.unhandled += 1;
             tracing::trace!(
@@ -2534,23 +2711,29 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    fn eviction(&mut self, opcode: u32, recipient: u64, body: &[u8]) {
-        match decode_play_message(opcode, recipient, body, &self.schema, &self.schema) {
-            Ok(Some(msg)) => {
-                let out = self.adapter.handle(&msg, &self.schema);
-                let reason = out.events.into_iter().find_map(|e| match e {
-                    Event::Disconnected { reason } => Some(reason),
-                    _ => None,
-                });
-                tracing::info!("official session: the server ended the session");
-                self.end(reason.unwrap_or_else(|| DisconnectReason::ServerClosed(String::new())));
-            }
-            Ok(None) | Err(_) => {
-                // A malformed eviction still ends the session: the server said it closes.
-                self.counters.decode_errors += 1;
+    /// `0xB3` (§9.3.7, Vector 15): the shared byte and the `u32` reason are read; the text after
+    /// them has no checked codec, so it is neither decoded nor dispatched. It ends the session in
+    /// every stage: the server said it closes.
+    ///
+    /// pending §25 fixes 4 and 8: §9.3.7's `AccountNotAllowed` is dropped by `official-entry.md`
+    /// after `Connected` and the stages before the list have no action; labelled, one
+    /// `Disconnected { ServerClosed }` in every stage. While the world is being entered, one
+    /// without its checked prefix ends with Tessera's own reason, not a stuck entry.
+    fn eviction(&mut self, m: &Inbound, now: f64) {
+        let reason = (m.envelope_flags == 0)
+            .then(|| AccountEvictionNotice::reason_of_envelope_body(&m.body))
+            .flatten();
+        let Some(reason) = reason else {
+            self.counters.decode_errors += 1;
+            if matches!(self.stage, Stage::Entering { .. }) {
+                self.entry_unsupported(UNSUPPORTED_ENTRY_ANSWER, now);
+            } else {
                 self.end(DisconnectReason::ServerClosed(String::new()));
             }
-        }
+            return;
+        };
+        tracing::info!(reason, "official session: the server ended the session");
+        self.end(DisconnectReason::ServerClosed(String::new()));
     }
 
     /// A message in the world (module docs "Entities"): batches are unpacked, the entity
@@ -2772,6 +2955,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// A message of the play layer (`official-messages-play.md` §4–§8). The positions of
     /// every entity but the local player go to the feed ([`EntityFeed::place`]).
     fn play_message(&mut self, opcode: u32, recipient: u64, body: &[u8]) {
+        if opcode == AccountEvictionNotice::EVENT_ID {
+            // Inside a batch: its boundary there is not rechecked, and no text is dispatched
+            // (`Self::eviction`).
+            tracing::info!("official session: the server ended the session");
+            self.end(DisconnectReason::ServerClosed(String::new()));
+            return;
+        }
         let decoded = decode_play_message(opcode, recipient, body, &self.schema, &self.schema);
         let msg = match decoded {
             Ok(Some(m)) => m,
@@ -2893,31 +3083,58 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// Sends `0x6F` on the connection that delivered the latest character list: the login
-    /// connection at first, the world connection after a return from the world
-    /// (`official-messages-play.md` §7.2 item 3 keeps that connection open). The login
-    /// connection is disconnected once a referral arrives (`official-session.md` §6.5 step
-    /// 2), so after that only the world connection can carry one. Which connection carries
-    /// a `0x6F` after a return is not in the spec: engineering choice pending a spec answer
-    /// (listed in `docs/m8-remediation.md` §15).
-    fn send_entry(&mut self, env: &[u8], now: f64) -> bool {
+    /// Sends `0x6F` on queue 2 of the login connection to `destination` (§9.3.7). Its body is
+    /// [`CharacterEnterWorldRequest`]'s with an empty client table, a labelled policy: no
+    /// separately specified entry property has a source.
+    fn send_entry(&mut self, destination: u64, env: &[u8], now: f64) -> bool {
         let opcode = CharacterEnterWorldRequest::EVENT_ID;
-        match self.world.as_mut() {
-            Some(w) if self.list_on_world => {
-                let ok = Self::send_on(w, &self.codecs, opcode, &[], env, now);
-                if !ok {
-                    self.counters.send_failures += 1;
-                }
-                ok
+        let (queue, group) = outbound_queue(opcode, &[]);
+        let sent = self
+            .login
+            .mux
+            .connection_mut(self.login.conn)
+            .map(|connection| {
+                connection.send_blob_to(
+                    queue,
+                    group,
+                    destination,
+                    opcode,
+                    env,
+                    now,
+                    self.codecs.outgoing.as_deref(),
+                )
+            });
+        match sent {
+            Some(Ok(_)) => true,
+            Some(Err(e)) => {
+                self.counters.send_failures += 1;
+                tracing::debug!(opcode, error = %e, "official session: message not queued");
+                false
             }
-            _ => self.send_on_login(opcode, env, now),
+            None => false,
         }
     }
 
-    /// pending spec pass 10 fix 9: `0xEC` and the client's `0xF5` stay resendable for a bounded
-    /// window. Each goes out once on an unreliable queue, and the server has no other way to
-    /// recover one lost datagram: the login would stall (labelled engineering choice).
-    fn send_retained_on_login(&mut self, opcode: u32, data: &[u8], now: f64) -> bool {
+    /// The destination a requested `0x6F` goes to: none on any production path, as no source is
+    /// specified (§9.3.7, OPEN-SESSION-15/20), and none after a teardown (OPEN-SESSION-16). It is
+    /// never the default recipient or the list's: that is the guess §9.3.7 forbids.
+    fn selection_destination(&self) -> Option<u64> {
+        if self.returned_from_world && !self.re_entry_allowed {
+            return None;
+        }
+        self.entry_destination
+            .filter(|d| *d != DEFAULT_BLOB_RECIPIENT_ID && Some(*d) != self.list_recipient)
+    }
+
+    /// `0xEC` and the client's `0xF5` (§9.3.7, "Queue-1 retention"): on queue 1 to `recipient`,
+    /// and resendable on a NAK until acknowledged or the attempt ends.
+    fn send_retained_on_login(
+        &mut self,
+        opcode: u32,
+        recipient: u64,
+        data: &[u8],
+        now: f64,
+    ) -> bool {
         let (queue, group) = outbound_queue(opcode, &[]);
         let sent = self
             .login
@@ -2927,6 +3144,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 connection.send_blob_retained(
                     queue,
                     group,
+                    recipient,
                     opcode,
                     data,
                     now,
@@ -3221,10 +3439,23 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     });
                     return Ok(());
                 };
+                // §9.3.7: a requested `0x6F` with no specified destination reports that it is
+                // not supported, and nothing is sent. pending §25 fix 2: whether that closes the
+                // session; labelled, it stays at the character list with Tessera's own text.
+                let Some(destination) = self.selection_destination() else {
+                    self.counters.entries_not_sent =
+                        self.counters.entries_not_sent.saturating_add(1);
+                    tracing::info!("official session: no specified destination for an entry");
+                    self.events.push_back(Event::EnterWorldFailed {
+                        character: name,
+                        reason: ENTRY_NOT_SUPPORTED.to_owned(),
+                    });
+                    return Ok(());
+                };
                 let env = CharacterEnterWorldRequest::new(id)
                     .to_envelope_bytes()
                     .map_err(|_| NetError::InvalidCommand("character not encodable"))?;
-                if !self.send_entry(&env, now) {
+                if !self.send_entry(destination, &env, now) {
                     self.events.push_back(Event::EnterWorldFailed {
                         character: name,
                         reason: "The request could not be sent.".to_owned(),
@@ -3457,6 +3688,18 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.login.flushing()
             || self.world.as_ref().is_some_and(Link::flushing)
             || self.old.iter().any(Link::flushing)
+    }
+
+    /// Synthetic tests only: a test-only destination for `0x6F` ([`ConnectorNet::entry_destination`]).
+    #[cfg(test)]
+    pub fn set_entry_destination_for_tests(&mut self, destination: u64) {
+        self.entry_destination = Some(destination);
+    }
+
+    /// Synthetic tests only: [`ConnectorNet::re_entry_allowed`], as if re-entry were specified.
+    #[cfg(test)]
+    pub fn forget_the_return_for_tests(&mut self) {
+        self.re_entry_allowed = true;
     }
 
     /// Synthetic tests only: the chat connections attached from now on accept a challenge

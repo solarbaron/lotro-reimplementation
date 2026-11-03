@@ -18,13 +18,39 @@ use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_formats::{EnumMapper, Record as _, StringSource};
 use tessera_props::{PROPERTY_DICTIONARY_DID, PropertyRegistry};
 
+/// The value of `result`. Its error is not printed: it can name a path of the install.
+#[track_caller]
+fn must<T, E>(result: Result<T, E>, what: &str) -> T {
+    match result {
+        Ok(value) => value,
+        Err(_) => panic!("{what}"),
+    }
+}
+
+/// The archives of `root`, read-only, for the language `lang`.
+fn open_set(root: &Path, lang: String) -> ArchiveSet {
+    must(
+        ArchiveSet::open(
+            root,
+            SetOptions {
+                language: Some(lang),
+                ..SetOptions::default()
+            },
+        ),
+        "the archives do not open",
+    )
+}
+
 fn game_dir() -> Option<PathBuf> {
     let dir = std::env::var_os("TESSERA_GAME_DIR")?;
     Some(PathBuf::from(dir))
 }
 
 fn language(root: &Path) -> String {
-    tessera_compat::login::resolve_install_language(root, None).expect("a language archive")
+    must(
+        tessera_compat::login::resolve_install_language(root, None),
+        "no language archive",
+    )
 }
 
 /// The verification facts of `official-messages-world.md` §4.3.1 (test only; the code
@@ -54,14 +80,23 @@ fn the_state_schemas_from_the_install_match_the_verification_tables() {
         eprintln!("TESSERA_GAME_DIR unset: skipped");
         return;
     };
-    let data = install_data_at(&root, &language(&root)).expect("the install opens");
+    let data = must(
+        install_data_at(&root, &language(&root)),
+        "the install does not open",
+    );
     let schemas = data.schemas();
     eprintln!("state schemas built: {}", schemas.len());
     let default = data
         .portal_state_schema(DEFAULT_PORTAL_STATE_SCHEMA_ID)
         .expect("the default schema");
-    assert_eq!(default.bool_pids, DEFAULT_BOOLS);
-    assert_eq!(default.enum_pids, DEFAULT_ENUMS);
+    assert!(
+        default.bool_pids == DEFAULT_BOOLS,
+        "the default schema's booleans differ"
+    );
+    assert!(
+        default.enum_pids == DEFAULT_ENUMS,
+        "the default schema's enums differ"
+    );
     for id in [0x1000_0E50u32, 0x1000_0E51] {
         let s = data.portal_state_schema(id).expect("a mounted schema");
         assert!(s.bool_pids.is_empty() && s.enum_pids.is_empty(), "{id:#x}");
@@ -71,12 +106,11 @@ fn the_state_schemas_from_the_install_match_the_verification_tables() {
     // `0x07000029` that is a key of the script-key enum was one, five on the reference
     // install.)
     assert_eq!(schemas.len(), 3);
-    let unlisted: Vec<u32> = schemas
+    let unlisted = schemas
         .keys()
-        .copied()
         .filter(|k| ![DEFAULT_PORTAL_STATE_SCHEMA_ID, 0x1000_0E50, 0x1000_0E51].contains(k))
-        .collect();
-    assert!(unlisted.is_empty(), "{unlisted:x?}");
+        .count();
+    assert_eq!(unlisted, 0, "schemas outside the verification table");
 }
 
 #[test]
@@ -85,16 +119,12 @@ fn no_state_schema_is_left_out_at_a_traversal_bound() {
         eprintln!("TESSERA_GAME_DIR unset: skipped");
         return;
     };
-    let set = ArchiveSet::open(
-        &root,
-        SetOptions {
-            language: Some(language(&root)),
-            ..SetOptions::default()
-        },
-    )
-    .expect("archives");
-    let dict = set.read(PROPERTY_DICTIONARY_DID.0).expect("the dictionary");
-    let registry = PropertyRegistry::parse(&dict).expect("decodes");
+    let set = open_set(&root, language(&root));
+    let dict = must(set.read(PROPERTY_DICTIONARY_DID.0), "no dictionary");
+    let registry = must(
+        PropertyRegistry::parse(&dict),
+        "the dictionary does not decode",
+    );
     let build = portal_state_schema_build(&set, &registry);
     eprintln!(
         "state schemas built: {}, left out: {}, nodes visited: {}",
@@ -103,7 +133,7 @@ fn no_state_schema_is_left_out_at_a_traversal_bound() {
         build.visited
     );
     // Each scriptlet is entered once per schema: every key stays far below its bound.
-    assert!(build.left_out.is_empty(), "{:x?}", build.left_out);
+    assert_eq!(build.left_out.len(), 0, "schemas left out at a bound");
     // `Startup` (`0x05`) and `ActiveMovement` (`0x0D`) reach no `PlayerPhysics` node
     // (§4.3.1 step 3): lifecycle scripts, not schemas.
     eprintln!(
@@ -123,7 +153,7 @@ fn chat_categories_texts_and_templates_read_from_the_install() {
         return;
     };
     let lang = language(&root);
-    let data = install_data_at(&root, &lang).expect("the install opens");
+    let data = must(install_data_at(&root, &lang), "the install does not open");
     let keys = data.chat_category_keys().expect("the chat category enum");
     eprintln!("chat category keys: {}", keys.len());
     // Every number `official-messages-play.md` §6.7 names.
@@ -134,16 +164,12 @@ fn chat_categories_texts_and_templates_read_from_the_install() {
     }
 
     // The enum's own display texts are string-table references: they resolve.
-    let set = ArchiveSet::open(
-        &root,
-        SetOptions {
-            language: Some(lang),
-            ..SetOptions::default()
-        },
-    )
-    .expect("archives");
-    let bytes = set.read(CHAT_CATEGORY_ENUM).expect("the enum record");
-    let mapper = EnumMapper::parse_expecting(&bytes, CHAT_CATEGORY_ENUM).expect("decodes");
+    let set = open_set(&root, lang);
+    let bytes = must(set.read(CHAT_CATEGORY_ENUM), "no enum record");
+    let mapper = must(
+        EnumMapper::parse_expecting(&bytes, CHAT_CATEGORY_ENUM),
+        "the enum does not decode",
+    );
     let mut resolved = 0usize;
     let mut references = 0usize;
     for (_, info) in mapper.displays() {
@@ -187,8 +213,11 @@ fn chat_categories_texts_and_templates_read_from_the_install() {
     assert!(data.text_cached(first));
 
     // Template baselines: the first object property sets of the install give values.
-    let dict = set.read(PROPERTY_DICTIONARY_DID.0).expect("dictionary");
-    let registry = PropertyRegistry::parse(&dict).expect("decodes");
+    let dict = must(set.read(PROPERTY_DICTIONARY_DID.0), "no dictionary");
+    let registry = must(
+        PropertyRegistry::parse(&dict),
+        "the dictionary does not decode",
+    );
     let mut checked = 0usize;
     let mut with_value = 0usize;
     'members: for m in set.members() {
@@ -221,10 +250,13 @@ fn chat_categories_texts_and_templates_read_from_the_install() {
     eprintln!("template sets checked: {checked}, with a readable value: {with_value}");
     assert!(checked > 0 && with_value > 0);
     // The builder is deterministic: built again, the same schemas.
-    assert_eq!(&portal_state_schemas(&set, &registry), data.schemas());
+    assert!(
+        &portal_state_schemas(&set, &registry) == data.schemas(),
+        "the schemas built twice differ"
+    );
 }
 
-/// The initial exchange's inputs (`official-session.md` §9.3.2, §9.3.4, decision 0046): built
+/// The initial exchange's inputs (`official-session.md` §9.3.2, §9.3.7, decision 0046): built
 /// from the install on this thread, checked against the rules without printing a value.
 #[test]
 fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
@@ -241,15 +273,8 @@ fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
         return;
     };
     let lang = language(&root);
-    let set = ArchiveSet::open(
-        &root,
-        SetOptions {
-            language: Some(lang.clone()),
-            ..SetOptions::default()
-        },
-    )
-    .expect("archives");
-    let inputs = initial_inputs(&set, &lang);
+    let set = open_set(&root, lang.clone());
+    let inputs = initial_inputs(&set);
 
     // The full key's fold is the selected language archive's subset.
     let key = inputs.language_key.expect("the language key");
@@ -272,7 +297,8 @@ fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
     assert!(rules.iter().any(|(_, languages)| languages.contains(&key)));
     eprintln!("name rules: {}", rules.len());
 
-    // One entry per mounted base of the policy, each with a unique identifier.
+    // One entry per mounted base of the policy, each with a unique identifier, and within the
+    // §9.3.7 caps; the iteration metadata keeps invariant 7 (N may be zero, with K zero).
     let inventory = inputs.inventory.as_ref().expect("the inventory");
     let bases = set
         .members()
@@ -291,18 +317,28 @@ fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
     ids.sort_unstable();
     ids.dedup();
     assert_eq!(ids.len(), inventory.len(), "unique identifiers");
+    assert!(inventory.len() <= tessera_compat::initial::MAX_ADVERTISED_ARCHIVES);
     for archive in inventory {
-        assert!(archive.iteration_count > 0, "an empty iteration list");
+        assert!(
+            archive.check_invariant().is_ok(),
+            "an entry breaks invariant 7"
+        );
     }
 
-    // Each entry's iteration description, written by the §9.3.2 serializer rule, equals the
-    // base's stored record; the entries come in decision 0046's order.
+    // Each entry's iteration description, written by the §9.3.7 serializer rule, decodes to the
+    // base's stored record, and is that record when it was stored canonically; the entries come
+    // in decision 0046's order.
     let data = build_install_advertisement(key, inventory).expect("builds");
+    assert!(data.len() <= tessera_compat::initial::MAX_ADVERTISEMENT_BYTES);
     let mut rewritten = 0usize;
+    let mut same_bytes = 0usize;
     for member in set.members().iter().filter(|m| m.id.part == 0) {
-        let entry = member.archive.lookup(DID_ITERATION).expect("lookup");
+        let entry = must(member.archive.lookup(DID_ITERATION), "the lookup failed");
         let Some(entry) = entry else { continue };
-        let raw = member.archive.read_entry(&entry).expect("record");
+        let raw = must(
+            member.archive.read_entry(&entry),
+            "the record does not read",
+        );
         let mut id = [0u8; 8];
         id[..4].copy_from_slice(&member.archive.header().dataset.to_le_bytes());
         id[4..].copy_from_slice(&member.archive.header().subset.to_le_bytes());
@@ -313,16 +349,19 @@ fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
             &advertised_archive(id, &raw, entry.stamp).expect("parses") == listed,
             "the listed entry differs from its base's record"
         );
-        // With a stamp-2 record the description is the record itself.
-        assert!(entry.stamp == 2, "an iteration record has another stamp");
         let single = build_install_advertisement(key, std::slice::from_ref(listed)).expect("one");
+        let description = &single[21..single.len() - 8];
         assert!(
-            &single[21..single.len() - 8] == raw.as_slice(),
+            &advertised_archive(id, description, 2).expect("what was written parses") == listed,
             "the rewritten iteration description differs from the stored record"
         );
+        if description == raw.as_slice() {
+            same_bytes += 1;
+        }
         rewritten += 1;
     }
     assert_eq!(rewritten, inventory.len());
+    eprintln!("iteration descriptions byte-identical to the record: {same_bytes} / {rewritten}");
     let mut at = 13usize;
     let mut last = None;
     for _ in 0..inventory.len() {
@@ -344,7 +383,7 @@ fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
     );
 
     // The connector's preparation gets the same data through the trait.
-    let archive_data = install_data_at(&root, &lang).expect("the install opens");
+    let archive_data = must(install_data_at(&root, &lang), "the install does not open");
     let prepared = prepare_advertisement(&archive_data).expect("prepared");
     assert!(
         prepared.language_key == key,

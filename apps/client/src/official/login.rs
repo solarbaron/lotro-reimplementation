@@ -183,11 +183,12 @@ pub fn disconnect_message(reason: &DisconnectReason) -> Option<Message> {
             text: text("official.error.server_closed").to_owned(),
             detail: (!why.trim().is_empty()).then(|| detail_line(why)),
         },
-        // The server answered, and this client cannot go on: Tessera's own line under §8.6's
-        // text, not the service's words and not the "no answer" text. Engineering choice, §8.6
-        // has no row for a session that ends this way after the hand-over.
+        // The server answered, and this client cannot go on: Tessera's own line, not the
+        // service's words and not the "no answer" text, and not read as an account fault
+        // (decision 0046 item 6). Engineering choice, §8.6 has no row for a session that ends
+        // this way after the hand-over.
         DisconnectReason::Unsupported(why) => Message {
-            text: text("official.error.unsupported_step").to_owned(),
+            text: text("official.error.tessera_limit").to_owned(),
             detail: (!why.trim().is_empty()).then(|| plain(why, MAX_ACCOUNT_DETAIL_LEN)),
         },
         // `TransportFailed` and any later reason.
@@ -346,6 +347,8 @@ impl LoginPresenter {
                         &[("world", &self.chosen_name())],
                     ),
                 };
+                // A status held back for the queue panel must not bring it back over this one.
+                self.queue_pending = None;
                 self.screen = LoginScreen::Progress { text: t };
             }
             AccountEvent::WorldList { worlds } => {
@@ -581,6 +584,7 @@ impl LoginPresenter {
             self.commands
                 .push(Command::Account(AccountCommand::LeaveLoginQueue));
             self.leaving_queue = true;
+            self.queue_pending = None;
             self.screen = LoginScreen::Progress {
                 text: text("official.login.listing").to_owned(),
             };
@@ -643,6 +647,15 @@ pub fn refusal_end(
     } else {
         FAILURE_WAIT
     };
+    // Tessera's own note on `UnsupportedStep` means a local install fault or a Tessera limit, not
+    // a step the account's login needs: §8.6's row would read as an account fault (decision 0046
+    // item 6). That row stays for a login that really asks for such a step.
+    let id =
+        if reason == LoginRefusal::UnsupportedStep && note.is_some_and(|n| !n.trim().is_empty()) {
+            "official.error.tessera_limit"
+        } else {
+            id
+        };
     let msg_text = if rate_limited {
         fill(text(id), &[("seconds", &wait.as_secs().to_string())])
     } else {

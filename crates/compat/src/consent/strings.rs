@@ -166,6 +166,12 @@ pub const TABLE: &[(&str, &str)] = &[
         "This login needs a step that Tessera does not support. Tessera cannot log in to this \
          account.",
     ),
+    // Decision 0046 item 6: a local install fault or a Tessera limit is not an account fault;
+    // the line under it says what Tessera could not do.
+    (
+        "official.error.tessera_limit",
+        "Tessera could not finish this login.",
+    ),
     (
         "official.error.client_not_accepted",
         "The official service did not accept this client.",

@@ -554,9 +554,8 @@ fn hostile_counts_depth_bools_and_unknown_pids() {
 fn vector_7_enter_world_delete_and_ready_ack() {
     let enter = CharacterEnterWorldRequest::new(0x0102_0304_0506_0708);
     let env = enter.to_envelope_bytes().unwrap();
-    // `official-session.md` §9.3.5, Vector 12's form: one shared flags byte, the ID and the
-    // empty client property table, with no second leading zero. World Vector 7's `0x6F` part
-    // (pending spec pass 10 fix 14) still shows the historical two-byte prefix.
+    // `official-session.md` §9.3.7, Vector 12's form and world Vector 7's: one shared flags byte,
+    // the ID and the empty client property table, 10 bytes, with no second leading zero.
     assert_eq!(
         env,
         [0x00, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00]

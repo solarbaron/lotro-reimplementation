@@ -143,8 +143,8 @@ pub trait InstallData: Send + Sync + std::fmt::Debug {
         None
     }
 
-    /// The full 32-bit key of the selected language in the runtime Languages enum
-    /// (`official-session.md` §9.3.2). The default answers unsupported.
+    /// The full 32-bit key of the actually mounted language in the runtime Languages enum
+    /// (`official-session.md` §9.3.7). The default answers unsupported.
     ///
     /// # Errors
     ///
@@ -153,7 +153,7 @@ pub trait InstallData: Send + Sync + std::fmt::Debug {
         Err(InstallUnsupported::NotRead)
     }
 
-    /// The `languages` list of the installed name rule `rule_key` (§9.3.4). The default
+    /// The `languages` list of the installed name rule `rule_key` (§9.3.7). The default
     /// answers unsupported.
     ///
     /// # Errors
@@ -163,7 +163,7 @@ pub trait InstallData: Send + Sync + std::fmt::Debug {
         Err(InstallUnsupported::NotRead)
     }
 
-    /// One entry per mounted base archive the advertisement lists (§9.3.4 items 2 and 3),
+    /// One entry per mounted base archive the advertisement lists (§9.3.7's preflight),
     /// computed on the connector's thread. The default answers unsupported.
     ///
     /// # Errors
@@ -191,9 +191,10 @@ pub fn chat_categories(data: &dyn InstallData) -> ChatCategories {
     ChatCategories::from_install_keys(Some(&keys))
 }
 
-/// The advertisement `0xEC` of this install (`official-session.md` §9.3.2, §9.3.4): what does
-/// not depend on the server's `0xDD`, so that a certain failure does not spend the ticket
-/// (pending spec pass 10 fix 2, labelled engineering choice).
+/// The advertisement `0xEC` of this install (`official-session.md` §9.3.2, §9.3.7): what does
+/// not depend on the server's `0xDD`, so that a failure does not spend the ticket. pending §25
+/// fix 14: the name-filter table's check will move here when the spec moves it; it still comes
+/// with `0xDD`.
 ///
 /// # Errors
 ///

@@ -786,6 +786,7 @@ fn leaving_the_world_forgets_its_entities() {
             .any(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }))
     );
     assert_eq!(d.feed_sizes(), (0, 0), "the feed is empty with the world");
+    d.forget_the_return_for_tests();
     d.command(
         &Command::EnterWorld {
             character: "Aldo".to_owned(),

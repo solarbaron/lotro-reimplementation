@@ -190,7 +190,7 @@ fuzz_target!(|data: &[u8]| {
             .is_ok()
     {
         let _ = negotiated.receive_datagram(data, peer, 0.5, codecs);
-        // The counters of §5.6.2 and a retained blob (§5.3; pending spec pass 10 fix 9): a
+        // The counters of §5.6.2 and a retained blob (§5.3, §9.3.7): a
         // send keeps every invariant whatever the input said, and a NAK of input-chosen
         // sequence numbers finds what it finds.
         let group = data.first().map_or(0, |b| u16::from(*b));
@@ -199,7 +199,7 @@ fuzz_target!(|data: &[u8]| {
         for queue in 1..=4u8 {
             let _ = negotiated.send_blob(queue, group, 0x10, body, 0.6, None);
         }
-        let _ = negotiated.send_blob_retained(1, 0, 0xEC, body, 0.7, None);
+        let _ = negotiated.send_blob_retained(1, 0, 0x1234, 0xEC, body, 0.7, None);
         while negotiated.pop_outbound_datagram().is_some() {}
         for (i, chunk) in data.as_chunks::<4>().0.iter().take(4).enumerate() {
             let seq = u32::from_le_bytes(*chunk);

@@ -25,14 +25,14 @@
 //!   for the [`MAX_CACHED_TEMPLATES`] used last;
 //! - the keys of the chat text category enum `0x230002A8` and its base chain
 //!   (`official-messages-play.md` §6.7);
-//! - the inputs of the login's initial exchange (`official-session.md` §9.3.2, §9.3.4,
-//!   decision 0046, [`InitialInputs`]): the selected language's full key, the installed name
+//! - the inputs of the login's initial exchange (`official-session.md` §9.3.2, §9.3.7,
+//!   decision 0046, [`InitialInputs`]): the mounted language's full key, the installed name
 //!   rules and one entry per mounted base archive, read once on the connector's thread, each
 //!   of them answering "unsupported" as a kind when it cannot be read truthfully.
 //!
 //! Open questions of the spec are told apart from Tessera's own choices at each place: a
-//! `pending spec pass 10 fix N` comment names a question waiting for the spec writer, with
-//! the labelled engineering choice taken meanwhile.
+//! `pending §25 fix N` comment names a question waiting for the spec writer, with the labelled
+//! engineering choice taken meanwhile.
 //!
 //! The in-game calendar (`official-messages-world.md` §4.4.2) is not read here: the spec's
 //! lookup (key `0x96` of directory `0x0F000002`) contradicts `environment.md` §3, which
@@ -574,12 +574,6 @@ impl InstallData for ArchiveData {
         self.chat_keys.clone()
     }
 
-    /// `true` when looking up `table_did` reads nothing: it is not a string-table DID (it is
-    /// refused unread), or the cache holds it. The cache is known to hold every table it
-    /// read as long as it never evicted one: then it holds exactly as many tables as were
-    /// read, each read once. After an eviction (or once the record of reads is full) this
-    /// answers `false` for every string table, so each lookup counts against the caller's
-    /// budget (conservative).
     fn selected_language_key(&self) -> Result<u32, InstallUnsupported> {
         self.initial.language_key
     }
@@ -592,6 +586,12 @@ impl InstallData for ArchiveData {
         self.initial.inventory.clone()
     }
 
+    /// `true` when looking up `table_did` reads nothing: it is not a string-table DID (it is
+    /// refused unread), or the cache holds it. The cache is known to hold every table it
+    /// read as long as it never evicted one: then it holds exactly as many tables as were
+    /// read, each read once. After an eviction (or once the record of reads is full) this
+    /// answers `false` for every string table, so each lookup counts against the caller's
+    /// budget (conservative).
     fn text_cached(&self, table_did: u32) -> bool {
         if !is_string_table_did(table_did) {
             return true;
@@ -601,12 +601,12 @@ impl InstallData for ArchiveData {
     }
 }
 
-/// What the login's initial exchange needs of the install (`official-session.md` §9.3.2,
-/// §9.3.4), read once. Each answer is a kind when it cannot be given truthfully; its `Debug`
+/// What the login's initial exchange needs of the install (`official-session.md` §9.3.7), read
+/// once. Each answer is a kind when it cannot be given truthfully; its `Debug`
 /// names no value.
 #[derive(Clone)]
 pub struct InitialInputs {
-    /// The selected language's full key.
+    /// The actually mounted language's full key.
     pub language_key: Result<u32, InstallUnsupported>,
     /// `(rule key, languages)` of every rule of the name-filter table.
     pub name_rules: Result<Vec<(u32, Vec<u32>)>, InstallUnsupported>,
@@ -625,7 +625,7 @@ impl std::fmt::Debug for InitialInputs {
 }
 
 impl InitialInputs {
-    /// The `languages` list of the rule `rule_key` (§9.3.4): a missing or duplicated rule is
+    /// The `languages` list of the rule `rule_key` (§9.3.7): a missing or duplicated rule is
     /// a kind, and nothing else is substituted.
     ///
     /// # Errors
@@ -644,22 +644,30 @@ impl InitialInputs {
     }
 }
 
-/// Reads the inputs from an open set, for the login-selected `language` label.
+/// Reads the inputs from an open set, for the language actually mounted after the fallback of
+/// `install-layout.md` §3.5 ([`ArchiveSet::language`]), not the requested label, which a fallback
+/// never replaces (`official-session.md` §9.3.7). pending §25 fix 15: the request is the login's
+/// §2.2 selection, passed to the set as `--language`, as `open` does.
 #[must_use]
-pub fn initial_inputs(set: &ArchiveSet, language: &str) -> InitialInputs {
+pub fn initial_inputs(set: &ArchiveSet) -> InitialInputs {
     let read = |did: Did| bounded_record(set, did.0, MAX_TABLE_RECORD);
     let root = master_map(set);
-    let language_key = root
-        .ok_or(InstallUnsupported::LanguageMapper)
-        .and_then(|root| language_key_lookup(&read, root, language))
-        .and_then(|key| check_language_archive(set, language, key).map(|()| key));
+    let language = set.language().map(str::to_owned);
+    let language_key = match (root, language.as_deref()) {
+        (None, _) => Err(InstallUnsupported::LanguageMapper),
+        (Some(_), None) => Err(InstallUnsupported::ArchiveMissing),
+        (Some(root), Some(language)) => language_key_lookup(&read, root, language)
+            .and_then(|key| check_language_archive(set, language, key).map(|()| key)),
+    };
     let name_rules = root
         .ok_or(InstallUnsupported::NameTable)
         .and_then(|root| name_rules_lookup(&read, root));
-    let inventory = root
-        .ok_or(InstallUnsupported::InventoryMaps)
-        .and_then(|root| region_keys_lookup(&read, root))
-        .and_then(|regions| archive_inventory(set, language, &regions));
+    let inventory = match (root, language.as_deref()) {
+        (None, _) => Err(InstallUnsupported::InventoryMaps),
+        (Some(_), None) => Err(InstallUnsupported::ArchiveMissing),
+        (Some(root), Some(language)) => region_keys_lookup(&read, root)
+            .and_then(|regions| archive_inventory(set, language, &regions)),
+    };
     InitialInputs {
         language_key,
         name_rules,
@@ -693,16 +701,19 @@ fn sub_map(read: RecordReader<'_>, root: Did, root_key: u32) -> Option<DataIdMap
     DataIdMap::parse_expecting(&read(did)?, did).ok()
 }
 
+/// Longest chain of Languages records followed (`official-session.md` §9.3.7): more fails.
+pub const LANGUAGE_CHAIN_LIMIT: usize = 64;
+
 /// The full key of the language labelled `label` in the Languages enum and its base chain
-/// (`official-session.md` §9.3.2, `records.md` §7–§8). Not the text layer's language ID, which
-/// is the folded subset.
-///
-/// pending spec pass 10 fix 5: labelled engineering choice until the spec names the match: an
-/// exact label, ASCII case-insensitive; absent, key `0` or two distinct keys are unsupported.
+/// (`official-session.md` §9.3.7, `records.md` §7–§8): the effective names are merged by key with
+/// the nearest child's definition first, and `label` must equal exactly one of them, ASCII
+/// case-insensitive, exactly otherwise. Not the text layer's language ID, which is the folded
+/// subset. Tessera's deterministic policy, not an observed official lookup.
 ///
 /// # Errors
 ///
-/// [`InstallUnsupported`] as a kind.
+/// [`InstallUnsupported`] as a kind: an unreadable record, a cycle or a longer chain than
+/// [`LANGUAGE_CHAIN_LIMIT`], an absent label, key `0`, or two keys with that effective label.
 pub fn language_key_lookup(
     read: RecordReader<'_>,
     root: Did,
@@ -711,13 +722,10 @@ pub fn language_key_lookup(
     let map =
         sub_map(read, root, ROOT_KEY_ENUM_MAPPERS).ok_or(InstallUnsupported::LanguageMapper)?;
     let start = map_target(&map, SUB_KEY_LANGUAGES).ok_or(InstallUnsupported::LanguageMapper)?;
-    let mut matched: Vec<u32> = Vec::new();
+    let mut effective: BTreeMap<u32, String> = BTreeMap::new();
     let mut seen = HashSet::new();
     let mut did = start;
-    for _ in 0..tessera_formats::enum_mapper::ENUM_BASE_CHAIN_LIMIT {
-        if did.is_null() {
-            return one_language_key(matched);
-        }
+    for _ in 0..LANGUAGE_CHAIN_LIMIT {
         // A chain with a cycle or a mapper that cannot be read cannot rule out a second key.
         if !seen.insert(did) {
             return Err(InstallUnsupported::LanguageMapper);
@@ -725,31 +733,36 @@ pub fn language_key_lookup(
         let mapper = read(did)
             .and_then(|b| EnumMapper::parse_expecting(&b, did).ok())
             .ok_or(InstallUnsupported::LanguageMapper)?;
-        matched.extend(
-            mapper
-                .names()
-                .iter()
-                .filter(|(_, name)| name.eq_ignore_ascii_case(label))
-                .map(|(key, _)| *key),
-        );
+        for (key, name) in mapper.names() {
+            effective.entry(*key).or_insert_with(|| name.clone());
+        }
         did = mapper.base;
+        if did.is_null() {
+            return one_language_key(&effective, label);
+        }
     }
     Err(InstallUnsupported::LanguageMapper)
 }
 
-fn one_language_key(mut matched: Vec<u32>) -> Result<u32, InstallUnsupported> {
-    matched.sort_unstable();
-    matched.dedup();
-    match matched.as_slice() {
-        [] => Err(InstallUnsupported::LanguageAbsent),
-        [0] => Err(InstallUnsupported::LanguageKeyZero),
-        [key] => Ok(*key),
-        _ => Err(InstallUnsupported::LanguageAmbiguous),
+fn one_language_key(
+    effective: &BTreeMap<u32, String>,
+    label: &str,
+) -> Result<u32, InstallUnsupported> {
+    let mut matched = effective
+        .iter()
+        .filter(|(_, name)| name.eq_ignore_ascii_case(label))
+        .map(|(key, _)| *key);
+    match (matched.next(), matched.next()) {
+        (None, _) => Err(InstallUnsupported::LanguageAbsent),
+        (Some(0), None) => Err(InstallUnsupported::LanguageKeyZero),
+        (Some(key), None) => Ok(key),
+        (Some(_), Some(_)) => Err(InstallUnsupported::LanguageAmbiguous),
     }
 }
 
-/// pending spec pass 10 fix 5: the selected language's base archive must carry the fold of the
-/// key as its subset (`dat-container.md` §3.4), so the key and the mounted archive agree.
+/// The mounted language's base archive must carry the union of the key's high and low 16-bit
+/// halves as its subset (`official-session.md` §9.3.7, `dat-container.md` §3.4), not the full key
+/// or its low half.
 fn check_language_archive(
     set: &ArchiveSet,
     language: &str,
@@ -771,8 +784,8 @@ fn is_selected_language(kind: &ArchiveKind, language: &str) -> bool {
     matches!(kind, ArchiveKind::Local(l) if l.eq_ignore_ascii_case(language))
 }
 
-/// Every rule of the name-filter table (`official-session.md` §9.3.4: root key `0x0F`, sub-key
-/// 1, both map groups, `misc-records.md` §9).
+/// Every rule of the name-filter table (`official-session.md` §9.3.4, §9.3.7: root key `0x0F`,
+/// sub-key 1, both map groups, `misc-records.md` §9).
 ///
 /// # Errors
 ///
@@ -839,38 +852,36 @@ fn expected_identity(kind: &ArchiveKind) -> Option<(u8, u8, Option<u32>)> {
     })
 }
 
-/// The portal sets (`dat-container.md` §2.4: one per table entry of dataset type 1).
-const PORTAL_KINDS: [ArchiveKind; 7] = [
+/// The portal sets that must be mounted (`official-session.md` §9.3.7). `highres` and `anim` are
+/// optional: absent, they contribute no entry; present, they are checked like the others (§9.3.7's
+/// interim eligibility choice, labelled there as such).
+const REQUIRED_PORTAL_KINDS: [ArchiveKind; 5] = [
     ArchiveKind::General,
     ArchiveKind::Gamelogic,
     ArchiveKind::Mesh,
     ArchiveKind::Surface,
     ArchiveKind::Sound,
-    ArchiveKind::Anim,
-    ArchiveKind::HighRes,
 ];
 
-/// One entry per mounted base archive (`official-session.md` §9.3.4 items 2 and 3).
+/// §9.3.7's preflight inventory: one entry per mounted base (`dat-container.md` §2.4) of the
+/// portal sets, of the region sets present for non-zero keys of the region map, and only the
+/// mounted language's base. Auxiliary members contribute no entry. A region key with neither file
+/// has no entry. Region 1's two bases are required when the map has that key.
 ///
-/// The spec's open question is which mounted archives count. pending spec pass 10 fix 1,
-/// labelled engineering choice until it answers: one entry per mounted base of the portal
-/// sets, of the region sets present for non-zero keys of the region map, and only the selected
-/// language's base. A region key with neither file does not count as missing; region 1's two
-/// bases are required when the map has that key (`dat-container.md` §2.4: its failure fails
-/// the client's archive initialisation), and half of a region pair is a partial inventory
-/// (`install-layout.md` §3.3). None of the unsupported cases is silently omitted:
+/// A stale or stray auxiliary file is left out with a warning, when its family's own membership
+/// is verified (`install-layout.md` §3.4). A missing active member, an unverified
+/// membership, an ambiguous base or a conflicting identifier is unsupported, and so is an older
+/// identifier encoding, an unknown family or iteration metadata breaking invariant 7.
 ///
-/// - any problem [`ArchiveSet`] recorded for an archive of these sets, whatever its severity:
-///   a file that failed to open, a missing part, a membership record that disagrees or is
-///   absent, two names differing only in case (§9.3.4 item 2: every auxiliary part is
-///   associated with its base, no base is ambiguous);
-/// - an auxiliary part beyond the base's count, of another identifier than its base's, without
-///   a base, or under a name with no canonical part number (`dat-container.md` §2.3 and §3.4);
-/// - an overlay next to a listed base (`dat-container.md` §2.5: the set's records may be out
-///   of date, which is an unresolved mount entry under §9.3.4 item 2; a labelled choice, as
-///   whether an overlay can hold the iteration record is not settled);
-/// - an archive of an unknown family, a region archive outside the region keys, an identifier
-///   disagreeing with its file name, or unusable iteration metadata.
+/// pending §25 fix 14: §9.3.7's row passes a non-region-1 set that fails to open, and "fails to
+/// open" has no test. Until the fix these stay labelled refusals, on the side of not sending:
+///
+/// - any other problem [`ArchiveSet`] recorded for an archive of these sets, whatever its
+///   severity: a file that failed to open, a missing part, two names differing only in case;
+/// - half of a region pair (`install-layout.md` §3.3);
+/// - an overlay next to a listed base (`dat-container.md` §2.5: the set's records may be out of
+///   date);
+/// - a region archive outside the region keys.
 ///
 /// Other languages stay members of the set (`crates/dat/src/set.rs`) and are filtered here.
 ///
@@ -885,7 +896,6 @@ pub fn archive_inventory(
     let other_language = |kind: &ArchiveKind| {
         matches!(kind, ArchiveKind::Local(_)) && !is_selected_language(kind, language)
     };
-    check_set_problems(set, &other_language)?;
     let mut bases: Vec<&SetMember> = Vec::new();
     for member in set.members() {
         let kind = &member.id.kind;
@@ -906,39 +916,49 @@ pub fn archive_inventory(
         return Err(InstallUnsupported::ArchiveCount);
     }
     let has = |want: &dyn Fn(&ArchiveKind) -> bool| bases.iter().any(|m| want(&m.id.kind));
-    if PORTAL_KINDS.iter().any(|k| !has(&|m| m == k))
+    if REQUIRED_PORTAL_KINDS.iter().any(|k| !has(&|m| m == k))
         || !has(&|m| is_selected_language(m, language))
     {
         return Err(InstallUnsupported::ArchiveMissing);
     }
     check_region_pairs(&bases, region_keys)?;
-    check_set_parts(set, &bases, &other_language)?;
+    let stale = check_set_parts(set, &bases, &other_language)?;
+    check_set_problems(set, &other_language, &stale)?;
     check_stray_parts(set, &bases, &other_language)?;
     bases.into_iter().map(advertised_base).collect()
 }
 
-/// A problem of an archive of the listed sets makes the inventory unsupported. A problem naming
-/// no file (a missing part, an implausible count) cannot be told apart by language, so it counts
-/// too: a labelled choice under pending spec pass 10 fix 1, on the side of not sending.
+/// pending §25 fix 14: a problem of an archive of the listed sets makes the inventory unsupported.
+/// A stale part's own problems do not: it is left out. A problem naming no file (a missing part,
+/// an implausible count) cannot be told apart by language, so it counts too. The one exception is
+/// the warning that the requested language is absent, the only one with no file and no error:
+/// §9.3.7 goes on with the label actually mounted.
 fn check_set_problems(
     set: &ArchiveSet,
     other_language: &dyn Fn(&ArchiveKind) -> bool,
+    stale: &[tessera_dat::ArchiveId],
 ) -> Result<(), InstallUnsupported> {
     for problem in set.problems() {
+        if problem.path.is_none() && problem.severity != tessera_dat::Severity::Error {
+            continue;
+        }
         let id = problem
             .path
             .as_deref()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
             .and_then(tessera_dat::ArchiveId::from_file_name);
-        if !id.is_some_and(|id| other_language(&id.kind)) {
+        let left_out = id
+            .as_ref()
+            .is_some_and(|id| other_language(&id.kind) || stale.contains(id));
+        if !left_out {
             return Err(InstallUnsupported::ArchiveFailed);
         }
     }
     Ok(())
 }
 
-/// Each region key's two bases: both or neither, and both for region 1.
+/// pending §25 fix 14: each region key's two bases, both or neither, and both for region 1.
 fn check_region_pairs(bases: &[&SetMember], region_keys: &[u32]) -> Result<(), InstallUnsupported> {
     for &r in region_keys {
         let cell = bases.iter().any(|m| m.id.kind == ArchiveKind::Cell(r));
@@ -950,50 +970,98 @@ fn check_region_pairs(bases: &[&SetMember], region_keys: &[u32]) -> Result<(), I
     Ok(())
 }
 
-/// Every auxiliary part of the listed sets belongs to a base, carries its identifier, and the
-/// parts add up to the base's count (`dat-container.md` §2.3 step 5, §3.4).
+/// What one family's base archive says of its set: its part count and set identifier. The base's
+/// record is the independent source, and an all-zero identifier on the base takes the first aux
+/// part's (`dat-container.md` §2.3 step 3).
+fn base_membership(base: &SetMember) -> Result<(u32, [u8; 16]), InstallUnsupported> {
+    let record = base
+        .archive
+        .membership()
+        .map_err(|_| InstallUnsupported::ArchiveFailed)?
+        .ok_or(InstallUnsupported::ArchiveFailed)?;
+    if record.part_index != 0 || record.part_count == 0 {
+        return Err(InstallUnsupported::ArchiveFailed);
+    }
+    Ok((record.part_count, record.set_id))
+}
+
+/// One family's active parts (`install-layout.md` §3.4): every index below the base's count must
+/// be there with a readable record of its own index, the same count and the same identifier, and
+/// carry the base's resource identifier; anything less is unsupported. A part at or past the count
+/// is a stale leftover, returned to be left out; its record is not trusted, and an active index
+/// whose record disagrees is a missing active member, not a stale file.
+fn active_parts<'a>(
+    set: &'a ArchiveSet,
+    base: &SetMember,
+) -> Result<Vec<&'a SetMember>, InstallUnsupported> {
+    let (count, mut set_id) = base_membership(base)?;
+    let family: Vec<&SetMember> = set
+        .members()
+        .iter()
+        .filter(|m| m.id.kind == base.id.kind && m.id.part != 0)
+        .collect();
+    let (ours, theirs) = (base.archive.header(), &family);
+    for part in 1..count {
+        let member = theirs
+            .iter()
+            .find(|m| m.id.part == part)
+            .ok_or(InstallUnsupported::ArchiveFailed)?;
+        let record = member
+            .archive
+            .membership()
+            .map_err(|_| InstallUnsupported::ArchiveFailed)?
+            .ok_or(InstallUnsupported::ArchiveFailed)?;
+        if set_id == [0; 16] {
+            set_id = record.set_id;
+        }
+        if record.part_index != part
+            || record.part_count != count
+            || record.set_id != set_id
+            || record.set_id == [0; 16]
+        {
+            return Err(InstallUnsupported::ArchiveFailed);
+        }
+        let header = member.archive.header();
+        if (header.dataset, header.subset) != (ours.dataset, ours.subset) {
+            return Err(InstallUnsupported::ArchiveIdentifier);
+        }
+    }
+    Ok(family.into_iter().filter(|m| m.id.part >= count).collect())
+}
+
+/// Checks every listed family's parts ([`active_parts`]) and returns its stale leftovers, each with
+/// a warning: excluded, never deleted or modified (`official-session.md` §9.3.7). An auxiliary part
+/// with no base at all has no membership to verify against.
 fn check_set_parts(
     set: &ArchiveSet,
     bases: &[&SetMember],
     other_language: &dyn Fn(&ArchiveKind) -> bool,
-) -> Result<(), InstallUnsupported> {
+) -> Result<Vec<tessera_dat::ArchiveId>, InstallUnsupported> {
     for member in set.members() {
-        if member.id.part == 0 || other_language(&member.id.kind) {
-            continue;
-        }
-        let base = bases
-            .iter()
-            .find(|b| b.id.kind == member.id.kind)
-            .ok_or(InstallUnsupported::ArchiveFailed)?;
-        let (ours, theirs) = (member.archive.header(), base.archive.header());
-        if (ours.dataset, ours.subset) != (theirs.dataset, theirs.subset) {
-            return Err(InstallUnsupported::ArchiveIdentifier);
-        }
-    }
-    for base in bases {
-        let count = base
-            .archive
-            .membership()
-            .map_err(|_| InstallUnsupported::ArchiveFailed)?
-            .ok_or(InstallUnsupported::ArchiveFailed)?
-            .part_count;
-        let parts = set
-            .members()
-            .iter()
-            .filter(|m| m.id.kind == base.id.kind)
-            .count();
-        if u32::try_from(parts) != Ok(count) {
+        if member.id.part != 0
+            && !other_language(&member.id.kind)
+            && !bases.iter().any(|b| b.id.kind == member.id.kind)
+        {
             return Err(InstallUnsupported::ArchiveFailed);
         }
     }
-    Ok(())
+    let mut stale = Vec::new();
+    for base in bases {
+        for part in active_parts(set, base)? {
+            tracing::warn!("official login: a stale auxiliary archive is left out");
+            stale.push(part.id.clone());
+        }
+    }
+    Ok(stale)
 }
 
 /// What [`ArchiveSet`] does not open and the listing shows: a name matching
-/// `client_<name>_aux_*.datx` with no canonical part number, which the original counts as a
-/// part (`dat-container.md` §2.1, §2.3), and an overlay next to a listed base (§2.5, matched
-/// ASCII case-insensitively as the names of the set are). A listing that fails answers the same
-/// way: nothing is known about those files.
+/// `client_<name>_aux_*.datx` with no canonical part number (`dat-container.md` §2.1, §2.3) is a
+/// stray: left out with a warning when its family has a verified base ([`active_parts`] holds for
+/// every listed base by now), unsupported when it has none, and of no concern for another
+/// language. pending §25 fix 14: an overlay next to a listed base (§2.5, matched ASCII
+/// case-insensitively as the names of the set are) is a labelled refusal. A listing that fails
+/// answers the same way: nothing is known about those files.
 fn check_stray_parts(
     set: &ArchiveSet,
     bases: &[&SetMember],
@@ -1018,10 +1086,13 @@ fn check_stray_parts(
         }
         if let Some(key) = stray_part_key(&name) {
             // The language label keeps its case in the name; `from_file_name` gives the kind.
-            let of_other_language = tessera_dat::ArchiveId::from_file_name(&format!("{key}.dat"))
-                .is_some_and(|id| other_language(&id.kind));
-            if !of_other_language {
-                return Err(InstallUnsupported::ArchiveFailed);
+            let family = tessera_dat::ArchiveId::from_file_name(&format!("{key}.dat"));
+            match family {
+                Some(id) if other_language(&id.kind) => {}
+                Some(id) if bases.iter().any(|b| b.id.kind == id.kind) => {
+                    tracing::warn!("official login: a stray auxiliary file is left out");
+                }
+                _ => return Err(InstallUnsupported::ArchiveFailed),
             }
         }
     }
@@ -1039,6 +1110,11 @@ fn stray_part_key(name: &str) -> Option<&str> {
 /// The real identifier and iteration metadata of one mounted base.
 fn advertised_base(member: &SetMember) -> Result<AdvertisedArchive, InstallUnsupported> {
     let header = member.archive.header();
+    // `dat-container.md` §3.4.1: bytes 0x14E and 0x14F zero and the u32 non-zero. §9.3.7: neither
+    // the raw old encoding nor a conversion is sent.
+    if uses_older_identifier(header.dataset) {
+        return Err(InstallUnsupported::ArchiveOlderIdentifier);
+    }
     let (dataset, kind, subset) =
         expected_identity(&member.id.kind).ok_or(InstallUnsupported::ArchiveUnknown)?;
     if header.dataset_type() != dataset
@@ -1076,13 +1152,21 @@ fn advertised_base(member: &SetMember) -> Result<AdvertisedArchive, InstallUnsup
     advertised_archive(resource_id, &bytes, entry.stamp)
 }
 
+/// Whether the dataset word at 0x14C is in the older identifier encoding (`dat-container.md`
+/// §3.4.1).
+#[must_use]
+pub const fn uses_older_identifier(dataset: u32) -> bool {
+    dataset != 0 && dataset & 0xFFFF_0000 == 0
+}
+
 /// One advertisement entry from an archive's identifier and its iteration record's bytes and
-/// directory-entry stamp (`install-layout.md` §9.2.1, §9.3). A record with no iterations has no
-/// usable metadata (a labelled choice under pending spec pass 10 fix 1).
+/// directory-entry stamp (`install-layout.md` §9.2.1, §9.3; `official-session.md` §9.3.7): decoded
+/// to exact exhaustion and checked against invariant 7, with no repair. An empty list passes with
+/// `K = 0`, and stamp 1 means `K = 0`; the record's metadata is its own.
 ///
 /// # Errors
 ///
-/// [`InstallUnsupported::ArchiveIteration`] for a malformed or empty record.
+/// [`InstallUnsupported::ArchiveIteration`] for a malformed record or one breaking the invariant.
 pub fn advertised_archive(
     resource_id: [u8; 8],
     iteration_record: &[u8],
@@ -1090,9 +1174,6 @@ pub fn advertised_archive(
 ) -> Result<AdvertisedArchive, InstallUnsupported> {
     let record = IterationRecord::parse(iteration_record, stamp)
         .map_err(|_| InstallUnsupported::ArchiveIteration)?;
-    if record.count == 0 {
-        return Err(InstallUnsupported::ArchiveIteration);
-    }
     let spans = record
         .ranges
         .iter()
@@ -1101,7 +1182,7 @@ pub fn advertised_archive(
             Ok(IterationSpan { start, len: r.len })
         })
         .collect::<Result<Vec<_>, InstallUnsupported>>()?;
-    Ok(AdvertisedArchive {
+    let archive = AdvertisedArchive {
         resource_id,
         iteration_count: record.count,
         spans,
@@ -1113,7 +1194,11 @@ pub fn advertised_archive(
                 opaque: t.opaque,
             })
             .collect(),
-    })
+    };
+    archive
+        .check_invariant()
+        .map_err(|_| InstallUnsupported::ArchiveIteration)?;
+    Ok(archive)
 }
 
 /// Every key of the enum mapper `start` and its base chain (`records.md` §7), `None` when
@@ -1556,7 +1641,7 @@ fn open(root: &Path, language: &str) -> Result<ArchiveData, InstallProblem> {
     if chat_keys.is_none() {
         tracing::warn!("official session: the chat category enum is missing");
     }
-    let initial = initial_inputs(&set, language);
+    let initial = initial_inputs(&set);
     let served = Arc::new(Mutex::new(ServedTables::default()));
     let strings = Strings::new(SetTables {
         set: Arc::clone(&set),

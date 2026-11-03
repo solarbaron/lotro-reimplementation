@@ -113,8 +113,18 @@ fuzz_target!(|data: &[u8]| {
     let _ = CharacterDeleteRequest::from_bytes(data, 0xD1);
     let _ = CharacterDeleteStatus::from_bytes(data);
     let _ = CharacterOperationError::from_bytes(data);
+    let _ = CharacterOperationError::from_envelope_body(data);
     let _ = AccountEvictionNotice::from_bytes(data);
+    let _ = AccountEvictionNotice::reason_of_envelope_body(data);
     let _ = PlatformAccountIdReport::from_bytes(data);
+    // `0x90` from the body after its one flags byte (§9.3.7, Vector 15): the whole form reads the
+    // same ID, and a failure of the one is a failure of the other.
+    if let Ok(ready) = PlayerSessionReady::from_envelope_body(data, &schema) {
+        let mut whole = vec![0u8];
+        whole.extend_from_slice(data);
+        let again = PlayerSessionReady::from_bytes(&whole, &schema);
+        assert_eq!(again.ok().map(|r| r.player_id), Some(ready.player_id));
+    }
     // `0x6F` is its one flags byte and fields, nothing prepended (§9.3.5, Vector 12).
     if let Ok(select) = CharacterEnterWorldRequest::from_bytes(data, &schema)
         && let Ok(env) = select.to_envelope_bytes()

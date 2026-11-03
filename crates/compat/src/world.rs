@@ -3139,8 +3139,9 @@ impl CharacterSummaryEntry {
 /// reassembled data, flags byte included, and [`Self::from_envelope_body`] on what is left
 /// after [`crate::session::decode_message`] consumed that byte.
 ///
-/// pending spec pass 10 fix 16: a compressed or routed `0x6C` has no specified boundary; the
-/// driver reports it as unsupported and never reads a list out of it.
+/// A compressed or routed `0x6C` has no specified boundary (`official-session.md` §9.3.7); the
+/// driver reports it as unsupported and never reads a list out of it. A list that fails to
+/// decode has no partial result and no forward scan (OPEN-WORLD-10).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CharacterListResponse {
     /// `characters` (`u32` LE count + entries).
@@ -3543,10 +3544,26 @@ impl CharacterOperationError {
             error_code: reader.read_u32_le()?,
         })
     }
+
+    /// Reads an uncompressed, unrouted `0x6D` from the body after its one shared flags byte
+    /// (`official-session.md` §9.3.7, Vector 15), to exact exhaustion.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldError`] on a short body or trailing bytes.
+    pub fn from_envelope_body(body: &[u8]) -> Result<Self, WorldError> {
+        let mut reader = WireReader::new(body);
+        let error_code = reader.read_u32_le()?;
+        reader.finish()?;
+        Ok(Self { error_code })
+    }
 }
 plain_codec!(CharacterOperationError);
 
-/// Event `0xB3` (`account_eviction_notice`, S→C, §3.4).
+/// Event `0xB3` (`account_eviction_notice`, S→C, §3.4). Its checked prefix is one shared flags
+/// byte and the `u32` reason (`official-session.md` §9.3.7, Vector 15); the text's current codec
+/// is not rechecked, so the session reads the reason only ([`Self::reason_of_envelope_body`]) and
+/// dispatches no text. The historical whole-message layout stays for the play layer's decoder.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AccountEvictionNotice {
     /// `boot_reason` (`u32` LE).
@@ -3582,14 +3599,22 @@ impl AccountEvictionNotice {
             reason_text: LocalizedTokenText::decode(reader)?,
         })
     }
+
+    /// The `u32` reason of an uncompressed, unrouted `0xB3`, from the body after its one shared
+    /// flags byte. What follows it is not read. `None` when the body is shorter than the reason.
+    #[must_use]
+    pub fn reason_of_envelope_body(body: &[u8]) -> Option<u32> {
+        let bytes: [u8; 4] = body.get(..4)?.try_into().ok()?;
+        Some(u32::from_le_bytes(bytes))
+    }
 }
 plain_codec!(AccountEvictionNotice);
 
 /// Event `0x19E` (`platform_account_id_report`, C→S, 9 bytes, §3.4).
 ///
-/// pending spec pass 10 fix 17: layout unchanged, and the driver does not emit it (the source
-/// of the platform ID and the companion `0x13D` are not specified; `official-session.md` §9.3.1
-/// gives only their order and queue).
+/// One flags byte and the `u64` LE ID, nothing after them (`official-session.md` §9.3.7, Vector
+/// 15). OPEN-SESSION-20: the driver does not emit it. No real platform ID or destination is
+/// specified, and zero or a borrowed ID is never sent; `0x13D` is omitted with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlatformAccountIdReport {
     /// `platform_id` (`u64` LE).
@@ -3836,11 +3861,10 @@ impl ServerShutdownText {
 }
 plain_codec!(ServerShutdownText);
 
-/// Event `0x90` (`player_session_ready`, S→C, §4.2).
-///
-/// pending spec pass 10 fix 14: decoded with its historical prefix, unchanged by guesswork
-/// (`official-session.md` §9.1 rechecks only `0x6C` and `0x6F`; the world §1.1.4 OPEN-WORLD-9
-/// remains). A failure is a distinct unsupported result of the entry (the session driver).
+/// Event `0x90` (`player_session_ready`, S→C, §4.2). An uncompressed, unrouted `0x90` has one
+/// shared flags byte (`official-session.md` §9.1, §9.3.7, Vector 15):
+/// [`Self::from_envelope_body`] reads what is left after [`crate::session::decode_message`]
+/// consumed it, and `from_bytes` the complete data with it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlayerSessionReady {
     /// `player_id`: the active player avatar's `InstanceID`.
@@ -3874,6 +3898,29 @@ impl PlayerSessionReady {
         schema: &dyn PropertySchemaLookup,
     ) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
+        Self::decode_after_flags(reader, schema)
+    }
+
+    /// Reads an uncompressed, unrouted `0x90` from the body after its one shared flags byte, to
+    /// exact exhaustion. The ID comes straight after that byte.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldError`] on framing or schema errors, trailing bytes among them.
+    pub fn from_envelope_body(
+        body: &[u8],
+        schema: &dyn PropertySchemaLookup,
+    ) -> Result<Self, WorldError> {
+        let mut reader = WireReader::new(body);
+        let ready = Self::decode_after_flags(&mut reader, schema)?;
+        reader.finish()?;
+        Ok(ready)
+    }
+
+    fn decode_after_flags(
+        reader: &mut WireReader<'_>,
+        schema: &dyn PropertySchemaLookup,
+    ) -> Result<Self, WorldError> {
         Ok(Self {
             player_id: reader.read_u64_le()?,
             session_props: EncodedPropertyTable::decode(reader, schema)?,

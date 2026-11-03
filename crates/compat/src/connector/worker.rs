@@ -439,7 +439,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
             return;
         }
         // Nothing was sent: the ticket is not spent on an install that cannot answer
-        // (`crate::initial`, pending spec pass 10 fix 2).
+        // (`crate::initial`, the preflight of `official-session.md` §9.3.7).
         Err(StartFailure::Unsupported(why)) => {
             tracing::info!(reason = %why, "official session: not started");
             out.refuse_locally(LoginRefusal::UnsupportedStep, why.detail());

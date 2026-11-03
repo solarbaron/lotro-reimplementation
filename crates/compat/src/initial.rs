@@ -1,39 +1,41 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The initial exchange of the login connection (`official-session.md` §9.3.1–§9.3.5,
-//! decision 0046): the server's `0xDD`, the client's install advertisement `0xEC`, the
-//! completion exchange `0xF5` and the bounded wait for the character list `0x6C`. Sans I/O:
-//! the session driver ([`crate::connector::session_phase`]) sends what this module builds,
-//! and the install's values reach it through [`crate::connector::data::InstallData`].
+//! The initial exchange of the login connection (`official-session.md` §9.3.1–§9.3.7, decision
+//! 0046): the server's `0xDD`, the client's install advertisement `0xEC`, the completion
+//! exchange `0xF5` and the bounded wait for the character list `0x6C`. Sans I/O: the session
+//! driver ([`crate::connector::session_phase`]) sends what this module builds, and the install's
+//! values reach it through [`crate::connector::data::InstallData`].
 //!
 //! # What is whose
 //!
-//! `official-session.md` §9.3.4 states the wire layouts and the policy `P10-10E` this module
-//! follows. It leaves questions open. They are marked in the code as
-//! `pending spec pass 10 fix N`, each with the choice taken until the spec answers:
+//! `official-session.md` §9.3.7 states the rules this module follows. Its descriptions of how
+//! the original walks its archives (§9.3.4–§9.3.6) are not rules and nothing here comes from
+//! them (decision 0046 item 4). Everything sent is the user's real data (decision 0046 item 2);
+//! a rejected attempt is not retried with varied data.
 //!
-//! - fix 4: `0xDD` flags other than `0` are rejected; only the first valid `0xDD` on queue 1
-//!   of the primary login connection triggers `0xEC`.
-//! - fix 7: iteration runs are written again under the §9.3.2 serializer rule, with stamp 1
-//!   meaning `K = 0`.
-//! - fix 8: the order of [`advertisement_order`] (decision 0046 item 3) with its labelled
-//!   tie-break.
-//! - fix 10: `0xF5` is answered once, only after `0xEC` was sent, only when its data is `00`.
-//! - fix 2: the deadlines of [`Negotiation`] and the checks before the first datagram.
-//! - fix 1: which archives the inventory lists and which problems refuse it (the client's
-//!   `archive_inventory`) and the caps here.
-//! - fix 9: `0xEC` and the client's `0xF5` stay resendable for a bounded window
-//!   ([`crate::session::RETAINED_BLOB_RESEND_WINDOW_SEC`]).
-//! - fix 13: a sequence gap that stays open ends the attempt
-//!   ([`crate::session::MAX_GAP_AGE_SEC`]).
+//! Where §9.3.7 leaves a choice open, the code keeps a labelled one, marked
+//! `pending §25 fix N` with the number of the writer fix that will settle it:
 //!
-//! No rule here comes from the spec's description of the original's own walk over its
-//! archives (§9.3.4, the paragraph that says it is not a rule). Everything sent is the user's
-//! real data (decision 0046 item 2); a rejected attempt is not retried with varied data.
+//! - fix 8: a queued `0x130` starts the current wait again, and an actual `0x12F` has its own
+//!   wait ([`VERSION_PATH_WAIT_SEC`]).
+//! - fix 9: a list that completed cancels every wait; a progress timer keeps the client's
+//!   watchdog from running out between the stages.
+//! - fix 10: the `0xF5` guard's window runs from the last `0xEC` fragment's allocation to the
+//!   first valid `0xF5`; a known message of §9.3 stays outside the guard.
+//! - fix 11: a later well-formed non-empty `0xDD` updates the word like any other; the `0xDD`
+//!   rules end with the login stage; bytes after a `0xDD` zlib stream are not looked at.
+//! - fix 12: refused transport forms are counted and only a sequence gap that stays open ends
+//!   the attempt ([`crate::session::MAX_GAP_AGE_SEC`]).
+//! - fix 17: a run list that repeats an iteration is refused, as the invariant does not say how
+//!   a repeat counts ([`AdvertisedArchive::check_invariant`]).
+//! - The client's own preflight refusals beyond §9.3.7's table: fix 14 (`archive_inventory` in
+//!   the client).
 //!
 //! # Hostile input
 //!
 //! Every count is checked against the bytes left before anything is read or allocated. A
-//! message that fails is rejected whole: the transport has already taken its datagram (§9.3.4).
+//! message that fails is rejected whole: the transport has already taken its datagram (§9.3.7).
+
+use std::collections::BTreeMap;
 
 /// Server opcode `0xDD`: the trigger of the install advertisement (§9.3.2, §9.3.4).
 pub const OPCODE_INSTALL_REQUEST: u32 = 0x0000_00DD;
@@ -48,33 +50,40 @@ pub const COMPLETION_DATA: [u8; 1] = [0];
 
 /// Bytes of the complete `0xDD` data before its counted array (§9.3.4).
 pub const DD_FIXED_BYTES: usize = 13;
-/// Tessera's cap on `0xDD`'s trailing count (§9.3.4: a resource policy, not an official limit).
+/// Tessera's cap on `0xDD`'s trailing count (§9.3.7: a resource policy, not an official limit).
 pub const MAX_DD_TRAILING: usize = 4096;
 
-/// The grouping remainder of decision 0046 item 3 (§9.3.4: an interim relation, not an
+/// The grouping remainder of decision 0046 item 3 (§9.3.7: an interim relation, not an
 /// archive count and not the official algorithm).
 pub const ADVERTISEMENT_ORDER_MODULUS: u64 = 23;
 
-/// Most archives one advertisement lists. pending spec pass 10 fix 1: labelled engineering
-/// choice; an install's table and region keys give far fewer, and more is refused as
+/// Most archives one advertisement lists (§9.3.7: a Tessera resource bound); more is refused
+/// as unsupported, never cut.
+pub const MAX_ADVERTISED_ARCHIVES: usize = 256;
+/// Longest advertisement data (§9.3.7: a Tessera resource bound); more is refused as
 /// unsupported, never cut.
-pub const MAX_ADVERTISED_ARCHIVES: usize = 64;
-/// Longest advertisement data. pending spec pass 10 fix 1: labelled engineering choice, far
-/// above a real install's; more is refused as unsupported, never cut.
-pub const MAX_ADVERTISEMENT_BYTES: usize = 256 * 1024;
+pub const MAX_ADVERTISEMENT_BYTES: usize = 1024 * 1024;
 
-/// Wait from State 5 to `0xDD`. pending spec pass 10 fix 2: labelled engineering choice,
-/// generous so a slow server does not fail; the spec only says not to wait indefinitely
-/// (§9.3.4).
-pub const DD_WAIT_SEC: f64 = 180.0;
-/// Wait from `0xEC` to the server's `0xF5`. pending spec pass 10 fix 2: as [`DD_WAIT_SEC`].
-pub const COMPLETION_WAIT_SEC: f64 = 120.0;
-/// Wait from the client's `0xF5` to `0x6C`. pending spec pass 10 fix 2: as [`DD_WAIT_SEC`].
-pub const LIST_WAIT_SEC: f64 = 120.0;
+/// Wait from State 5 to the first valid `0xDD` (§9.3.7: Tessera policy, not a captured timing).
+pub const DD_WAIT_SEC: f64 = 30.0;
+/// Wait from the last initial `0xEC` fragment's allocation to the server's `0xF5` (§9.3.7).
+pub const COMPLETION_WAIT_SEC: f64 = 30.0;
+/// Wait from the allocation of the client's `0xF5` to a complete `0x6C` (§9.3.7).
+pub const LIST_WAIT_SEC: f64 = 30.0;
 /// Wait from an actual `0x12F` to `0xDD` or `0x6C` on the historical version path (§9.3).
-/// pending spec pass 10 fix 2: as [`DD_WAIT_SEC`]; §9.3 does not lift §9.3.4's rule against
-/// waiting indefinitely for a character list.
+/// pending §25 fix 8: labelled engineering choice; §9.3.7's waits are for the `0xDD` path, and
+/// §9.3 does not lift the rule against waiting indefinitely for a character list.
 pub const VERSION_PATH_WAIT_SEC: f64 = 180.0;
+
+/// Wait while the queue panel shows, from the latest queue status. pending §25 fix 8: §9.3 keeps a
+/// queued session waiting, §9.3.7's deadlines have no exemption and neither names a bound for it;
+/// labelled engineering choice, longer than §9.3.7's waits so that the queue place is not lost
+/// between statuses.
+pub const QUEUE_WAIT_SEC: f64 = 180.0;
+
+/// Most distinct opcodes the skip counter keeps; the others are counted together (§9.3.7:
+/// Tessera policy).
+pub const MAX_SKIP_KEYS: usize = 256;
 
 /// Errors of the initial exchange's decoders and builder.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -88,26 +97,31 @@ pub enum InitialError {
         /// Bytes there are.
         available: usize,
     },
-    /// The shared flags byte is not `0` (pending spec pass 10 fix 4).
+    /// The shared flags byte is `0x02` or more (§9.3.7): no routed form is guessed.
     #[error("unsupported flags byte {0:#04x}")]
     UnsupportedFlags(u8),
+    /// Flags `0x01` and the data does not inflate to exactly its stated length (§9.1, §10.1).
+    #[error("the compressed data does not inflate to its stated length")]
+    Decompression,
     /// The counted array cannot fit the remaining bytes, or passes [`MAX_DD_TRAILING`].
     #[error("trailing count {count} is out of bounds")]
     TrailingCount {
         /// The count on the wire.
         count: u32,
     },
-    /// Bytes follow the counted array (§9.3.4: exact exhaustion).
+    /// Bytes follow the counted array (§9.3.7: it must fit the buffer exactly).
     #[error("{0} trailing bytes")]
     TrailingBytes(usize),
     /// The advertisement has no archive, more than [`MAX_ADVERTISED_ARCHIVES`], or the
     /// language key is `0`.
     #[error("the advertisement's inputs are not usable")]
     UnusableInputs,
-    /// Two archives have one resource identifier (§9.3.4 item 2).
+    /// Two archives have one resource identifier (§9.3.7).
     #[error("two archives have one resource identifier")]
     DuplicateIdentifier,
-    /// An archive's iteration metadata is not usable: runs that do not add up to its count.
+    /// An archive's iteration metadata is not usable: runs that do not add up to its count, or
+    /// a trailing list that is not the highest listed iterations (`install-layout.md` §9.6
+    /// invariant 7). Nothing is repaired.
     #[error("iteration metadata is not usable")]
     UnusableIteration,
     /// The data would pass [`MAX_ADVERTISEMENT_BYTES`].
@@ -115,7 +129,7 @@ pub enum InitialError {
     TooLarge,
 }
 
-/// A decoded server `0xDD` (§9.3.4).
+/// A decoded server `0xDD` (§9.3.4, §9.3.7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallRequest {
     /// The opaque server configuration word: kept, never compared with a local version.
@@ -123,18 +137,19 @@ pub struct InstallRequest {
     /// The name-rule key, selecting a rule set of the installed name-filter table. Not a
     /// language code.
     pub name_rule_key: u32,
-    /// The trailing fields; `P10-10E` supports an empty array only.
+    /// The trailing fields; the send policy supports an empty array only (§9.3.7).
     pub trailing: Vec<u32>,
 }
 
 impl InstallRequest {
-    /// Decodes the complete reassembled data, its flags byte at offset `0` (§9.3.4).
-    ///
-    /// pending spec pass 10 fix 4: flags other than `0` are rejected.
+    /// Decodes the complete reassembled data, its flags byte at offset `0` (§9.3.7): flags
+    /// `0x00` as it is, flags `0x01` after the bounded inflation of §9.1 and §10.1 item 9 (the
+    /// layout is measured on the inflated body), and `0x02` to `0xFF` not at all.
     ///
     /// # Errors
     ///
-    /// [`InitialError`] for truncation, other flags, an out-of-bounds count or trailing bytes.
+    /// [`InitialError`] for truncation, other flags, a failed inflation, an out-of-bounds count
+    /// or trailing bytes.
     pub fn from_data(data: &[u8]) -> Result<Self, InitialError> {
         let Some((&flags, body)) = data.split_first() else {
             return Err(InitialError::Truncated {
@@ -142,14 +157,23 @@ impl InstallRequest {
                 available: 0,
             });
         };
-        if flags != 0 {
-            return Err(InitialError::UnsupportedFlags(flags));
+        match flags {
+            0 => Self::from_envelope_body(body),
+            1 => {
+                let envelope = crate::session::decode_message(
+                    OPCODE_INSTALL_REQUEST,
+                    data,
+                    crate::session::DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
+                )
+                .map_err(|_| InitialError::Decompression)?;
+                Self::from_envelope_body(&envelope.body)
+            }
+            other => Err(InitialError::UnsupportedFlags(other)),
         }
-        Self::from_envelope_body(body)
     }
 
     /// Decodes the data after its flags byte (what [`crate::session::decode_message`] leaves
-    /// of an uncompressed, unrouted `0xDD`).
+    /// of an unrouted `0xDD`, inflated when it was compressed).
     ///
     /// # Errors
     ///
@@ -195,8 +219,9 @@ fn read_u32(bytes: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(b.try_into().ok()?))
 }
 
-/// The folded language code of a language archive's subset (`dat-container.md` §3.4): the
-/// high 16 bits OR-ed into the low 16 bits.
+/// The folded language code a language archive carries as its subset (`dat-container.md` §3.4,
+/// `official-session.md` §9.3.7): the union of the key's high and low 16-bit halves. Not a
+/// language key: only the full key is tested against an allowlist or sent.
 #[must_use]
 pub const fn fold_language_code(key: u32) -> u32 {
     (key >> 16) | (key & 0xFFFF)
@@ -221,7 +246,7 @@ pub struct IterationNote {
 }
 
 /// What one mounted base archive contributes to `0xEC`: its real identifier and its real
-/// iteration metadata (§9.3.4 item 3). The `Debug` form names no value: it can reach a log.
+/// iteration metadata (§9.3.7). The `Debug` form names no value: it can reach a log.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AdvertisedArchive {
     /// Superblock bytes `0x14C..=0x153`, as stored.
@@ -230,7 +255,7 @@ pub struct AdvertisedArchive {
     pub iteration_count: u32,
     /// The run list, in record order.
     pub spans: Vec<IterationSpan>,
-    /// The trailing entries. A stamp-1 record has none (pending spec pass 10 fix 7: `K = 0`).
+    /// The trailing entries. A stamp-1 record has none (§9.3.7: an explicit `K = 0` in `0xEC`).
     pub notes: Vec<IterationNote>,
 }
 
@@ -251,25 +276,99 @@ impl AdvertisedArchive {
         let [a, b, c, d, e, f, g, h] = self.resource_id;
         [e, f, g, h, a, b, c, d]
     }
+
+    /// `install-layout.md` §9.6 invariant 7, for §9.3.7's sender and inventory check: the runs
+    /// add up to the count and the trailing list is the `K` highest listed iterations in
+    /// increasing order. Nothing is repaired.
+    ///
+    /// pending §25 fix 17: the invariant does not say how a repeated iteration counts; a run
+    /// list that repeats one is refused, on the side of not sending.
+    ///
+    /// # Errors
+    ///
+    /// [`InitialError::UnusableIteration`].
+    pub fn check_invariant(&self) -> Result<(), InitialError> {
+        let mut expanded = 0u64;
+        let mut sorted: Vec<(i64, u64)> = Vec::with_capacity(self.spans.len());
+        for span in &self.spans {
+            if span.len == 0 || span.start < 0 {
+                return Err(InitialError::UnusableIteration);
+            }
+            expanded = expanded.saturating_add(u64::from(span.len));
+            sorted.push((i64::from(span.start), u64::from(span.len)));
+        }
+        if expanded != u64::from(self.iteration_count) {
+            return Err(InitialError::UnusableIteration);
+        }
+        sorted.sort_unstable();
+        let repeats = sorted.windows(2).any(|w| {
+            matches!(w, [(start, len), (next, _)]
+                if start.saturating_add(i64::try_from(*len).unwrap_or(i64::MAX)) > *next)
+        });
+        if repeats {
+            return Err(InitialError::UnusableIteration);
+        }
+        // Lazily from the top, so at most `K` values are made whatever the runs' lengths.
+        let mut highest = sorted.iter().rev().flat_map(|&(start, len)| {
+            (0..len).map(move |i| {
+                start
+                    .saturating_add(i64::try_from(len).unwrap_or(i64::MAX))
+                    .saturating_sub(i64::try_from(i).unwrap_or(i64::MAX))
+                    .saturating_sub(1)
+            })
+        });
+        for note in self.notes.iter().rev() {
+            if highest.next() != Some(i64::from(note.iteration)) {
+                return Err(InitialError::UnusableIteration);
+            }
+        }
+        Ok(())
+    }
 }
 
-/// The sort key of decision 0046 item 3 for a wire identifier.
-///
-/// pending spec pass 10 fix 8: ascending remainder of the `u64` LE value at entry offset `0`
-/// divided by [`ADVERTISEMENT_ORDER_MODULUS`]; ties by numeric order of the same value, a
-/// labelled Tessera tie-break. An interim relation fitting the owner's captures, not the
-/// official algorithm.
+/// The sort key of decision 0046 item 3 for a wire identifier (§9.3.7): non-decreasing remainder
+/// of the `u64` LE value of the eight wire bytes divided by [`ADVERTISEMENT_ORDER_MODULUS`], ties
+/// by the increasing numeric value of the same integer (a labelled Tessera tie-break). An interim
+/// relation fitting the owner's captures, not the official algorithm.
 #[must_use]
 pub fn advertisement_order(wire_identifier: [u8; 8]) -> (u64, u64) {
     let value = u64::from_le_bytes(wire_identifier);
     (value % ADVERTISEMENT_ORDER_MODULUS, value)
 }
 
-/// Writes one merged run (`start`, `len`) of the iteration description.
-fn write_run(run: Option<(i64, u64)>, out: &mut Vec<u8>) -> Result<(), InitialError> {
-    let Some((start, len)) = run else {
-        return Ok(());
-    };
+/// Calls `f` with each maximal run of consecutive increasing iterations of `spans`, in record
+/// order: the records' own runs and singles merged where they touch (§9.3.7).
+fn for_each_run(
+    spans: &[IterationSpan],
+    mut f: impl FnMut(i64, u64) -> Result<(), InitialError>,
+) -> Result<(), InitialError> {
+    let mut run: Option<(i64, u64)> = None;
+    for span in spans {
+        let start = i64::from(span.start);
+        let len = u64::from(span.len);
+        run = match run {
+            Some((first, n))
+                if first.saturating_add(i64::try_from(n).unwrap_or(i64::MAX)) == start =>
+            {
+                Some((first, n.saturating_add(len)))
+            }
+            other => {
+                if let Some((first, n)) = other {
+                    f(first, n)?;
+                }
+                Some((start, len))
+            }
+        };
+    }
+    if let Some((first, n)) = run {
+        f(first, n)?;
+    }
+    Ok(())
+}
+
+/// Writes one maximal run: a negative length and its start from three values up, else singles
+/// (§9.3.7: a run of two is two singles).
+fn write_run(start: i64, len: u64, out: &mut Vec<u8>) -> Result<(), InitialError> {
     let first = i32::try_from(start).map_err(|_| InitialError::UnusableIteration)?;
     if len >= 3 {
         let token = i32::try_from(len)
@@ -287,59 +386,41 @@ fn write_run(run: Option<(i64, u64)>, out: &mut Vec<u8>) -> Result<(), InitialEr
     Ok(())
 }
 
-/// Writes the iteration description of §9.3.2.
-///
-/// pending spec pass 10 fix 7: written again under the §9.3.2 serializer rule as it stands:
-/// consecutive increasing iterations form one run, a run of at least three values is a
-/// negative length token and its start, a shorter one is individual tokens; the trailing
-/// list is written even when empty. With stamp 1 the archive has no notes (`K = 0`).
+/// The bytes [`write_iteration`] writes for `archive`: its count, tokens, `K` and trailing list.
+fn iteration_bytes(archive: &AdvertisedArchive) -> Result<u64, InitialError> {
+    let mut total = 8u64;
+    for_each_run(&archive.spans, |_, len| {
+        total = total.saturating_add(if len >= 3 { 8 } else { len.saturating_mul(4) });
+        Ok(())
+    })?;
+    let notes = u64::try_from(archive.notes.len()).unwrap_or(u64::MAX);
+    Ok(total.saturating_add(notes.saturating_mul(12)))
+}
+
+/// Writes the iteration description of §9.3.2 and §9.3.7: decoded and written again rather than
+/// copied, the trailing list's values and opaque bytes as they are and written even when empty.
+/// [`AdvertisedArchive::check_invariant`] has held.
 fn write_iteration(archive: &AdvertisedArchive, out: &mut Vec<u8>) -> Result<(), InitialError> {
-    let mut expanded = 0u64;
-    let mut run: Option<(i64, u64)> = None;
     out.extend_from_slice(&archive.iteration_count.to_le_bytes());
-    for span in &archive.spans {
-        if span.len == 0 || span.start < 0 {
-            return Err(InitialError::UnusableIteration);
-        }
-        if out.len() > MAX_ADVERTISEMENT_BYTES {
-            return Err(InitialError::TooLarge);
-        }
-        expanded = expanded.saturating_add(u64::from(span.len));
-        let start = i64::from(span.start);
-        run = match run {
-            Some((first, len)) if first + i64::try_from(len).unwrap_or(i64::MAX) == start => {
-                Some((first, len + u64::from(span.len)))
-            }
-            other => {
-                write_run(other, out)?;
-                Some((start, u64::from(span.len)))
-            }
-        };
-    }
-    write_run(run, out)?;
-    if expanded != u64::from(archive.iteration_count) {
-        return Err(InitialError::UnusableIteration);
-    }
+    for_each_run(&archive.spans, |start, len| write_run(start, len, out))?;
     let k = u32::try_from(archive.notes.len()).map_err(|_| InitialError::TooLarge)?;
     out.extend_from_slice(&k.to_le_bytes());
     for note in &archive.notes {
-        if out.len() > MAX_ADVERTISEMENT_BYTES {
-            return Err(InitialError::TooLarge);
-        }
         out.extend_from_slice(&note.iteration.to_le_bytes());
         out.extend_from_slice(&note.opaque);
     }
     Ok(())
 }
 
-/// The complete reassembled data of `0xEC` (§9.3.2): one flags byte `0`, the full language
+/// The complete reassembled data of `0xEC` (§9.3.2, §9.3.7): one flags byte `0`, the full language
 /// key, status `1`, the entries in the order of [`advertisement_order`], `M = 0` and the
-/// terminal `0`.
+/// terminal `0`. The whole size is known before anything is allocated.
 ///
 /// # Errors
 ///
-/// [`InitialError`] when the inputs are not usable or the data passes
-/// [`MAX_ADVERTISEMENT_BYTES`]; nothing is dropped from a list to make it fit.
+/// [`InitialError`] when the inputs are not usable, an archive breaks
+/// [`AdvertisedArchive::check_invariant`] or the data would pass [`MAX_ADVERTISEMENT_BYTES`];
+/// nothing is dropped from a list to make it fit.
 pub fn build_install_advertisement(
     language_key: u32,
     archives: &[AdvertisedArchive],
@@ -355,7 +436,19 @@ pub fn build_install_advertisement(
     {
         return Err(InitialError::DuplicateIdentifier);
     }
-    let mut out = Vec::with_capacity(32);
+    // Flags, key, status and `N`, then `M` and the terminal field.
+    let mut total = 1u64 + 4 + 4 + 4 + 4 + 4;
+    for archive in &ordered {
+        archive.check_invariant()?;
+        total = total
+            .saturating_add(8)
+            .saturating_add(iteration_bytes(archive)?);
+    }
+    let capacity = usize::try_from(total)
+        .ok()
+        .filter(|t| *t <= MAX_ADVERTISEMENT_BYTES)
+        .ok_or(InitialError::TooLarge)?;
+    let mut out = Vec::with_capacity(capacity);
     out.push(0);
     out.extend_from_slice(&language_key.to_le_bytes());
     out.extend_from_slice(&1u32.to_le_bytes());
@@ -364,20 +457,15 @@ pub fn build_install_advertisement(
     for archive in ordered {
         out.extend_from_slice(&archive.wire_identifier());
         write_iteration(archive, &mut out)?;
-        if out.len() > MAX_ADVERTISEMENT_BYTES {
-            return Err(InitialError::TooLarge);
-        }
     }
     out.extend_from_slice(&0u32.to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes());
-    if out.len() > MAX_ADVERTISEMENT_BYTES {
-        return Err(InitialError::TooLarge);
-    }
     Ok(out)
 }
 
 /// Whether the `languages` list of the name rule `0xDD` selected allows `language_key`
-/// (§9.3.4): an empty list fails, and no other language or rule is substituted.
+/// (§9.3.7): an empty list fails, no other language or rule is substituted, and only the full
+/// key is tested (neither its fold nor its low half stands in for it).
 ///
 /// # Errors
 ///
@@ -419,7 +507,7 @@ pub enum InstallUnsupported {
     NameRuleMissing,
     /// The table has two rules for the key `0xDD` named.
     NameRuleDuplicate,
-    /// A base archive the policy needs is not mounted.
+    /// A base archive §9.3.7 requires is not mounted (the optional portal sets excepted).
     ArchiveMissing,
     /// An archive is present but failed to open, or its set is incomplete.
     ArchiveFailed,
@@ -427,6 +515,9 @@ pub enum InstallUnsupported {
     ArchiveUnknown,
     /// An archive's resource identifier does not agree with its file name.
     ArchiveIdentifier,
+    /// An archive uses the older identifier encoding (§9.3.7: neither the raw encoding nor a
+    /// conversion is sent).
+    ArchiveOlderIdentifier,
     /// An overlay lies next to a base archive: the set's records may be out of date.
     ArchiveOverlay,
     /// A base archive has no usable iteration metadata.
@@ -455,6 +546,7 @@ impl InstallUnsupported {
             Self::ArchiveFailed => "archive failed or set incomplete",
             Self::ArchiveUnknown => "archive of an unknown family",
             Self::ArchiveIdentifier => "archive identifier disagrees",
+            Self::ArchiveOlderIdentifier => "older archive identifier encoding",
             Self::ArchiveOverlay => "overlay next to an archive",
             Self::ArchiveIteration => "iteration metadata unusable",
             Self::ArchiveCount => "too many archives",
@@ -463,8 +555,8 @@ impl InstallUnsupported {
     }
 }
 
-/// One explicit unsupported result of the initial exchange (§9.3.4: report unsupported, do
-/// not fabricate `0xEC` or wait indefinitely).
+/// One explicit failure of the initial exchange (§9.3.7: report it, do not fabricate `0xEC` or
+/// wait indefinitely).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum UnsupportedNegotiation {
@@ -480,24 +572,28 @@ pub enum UnsupportedNegotiation {
     /// `0xDD` is malformed, or has an envelope other than plain.
     #[error("malformed install request")]
     MalformedRequest,
-    /// `0xDD` has a non-empty trailing array (§9.3.4 item 1).
+    /// `0xDD` has a non-empty trailing array (§9.3.7).
     #[error("install request with a trailing array")]
     RequestArray,
     /// The name-rule table or rule of `0xDD` cannot be used.
     #[error("name rule: {}", .0.label())]
     NameRule(InstallUnsupported),
-    /// The rule's language list is empty (§9.3.4).
+    /// The rule's language list is empty (§9.3.7).
     #[error("empty name rule language list")]
     NameRuleEmpty,
-    /// The rule's language list lacks the selected language (§9.3.4).
+    /// The rule's language list lacks the selected language's full key (§9.3.7).
     #[error("selected language not allowed by the name rule")]
     LanguageNotAllowed,
     /// `0xEC` could not be queued.
     #[error("the advertisement could not be sent")]
     AdvertisementNotSent,
-    /// A server `0xF5` before `0xEC`, or not exactly `00` on queue 1 (pending fix 10).
+    /// A server `0xF5` before `0xEC`, or not exactly `00` on queue 1 (§9.3.7).
     #[error("unexpected completion message")]
     UnexpectedCompletion,
+    /// While `0xF5` is awaited, a message outside §9.3.7's list arrived: the preparation is not
+    /// one this policy supports (OPEN-SESSION-21; its body was discarded).
+    #[error("a message outside the completion guard")]
+    UnsupportedPreparation,
     /// The client's `0xF5` could not be queued.
     #[error("the completion reply could not be sent")]
     CompletionNotSent,
@@ -513,14 +609,15 @@ pub enum UnsupportedNegotiation {
     /// No `0xDD` or `0x6C` within [`VERSION_PATH_WAIT_SEC`] of an actual `0x12F`.
     #[error("the version exchange did not lead to a character list in time")]
     VersionPathDeadline,
-    /// `0x6C` did not decode (§9.3.5: list display stops; no character is invented).
+    /// `0x6C` did not decode (§9.3.7, OPEN-WORLD-10: no scan and no partial list; no character
+    /// is invented).
     #[error("the character list cannot be read")]
     ListDecode,
-    /// `0x6C` is compressed or routed (pending spec pass 10 fix 16).
+    /// `0x6C` is compressed or routed (§9.3.7: unsupported, never shifted by a guessed byte).
     #[error("a compressed or routed character list is not supported")]
     ListEnvelope,
     /// A sequence gap stayed open because its packet cannot be taken, while the server kept
-    /// sending (pending spec pass 10 fix 13).
+    /// sending (pending §25 fix 12).
     #[error("a packet of the server could not be taken")]
     TrafficRefused,
 }
@@ -540,6 +637,7 @@ impl UnsupportedNegotiation {
             Self::LanguageNotAllowed => "language not allowed",
             Self::AdvertisementNotSent => "advertisement not sent",
             Self::UnexpectedCompletion => "unexpected completion",
+            Self::UnsupportedPreparation => "outside the completion guard",
             Self::CompletionNotSent => "completion not sent",
             Self::RequestDeadline => "install request deadline",
             Self::CompletionDeadline => "completion deadline",
@@ -551,33 +649,59 @@ impl UnsupportedNegotiation {
         }
     }
 
+    /// Whether this is one of the waits of §9.3.7: `ServiceUnavailable`, where every other
+    /// result is `UnsupportedStep`.
+    #[must_use]
+    pub const fn is_deadline(self) -> bool {
+        matches!(
+            self,
+            Self::RequestDeadline
+                | Self::CompletionDeadline
+                | Self::ListDeadline
+                | Self::VersionPathDeadline
+        )
+    }
+
     /// The line under the refusal on the client's error screen. Tessera's own text, never the
-    /// service's: it goes in `LoginRefused`'s `note`, not its `detail`.
+    /// service's: it goes in `LoginRefused`'s `note`, not its `detail`. A local install fault or
+    /// a Tessera limit says what Tessera could not do and never reads as an account fault
+    /// (decision 0046 item 6); the diagnostic is the log's ([`Self::label`]), and no path,
+    /// identifier, iteration value or account data is in either.
     #[must_use]
     pub const fn detail(self) -> &'static str {
         match self {
             Self::LanguageKey(_) | Self::Inventory(_) | Self::Advertisement => {
-                "This install's data could not be prepared for the official login."
+                "Tessera could not read what the official login needs from this install. This is \
+                 a Tessera limit or a problem with the local files, not a fault of your account."
             }
             Self::MalformedRequest
             | Self::RequestArray
             | Self::UnexpectedCompletion
+            | Self::UnsupportedPreparation
             | Self::TrafficRefused => {
-                "The server sent a message of the official login Tessera does not support yet."
+                "The server sent a message of the official login that Tessera cannot handle yet. \
+                 This is a Tessera limit, not a fault of your account."
             }
             // The install's own table, not the server's answer.
             Self::NameRule(InstallUnsupported::NameTable) => {
-                "This install's name-rule table could not be read."
+                "Tessera could not read this install's name-rule table. This is a Tessera limit \
+                 or a problem with the local files, not a fault of your account."
             }
             Self::NameRule(InstallUnsupported::NameRuleMissing) => {
-                "This install has no name rule for the one the server selected."
+                "Tessera could not find the name rule the server selected in this install. This \
+                 is a Tessera limit or a problem with the local files, not a fault of your account."
             }
-            Self::NameRule(_) => "This install's name rules are not usable.",
+            Self::NameRule(_) => {
+                "Tessera could not use this install's name rules. This is a Tessera limit or a \
+                 problem with the local files, not a fault of your account."
+            }
             Self::NameRuleEmpty | Self::LanguageNotAllowed => {
-                "The name rule the server selected does not allow this install's language."
+                "The name rule the server selected does not allow this install's language, so \
+                 Tessera stopped. This is a Tessera limit, not a fault of your account."
             }
             Self::AdvertisementNotSent | Self::CompletionNotSent => {
-                "A message of the official login could not be sent."
+                "Tessera could not send a message of the official login. This is a Tessera limit, \
+                 not a fault of your account."
             }
             Self::RequestDeadline
             | Self::CompletionDeadline
@@ -586,15 +710,15 @@ impl UnsupportedNegotiation {
                 "The server did not continue the official login in time."
             }
             Self::ListDecode | Self::ListEnvelope => {
-                "The server's character list could not be read by Tessera yet."
+                "Tessera cannot read the character list yet. This is a Tessera limit, not a fault \
+                 of your account."
             }
         }
     }
 }
 
-/// The install's advertisement, built before the first datagram: what §9.3.4 does not make
-/// depend on `0xDD` can fail without spending the ticket (pending spec pass 10 fix 2,
-/// labelled engineering choice). The `Debug` form names no value.
+/// The install's advertisement, built before the first datagram: the preflight of §9.3.7, so a
+/// failure does not spend the ticket. The `Debug` form names no value.
 #[derive(Clone, PartialEq, Eq)]
 pub struct PreparedAdvertisement {
     /// The selected language's full key.
@@ -658,8 +782,8 @@ pub struct InitialStages {
 }
 
 /// The messages of the login window that are skipped: no dispatch, no reply and no decode
-/// count (§9.3.1, §9.3.5). A skipped message is already bounded and reassembled; nothing of
-/// it is kept.
+/// count (§9.3.7). A skipped message is already bounded and reassembled; nothing of it is kept.
+/// The named opcodes are the log's; [`SkipCounters`] has every opcode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SkippedMessages {
     /// `0x149`.
@@ -674,7 +798,7 @@ pub struct SkippedMessages {
     pub op_fe: u64,
     /// `0x54`.
     pub op_54: u64,
-    /// Any other opcode of this window (§9.3.5's bounded unknown-message policy).
+    /// Any other opcode of this window (§9.3.7's bounded unknown-message rule).
     pub other: u64,
     /// Bytes of all of them.
     pub bytes: u64,
@@ -699,6 +823,45 @@ impl SkippedMessages {
     }
 }
 
+/// §9.3.7's bounded counter set of skipped messages: one count per opcode, for at most
+/// [`MAX_SKIP_KEYS`] distinct opcodes; the others are counted together. No body is kept.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SkipCounters {
+    keys: BTreeMap<u32, u64>,
+    overflow: u64,
+}
+
+impl SkipCounters {
+    /// Counts one message of `opcode`.
+    pub fn note(&mut self, opcode: u32) {
+        if let Some(n) = self.keys.get_mut(&opcode) {
+            *n = n.saturating_add(1);
+        } else if self.keys.len() < MAX_SKIP_KEYS {
+            self.keys.insert(opcode, 1);
+        } else {
+            self.overflow = self.overflow.saturating_add(1);
+        }
+    }
+
+    /// The count of `opcode`, `0` when it has none of its own.
+    #[must_use]
+    pub fn count(&self, opcode: u32) -> u64 {
+        self.keys.get(&opcode).copied().unwrap_or(0)
+    }
+
+    /// How many distinct opcodes have a count of their own.
+    #[must_use]
+    pub fn keys(&self) -> usize {
+        self.keys.len()
+    }
+
+    /// The messages counted together, past [`MAX_SKIP_KEYS`].
+    #[must_use]
+    pub const fn overflow(&self) -> u64 {
+        self.overflow
+    }
+}
+
 /// Where the initial exchange stands.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {
@@ -710,17 +873,21 @@ enum Phase {
     AwaitingCompletion(f64),
     /// The client's `0xF5` sent; waiting for `0x6C` since the time held.
     AwaitingList(f64),
-    /// An actual `0x12F` arrived at the time held: the historical version path (§9.3).
+    /// An actual `0x12F` arrived at the time held: the historical version path (§9.3, pending
+    /// §25 fix 8).
     Historical(f64),
     /// The list arrived.
     Finished,
 }
 
 /// The initial exchange's state on the login connection (sans I/O, the driver acts).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Negotiation {
     phase: Phase,
     stages: InitialStages,
+    skips: SkipCounters,
+    /// The latest opaque configuration word of a valid `0xDD`: kept, never compared (§9.3.7).
+    server_config: Option<u32>,
     /// The login queue says the account waits: the client shows its queue panel, whose watchdog
     /// does not run (`official-entry.md` §8.4), until the queue ends or the next step.
     in_queue: bool,
@@ -737,6 +904,11 @@ impl Negotiation {
     #[must_use]
     pub const fn new() -> Self {
         Self {
+            skips: SkipCounters {
+                keys: BTreeMap::new(),
+                overflow: 0,
+            },
+            server_config: None,
             phase: Phase::Connecting,
             stages: InitialStages {
                 dd_seen: false,
@@ -766,7 +938,27 @@ impl Negotiation {
         self.stages
     }
 
-    /// Whether a first `0xDD` may still trigger `0xEC` (pending spec pass 10 fix 4).
+    /// The skipped messages by opcode (§9.3.7).
+    #[must_use]
+    pub const fn skip_counters(&self) -> &SkipCounters {
+        &self.skips
+    }
+
+    /// The latest valid `0xDD`'s opaque word.
+    #[must_use]
+    pub const fn server_config(&self) -> Option<u32> {
+        self.server_config
+    }
+
+    /// Whether `0xF5` is awaited: the window of §9.3.7's guard. pending §25 fix 10: "while
+    /// awaiting F5" has no start in the text; labelled as from the last `0xEC` fragment's
+    /// allocation to the first valid `0xF5`.
+    #[must_use]
+    pub const fn awaiting_completion(&self) -> bool {
+        matches!(self.phase, Phase::AwaitingCompletion(_))
+    }
+
+    /// Whether a first `0xDD` may still trigger `0xEC` (§9.3.7: one per primary connection).
     #[must_use]
     pub const fn wants_request(&self) -> bool {
         !self.stages.dd_seen && !matches!(self.phase, Phase::Finished)
@@ -787,7 +979,7 @@ impl Negotiation {
         }
     }
 
-    /// The current wait starts again at `now`.
+    /// The current wait starts again at `now`. Only for the login queue (pending §25 fix 8).
     fn restart_wait(&mut self, now: f64) {
         self.phase = match self.phase {
             Phase::AwaitingRequest(_) => Phase::AwaitingRequest(now),
@@ -798,7 +990,10 @@ impl Negotiation {
         };
     }
 
-    /// The login queue says the account still waits: the current wait starts again.
+    /// The login queue says the account still waits. pending §25 fix 8: §9.3 keeps the session
+    /// waiting and §9.3.7 has no exemption and no bound for it; labelled, the current wait starts
+    /// again and is [`QUEUE_WAIT_SEC`] while the queue panel shows, so a queued login is bounded
+    /// by its gaps between statuses.
     pub fn queued(&mut self, now: f64) {
         self.in_queue = true;
         self.restart_wait(now);
@@ -812,13 +1007,21 @@ impl Negotiation {
         }
     }
 
-    /// A valid `0xDD` arrived.
-    pub fn request_seen(&mut self) {
+    /// The first valid `0xDD` arrived, with its opaque word.
+    pub fn request_seen(&mut self, server_config: u32) {
         self.stages.dd_seen = true;
+        self.server_config = Some(server_config);
         self.in_queue = false;
     }
 
-    /// `0xEC` was queued at `now`.
+    /// A later valid `0xDD` (§9.3.7): only its word is kept, and it is counted. No wait starts
+    /// again and nothing is sent.
+    pub fn later_request(&mut self, server_config: u32) {
+        self.server_config = Some(server_config);
+        self.ignored();
+    }
+
+    /// The last fragment of `0xEC` was allocated at `now`.
     pub fn advertisement_sent(&mut self, now: f64) {
         self.stages.ec_sent = true;
         self.in_queue = false;
@@ -830,14 +1033,15 @@ impl Negotiation {
         self.stages.f5_received = true;
     }
 
-    /// The client's `0xF5` was queued at `now`.
+    /// The client's `0xF5` was allocated at `now`.
     pub fn completion_sent(&mut self, now: f64) {
         self.stages.f5_sent = true;
         self.in_queue = false;
         self.phase = Phase::AwaitingList(now);
     }
 
-    /// The character list was decoded.
+    /// The character list was decoded. pending §25 fix 9: every wait ends with it, the labelled
+    /// reading of "unless a valid list already completed".
     pub fn list_received(&mut self) {
         self.stages.list_received = true;
         self.in_queue = false;
@@ -847,6 +1051,7 @@ impl Negotiation {
     /// Counts one skipped message.
     pub fn skipped(&mut self, opcode: u32, len: usize) {
         self.stages.skipped.note(opcode, len);
+        self.skips.note(opcode);
     }
 
     /// Counts one `0xDD` or `0xF5` that makes no reply.
@@ -857,24 +1062,28 @@ impl Negotiation {
     /// When the current wait ends, `None` when nothing is awaited.
     #[must_use]
     pub fn deadline(&self) -> Option<f64> {
+        let queued = |wait: f64| if self.in_queue { QUEUE_WAIT_SEC } else { wait };
         match self.phase {
-            Phase::AwaitingRequest(t) => Some(t + DD_WAIT_SEC),
-            Phase::AwaitingCompletion(t) => Some(t + COMPLETION_WAIT_SEC),
-            Phase::AwaitingList(t) => Some(t + LIST_WAIT_SEC),
-            Phase::Historical(t) => Some(t + VERSION_PATH_WAIT_SEC),
+            Phase::AwaitingRequest(t) => Some(t + queued(DD_WAIT_SEC)),
+            Phase::AwaitingCompletion(t) => Some(t + queued(COMPLETION_WAIT_SEC)),
+            Phase::AwaitingList(t) => Some(t + queued(LIST_WAIT_SEC)),
+            Phase::Historical(t) => Some(t + queued(VERSION_PATH_WAIT_SEC)),
             Phase::Connecting | Phase::Finished => None,
         }
     }
 
     /// Whether the driver keeps the client's progress screen alive: a wait of this module is
-    /// the bound, not the screen's shorter watchdog (`official-entry.md` §8.3). Not while the
-    /// queue panel shows, which a progress event would replace (§8.4).
+    /// the bound, not the screen's own watchdog (`official-entry.md` §8.3), which three stages
+    /// in a row could pass (pending §25 fix 9). Not while the queue panel shows, which a
+    /// progress event would replace (§8.4).
     #[must_use]
     pub fn keeps_progress(&self) -> bool {
         self.deadline().is_some() && !self.in_queue
     }
 
-    /// The unsupported result of a wait that ended by `now`.
+    /// The result of a wait that ended by `now`. None of them starts again for other traffic,
+    /// a repeated `0xDD` or `0xF5`, or a retransmission (§9.3.7). pending §25 fix 8: a queue
+    /// status does; this result does not look at the queue panel.
     #[must_use]
     pub fn expired(&self, now: f64) -> Option<UnsupportedNegotiation> {
         if self.deadline().is_none_or(|t| now < t) {
@@ -968,6 +1177,81 @@ mod tests {
         assert_eq!(body, want.as_slice());
     }
 
+    /// §9.3.7's caps: refused as unsupported, never cut, and the size is known before anything is
+    /// allocated.
+    #[test]
+    fn the_caps_are_refused_and_nothing_is_cut() {
+        let many = |n: usize| -> Vec<AdvertisedArchive> {
+            (0..n)
+                .map(|i| {
+                    let mut a = archive([0; 8]);
+                    a.resource_id[..8]
+                        .copy_from_slice(&u64::try_from(i).expect("small").to_le_bytes());
+                    a
+                })
+                .collect()
+        };
+        assert_eq!(MAX_ADVERTISED_ARCHIVES, 256);
+        assert_eq!(MAX_ADVERTISEMENT_BYTES, 1024 * 1024);
+        assert!(build_install_advertisement(5, &many(256)).is_ok());
+        assert_eq!(
+            build_install_advertisement(5, &many(257)),
+            Err(InitialError::UnusableInputs)
+        );
+        // Singles, four bytes each: one past the cap, then one that fits it exactly.
+        let singles = |n: i32| AdvertisedArchive {
+            resource_id: [0; 8],
+            iteration_count: u32::try_from(n).expect("positive"),
+            spans: (0..n)
+                .map(|i| IterationSpan {
+                    start: i * 2,
+                    len: 1,
+                })
+                .collect(),
+            notes: Vec::new(),
+        };
+        // Flags, key, status, N, M and terminal: 21; the entry's identifier, N and K: 16.
+        let fits = i32::try_from((MAX_ADVERTISEMENT_BYTES - 37) / 4).expect("small");
+        let data = build_install_advertisement(5, &[singles(fits)]).expect("fits");
+        assert!(data.len() <= MAX_ADVERTISEMENT_BYTES);
+        assert_eq!(data.capacity(), data.len(), "the size was known before");
+        assert_eq!(
+            build_install_advertisement(5, &[singles(fits + 1)]),
+            Err(InitialError::TooLarge)
+        );
+    }
+
+    #[test]
+    fn the_skip_counter_counts_per_opcode_and_then_together() {
+        let mut c = SkipCounters::default();
+        for op in 0..300u32 {
+            c.note(op);
+        }
+        c.note(0);
+        assert_eq!(c.keys(), MAX_SKIP_KEYS);
+        assert_eq!(c.overflow(), 300 - 256);
+        assert_eq!(c.count(0), 2);
+        assert_eq!(c.count(299), 0);
+        // A later copy of a key it has still counts as itself.
+        c.note(255);
+        assert_eq!(c.count(255), 2);
+        assert_eq!(c.overflow(), 300 - 256);
+    }
+
+    /// Only a queue status starts a wait again, with its own bound; a later `0xDD` does not, and
+    /// only updates the word.
+    #[test]
+    fn a_later_request_starts_no_wait_again() {
+        let mut n = Negotiation::new();
+        n.connected(0.0);
+        n.request_seen(1);
+        n.advertisement_sent(1.0);
+        n.later_request(2);
+        assert_eq!(n.server_config(), Some(2));
+        assert_eq!(n.deadline(), Some(1.0 + COMPLETION_WAIT_SEC));
+        assert_eq!(n.stages().ignored, 1);
+    }
+
     #[test]
     fn runs_that_do_not_add_up_are_refused() {
         let mut a = archive([0; 8]);
@@ -996,7 +1280,7 @@ mod tests {
             Some(UnsupportedNegotiation::RequestDeadline)
         );
         n.queued(50.0);
-        assert_eq!(n.deadline(), Some(50.0 + DD_WAIT_SEC));
+        assert_eq!(n.deadline(), Some(50.0 + QUEUE_WAIT_SEC));
         n.advertisement_sent(60.0);
         assert_eq!(
             n.expired(60.0 + COMPLETION_WAIT_SEC),
@@ -1018,7 +1302,7 @@ mod tests {
             Some(UnsupportedNegotiation::VersionPathDeadline)
         );
         h.queued(50.0);
-        assert_eq!(h.deadline(), Some(50.0 + VERSION_PATH_WAIT_SEC));
+        assert_eq!(h.deadline(), Some(50.0 + QUEUE_WAIT_SEC));
     }
 
     #[test]
@@ -1036,7 +1320,7 @@ mod tests {
         n.queue_left(25.0);
         assert_eq!(n.deadline(), Some(20.0 + DD_WAIT_SEC));
         n.queued(30.0);
-        n.request_seen();
+        n.request_seen(0);
         assert!(n.keeps_progress());
         n.list_received();
         assert!(!n.keeps_progress(), "nothing awaited any more");

@@ -24,7 +24,7 @@
 //!   it closed from. A cancel or a revoked network right during the handshake logs the same
 //!   line once, with `reason="cancelled"` or `reason="network right revoked"`.
 //! - While the login connection is past its handshake and before its character list
-//!   (`official-session.md` §9.3.1–§9.3.5), one `info` line,
+//!   (`official-session.md` §9.3.1–§9.3.7), one `info` line,
 //!   `official session: initial exchange`, at each step ([`HandshakeReport::log_initial`]),
 //!   with the stages `dd_seen`, `ec_sent`, `f5_received`, `f5_sent` and `list_received` and
 //!   the counts of the messages skipped; never an identifier, an iteration value, a key or a

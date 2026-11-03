@@ -2605,6 +2605,36 @@ fn oe_t14_queue_panels() {
     );
 }
 
+/// A status held back by the update limit does not bring the queue panel back once the queue
+/// ended or the user left it.
+#[test]
+fn a_held_queue_status_does_not_replace_the_progress_screen() {
+    let t0 = Instant::now();
+    let q = |pos| {
+        Event::Account(AccountEvent::LoginQueueChanged {
+            position: Some(pos),
+            length: None,
+            wait_seconds: None,
+        })
+    };
+    let progress = Event::Account(AccountEvent::LoginProgress {
+        stage: LoginStage::JoiningWorld,
+    });
+    let mut p = LoginPresenter::new(t0, None);
+    p.on_event(&q(5), t0);
+    p.on_event(&q(4), t0 + Duration::from_millis(100));
+    p.on_event(&progress, t0 + Duration::from_millis(150));
+    p.tick(t0 + Duration::from_millis(500));
+    assert!(matches!(p.screen(), LoginScreen::Progress { .. }));
+
+    let mut p = LoginPresenter::new(t0, None);
+    p.on_event(&q(5), t0);
+    p.on_event(&q(4), t0 + Duration::from_millis(100));
+    p.leave_queue(t0 + Duration::from_millis(150));
+    p.tick(t0 + Duration::from_millis(500));
+    assert!(matches!(p.screen(), LoginScreen::Progress { .. }));
+}
+
 #[test]
 fn oe_t14_every_row_of_8_6_and_the_watchdog() {
     use super::login::LoginEnd;
@@ -3970,6 +4000,9 @@ fn the_official_flow_hands_its_session_to_the_character_screens_and_back() {
 
     let _guard = net_lock();
     let service = SyntheticService::new();
+    // Re-entry is unsupported on every production path (`official-session.md` §9.3.7); the client
+    // half below still must not carry the first world into a second.
+    service.allow_re_entry();
     let install = tempfile::tempdir().expect("temp dir");
     let mut f = fixture(Availability::Available);
     let mut flow = Flow::new(
@@ -4364,11 +4397,24 @@ fn dismiss_not_stored(flow: &mut Flow, t: Instant) {
 /// the row asks for. A service detail keeps its line.
 #[test]
 fn a_local_refusal_is_not_attributed_to_the_service() {
-    let note = "This install's data could not be prepared for the official login.";
+    let note = tessera_compat::initial::UnsupportedNegotiation::ListDecode.detail();
     let end = super::login::refusal_end(LoginRefusal::UnsupportedStep, None, None, Some(note));
     assert_eq!(end.target, super::login::Target::StartScreen);
     let m = end.message.expect("a message");
     assert_eq!(m.detail.as_deref(), Some(note));
+    // Decision 0046 item 6: a Tessera limit does not read as an account fault.
+    assert_eq!(
+        m.text,
+        tessera_compat::consent::strings::text("official.error.tessera_limit")
+    );
+    for text in [m.text.as_str(), note] {
+        assert!(!text.contains("cannot log in"), "{text}");
+    }
+    assert!(
+        note.contains("cannot read the character list yet"),
+        "{note}"
+    );
+    assert!(note.contains("Tessera limit"), "{note}");
     assert!(
         !m.detail
             .as_deref()
@@ -4382,9 +4428,12 @@ fn a_local_refusal_is_not_attributed_to_the_service() {
         Some("maintenance"),
         None,
     );
+    let m = end.message.expect("a message");
+    assert_eq!(m.detail.as_deref(), Some("The service said: maintenance"));
+    // A step the service's login really asks for keeps §8.6's row.
     assert_eq!(
-        end.message.expect("a message").detail.as_deref(),
-        Some("The service said: maintenance")
+        m.text,
+        tessera_compat::consent::strings::text("official.error.unsupported_step")
     );
 }
 
@@ -4396,7 +4445,7 @@ fn an_unsupported_end_of_the_session_has_its_own_message() {
     let m = super::login::disconnect_message(&why).expect("a message");
     assert_eq!(
         m.text,
-        tessera_compat::consent::strings::text("official.error.unsupported_step")
+        tessera_compat::consent::strings::text("official.error.tessera_limit")
     );
     assert_eq!(m.detail.as_deref(), Some("The start could not be read."));
     let timed_out =

@@ -169,27 +169,20 @@ pub const DEFAULT_MAX_CONTAINER_DEPTH: usize = 8;
 /// Engineering choice, spec silent.
 pub const MAX_ORDER_GROUPS: usize = 256;
 
-// pending spec pass 10 fix 9: how long a sent queue-1 blob stays resendable.
-/// How long a blob sent with [`SessionConnection::send_blob_retained`] stays resendable on a
-/// `SequenceNakHeader`, from its send. §5.3 expires unreliable fragments and sends
-/// `OutOfOrderAckHeader` instead; for the initial `0xEC` and the client's `0xF5`, one lost
-/// datagram would then stall the login, so their packets stay eligible for this window. Labelled
-/// engineering choice, not an observed official rule, generous against the `0.6` s NAK interval
-/// of §5.3.
-pub const RETAINED_BLOB_RESEND_WINDOW_SEC: f64 = 30.0;
-
-// pending spec pass 10 fix 13: rejected datagrams can stall a connection.
+// pending §25 fix 12: §9.3.7 makes the first refused form terminal, but does not settle the
+// validation order or scope: one unverified datagram matching the address and recipient must not
+// end a login. Until the fix says, refusals are counted and this gap is what ends a stall.
 /// How long a connected connection keeps a sequence gap open before it closes with
 /// [`DisconnectReason::UnsupportedTraffic`]. A datagram refused before anything was committed
-/// (§5.6.3, §6.5: no sequence, generator, reassembly or Ack change) leaves its sequence number
+/// (§9.3.7: no sequence, generator, reassembly or Ack change) leaves its sequence number
 /// missing, so while later packets keep arriving the gap would be NAKed for as long as the peer
 /// keeps answering and its retransmission keeps being refused. A gap opens only after a later
 /// packet passed its masked checksum, so datagrams from anyone else cannot start this clock.
 ///
 /// Labelled engineering choice, not an observed official rule: longer than
-/// [`SILENCE_TIMEOUT_SEC`], so a peer that went silent is still reported as silent, and shorter
-/// than the login's waits, so a stuck login reports this rather than a wait that ran out. A
-/// peer that cannot resend says so with `OutOfOrderAckHeader` (§5.4), which closes the gap.
+/// [`SILENCE_TIMEOUT_SEC`], so a peer that went silent is still reported as silent. The login's
+/// own waits (§9.3.7) are shorter, so during them they decide first. A peer that cannot resend
+/// says so with `OutOfOrderAckHeader` (§5.4), which closes the gap.
 pub const MAX_GAP_AGE_SEC: f64 = 90.0;
 
 // Session timers. [`SessionConnection::tick`] (and the multiplexer's cleanup) acts on them
@@ -4367,6 +4360,33 @@ pub struct BlobReassembler {
     incomplete: HashMap<BlobKey, IncompleteBlob>,
     max_concurrent_blobs: usize,
     max_blob_bytes: usize,
+    superseded: u64,
+}
+
+/// Where a queue-3 ordering word lies from another of its sequence group (§9.3.7): the
+/// modulo-65,536 distance. pending §25 fix 20: the text states no operands; labelled, the distance
+/// is the new word minus the word it is compared with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderBand {
+    /// Distance 1 through 32,767.
+    Newer,
+    /// Distance zero.
+    Equal,
+    /// Distance 32,768.
+    Ambiguous,
+    /// The rest.
+    Older,
+}
+
+/// The band of `word` from `reference` ([`OrderBand`]).
+#[must_use]
+pub const fn order_band(word: u16, reference: u16) -> OrderBand {
+    match word.wrapping_sub(reference) {
+        0 => OrderBand::Equal,
+        1..=32_767 => OrderBand::Newer,
+        32_768 => OrderBand::Ambiguous,
+        _ => OrderBand::Older,
+    }
 }
 
 impl Default for BlobReassembler {
@@ -4387,7 +4407,29 @@ impl BlobReassembler {
             incomplete: HashMap::new(),
             max_concurrent_blobs: max_concurrent_blobs.max(1),
             max_blob_bytes: max_blob_bytes.min(MAX_BLOB_BYTES),
+            superseded: 0,
         }
+    }
+
+    /// How many incomplete queue-3 blobs a newer completed one superseded.
+    #[must_use]
+    pub const fn superseded(&self) -> u64 {
+        self.superseded
+    }
+
+    /// A queue-3 blob of `group` completed with `order`: an older incomplete one of its group
+    /// is superseded (§9.3.7, the interim latest-only choice). Equal and ambiguous words are
+    /// not; a completed blob is not touched.
+    fn supersede_older(&mut self, sender_rec_id: u16, group: u16, order: u16) {
+        let before = self.incomplete.len();
+        self.incomplete.retain(|&(sender, queue, g, o), _| {
+            !(sender == sender_rec_id
+                && queue == 3
+                && g == group
+                && order_band(order, o) == OrderBand::Newer)
+        });
+        let gone = u64::try_from(before - self.incomplete.len()).unwrap_or(u64::MAX);
+        self.superseded = self.superseded.saturating_add(gone);
     }
 
     /// Returns the number of currently incomplete multi-fragment blobs.
@@ -4549,6 +4591,9 @@ impl BlobReassembler {
 
         // Fast path for single-fragment blobs (numFrags == 1, fragIndex == 0, §5.6.4 rule 2)
         if hdr.num_frags == 1 {
+            if hdr.queue_id == 3 {
+                self.supersede_older(sender_rec_id, hdr.seq_group, hdr.order_num);
+            }
             return Ok(Some(ReassembledBlob {
                 queue_id: hdr.queue_id,
                 order_num: hdr.order_num,
@@ -4620,6 +4665,9 @@ impl BlobReassembler {
             };
             if let Some(final_len) = completed.trimmed_len {
                 completed.buffer.truncate(final_len);
+            }
+            if completed.queue_id == 3 {
+                self.supersede_older(sender_rec_id, completed.seq_group, completed.order_num);
             }
             return Ok(Some(ReassembledBlob {
                 queue_id: completed.queue_id,
@@ -4944,7 +4992,7 @@ pub enum DisconnectReason {
     /// State `7` (§6.1, §8.2).
     LocalDisconnect,
     /// A sequence gap stayed open for [`MAX_GAP_AGE_SEC`] with the peer still sending (§5.6.3,
-    /// §6.5): labelled engineering limit, pending spec pass 10 fix 13.
+    /// §6.5): labelled engineering limit, pending §25 fix 12.
     UnsupportedTraffic,
 }
 
@@ -5022,9 +5070,10 @@ pub struct SentPacketRecord {
     /// True if the packet still has reliable content that should be retransmitted on `SequenceNakHeader`
     /// (false if it only carried ephemeral `queueId == 1` fragments that have expired, §5.3).
     pub retransmit_eligible: bool,
-    /// When [`Self::retransmit_eligible`] is false: until when the packet is resent on a
-    /// `SequenceNakHeader` all the same ([`SessionConnection::send_blob_retained`]).
-    pub retain_until_sec: Option<f64>,
+    /// When [`Self::retransmit_eligible`] is false: the packet is resent on a
+    /// `SequenceNakHeader` all the same, until it is acknowledged or the connection ends
+    /// ([`SessionConnection::send_blob_retained`]).
+    pub retained: bool,
 }
 
 /// What one connection counted of its handshake and its datagrams, for diagnostics: counts
@@ -5067,7 +5116,7 @@ pub struct HandshakeCounts {
     /// whatever the reason, a duplicate of a sequence number already taken apart. A diagnostic:
     /// such datagrams are not authenticated, and [`MAX_GAP_AGE_SEC`] is what ends a stall.
     pub refused_while_connected: u64,
-    /// Sent packets resent on a `SequenceNakHeader` inside their retained window
+    /// Retained packets resent on a `SequenceNakHeader`
     /// ([`SessionConnection::send_blob_retained`]).
     pub retained_resends: u64,
 }
@@ -5814,7 +5863,7 @@ impl SessionConnection {
                 opt_headers,
                 fragments,
                 retransmit_eligible,
-                retain_until_sec: None,
+                retained: false,
             },
         );
         self.outbound_datagrams.push_back(dgram);
@@ -5875,25 +5924,27 @@ impl SessionConnection {
             payload,
             now_sec,
             outgoing_codec,
-            None,
+            false,
         )
     }
 
-    /// [`Self::send_blob`] whose packets stay resendable on a `SequenceNakHeader` for
-    /// [`RETAINED_BLOB_RESEND_WINDOW_SEC`] even on an unreliable queue, with their saved
-    /// sequence number, mask and client word (§4.2, §5.3); after the window a request for
-    /// one is answered with `OutOfOrderAckHeader` as for any expired fragment (§5.4).
+    /// [`Self::send_blob_to`] whose packets stay resendable on a `SequenceNakHeader` even on an
+    /// unreliable queue, with their saved sequence number, mask, client word and data (§4.2,
+    /// §5.3), until they are acknowledged or the connection ends. Once one is gone a request
+    /// for it is answered with `OutOfOrderAckHeader` as for any expired fragment (§5.4).
     ///
-    /// pending spec pass 10 fix 9: labelled engineering choice for the initial `0xEC` and the
-    /// client's `0xF5` (§9.3.2, §9.3.3), whose loss would otherwise stall the login.
+    /// For the initial `0xEC` and the client's `0xF5` (§9.3.7, "Queue-1 retention"): they stay
+    /// for the entire active negotiation, not for a fixed time.
     ///
     /// # Errors
     ///
     /// Returns [`SessionError`] if fragmentation or packet queueing fails.
+    #[allow(clippy::too_many_arguments)]
     pub fn send_blob_retained(
         &mut self,
         queue_id: u8,
         seq_group: u16,
+        recipient_id: u64,
         blob_header_word: u32,
         payload: &[u8],
         now_sec: f64,
@@ -5902,12 +5953,12 @@ impl SessionConnection {
         self.send_blob_inner(
             queue_id,
             seq_group,
-            DEFAULT_BLOB_RECIPIENT_ID,
+            recipient_id,
             blob_header_word,
             payload,
             now_sec,
             outgoing_codec,
-            Some(now_sec + RETAINED_BLOB_RESEND_WINDOW_SEC),
+            true,
         )
     }
 
@@ -5921,7 +5972,7 @@ impl SessionConnection {
         payload: &[u8],
         now_sec: f64,
         outgoing_codec: Option<&dyn BitTreeCodec>,
-        retain_until_sec: Option<f64>,
+        retained: bool,
     ) -> Result<Vec<u32>, SessionError> {
         if !(1..=4).contains(&queue_id) {
             return Err(SessionError::InvalidQueueId { queue_id });
@@ -5969,7 +6020,7 @@ impl SessionConnection {
                 outgoing_codec,
             )?;
             if let Some(rec) = self.retransmit_table.get_mut(&seq) {
-                rec.retain_until_sec = retain_until_sec;
+                rec.retained = retained;
             }
             seqs.push(seq);
         }
@@ -5981,15 +6032,39 @@ impl SessionConnection {
     pub fn expire_unreliable_sent_packet(&mut self, seq_num: u32) {
         if let Some(rec) = self.retransmit_table.get_mut(&seq_num) {
             rec.retransmit_eligible = false;
-            rec.retain_until_sec = None;
+            rec.retained = false;
         }
     }
 
-    /// Drops the datagrams queued and not yet handed to the socket. A cancelled login uses
-    /// this so that nothing it queued in its last pass goes out before its goodbye; the
-    /// sequence state stays as it is, and the connection is on its way out.
+    /// Drops the datagrams queued and not yet handed to the socket and everything it could
+    /// resend. A cancelled login uses this so that nothing it queued in its last pass goes out
+    /// before its goodbye, also on a later `SequenceNakHeader`; the sequence state stays as it
+    /// is, and the connection is on its way out.
     pub fn discard_unsent_datagrams(&mut self) {
         self.outbound_datagrams.clear();
+        self.retransmit_table.clear();
+    }
+
+    /// Queues one standalone `DisconnectHeader` at once, with no flush wait (§9.3.7, "Unsequenced
+    /// controls"). The caller then closes the connection locally. Nothing is sent before State 5.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError`] if the packet cannot be encoded.
+    pub fn queue_standalone_disconnect(&mut self) -> Result<(), SessionError> {
+        if self.state != ConnectionState::Connected {
+            return Ok(());
+        }
+        self.queue_control(OptionalHeaders {
+            disconnect: true,
+            ..OptionalHeaders::default()
+        })
+    }
+
+    /// How many incomplete queue-3 blobs a newer completed one superseded (§9.3.7).
+    #[must_use]
+    pub fn superseded_blobs(&self) -> u64 {
+        self.reassembler.superseded()
     }
 
     /// Initiates a local graceful disconnect (`State 5 -> State 6`, §6.1, §8.2).
@@ -6174,9 +6249,9 @@ impl SessionConnection {
     }
 
     /// Counts a datagram refused before anything was committed, for the diagnostics, and hands
-    /// the error back. pending spec pass 10 fix 13: the count closes nothing, because such a
-    /// datagram is not authenticated: what ends a stalled connection is the age of its sequence
-    /// gap ([`MAX_GAP_AGE_SEC`]). A duplicate of a sequence number already taken is ordinary
+    /// the error back. pending §25 fix 12: the count closes nothing, because such a datagram is
+    /// not authenticated: what ends a stalled connection is the age of its sequence gap
+    /// ([`MAX_GAP_AGE_SEC`]). A duplicate of a sequence number already taken is ordinary
     /// retransmission overlap and is not a refusal; only State `5` counts, since the handshake
     /// has its own `20.0` s timeout.
     fn refused(&mut self, err: SessionError) -> SessionError {
@@ -6407,10 +6482,10 @@ impl SessionConnection {
             // Resends go out with the outgoing (client-to-server) dictionary (§4.1.2).
             let codec = self.data_codec(outgoing_codec);
             for &s in nak_seqs {
-                let resend = self.retransmit_table.get(&s).filter(|rec| {
-                    rec.retransmit_eligible
-                        || rec.retain_until_sec.is_some_and(|until| now_sec <= until)
-                });
+                let resend = self
+                    .retransmit_table
+                    .get(&s)
+                    .filter(|rec| rec.retransmit_eligible || rec.retained);
                 if let Some(rec) = resend {
                     if !rec.retransmit_eligible {
                         self.counts.retained_resends =
@@ -6603,8 +6678,8 @@ impl SessionConnection {
                     return Ok(());
                 }
 
-                // pending spec pass 10 fix 13: a gap that stays open while later packets keep
-                // arriving ends the connection rather than being NAKed forever.
+                // pending §25 fix 12: a gap that stays open while later packets keep arriving
+                // ends the connection rather than being NAKed forever.
                 if self
                     .oldest_gap_opened_at()
                     .is_some_and(|t| now_sec - t > MAX_GAP_AGE_SEC)
@@ -6781,14 +6856,12 @@ impl SessionConnection {
     }
 
     /// Queues an unsequenced control packet that goes out uncompressed without
-    /// `MaskedChecksumFlag` (§4.1.1). It repeats the current allocated outgoing sequence
-    /// number and allocates none and draws no mask: the standalone acknowledgement rule of
-    /// §5.2 and §6.4.1, and it carries the current client word without advancing it (§4.2
-    /// P10-23-POLICY, §10.2 Vector 9).
+    /// `MaskedChecksumFlag` (§4.1.1): standalone Ack, SequenceNak, OutOfOrderAck and Disconnect
+    /// copy the last allocated outgoing sequence number and the current client word, advance
+    /// neither and draw no mask (§9.3.7 "Unsequenced controls", P10-23-POLICY; Vectors 9 and 13).
     ///
-    /// pending spec pass 10 fix 12: `seqNum` on the other standalone controls Tessera sends
-    /// (negative acknowledgements, out-of-order acknowledgements, disconnects): the spec
-    /// infers no rule for them (`OPEN-SESSION-9`); they keep following the Ack rule.
+    /// pending §25 fix 13: before any sequence is allocated this copies the counter's initial
+    /// `1` (§5.2), where §9.3.7 says zero; the two give different bytes.
     fn queue_control(&mut self, opt: OptionalHeaders) -> Result<(), SessionError> {
         let hdr = self.base_datagram_header(self.send_seq_num);
         let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;

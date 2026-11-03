@@ -62,7 +62,8 @@ use crate::{CompatBackend, CompatConfig};
 // The synthetic service's challenge, decoder and dictionary UUIDs.
 use super::test_support::{
     CHARACTER, INCOMING_UUID, OUTGOING_UUID, SYNTHETIC_LANGUAGE_KEY, SYNTHETIC_NAME_RULE,
-    SyntheticService, challenge_datagram, decode_client_datagram, synthetic_inventory,
+    SyntheticService, TEST_ENTRY_DESTINATION, challenge_datagram, decode_client_datagram,
+    synthetic_inventory,
 };
 
 const LOCAL: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 5000);
@@ -307,6 +308,8 @@ impl Gate {
 /// The service's behaviour, per test.
 #[derive(Debug, Clone)]
 struct Service {
+    /// The network answers no destination for `0x6F`, as every production path does.
+    no_entry_destination: bool,
     auth: String,
     login: String,
     login_server: String,
@@ -352,6 +355,7 @@ struct Service {
 impl Default for Service {
     fn default() -> Self {
         Self {
+            no_entry_destination: false,
             auth: "https://auth.example.invalid/login".to_owned(),
             login: login_ok(1),
             login_server: "login.example.invalid:9001".to_owned(),
@@ -698,6 +702,10 @@ impl Drop for FakeNet {
 
 impl ConnectorNet for FakeNet {
     type Udp = FakeUdp;
+
+    fn entry_destination(&self) -> Option<u64> {
+        (!self.0.service.no_entry_destination).then_some(TEST_ENTRY_DESTINATION)
+    }
 
     fn http(&mut self, request: &HttpRequest) -> Result<HttpResponse, LoginError> {
         self.0.answer(request)
@@ -1062,10 +1070,10 @@ impl Server {
         .expect("datagram")
     }
 
-    /// An event's datagram. The list `0x6C` has one shared flags byte, which its payload
-    /// already starts with (`official-session.md` §9.3.5).
+    /// An event's datagram. `0x6C`, `0x90`, `0x6D` and `0xB3` have one shared flags byte, which
+    /// their payloads already start with (`official-session.md` §9.3.7).
     fn event(&mut self, opcode: u32, inner: &[u8]) -> Vec<u8> {
-        if opcode == CharacterListResponse::EVENT_ID {
+        if matches!(opcode, 0x6C | 0x90 | 0x6D | 0xB3) {
             return self.blob(opcode, inner);
         }
         self.blob(opcode, &encode_event_envelope(inner))
@@ -2301,10 +2309,11 @@ fn an_eviction_at_the_character_list_ends_the_session() {
     let d = login.event(0xB3, &evict);
     run.world.deliver(d, LOGIN_SERVER);
     let end = run.wait_event(is_disconnected);
+    // §9.3.7: the reason is read and the text is not dispatched.
     assert_eq!(
         end,
         Event::Disconnected {
-            reason: DisconnectReason::ServerClosed("Maintenance".to_owned())
+            reason: DisconnectReason::ServerClosed(String::new())
         }
     );
 }
@@ -2589,7 +2598,7 @@ fn a_world_that_never_answers_the_entry_returns_to_the_character_list() {
         character: "Aldo".to_owned(),
     };
     d.command(&enter, 1.0).expect("enter");
-    for t in [20.0, 40.0, 60.0] {
+    for t in [10.0, 20.0, 30.0] {
         // The login server stays alive meanwhile.
         world.deliver(
             login.control(OptionalHeaders {
@@ -2606,7 +2615,7 @@ fn a_world_that_never_answers_the_entry_returns_to_the_character_list() {
             "too early at {t}"
         );
     }
-    d.step(61.5, true, &go);
+    d.step(31.5, true, &go);
     let events = d.take_events();
     assert!(
         events.iter().any(|e| matches!(
@@ -2657,7 +2666,7 @@ fn the_referral_disconnects_the_login_connection_gracefully() {
     );
     // The login connection says Disconnect and closes; the world keeps the session.
     let mut said_disconnect = false;
-    for t in [5.0, 20.0, 30.0, 45.0, 55.0] {
+    for t in [5.0, 10.0, 15.0, 20.0, 25.0] {
         world.deliver(
             ws.control(OptionalHeaders {
                 cumulative_ack: Some(0),
@@ -2683,7 +2692,7 @@ fn the_referral_disconnects_the_login_connection_gracefully() {
         Some(ConnectionState::Connected)
     ));
     // The world never answers the entry: no connection is left for a later `0x6F`.
-    d.step(61.5, true, &go);
+    d.step(31.5, true, &go);
     let events = d.take_events();
     assert!(
         events
@@ -4240,23 +4249,22 @@ fn leaving_the_world_returns_to_the_character_list_on_the_same_session() {
         d.command(&Command::LeaveWorld, 3.6),
         Err(tessera_net::NetError::InvalidCommand(_))
     ));
-    // The character enters again: `0x6F` once more (no referral: the login connection).
+    // §9.3.7, OPEN-SESSION-16: entering again is not supported: reported, and nothing is sent.
     d.command(
         &Command::EnterWorld {
             character: "Aldo".to_owned(),
         },
         4.0,
     )
-    .expect("enter again");
+    .expect("reported");
     d.step(4.1, true, &go);
-    assert!(sent_blobs(&world).contains(&(0x6F, LOGIN_SERVER)));
-    world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
-    d.step(4.2, true, &go);
-    assert!(
-        d.take_events()
-            .iter()
-            .any(|e| matches!(e, Event::WorldEntered { .. }))
-    );
+    assert!(!sent_blobs(&world).iter().any(|(op, _)| *op == 0x6F));
+    assert!(d.take_events().iter().any(|e| matches!(
+        e,
+        Event::EnterWorldFailed { reason, .. }
+            if reason == super::session_phase::ENTRY_NOT_SUPPORTED
+    )));
+    assert!(!d.ended());
 }
 
 #[test]
@@ -4411,6 +4419,7 @@ fn a_stray_loading_signal_does_not_end_the_next_portal_space() {
     d.command(&Command::WorldLoaded, 1.5).expect("accepted");
     assert_eq!(d.counters().stray_loaded, 1);
     // Re-entry: a fresh portal space waits for its own signal.
+    d.forget_the_return_for_tests();
     d.command(
         &Command::EnterWorld {
             character: "Aldo".to_owned(),
@@ -4455,8 +4464,8 @@ fn the_live_connector_returns_to_character_selection() {
             break;
         }
     }
-    // The teardown on the world connection, and no list after it: the return comes at
-    // once, and the next `0x6F` goes to the world server, which keeps the session.
+    // The teardown on the world connection, and no list after it: the return comes at once, and
+    // the session stays. Entering again is not supported (§9.3.7, OPEN-SESSION-16).
     run.world
         .deliver(world.event(0x3000_001C, &[0]), WORLD_SERVER);
     run.wait_event(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }));
@@ -4468,17 +4477,28 @@ fn the_live_connector_returns_to_character_selection() {
                 character: "Aldo".to_owned(),
             },
         )
-        .expect("enter again");
-    loop {
-        let (op, _) = run.wait_blob(WORLD_SERVER);
-        if op == 0x6F {
-            break;
-        }
+        .expect("reported");
+    run.wait_event(|e| {
+        matches!(
+            e,
+            Event::EnterWorldFailed { reason, .. }
+                if reason == super::session_phase::ENTRY_NOT_SUPPORTED
+        )
+    });
+    assert_eq!(run.session.state(), tessera_net::SessionState::Connected);
+    let mut sent = Vec::new();
+    while let Some(d) = run.world.pop_sent() {
+        sent.push(d);
     }
-    // The world answers on the same connection: in the world again (referral path).
-    let d = world.event(0x90, &session_ready());
-    run.world.deliver(d, WORLD_SERVER);
-    run.wait_event(|e| matches!(e, Event::WorldEntered { .. }));
-    assert_eq!(run.session.state(), tessera_net::SessionState::InWorld);
+    assert!(
+        !sent.iter().any(|(d, _)| {
+            decode_client_datagram(d, false).is_ok_and(|p| {
+                p.fragments
+                    .iter()
+                    .any(|f| f.header.blob_header_word == Some(0x6F))
+            })
+        }),
+        "no second selection"
+    );
     let _ = run.session.send(Instant::now(), Command::Disconnect);
 }

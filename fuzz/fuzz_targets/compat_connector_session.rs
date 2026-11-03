@@ -199,6 +199,12 @@ struct Net {
 impl ConnectorNet for Net {
     type Udp = Udp;
 
+    // The test-only destination of `0x6F`, so the fuzzer reaches the world (no production path
+    // has one, `official-session.md` §9.3.7).
+    fn entry_destination(&self) -> Option<u64> {
+        Some(0x0A0B_0C0D_0E0F_1113)
+    }
+
     fn http(&mut self, _request: &HttpRequest) -> Result<HttpResponse, LoginError> {
         Err(LoginError::ServiceUnavailable {
             reason: "no network in the fuzz target".to_owned(),
@@ -347,7 +353,7 @@ impl Server {
     /// The list `0x6C` has one shared flags byte, which its payload already starts with
     /// (`official-session.md` §9.3.5).
     fn event(&mut self, opcode: u32, inner: &[u8]) -> Option<Vec<u8>> {
-        if opcode == 0x6C {
+        if matches!(opcode, 0x6C | 0x90 | 0x6D | 0xB3) {
             return self.blob(opcode, inner);
         }
         self.blob(opcode, &encode_event_envelope(inner))

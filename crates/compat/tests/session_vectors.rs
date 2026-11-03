@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The synthetic test vectors of `docs/specs/official-session.md` §10.2 (Vectors 1–12), byte
+//! The synthetic test vectors of `docs/specs/official-session.md` §10.2 (Vectors 1–15), byte
 //! for byte, with the "must fail" variants the spec states (a whole-payload sum, swapped
 //! seeds, recipients read from the cookie, sequence 1, the former high-bit mask flag, an
 //! unreversed referral cookie, a borrowed recipient, sequence or mask, an address family
@@ -11,7 +11,8 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use tessera_compat::initial::{
     AdvertisedArchive, InitialError, InstallRequest, IterationNote, IterationSpan,
-    UnsupportedNegotiation, build_install_advertisement, check_language_allowed,
+    UnsupportedNegotiation, advertisement_order, build_install_advertisement,
+    check_language_allowed, fold_language_code,
 };
 use tessera_compat::session::{
     AuthConnection, BLOB_FLAG_DEFAULT_RECIPIENT, BlobFragmentHeader, CHAT_MAX_RECV_RATE,
@@ -863,7 +864,8 @@ fn vector_9_standalone_ack() {
 // Vector 10: `0xEC` serialization only (§9.3.2)
 // ---------------------------------------------------------------------------
 
-const VECTOR_10_DATA: &str = "00 05 00 00 00 01 00 00 00 01 00 00 00 09 00 00 00 00 00 02 01 03 00 00 00 FD FF FF FF 07 00 00 00 01 00 00 00 08 00 00 00 56 34 12 EE FF C0 AD 0B 00 00 00 00 00 00 00 00";
+const VECTOR_10_DATA: &str = "00 05 00 00 10 01 00 00 00 01 00 00 00 09 00 00 00 00 00 02 01 03 00 00 00 FD FF FF FF 07 00 00 00 01 00 00 00 09 00 00 00 56 34 12 EE FF C0 AD 0B 00 00 00 00 00 00 00 00";
+const VECTOR_LANGUAGE_KEY: u32 = 0x1000_0005;
 const VECTOR_10_HEADER: &str = "01 40 80 EC 39 00";
 
 fn vector_10_archive() -> AdvertisedArchive {
@@ -872,7 +874,7 @@ fn vector_10_archive() -> AdvertisedArchive {
         iteration_count: 3,
         spans: vec![IterationSpan { start: 7, len: 3 }],
         notes: vec![IterationNote {
-            iteration: 8,
+            iteration: 9,
             opaque: 0x0BAD_C0FF_EE12_3456u64.to_le_bytes(),
         }],
     }
@@ -880,12 +882,13 @@ fn vector_10_archive() -> AdvertisedArchive {
 
 #[test]
 fn vector_10_install_advertisement() {
-    let data = build_install_advertisement(5, &[vector_10_archive()]).expect("builds");
+    let data =
+        build_install_advertisement(VECTOR_LANGUAGE_KEY, &[vector_10_archive()]).expect("builds");
     assert_eq!(data, hex(VECTOR_10_DATA));
     assert_eq!(data.len(), 57);
     // The offsets the spec lists.
     assert_eq!(data[0], 0, "one flags byte");
-    assert_eq!(&data[1..5], &5u32.to_le_bytes(), "language key");
+    assert_eq!(&data[1..5], &[0x05, 0x00, 0x00, 0x10], "language key");
     assert_eq!(&data[5..9], &1u32.to_le_bytes(), "status");
     assert_eq!(&data[9..13], &1u32.to_le_bytes(), "N");
     assert_eq!(&data[13..21], &[9, 0, 0, 0, 0, 0, 2, 1], "identifier");
@@ -893,7 +896,12 @@ fn vector_10_install_advertisement() {
     assert_eq!(&data[25..29], &(-3i32).to_le_bytes(), "run token");
     assert_eq!(&data[29..33], &7u32.to_le_bytes(), "start");
     assert_eq!(&data[33..37], &1u32.to_le_bytes(), "K");
-    assert_eq!(&data[37..41], &8u32.to_le_bytes(), "iteration");
+    assert_eq!(&data[37..41], &9u32.to_le_bytes(), "trailing iteration");
+    assert_eq!(
+        &data[41..49],
+        &0x0BAD_C0FF_EE12_3456u64.to_le_bytes(),
+        "opaque"
+    );
     assert_eq!(&data[49..53], &0u32.to_le_bytes(), "M");
     assert_eq!(&data[53..57], &0u32.to_le_bytes(), "terminal");
 
@@ -908,13 +916,13 @@ fn vector_10_install_advertisement() {
     let mut unchanged = vector_10_archive();
     unchanged.resource_id = [0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x01];
     assert_ne!(
-        build_install_advertisement(5, &[unchanged]).expect("builds"),
+        build_install_advertisement(VECTOR_LANGUAGE_KEY, &[unchanged]).expect("builds"),
         data
     );
     let mut token_count = vector_10_archive();
     token_count.iteration_count = 1;
     assert_eq!(
-        build_install_advertisement(5, &[token_count]),
+        build_install_advertisement(VECTOR_LANGUAGE_KEY, &[token_count]),
         Err(InitialError::UnusableIteration)
     );
     // An extra base byte and an omitted terminal field are not what the builder writes.
@@ -939,16 +947,31 @@ fn vector_11_install_request_and_rule() {
     // The same fields from what `decode_message` leaves.
     assert_eq!(InstallRequest::from_envelope_body(&data[1..]), Ok(dd));
 
-    // Rule 7 with the full key 5 passes; an empty list or key 6 fails and suppresses `0xEC`.
-    assert_eq!(check_language_allowed(&[5], 5), Ok(()));
+    // Rule 7 with the full key passes; an empty list or another key fails and suppresses `0xEC`.
+    const FULL: u32 = VECTOR_LANGUAGE_KEY;
+    assert_eq!(check_language_allowed(&[FULL], FULL), Ok(()));
     assert_eq!(
-        check_language_allowed(&[], 5),
+        check_language_allowed(&[], FULL),
         Err(UnsupportedNegotiation::NameRuleEmpty)
     );
     assert_eq!(
-        check_language_allowed(&[5], 6),
+        check_language_allowed(&[FULL], 0x1000_0006),
         Err(UnsupportedNegotiation::LanguageNotAllowed)
     );
+    // The fold and the low half are not the full key, in the list or as the scalar.
+    assert_eq!(fold_language_code(FULL), 0x1005);
+    for not_the_key in [0x1005, 0x0005] {
+        assert_eq!(
+            check_language_allowed(&[FULL], not_the_key),
+            Err(UnsupportedNegotiation::LanguageNotAllowed)
+        );
+        assert_ne!(
+            build_install_advertisement(not_the_key, &[vector_10_archive()])
+                .expect("builds")
+                .get(1..5),
+            Some(&[0x05, 0x00, 0x00, 0x10][..])
+        );
+    }
 
     // N = 1 without its four bytes: truncated. Four bytes more with N = 0: trailing bytes.
     let mut n_one = data.clone();
@@ -984,12 +1007,41 @@ fn vector_11_install_request_and_rule() {
         InstallRequest::from_data(&over_cap),
         Err(InitialError::TrailingCount { count: 4097 })
     ));
-    // Other flags, and truncation at every length.
+    // N = 4,096 with exactly its bytes decodes, and fails only the send policy's empty array.
+    let mut at_cap = data.clone();
+    at_cap[9..13].copy_from_slice(&4096u32.to_le_bytes());
+    at_cap.resize(13 + 4096 * 4, 0);
+    assert_eq!(
+        InstallRequest::from_data(&at_cap)
+            .expect("decodes")
+            .trailing
+            .len(),
+        4096
+    );
+    // Flags 0x01 with no valid stream and 0x02 up, then truncation at every length.
     let mut flags = data.clone();
     flags[0] = 1;
     assert_eq!(
         InstallRequest::from_data(&flags),
-        Err(InitialError::UnsupportedFlags(1))
+        Err(InitialError::Decompression)
+    );
+    for bad in [0x02u8, 0x04, 0xFF] {
+        flags[0] = bad;
+        assert_eq!(
+            InstallRequest::from_data(&flags),
+            Err(InitialError::UnsupportedFlags(bad))
+        );
+    }
+    // Flags 0x01: a stored-block stream of the same fields, measured after it is inflated.
+    let compressed =
+        hex("01 0C 00 00 00 78 01 01 0C 00 F3 FF 04 03 02 01 07 00 00 00 00 00 00 00 00 B2 00 12");
+    let inflated = InstallRequest::from_data(&compressed).expect("inflates");
+    assert_eq!(inflated, InstallRequest::from_data(&data).expect("decodes"));
+    let mut wrong_length = compressed.clone();
+    wrong_length[1] = 0x0B;
+    assert_eq!(
+        InstallRequest::from_data(&wrong_length),
+        Err(InitialError::Decompression)
     );
     for len in 0..data.len() {
         assert!(InstallRequest::from_data(&data[..len]).is_err(), "{len}");
@@ -1056,6 +1108,373 @@ fn vector_12_character_selection_and_empty_list() {
     assert_eq!(list.to_bytes().expect("encodes"), empty);
     let body = CharacterListResponse::from_envelope_body(&empty[1..], &NoProperties);
     assert_eq!(body.expect("decodes"), list);
+}
+
+// ---------------------------------------------------------------------------
+// Vector 13: a standalone NAK under P10-23-POLICY (§9.3.7)
+// ---------------------------------------------------------------------------
+
+const VECTOR_13_NAK: &str =
+    "00 00 12 34 00 08 00 00 10 00 00 00 00 02 D1 2F D7 5F 00 02 56 78 01 00 00 00 03 00 00 00";
+
+#[test]
+fn vector_13_standalone_nak() {
+    let hdr = DatagramHeader {
+        rec_id: 0x1234,
+        seq_num: 2,
+        client_word: 2,
+        peer_word: 0x5678,
+        ..DatagramHeader::default()
+    };
+    let opt = OptionalHeaders {
+        sequence_nak: Some(vec![3]),
+        ..OptionalHeaders::default()
+    };
+    let dgram = encode_datagram(hdr, &opt, &[], None, None).expect("encodes");
+    assert_eq!(dgram, hex(VECTOR_13_NAK));
+    assert_eq!(dgram.len(), 30);
+    let parsed = decode_datagram(&dgram, false, None, true).expect("verifies");
+    assert_eq!(parsed.header.flags, 0x0000_1000);
+    assert_eq!(parsed.header.header_checksum(), 0xCD27_D75F);
+    assert_eq!(parsed.payload_sum, 0x0408_0000);
+    assert_eq!(parsed.header.checksum, 0xD12F_D75F);
+    assert_eq!(&dgram[22..], [1, 0, 0, 0, 3, 0, 0, 0], "little-endian");
+
+    // The connection's own NAK repeats the last allocated sequence and word and advances neither.
+    // A packet of the server that skips a sequence number leaves that one missing.
+    let mut conn = started();
+    conn.receive_datagram(&hex(VECTOR_5_CHALLENGE), SERVER, 0.1, WireCodecs::NONE)
+        .expect("challenge");
+    conn.receive_datagram(&hex(VECTOR_7_SERVER), SERVER, 0.2, WireCodecs::NONE)
+        .expect("server packet");
+    while conn.pop_outbound_datagram().is_some() {}
+    conn.tick(0.3).expect("the flow-only packet");
+    while conn.pop_outbound_datagram().is_some() {}
+    // The server's generator past its first packet and the sequence number it skips.
+    let mut server = IsaacCipher::from_seed(0x1122_3344);
+    let _ = server.next_mask();
+    let _ = server.next_mask();
+    let later = encode_datagram(
+        DatagramHeader {
+            rec_id: conn.local_rec_id(),
+            seq_num: 4,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders::default(),
+        &[],
+        Some(server.next_mask()),
+        None,
+    )
+    .expect("encodes");
+    conn.receive_datagram(&later, SERVER, 0.4, WireCodecs::NONE)
+        .expect("the later packet");
+    while conn.pop_outbound_datagram().is_some() {}
+    conn.tick(1.1).expect("the NAK");
+    let mut nak = None;
+    while let Some(d) = conn.pop_outbound_datagram() {
+        let p = decode_datagram(&d, false, None, false).expect("decodes");
+        if p.opt_headers.sequence_nak.is_some() {
+            nak = Some(p);
+        }
+    }
+    let nak = nak.expect("a standalone NAK");
+    assert_eq!(nak.opt_headers.sequence_nak, Some(vec![3]));
+    // The flow report of the tick took sequence 3 and word 3; the NAK copies them and takes none.
+    assert_eq!((nak.header.seq_num, nak.header.client_word), (3, 3));
+    assert_eq!(
+        nak.header.flags & tessera_compat::session::FLAG_MASKED_CHECKSUM,
+        0
+    );
+    assert_eq!(conn.send_seq_num(), 3, "no sequence allocated");
+
+    // Must fail: an advanced sequence or word, drawing a mask, or a big-endian count and sequence.
+    for bad in [
+        DatagramHeader { seq_num: 3, ..hdr },
+        DatagramHeader {
+            client_word: 3,
+            ..hdr
+        },
+    ] {
+        assert_ne!(
+            encode_datagram(bad, &opt, &[], None, None).expect("encodes"),
+            hex(VECTOR_13_NAK)
+        );
+    }
+    assert_ne!(
+        encode_datagram(
+            hdr,
+            &opt,
+            &[],
+            Some(IsaacCipher::from_seed(0x5566_7788).next_mask()),
+            None
+        )
+        .expect("encodes"),
+        hex(VECTOR_13_NAK)
+    );
+    let mut big_endian = hex(VECTOR_13_NAK);
+    big_endian[22..26].copy_from_slice(&1u32.to_be_bytes());
+    big_endian[26..30].copy_from_slice(&3u32.to_be_bytes());
+    assert!(decode_datagram(&big_endian, false, None, true).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Vector 14: `0xEC` ordering, runs and two-fragment framing (§9.3.7)
+// ---------------------------------------------------------------------------
+
+const VECTOR_14_DATA: &str = "00 05 00 00 10 01 00 00 00 04 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 1A 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 02 02 00 00 00 00 00 00 00 00 09 00 00 00 00 00 02 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00";
+
+/// An archive with the given eight wire bytes and an empty iteration list.
+fn wire_archive(wire: [u8; 8]) -> AdvertisedArchive {
+    let [e, f, g, h, a, b, c, d] = wire;
+    AdvertisedArchive {
+        resource_id: [a, b, c, d, e, f, g, h],
+        iteration_count: 0,
+        spans: Vec::new(),
+        notes: Vec::new(),
+    }
+}
+
+#[test]
+fn vector_14_order_and_empty_lists() {
+    let a = wire_archive([0x09, 0, 0, 0, 0, 0, 0x02, 0x01]);
+    let b = wire_archive([0x02, 0, 0, 0, 0, 0, 0x02, 0x02]);
+    let c = wire_archive([0x03, 0, 0, 0, 0, 0, 0, 0]);
+    let d = wire_archive([0x1A, 0, 0, 0, 0, 0, 0, 0]);
+    let expected = hex(VECTOR_14_DATA);
+    assert_eq!(expected.len(), 85);
+    // The result holds for any input order.
+    for input in [
+        [&a, &b, &c, &d],
+        [&d, &c, &b, &a],
+        [&b, &d, &a, &c],
+        [&c, &a, &d, &b],
+    ] {
+        let archives: Vec<AdvertisedArchive> = input.into_iter().cloned().collect();
+        let data = build_install_advertisement(VECTOR_LANGUAGE_KEY, &archives).expect("builds");
+        assert_eq!(data, expected);
+    }
+    // The fixture's remainders.
+    for (archive, want) in [(&a, 20), (&b, 15), (&c, 3), (&d, 3)] {
+        assert_eq!(advertisement_order(archive.wire_identifier()).0, want);
+    }
+    // Its unfragmented default-recipient header.
+    let frags =
+        tessera_compat::session::split_blob(1, 0xFFFF, 0, 0, None, 0xEC, &expected).unwrap();
+    let mut header = Vec::new();
+    frags[0].header.encode(&mut header).expect("encodes");
+    assert_eq!(header, hex("01 40 80 EC 55 00"));
+    // Plain numeric and bytewise orders are not it.
+    let ids = |data: &[u8]| -> Vec<u8> { (0..4).map(|i| data[13 + i * 16]).collect() };
+    assert_eq!(ids(&expected), [0x03, 0x1A, 0x02, 0x09]);
+}
+
+/// `official-session.md` Vector 14's run-threshold fixture, in EC bytes after the identifier.
+const VECTOR_14_TOKENS: &str =
+    "06 00 00 00 FD FF FF FF 07 00 00 00 0D 00 00 00 0E 00 00 00 14 00 00 00";
+const VECTOR_14_TRAILING: &str = "01 00 00 00 14 00 00 00 56 34 12 EE FF C0 AD 0B";
+
+fn run_archive(spans: Vec<IterationSpan>, notes: Vec<IterationNote>) -> AdvertisedArchive {
+    AdvertisedArchive {
+        resource_id: [0x00, 0x00, 0x02, 0x01, 0x09, 0x00, 0x00, 0x00],
+        iteration_count: 6,
+        spans,
+        notes,
+    }
+}
+
+fn single(start: i32) -> IterationSpan {
+    IterationSpan { start, len: 1 }
+}
+
+#[test]
+fn vector_14_run_threshold() {
+    let note = |iteration: u32| IterationNote {
+        iteration,
+        opaque: 0x0BAD_C0FF_EE12_3456u64.to_le_bytes(),
+    };
+    let entry_tail = |archive: AdvertisedArchive| {
+        let data = build_install_advertisement(VECTOR_LANGUAGE_KEY, &[archive]).expect("builds");
+        data[21..data.len() - 8].to_vec()
+    };
+    let mut want = hex(VECTOR_14_TOKENS);
+    want.extend_from_slice(&hex(VECTOR_14_TRAILING));
+
+    // However the record stored them: as singles, as a stored two-value run, or with a run of one.
+    let singles = run_archive(
+        [7, 8, 9, 13, 14, 20].into_iter().map(single).collect(),
+        vec![note(20)],
+    );
+    assert_eq!(entry_tail(singles), want);
+    let stored = run_archive(
+        vec![
+            IterationSpan { start: 7, len: 3 },
+            IterationSpan { start: 13, len: 2 },
+            IterationSpan { start: 20, len: 1 },
+        ],
+        vec![note(20)],
+    );
+    assert_eq!(entry_tail(stored.clone()), want);
+
+    // A trailing iteration below the highest listed value, or a trailing list not in increasing
+    // order, fails the invariant, with no repair.
+    let mut low = stored.clone();
+    low.notes = vec![note(14)];
+    assert_eq!(low.check_invariant(), Err(InitialError::UnusableIteration));
+    assert_eq!(
+        build_install_advertisement(VECTOR_LANGUAGE_KEY, &[low]),
+        Err(InitialError::UnusableIteration)
+    );
+    let mut swapped = stored.clone();
+    swapped.notes = vec![note(20), note(14)];
+    assert_eq!(
+        swapped.check_invariant(),
+        Err(InitialError::UnusableIteration)
+    );
+    let mut two = stored.clone();
+    two.notes = vec![note(14), note(20)];
+    assert_eq!(two.check_invariant(), Ok(()));
+    let mut too_many = run_archive(Vec::new(), vec![note(1)]);
+    too_many.iteration_count = 0;
+    assert_eq!(
+        too_many.check_invariant(),
+        Err(InitialError::UnusableIteration)
+    );
+    // pending §25 fix 17: a list that repeats an iteration is refused.
+    let repeated = run_archive(
+        vec![
+            IterationSpan { start: 7, len: 3 },
+            IterationSpan { start: 9, len: 3 },
+        ],
+        Vec::new(),
+    );
+    assert_eq!(
+        repeated.check_invariant(),
+        Err(InitialError::UnusableIteration)
+    );
+
+    // A stamp-1 record with those runs and no trailing list: the same `N` and tokens, an explicit
+    // zero `K`.
+    let mut stamp_1 = stored;
+    stamp_1.notes = Vec::new();
+    let mut want = hex(VECTOR_14_TOKENS);
+    want.extend_from_slice(&[0, 0, 0, 0]);
+    assert_eq!(entry_tail(stamp_1), want);
+}
+
+#[test]
+fn vector_14_two_fragments() {
+    let archive = AdvertisedArchive {
+        resource_id: [0x00, 0x00, 0x02, 0x01, 0x09, 0x00, 0x00, 0x00],
+        iteration_count: 110,
+        spans: (0..110).map(|i| single(2 * i + 1)).collect(),
+        notes: Vec::new(),
+    };
+    let data = build_install_advertisement(VECTOR_LANGUAGE_KEY, &[archive]).expect("builds");
+    assert_eq!(data.len(), 477);
+    const RECIPIENT: u64 = 0x0A0B_0C0D_0E0F_1112;
+    let frags =
+        tessera_compat::session::split_blob(1, 0xFFFF, 1, 0, Some(RECIPIENT), 0xEC, &data).unwrap();
+    assert_eq!(frags.len(), 2);
+    let header = |i: usize| {
+        let mut out = Vec::new();
+        frags[i].header.encode(&mut out).expect("encodes");
+        out
+    };
+    assert_eq!(
+        header(0),
+        hex("01 10 01 00 00 02 12 11 0F 0E 0D 0C 0B 0A 80 EC 81 B4")
+    );
+    assert_eq!(
+        header(1),
+        hex("01 10 01 00 01 02 12 11 0F 0E 0D 0C 0B 0A 29 00")
+    );
+    assert_eq!(frags[0].payload.len(), 436);
+    assert_eq!(frags[1].payload.len(), 41);
+
+    // Reassembly in either order gives the same data.
+    for order in [[0usize, 1], [1, 0]] {
+        let mut r = tessera_compat::session::BlobReassembler::default();
+        let mut done = None;
+        for i in order {
+            done = done.or(r.ingest(0x100, frags[i].clone(), 0.0).unwrap());
+        }
+        assert_eq!(done.expect("complete").payload, data);
+    }
+
+    // The connection's own send with that recipient: the same two headers, in ascending order.
+    let mut conn = started();
+    conn.receive_datagram(&hex(VECTOR_5_CHALLENGE), SERVER, 0.1, WireCodecs::NONE)
+        .expect("challenge");
+    conn.receive_datagram(&hex(VECTOR_7_SERVER), SERVER, 0.2, WireCodecs::NONE)
+        .expect("server packet");
+    while conn.pop_outbound_datagram().is_some() {}
+    conn.send_blob_retained(1, 0, RECIPIENT, 0xEC, &data, 0.3, None)
+        .expect("sends");
+    let mut own = Vec::new();
+    while let Some(d) = conn.pop_outbound_datagram() {
+        let p = decode_datagram(&d, false, None, false).expect("decodes");
+        own.extend(p.fragments);
+    }
+    assert_eq!(own, frags);
+}
+
+// ---------------------------------------------------------------------------
+// Vector 15: one-prefix application boundaries (§9.3.7)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn vector_15_one_prefix_boundaries() {
+    use tessera_compat::world::{
+        AccountEvictionNotice, CharacterOperationError, PlatformAccountIdReport, PlayerSessionReady,
+    };
+    // `0x19E`: shared flags and the ID.
+    let platform = hex("00 88 77 66 55 44 33 22 11");
+    let report = PlatformAccountIdReport::from_bytes(&platform).expect("decodes");
+    assert_eq!(report.platform_id, 0x1122_3344_5566_7788);
+    assert_eq!(report.to_bytes().expect("encodes"), platform);
+    let mut second = vec![0u8];
+    second.extend_from_slice(&platform);
+    assert!(PlatformAccountIdReport::from_bytes(&second).is_err());
+
+    // `0x90`: shared flags, the ID and an empty table.
+    let ready = hex("00 77 00 00 00 00 00 00 01 00");
+    let session = PlayerSessionReady::from_bytes(&ready, &NoProperties).expect("decodes");
+    assert_eq!(session.player_id, 0x0100_0000_0000_0077);
+    assert_eq!(
+        PlayerSessionReady::from_envelope_body(&ready[1..], &NoProperties).expect("decodes"),
+        session
+    );
+    // A second leading byte shifts the ID.
+    let mut second = vec![0u8];
+    second.extend_from_slice(&ready);
+    assert!(PlayerSessionReady::from_bytes(&second, &NoProperties).is_err());
+    assert!(PlayerSessionReady::from_envelope_body(&ready, &NoProperties).is_err());
+
+    // `0x6D`: shared flags and the reason.
+    let refused = hex("00 04 03 02 01");
+    assert_eq!(
+        CharacterOperationError::from_bytes(&refused)
+            .expect("decodes")
+            .error_code,
+        0x0102_0304
+    );
+    assert_eq!(
+        CharacterOperationError::from_envelope_body(&refused[1..])
+            .expect("decodes")
+            .error_code,
+        0x0102_0304
+    );
+    assert!(CharacterOperationError::from_envelope_body(&refused).is_err());
+
+    // `0xB3`: the checked prefix only; what follows is not read.
+    assert_eq!(
+        AccountEvictionNotice::reason_of_envelope_body(&[4, 3, 2, 1, 0xFF, 0xFF]),
+        Some(0x0102_0304)
+    );
+    assert_eq!(
+        AccountEvictionNotice::reason_of_envelope_body(&[4, 3, 2]),
+        None
+    );
 }
 
 // ---------------------------------------------------------------------------

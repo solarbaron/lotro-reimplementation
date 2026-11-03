@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The install's answers to the login's initial exchange (`official-session.md` §9.3.2, §9.3.4)
+//! The install's answers to the login's initial exchange (`official-session.md` §9.3.2, §9.3.7)
 //! over synthetic archives and records: the full language key through the Languages enum and its
-//! base chain, the name rules in both map groups, the identifier's two halves and every refusal
-//! of the archive inventory. Every byte is generated here; no game data is involved.
+//! base chain, the name rules in both map groups, the identifier's two halves and every outcome
+//! of the preflight inventory. Every byte is generated here; no game data is involved.
 
 use std::path::Path;
 
 use tessera_client::official::install_data::{
-    advertised_archive, archive_inventory, initial_inputs, language_key_lookup, name_rules_lookup,
-    region_keys_lookup,
+    LANGUAGE_CHAIN_LIMIT, advertised_archive, archive_inventory, initial_inputs,
+    language_key_lookup, name_rules_lookup, region_keys_lookup, uses_older_identifier,
 };
 use tessera_compat::initial::{
     InstallUnsupported, UnsupportedNegotiation, build_install_advertisement,
@@ -34,10 +34,10 @@ const NAME_TABLE: u32 = 0x0E00_0001;
 const DE_KEY: u32 = 0x1000_0004;
 const SET_ID: [u8; 16] = [0x5A; 16];
 
-/// `N = 3`, one run from 7, `K = 1` (`install-layout.md` §9.3).
+/// `N = 3`, one run from 7, `K = 1`: the highest listed (`install-layout.md` §9.3, §9.6).
 fn iteration_record() -> Vec<u8> {
     let mut out = Vec::new();
-    for v in [3i32, -3, 7, 1, 8] {
+    for v in [3i32, -3, 7, 1, 9] {
         out.extend_from_slice(&v.to_le_bytes());
     }
     out.extend_from_slice(&[0xAB; 8]);
@@ -196,8 +196,18 @@ fn reader(m: std::collections::BTreeMap<u32, Vec<u8>>) -> impl Fn(Did) -> Option
 /// Writes a healthy install: every portal set, region 1 and the selected language `DE`, with the
 /// install's records in the general archive. The mesh set has one auxiliary part.
 fn healthy(dir: &Path) {
+    install(dir, records(), "client_local_DE.dat", 0x1004);
+}
+
+/// [`healthy`] with its own records and language archive.
+fn install(
+    dir: &Path,
+    records: std::collections::BTreeMap<u32, Vec<u8>>,
+    language_file: &str,
+    subset: u32,
+) {
     let mut general = base(0x0103_0000, 0, 1);
-    for (did, bytes) in records() {
+    for (did, bytes) in records {
         general.records.push(Rec {
             did,
             flags: 2,
@@ -224,7 +234,7 @@ fn healthy(dir: &Path) {
     write(dir, "client_mesh_aux_1.datx", &aux(0x0102_0000, 0, 1, 2));
     write(dir, "client_cell_1.dat", &base(0x0203_0000, 1, 1));
     write(dir, "client_map_1.dat", &base(0x020A_0000, 1, 1));
-    write(dir, "client_local_DE.dat", &base(0x0303_0000, 0x1004, 1));
+    write(dir, language_file, &base(0x0303_0000, subset, 1));
 }
 
 fn open(dir: &Path) -> ArchiveSet {
@@ -259,7 +269,7 @@ fn a_healthy_install_answers_with_the_full_key_and_its_real_entries() {
     let dir = fresh();
     let set = open(dir.path());
     assert_eq!(set.problems(), [], "a healthy set has no problem");
-    let inputs = initial_inputs(&set, "DE");
+    let inputs = initial_inputs(&set);
     assert_eq!(inputs.language_key, Ok(DE_KEY), "not the folded key");
     assert_eq!(fold_language_code(DE_KEY), 0x1004);
 
@@ -340,8 +350,76 @@ fn the_selected_archive_must_carry_the_fold_of_the_key() {
     );
     let set = open(dir.path());
     assert_eq!(
-        initial_inputs(&set, "DE").language_key,
+        initial_inputs(&set).language_key,
         Err(InstallUnsupported::LanguageSubset)
+    );
+}
+
+/// §9.3.7's resolver cases: the requested label is absent and the fallback archive's label is the
+/// one actually mounted; it resolves to the full key and requires its fold. Neither the fold nor
+/// the low half stands in for the key.
+#[test]
+fn the_lookup_uses_the_label_actually_mounted() {
+    const FIXTURE_KEY: u32 = 0x1000_0005;
+    let fixture_records = || {
+        let mut m = records();
+        m.insert(
+            LANGUAGES_BASE,
+            enum_mapper(LANGUAGES_BASE, 0, &[(FIXTURE_KEY, "fixturelang")]),
+        );
+        m.insert(NAME_TABLE, name_table(&[(7, &[FIXTURE_KEY])]));
+        m
+    };
+    let open_as = |dir: &Path| {
+        ArchiveSet::open(
+            dir,
+            SetOptions {
+                language: Some("Requested".to_owned()),
+                ..SetOptions::default()
+            },
+        )
+        .expect("the set opens")
+    };
+    let dir = tempfile::tempdir().expect("a directory");
+    install(
+        dir.path(),
+        fixture_records(),
+        "client_local_FixtureLang.dat",
+        0x1005,
+    );
+    let set = open_as(dir.path());
+    assert_eq!(set.language(), Some("FixtureLang"), "the fallback");
+    let inputs = initial_inputs(&set);
+    assert_eq!(inputs.language_key, Ok(FIXTURE_KEY));
+    assert_eq!(inputs.name_rule(7), Ok(vec![FIXTURE_KEY]));
+    let inventory = inputs.inventory.expect("the inventory");
+    let data = build_install_advertisement(FIXTURE_KEY, &inventory).expect("builds");
+    assert_eq!(&data[1..5], &[0x05, 0x00, 0x00, 0x10], "the full key");
+
+    // A low-half subset is not the fold.
+    let dir = tempfile::tempdir().expect("a directory");
+    install(
+        dir.path(),
+        fixture_records(),
+        "client_local_FixtureLang.dat",
+        0x0005,
+    );
+    assert_eq!(
+        initial_inputs(&open_as(dir.path())).language_key,
+        Err(InstallUnsupported::LanguageSubset)
+    );
+    // The requested label is never substituted for the mounted one: an enum without the mounted
+    // label fails, even when it has the requested one.
+    let mut m = fixture_records();
+    m.insert(
+        LANGUAGES_BASE,
+        enum_mapper(LANGUAGES_BASE, 0, &[(FIXTURE_KEY, "Requested")]),
+    );
+    let dir = tempfile::tempdir().expect("a directory");
+    install(dir.path(), m, "client_local_FixtureLang.dat", 0x1005);
+    assert_eq!(
+        initial_inputs(&open_as(dir.path())).language_key,
+        Err(InstallUnsupported::LanguageAbsent)
     );
 }
 
@@ -372,6 +450,27 @@ fn the_language_lookup_walks_the_base_chain_and_takes_no_guess() {
         Err(InstallUnsupported::LanguageAmbiguous)
     );
 
+    // The nearest child's name for a key wins, and an overridden name matches nothing.
+    let mut m = records();
+    m.insert(
+        LANGUAGES,
+        enum_mapper(LANGUAGES, LANGUAGES_BASE, &[(DE_KEY, "Deutsch")]),
+    );
+    let read = reader(m);
+    assert_eq!(language_key_lookup(&read, root, "Deutsch"), Ok(DE_KEY));
+    assert_eq!(
+        language_key_lookup(&read, root, "DE"),
+        Err(InstallUnsupported::LanguageAbsent)
+    );
+    // A label the child takes from its base under another key is on two effective keys only if
+    // the base's key keeps it; a child's override of that key clears the tie.
+    let mut m = records();
+    m.insert(
+        LANGUAGES,
+        enum_mapper(LANGUAGES, LANGUAGES_BASE, &[(77, "DE"), (DE_KEY, "Other")]),
+    );
+    assert_eq!(language_key_lookup(&reader(m), root, "DE"), Ok(77));
+
     // Key zero.
     let mut m = records();
     m.insert(LANGUAGES, enum_mapper(LANGUAGES, 0, &[(0, "DE")]));
@@ -396,6 +495,34 @@ fn the_language_lookup_walks_the_base_chain_and_takes_no_guess() {
         language_key_lookup(&reader(m), root, "DE"),
         Err(InstallUnsupported::LanguageMapper)
     );
+}
+
+/// §9.3.7: a chain of 64 records is followed, and one of 65 fails.
+#[test]
+fn the_language_chain_is_bounded() {
+    assert_eq!(LANGUAGE_CHAIN_LIMIT, 64);
+    let chain = |records_in_chain: u32| {
+        let mut m = records();
+        let did = |i: u32| {
+            if i == 0 { LANGUAGES } else { 0x2300_1000 + i }
+        };
+        for i in 0..records_in_chain {
+            let next = if i + 1 == records_in_chain {
+                0
+            } else {
+                did(i + 1)
+            };
+            let names: &[(u32, &str)] = if i + 1 == records_in_chain {
+                &[(DE_KEY, "DE")]
+            } else {
+                &[]
+            };
+            m.insert(did(i), enum_mapper(did(i), next, names));
+        }
+        language_key_lookup(&reader(m), Did(MASTER_MAP), "DE")
+    };
+    assert_eq!(chain(64), Ok(DE_KEY));
+    assert_eq!(chain(65), Err(InstallUnsupported::LanguageMapper));
 }
 
 #[test]
@@ -448,19 +575,80 @@ fn the_iteration_stamp_decides_the_trailing_part() {
         advertised_archive(id, &iteration_record(), 1),
         Err(InstallUnsupported::ArchiveIteration)
     );
-    // Stamp 3 and more are malformed; so is a list with no iterations.
+    // Stamp 3 and more are malformed.
     assert_eq!(
         advertised_archive(id, &iteration_record(), 3),
         Err(InstallUnsupported::ArchiveIteration)
     );
+    // An empty list passes with exact consumption and `K = 0`, in both stamps, and writes the
+    // real empty list.
+    let empty = advertised_archive(id, &[0u8; 4], 1).expect("stamp 1, no iterations");
+    assert_eq!(empty.iteration_count, 0);
+    let stored = advertised_archive(id, &[0u8; 8], 2).expect("stamp 2, no iterations");
+    assert_eq!(stored, empty);
+    let data = build_install_advertisement(DE_KEY, &[empty]).expect("builds");
+    assert_eq!(&data[21..29], &[0u8; 8], "N and K");
     assert_eq!(
-        advertised_archive(id, &[0u8; 4], 1),
+        advertised_archive(id, &[0u8; 5], 1),
+        Err(InstallUnsupported::ArchiveIteration),
+        "exact consumption"
+    );
+    // `K = 1` over an empty list has nothing to name.
+    let mut one_note = [0u8; 8].to_vec();
+    one_note[4] = 1;
+    one_note.extend_from_slice(&[7, 0, 0, 0]);
+    one_note.extend_from_slice(&[0xAB; 8]);
+    assert_eq!(
+        advertised_archive(id, &one_note, 2),
         Err(InstallUnsupported::ArchiveIteration)
     );
 }
 
+/// `install-layout.md` §9.6 invariant 7, with no repair: the trailing list is the `K` highest
+/// listed iterations in increasing order. Trailing bytes are kept, runs are written again.
+#[test]
+fn the_iteration_record_must_keep_the_invariant() {
+    let id = [0, 0, 3, 2, 1, 0, 0, 0];
+    let record = |values: &[i32], opaque: &[u8]| {
+        let mut out = Vec::new();
+        for v in values {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.extend_from_slice(opaque);
+        out
+    };
+    // The middle of the list is not the highest.
+    assert_eq!(
+        advertised_archive(id, &record(&[3, -3, 7, 1, 8], &[0xAB; 8]), 2),
+        Err(InstallUnsupported::ArchiveIteration)
+    );
+    // Two values, ascending: the two highest.
+    let mut two = record(&[3, -3, 7, 2, 8], &[1; 8]);
+    two.extend_from_slice(&9i32.to_le_bytes());
+    two.extend_from_slice(&[2; 8]);
+    let archive = advertised_archive(id, &two, 2).expect("the two highest");
+    let data = build_install_advertisement(DE_KEY, &[archive]).expect("builds");
+    assert_eq!(&data[21..data.len() - 8], two.as_slice());
+    // In decreasing order it fails.
+    let mut swapped = record(&[3, -3, 7, 2, 9], &[1; 8]);
+    swapped.extend_from_slice(&8i32.to_le_bytes());
+    swapped.extend_from_slice(&[2; 8]);
+    assert_eq!(
+        advertised_archive(id, &swapped, 2),
+        Err(InstallUnsupported::ArchiveIteration)
+    );
+    // A stored two-value run is written again as two singles, its values kept.
+    let stored = record(&[2, -2, 13, 1, 14], &[3; 8]);
+    let archive = advertised_archive(id, &stored, 2).expect("a stored pair");
+    let data = build_install_advertisement(DE_KEY, &[archive]).expect("builds");
+    assert_eq!(
+        &data[21..data.len() - 8],
+        record(&[2, 13, 14, 1, 14], &[3; 8]).as_slice()
+    );
+}
+
 // ---------------------------------------------------------------------------
-// Refusals of the inventory: nothing is silently omitted
+// The preflight's outcomes
 // ---------------------------------------------------------------------------
 
 /// Each change of a healthy install makes the inventory unsupported, with its kind.
@@ -469,6 +657,115 @@ fn refused(change: impl FnOnce(&Path), want: InstallUnsupported) {
     let dir = fresh();
     change(dir.path());
     assert_eq!(inventory_of(dir.path()), Err(want));
+}
+
+/// §9.3.7: `highres` and `anim` are optional: absent, they contribute no entry.
+#[test]
+fn the_optional_portal_sets_may_be_absent() {
+    let dir = fresh();
+    std::fs::remove_file(dir.path().join("client_anim.dat")).expect("removed");
+    assert_eq!(inventory_of(dir.path()), Ok(9));
+    std::fs::remove_file(dir.path().join("client_highres.dat")).expect("removed");
+    assert_eq!(inventory_of(dir.path()), Ok(8));
+    // The non-optional ones may not.
+    for file in [
+        "client_gamelogic.dat",
+        "client_mesh.dat",
+        "client_surface.dat",
+        "client_sound.dat",
+    ] {
+        refused(
+            |d| {
+                std::fs::remove_file(d.join(file)).expect("removed");
+                if file == "client_mesh.dat" {
+                    std::fs::remove_file(d.join("client_mesh_aux_1.datx")).expect("removed");
+                }
+            },
+            InstallUnsupported::ArchiveMissing,
+        );
+    }
+}
+
+/// §9.3.7, `install-layout.md` §3.4: a stale or stray auxiliary file is left out when its family's
+/// own membership is verified, and is never touched.
+#[test]
+fn a_stale_or_stray_auxiliary_file_is_left_out() {
+    let check = |change: &dyn Fn(&Path), file: &str| {
+        let dir = fresh();
+        change(dir.path());
+        let before = std::fs::read(dir.path().join(file)).expect("there");
+        assert_eq!(inventory_of(dir.path()), Ok(10), "{file}");
+        assert_eq!(
+            std::fs::read(dir.path().join(file)).expect("still there"),
+            before,
+            "{file}"
+        );
+    };
+    // At or past the base's count, whatever its own record says.
+    check(
+        &|d| write(d, "client_cell_1_aux_1.datx", &aux(0x0203_0000, 1, 1, 1)),
+        "client_cell_1_aux_1.datx",
+    );
+    check(
+        &|d| write(d, "client_mesh_aux_2.datx", &aux(0x0102_0000, 0, 2, 3)),
+        "client_mesh_aux_2.datx",
+    );
+    check(
+        &|d| {
+            let mut a = aux(0x0102_0000, 0, 2, 2);
+            a.membership = Some(([0x77; 16], 2, 2));
+            write(d, "client_mesh_aux_2.datx", &a);
+        },
+        "client_mesh_aux_2.datx",
+    );
+    // A name with no canonical part number.
+    check(
+        &|d| std::fs::write(d.join("client_mesh_aux_01.datx"), b"x").expect("written"),
+        "client_mesh_aux_01.datx",
+    );
+    check(
+        &|d| std::fs::write(d.join("client_mesh_aux_x.datx"), b"x").expect("written"),
+        "client_mesh_aux_x.datx",
+    );
+    // A stray with no verified family to be left out of.
+    refused(
+        |d| std::fs::write(d.join("client_cell_2_aux_x.datx"), b"x").expect("written"),
+        InstallUnsupported::ArchiveFailed,
+    );
+    refused(
+        |d| std::fs::write(d.join("client_custom_aux_1x.datx"), b"x").expect("written"),
+        InstallUnsupported::ArchiveFailed,
+    );
+}
+
+/// §9.3.7, `dat-container.md` §3.4.1: neither the raw older encoding nor a conversion is sent.
+#[test]
+fn an_older_identifier_encoding_is_refused() {
+    assert!(uses_older_identifier(0x0000_0001));
+    assert!(!uses_older_identifier(0));
+    assert!(!uses_older_identifier(0x0107_0000));
+    refused(
+        |d| write(d, "client_sound.dat", &base(0x0000_0001, 7, 1)),
+        InstallUnsupported::ArchiveOlderIdentifier,
+    );
+}
+
+/// §9.3.7: the requested label's absence alone refuses nothing (a warning naming no file), but a
+/// problem of the listed sets does.
+#[test]
+fn a_missing_part_is_refused_and_a_language_fallback_is_not() {
+    let dir = fresh();
+    let set = ArchiveSet::open(
+        dir.path(),
+        SetOptions {
+            language: Some("Requested".to_owned()),
+            ..SetOptions::default()
+        },
+    )
+    .expect("the set opens");
+    assert_eq!(set.language(), Some("DE"));
+    assert!(!set.problems().is_empty());
+    assert_eq!(archive_inventory(&set, "DE", &[1]).map(|a| a.len()), Ok(10));
 }
 
 #[test]
@@ -506,11 +803,6 @@ fn an_auxiliary_part_that_is_not_associated_with_its_base_is_refused() {
         },
         failed,
     );
-    // A part past the base's count.
-    refused(
-        |d| write(d, "client_cell_1_aux_1.datx", &aux(0x0203_0000, 1, 1, 1)),
-        failed,
-    );
     // A part with no base.
     refused(
         |d| write(d, "client_cell_2_aux_1.datx", &aux(0x0203_0000, 2, 1, 1)),
@@ -519,15 +811,6 @@ fn an_auxiliary_part_that_is_not_associated_with_its_base_is_refused() {
     // A part the base counts that is not there.
     refused(
         |d| std::fs::remove_file(d.join("client_mesh_aux_1.datx")).expect("removed"),
-        failed,
-    );
-    // A name with no canonical part number, which the original counts as a part.
-    refused(
-        |d| std::fs::write(d.join("client_mesh_aux_01.datx"), b"x").expect("written"),
-        failed,
-    );
-    refused(
-        |d| std::fs::write(d.join("client_mesh_aux_x.datx"), b"x").expect("written"),
         failed,
     );
     // Another identifier than its base's.
@@ -582,6 +865,8 @@ fn an_overlay_next_to_a_listed_base_is_refused() {
     assert_eq!(inventory_of(dir.path()), Ok(10));
 }
 
+/// Region 1 is required. pending §25 fix 14: half of another pair stays a labelled refusal, and so
+/// does a region archive outside the map's keys.
 #[test]
 fn the_regions_are_complete_or_unsupported() {
     let missing = InstallUnsupported::ArchiveMissing;
@@ -622,12 +907,8 @@ fn the_regions_are_complete_or_unsupported() {
 #[test]
 fn the_other_inventory_refusals_keep_their_kinds() {
     refused(
-        |d| std::fs::remove_file(d.join("client_highres.dat")).expect("removed"),
-        InstallUnsupported::ArchiveMissing,
-    );
-    refused(
         |d| std::fs::remove_file(d.join("client_local_DE.dat")).expect("removed"),
-        InstallUnsupported::ArchiveFailed,
+        InstallUnsupported::ArchiveMissing,
     );
     refused(
         |d| write(d, "client_custom.dat", &base(0x0103_0000, 0, 1)),

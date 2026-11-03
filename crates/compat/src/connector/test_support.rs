@@ -109,9 +109,12 @@ pub const OUTGOING_UUID: [u8; 16] = [
     0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00, 0xAB, 0xCD,
 ];
 
-/// The selected language's key of the synthetic install (`official-session.md` §10.2 Vector
+/// The selected language's full key of the synthetic install (`official-session.md` §10.2 Vector
 /// 10's synthetic key, never a value for the service).
-pub const SYNTHETIC_LANGUAGE_KEY: u32 = 5;
+pub const SYNTHETIC_LANGUAGE_KEY: u32 = 0x1000_0005;
+/// The test-only destination of a requested `0x6F`: invented, neither the default recipient nor
+/// the list's. No production path has one ([`ConnectorNet::entry_destination`]).
+pub const TEST_ENTRY_DESTINATION: u64 = 0x0A0B_0C0D_0E0F_1113;
 /// The name-rule key of the synthetic server's `0xDD` and the synthetic install's rule
 /// (§10.2 Vector 11's synthetic key).
 pub const SYNTHETIC_NAME_RULE: u32 = 7;
@@ -133,7 +136,8 @@ pub fn synthetic_inventory() -> Vec<AdvertisedArchive> {
             ],
             notes: (0..11)
                 .map(|n| IterationNote {
-                    iteration: 10_030 + n,
+                    // The 11 highest listed: the end of the first run, then the whole second.
+                    iteration: if n == 0 { 30 } else { 10_030 + n },
                     opaque: [i, 0xA5, 0x5A, 3, 4, 5, 6, u8::try_from(n).unwrap_or(0)],
                 })
                 .collect(),
@@ -218,6 +222,8 @@ struct State {
     access: Option<NetworkAccess>,
     /// Plays [`SyntheticService::observed_order`]'s script.
     observed: bool,
+    /// [`SyntheticService::allow_re_entry`].
+    re_entry: bool,
     /// The client's blobs being put together in that mode.
     reassembler: BlobReassembler,
 }
@@ -258,6 +264,13 @@ impl SyntheticService {
         let service = Self::default();
         service.state().observed = true;
         service
+    }
+
+    /// Lets the client enter the world again after a return, which `official-session.md` §9.3.7
+    /// leaves unsupported on every production path, so a test reaches what a second world must not
+    /// inherit from the first.
+    pub fn allow_re_entry(&self) {
+        self.state().re_entry = true;
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -758,10 +771,10 @@ impl Server {
         .ok()
     }
 
-    /// An event of the historical script. The list `0x6C` has one shared flags byte, which
-    /// its payload already starts with (`official-session.md` §9.3.5).
+    /// An event of the historical script. `0x6C`, `0x90`, `0x6D` and `0xB3` have one shared
+    /// flags byte, which their payloads already start with (`official-session.md` §9.3.7).
     fn event(&mut self, opcode: u32, inner: &[u8]) -> Option<Vec<u8>> {
-        if opcode == CharacterListResponse::EVENT_ID {
+        if matches!(opcode, 0x6C | 0x90 | 0x6D | 0xB3) {
             return self.blob(opcode, inner);
         }
         self.blob(opcode, &encode_event_envelope(inner))
@@ -833,6 +846,14 @@ impl UdpDatagramTransport for SyntheticUdp {
 
 impl ConnectorNet for SyntheticNet {
     type Udp = SyntheticUdp;
+
+    fn entry_destination(&self) -> Option<u64> {
+        Some(TEST_ENTRY_DESTINATION)
+    }
+
+    fn re_entry_allowed(&self) -> bool {
+        self.0.state().re_entry
+    }
 
     fn http(&mut self, request: &HttpRequest) -> Result<HttpResponse, LoginError> {
         self.0.answer(request)

@@ -3,8 +3,9 @@
 //!
 //! String tables live only in `client_local_<Lang>.dat`. One archive is chosen per
 //! rendering session and there is no cross-locale fallback. The archive's header subset
-//! word (0x150) is reported as the locale's language ID; behaviour must key off that ID,
-//! not off the spelling of the archive name.
+//! word (0x150) is the folded archive subset, the union of the high and low halves of the full
+//! language key (spec §10.2, `dat-container.md` §3.4). It is reported here as the locale's
+//! [`LanguageId`]; it is not the full key.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -13,8 +14,9 @@ use tessera_dat::{Archive, ArchiveId, ArchiveKind};
 
 use crate::error::{Result, TextError};
 
-/// A language ID: the language archive's header subset word, which is the plugin API's
-/// language value (spec §10.2).
+/// The language archive's header subset word: a folded subset, not the full language key (spec
+/// §10.2). Whether the plugin API's language value is this word is the spec's OPEN; the result of
+/// `GetLanguage` is unchanged until it answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct LanguageId(pub u32);
 
@@ -62,7 +64,7 @@ pub struct Locale {
     /// The language name exactly as written in the archive file name (also the value
     /// matched by `--language`).
     pub name: String,
-    /// The archive's language ID (header subset word).
+    /// The archive's folded subset (header subset word), not the full language key.
     pub language_id: LanguageId,
     /// Path of the language archive.
     pub path: PathBuf,

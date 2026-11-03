@@ -564,6 +564,7 @@ pub fn format_event(event: &Event, ctx: &LogContext) -> String {
                 DisconnectReason::ServerClosed(s) => format!("server-closed:{}", quote(s)),
                 DisconnectReason::TimedOut => "timed-out".to_owned(),
                 DisconnectReason::TransportFailed(s) => format!("transport-failed:{}", quote(s)),
+                DisconnectReason::Unsupported(s) => format!("unsupported:{}", quote(s)),
             };
             format!("Disconnected reason={r}")
         }

@@ -1191,6 +1191,7 @@ fn every_event() -> Vec<Event> {
             reason: LoginRefusal::Other,
             retry_after_seconds: Some(1),
             detail: None,
+            note: None,
         }),
         Event::Disconnected {
             reason: DisconnectReason::ServerClosed("bye".into()),
@@ -1825,7 +1826,7 @@ fn official_release_path_shows_the_warning_and_makes_no_network_operation() {
 
 #[test]
 fn placeholder_backend_refusal_maps_to_the_not_available_message() {
-    let end = super::login::refusal_end(LoginRefusal::NotAvailable, None, Some("ignored"));
+    let end = super::login::refusal_end(LoginRefusal::NotAvailable, None, Some("ignored"), None);
     assert_eq!(end.target, Target::StartScreen);
     let m = end.message.expect("message");
     assert_eq!(
@@ -1957,6 +1958,7 @@ fn oe_t10_credentials_never_persisted_or_logged() {
                 reason,
                 retry_after_seconds: None,
                 detail: Some("service text".into()),
+                note: None,
             }));
             f.push(Event::Disconnected {
                 reason: DisconnectReason::ServerClosed("closed".into()),
@@ -2673,6 +2675,7 @@ fn oe_t14_every_row_of_8_6_and_the_watchdog() {
                 reason,
                 retry_after_seconds: None,
                 detail: Some("why".into()),
+                note: None,
             }),
             t0,
         );
@@ -2689,7 +2692,7 @@ fn oe_t14_every_row_of_8_6_and_the_watchdog() {
         assert_eq!(m.detail.is_some(), detail, "{reason:?}");
         assert!(end.wait >= Duration::from_secs(2));
     }
-    let end = super::login::refusal_end(LoginRefusal::RateLimited, Some(120), None);
+    let end = super::login::refusal_end(LoginRefusal::RateLimited, Some(120), None, None);
     assert_eq!(end.wait, Duration::from_secs(120));
     assert!(end.rate_limited);
     // Without LoginRefused.
@@ -2778,6 +2781,7 @@ fn oe_t14_retry_waits_and_targets_in_the_flow() {
         reason: LoginRefusal::RateLimited,
         retry_after_seconds: Some(30),
         detail: None,
+        note: None,
     }));
     f.push(Event::Disconnected {
         reason: DisconnectReason::ServerClosed(String::new()),
@@ -2832,6 +2836,7 @@ fn oe_t14_retry_waits_and_targets_in_the_flow() {
         reason: LoginRefusal::UnsupportedStep,
         retry_after_seconds: None,
         detail: None,
+        note: None,
     }));
     f.push(Event::Disconnected {
         reason: DisconnectReason::ClientRequested,
@@ -3010,6 +3015,7 @@ fn oe_t19_account_name_copy() {
             reason,
             retry_after_seconds: None,
             detail: None,
+            note: None,
         }));
         f.push(Event::Disconnected {
             reason: DisconnectReason::TransportFailed("x".into()),
@@ -4352,4 +4358,48 @@ fn dismiss_not_stored(flow: &mut Flow, t: Instant) {
         flow.device_input(&press(Key::Escape, t), &|_, _| None);
     }
     assert!(flow.notice().is_none());
+}
+
+/// Tessera's own note on a refusal is not presented as the service's words, on the start screen
+/// the row asks for. A service detail keeps its line.
+#[test]
+fn a_local_refusal_is_not_attributed_to_the_service() {
+    let note = "This install's data could not be prepared for the official login.";
+    let end = super::login::refusal_end(LoginRefusal::UnsupportedStep, None, None, Some(note));
+    assert_eq!(end.target, super::login::Target::StartScreen);
+    let m = end.message.expect("a message");
+    assert_eq!(m.detail.as_deref(), Some(note));
+    assert!(
+        !m.detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("service said")
+    );
+
+    let end = super::login::refusal_end(
+        LoginRefusal::UnsupportedStep,
+        None,
+        Some("maintenance"),
+        None,
+    );
+    assert_eq!(
+        end.message.expect("a message").detail.as_deref(),
+        Some("The service said: maintenance")
+    );
+}
+
+/// A session that ends at a step the client does not support (an undecodable `0x90` after the
+/// referral) reads as that, not as no answer.
+#[test]
+fn an_unsupported_end_of_the_session_has_its_own_message() {
+    let why = tessera_net::DisconnectReason::Unsupported("The start could not be read.".into());
+    let m = super::login::disconnect_message(&why).expect("a message");
+    assert_eq!(
+        m.text,
+        tessera_compat::consent::strings::text("official.error.unsupported_step")
+    );
+    assert_eq!(m.detail.as_deref(), Some("The start could not be read."));
+    let timed_out =
+        super::login::disconnect_message(&tessera_net::DisconnectReason::TimedOut).expect("one");
+    assert_ne!(m.text, timed_out.text);
 }

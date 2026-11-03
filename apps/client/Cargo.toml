@@ -79,6 +79,8 @@ audio-device = ["tessera-audio/device"]
 
 [dev-dependencies]
 tempfile = "3"
+# Synthetic archives of `tests/official_inventory.rs` (the writer in `crates/dat/tests/common`).
+flate2.workspace = true
 # The record-building helpers of `consent::test_support` for the official-entry tests
 # (OE-T5, OE-T6 (c)); dev-dependency features never reach the client binary.
 tessera-compat = { workspace = true, features = ["test-support"] }

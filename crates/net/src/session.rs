@@ -1224,7 +1224,10 @@ fn clean_text(event: &mut Event) -> bool {
             changed
         }
         Event::Disconnected {
-            reason: DisconnectReason::ServerClosed(why) | DisconnectReason::TransportFailed(why),
+            reason:
+                DisconnectReason::ServerClosed(why)
+                | DisconnectReason::TransportFailed(why)
+                | DisconnectReason::Unsupported(why),
         } => clean(why, MAX_CHAT_LEN),
         Event::EnterWorldFailed { character, reason } => {
             clean(character, MAX_NAME_LEN) | clean(reason, MAX_CHAT_LEN)

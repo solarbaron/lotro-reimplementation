@@ -4,9 +4,10 @@
 //! install's name-rule and language lookups over hostile DID maps, enum mappers and name
 //! tables, and the top level of `0x6C`.
 //!
-//! The input is a chain of length-prefixed chunks: the first selects a wire `0xDD` and `0x6C`
-//! body, the next ones are records served by an in-memory install. No panic and bounded work:
-//! `0xEC` never passes its cap, and what it writes reads back through `IterationRecord::parse`.
+//! The whole input is tried as a wire `0xDD` and a `0x6C` body; split into a chain of
+//! length-prefixed chunks it also gives iteration records and the records of an in-memory
+//! install. No panic and bounded work: `0xEC` never passes its cap, and what it writes reads
+//! back through `IterationRecord::parse` as the same iterations and trailing entries.
 #![no_main]
 
 use std::collections::BTreeMap;
@@ -62,6 +63,23 @@ fn chunks(data: &[u8]) -> Vec<&[u8]> {
     out
 }
 
+/// The iteration runs merged at their joins, so two forms of one list compare equal without
+/// walking a count the input chose.
+fn expanded(record: &tessera_install::IterationRecord) -> Vec<(i64, u64)> {
+    let mut runs: Vec<(i64, u64)> = Vec::new();
+    for range in &record.ranges {
+        match runs.last_mut() {
+            Some((start, len))
+                if start.saturating_add(i64::try_from(*len).unwrap_or(i64::MAX)) == range.start =>
+            {
+                *len += u64::from(range.len);
+            }
+            _ => runs.push((range.start, u64::from(range.len))),
+        }
+    }
+    runs
+}
+
 fn iteration_entries(archive: &AdvertisedArchive, record: &[u8], stamp: u16) {
     let Ok(data) = build_install_advertisement(5, std::slice::from_ref(archive)) else {
         return;
@@ -72,12 +90,12 @@ fn iteration_entries(archive: &AdvertisedArchive, record: &[u8], stamp: u16) {
         return;
     };
     // The serializer's output is a record of the same values, whatever form the input had.
-    let again = tessera_install::IterationRecord::parse(body, 2);
-    let first = tessera_install::IterationRecord::parse(record, stamp);
-    if let (Ok(again), Ok(first)) = (again, first) {
-        assert_eq!(again.count, first.count);
-        assert_eq!(again.trailing, first.trailing);
-    }
+    // `advertised_archive` took this record, so both parse.
+    let again = tessera_install::IterationRecord::parse(body, 2).expect("what it wrote parses");
+    let first = tessera_install::IterationRecord::parse(record, stamp).expect("it parsed before");
+    assert_eq!(again.count, first.count);
+    assert_eq!(again.trailing, first.trailing);
+    assert_eq!(expanded(&again), expanded(&first));
     let _ = advertisement_order(archive.wire_identifier());
 }
 

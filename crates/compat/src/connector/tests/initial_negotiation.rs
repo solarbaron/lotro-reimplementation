@@ -12,10 +12,10 @@ use super::diagnostics::{assert_no_endpoint, logs_of};
 use super::*;
 use crate::initial::{
     AdvertisedArchive, COMPLETION_WAIT_SEC, DD_WAIT_SEC, InstallUnsupported, LIST_WAIT_SEC,
-    UnsupportedNegotiation, build_install_advertisement,
+    UnsupportedNegotiation, VERSION_PATH_WAIT_SEC, build_install_advertisement,
 };
 use crate::session::{
-    FLAG_MASKED_CHECKSUM, FlowControlHeader, RETAINED_BLOB_RESEND_WINDOW_SEC,
+    FLAG_MASKED_CHECKSUM, FlowControlHeader, MAX_GAP_AGE_SEC, RETAINED_BLOB_RESEND_WINDOW_SEC,
     encode_message_with_routing,
 };
 
@@ -94,19 +94,21 @@ fn opcodes(packets: &[crate::session::DecodedPacket]) -> Vec<u32> {
 /// and the driver has ended.
 fn assert_refused(d: &mut SessionDriver<FakeNet>, why: UnsupportedNegotiation) {
     let events = d.take_events();
-    let refused: Vec<&Option<String>> = events
+    let refused: Vec<(&Option<String>, &Option<String>)> = events
         .iter()
         .filter_map(|e| match e {
             Event::Account(AccountEvent::LoginRefused {
                 reason: LoginRefusal::UnsupportedStep,
                 detail,
+                note,
                 ..
-            }) => Some(detail),
+            }) => Some((detail, note)),
             _ => None,
         })
         .collect();
     assert_eq!(refused.len(), 1, "{events:?}");
-    assert_eq!(refused[0].as_deref(), Some(why.detail()));
+    assert_eq!(refused[0].0, &None, "nothing here is the service's words");
+    assert_eq!(refused[0].1.as_deref(), Some(why.detail()));
     assert!(events.iter().any(is_disconnected), "{events:?}");
     assert!(d.ended());
     assert_eq!(d.counters().unsupported_results, 1);
@@ -398,6 +400,27 @@ fn only_the_first_valid_request_on_queue_1_of_the_login_connection_sends_the_adv
     assert!(!d.ended());
 }
 
+/// §9.3.4 and Vector 11: the opaque configuration word is kept, never compared with anything.
+#[test]
+fn another_configuration_word_alone_changes_nothing_in_the_advertisement() {
+    let advertisement_for = |word: u32| {
+        let (world, mut d, mut login) = connected();
+        let mut request = install_request(RULE, &[]);
+        request[1..5].copy_from_slice(&word.to_le_bytes());
+        world.deliver(queue1(&mut login, 0xDD, &request), LOGIN_SERVER);
+        d.step(0.1, true, &go);
+        assert!(d.initial_stages().ec_sent, "{word:#x}");
+        sent_packets(&world)
+            .into_iter()
+            .flat_map(|p| p.fragments)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        advertisement_for(0x0102_0304),
+        advertisement_for(0xFFFF_FFFF)
+    );
+}
+
 #[test]
 fn the_completion_is_answered_once() {
     let (world, mut d, mut login) = connected();
@@ -416,14 +439,31 @@ fn the_completion_is_answered_once() {
 }
 
 #[test]
-fn an_actual_version_request_is_still_answered() {
-    // §9.3: only an actual `0x12F` asks for `0x12C`, and it ends the wait for `0xDD`.
+fn an_actual_version_request_is_still_answered_and_its_wait_is_bounded() {
+    // §9.3: only an actual `0x12F` asks for `0x12C`, and it has a wait of its own: a server that
+    // goes on sending and never gets to `0xDD` or `0x6C` does not hold the login forever.
     let (world, mut d, mut login) = connected();
     world.deliver(login.event(0x12F, &[]), LOGIN_SERVER);
-    d.step(0.1, true, &go);
+    d.step(1.0, true, &go);
     assert_eq!(opcodes(&sent_packets(&world)), [0x12C]);
-    d.step(DD_WAIT_SEC + 1.0, false, &go);
+    slow_server(&world, &mut d, &mut login, 2.0, VERSION_PATH_WAIT_SEC);
     assert!(!d.ended());
+    d.step(1.0 + VERSION_PATH_WAIT_SEC + 0.1, false, &go);
+    assert_refused(&mut d, UnsupportedNegotiation::VersionPathDeadline);
+    assert_no_ticket_after(&world, &mut d, 1.0 + VERSION_PATH_WAIT_SEC + 1.0);
+}
+
+#[test]
+fn the_version_path_still_reaches_the_list() {
+    let (world, mut d, mut login) = connected();
+    world.deliver(login.event(0x12F, &[]), LOGIN_SERVER);
+    d.step(1.0, true, &go);
+    world.deliver(queue1(&mut login, 0x6C, &character_list()), LOGIN_SERVER);
+    d.step(2.0, true, &go);
+    assert!(d.initial_stages().list_received);
+    let _ = d.take_events();
+    d.step(1.0 + VERSION_PATH_WAIT_SEC + 1.0, false, &go);
+    assert_eq!(d.counters().unsupported_results, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -474,6 +514,45 @@ fn an_install_that_cannot_answer_spends_no_ticket() {
         assert!(world.take_sent().is_empty(), "nothing sent");
         assert_eq!(world.binds(), 0, "no socket");
     }
+}
+
+/// Over the whole connector: the refusal carries Tessera's note, never the service's detail,
+/// and no socket is opened.
+#[test]
+fn the_connector_refuses_an_install_that_cannot_answer_with_its_own_note() {
+    let why = UnsupportedNegotiation::Inventory(InstallUnsupported::ArchiveMissing);
+    let (dir, world, backend) = backend_over(
+        Service::default(),
+        Some(GLS),
+        Box::new(|_, _| {
+            Ok(Arc::new(Answers {
+                inventory: Err(InstallUnsupported::ArchiveMissing),
+                ..Answers::new()
+            }) as Arc<dyn InstallData>)
+        }),
+    );
+    let mut session = Session::from_boxed(backend);
+    session
+        .send(Instant::now(), Command::Connect)
+        .expect("connect");
+    let mut run = Run {
+        _dir: dir,
+        world,
+        session,
+        seen: Vec::new(),
+        backlog: std::collections::VecDeque::new(),
+    };
+    run.wait_event(is_world_list);
+    run.choose(0);
+    run.wait_event(is_disconnected);
+    let refusal = run.seen.iter().find_map(|e| match e {
+        Event::Account(AccountEvent::LoginRefused { detail, note, .. }) => {
+            Some((detail.clone(), note.clone()))
+        }
+        _ => None,
+    });
+    assert_eq!(refusal, Some((None, Some(why.detail().to_owned()))));
+    assert_eq!(run.world.binds(), 0);
 }
 
 /// `dd` as the first `0xDD` ends the attempt with `why`, with no message and no ticket sent.
@@ -731,8 +810,172 @@ fn a_queued_login_restarts_the_wait() {
     assert!(!d.ended(), "the wait began again at the queue message");
 }
 
+/// Valid unsequenced traffic only: it keeps the silence timeout (§8.2) from firing and carries
+/// no application message. Steps from `from` up to `to`, returning the times of the progress
+/// events seen on the way.
+fn transport_only_server(
+    world: &World,
+    d: &mut SessionDriver<FakeNet>,
+    login: &Server,
+    from: f64,
+    to: f64,
+) -> Vec<f64> {
+    let mut progress = Vec::new();
+    let mut t = from;
+    while t < to {
+        world.deliver(
+            login.control(OptionalHeaders {
+                cumulative_ack: Some(0),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(t, true, &go);
+        for e in d.take_events() {
+            if matches!(e, Event::Account(AccountEvent::LoginProgress { .. })) {
+                progress.push(t);
+            }
+        }
+        t += 1.0;
+    }
+    progress
+}
+
+/// The client's watchdog runs out at 60 s without an event (`official-entry.md` §8.3): a server
+/// that only keeps the transport alive still gets the whole wait, and the wait's own result.
 #[test]
-fn refused_datagrams_end_the_attempt_at_their_limit() {
+fn the_deadlines_decide_when_the_server_sends_only_transport_traffic() {
+    const WATCHDOG_SEC: f64 = 60.0;
+    let bounded = |progress: &[f64], from: f64, to: f64| {
+        let mut last = from;
+        for &t in progress {
+            assert!(t - last < WATCHDOG_SEC, "{last} to {t}");
+            last = t;
+        }
+        assert!(to - last < WATCHDOG_SEC, "{last} to {to}");
+    };
+
+    // State 5 to `0xDD`.
+    let (world, mut d, login) = connected();
+    let progress = transport_only_server(&world, &mut d, &login, 1.0, DD_WAIT_SEC);
+    bounded(&progress, 0.0, DD_WAIT_SEC);
+    assert!(!d.ended());
+    d.step(DD_WAIT_SEC + 0.1, false, &go);
+    assert_refused(&mut d, UnsupportedNegotiation::RequestDeadline);
+
+    // `0xEC` to the server's `0xF5`, and a late answer past the watchdog is still taken.
+    let (world, mut d, mut login) = connected();
+    world.deliver(
+        queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+        LOGIN_SERVER,
+    );
+    d.step(1.0, true, &go);
+    let progress = transport_only_server(&world, &mut d, &login, 2.0, 2.0 + WATCHDOG_SEC + 10.0);
+    bounded(&progress, 1.0, 2.0 + WATCHDOG_SEC + 10.0);
+    world.deliver(queue1(&mut login, 0xF5, &[0]), LOGIN_SERVER);
+    d.step(2.0 + WATCHDOG_SEC + 11.0, true, &go);
+    assert!(d.initial_stages().f5_sent, "past the watchdog");
+
+    // The client's `0xF5` to `0x6C`.
+    let from = 2.0 + WATCHDOG_SEC + 11.0;
+    let progress = transport_only_server(&world, &mut d, &login, from + 1.0, from + LIST_WAIT_SEC);
+    bounded(&progress, from, from + LIST_WAIT_SEC);
+    assert!(!d.ended());
+    d.step(from + LIST_WAIT_SEC + 0.1, false, &go);
+    assert_refused(&mut d, UnsupportedNegotiation::ListDeadline);
+
+    // `0xEC` to `0xF5` to its end.
+    let (world, mut d, mut login) = connected();
+    world.deliver(
+        queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+        LOGIN_SERVER,
+    );
+    d.step(1.0, true, &go);
+    let _ = transport_only_server(&world, &mut d, &login, 2.0, 1.0 + COMPLETION_WAIT_SEC);
+    assert!(!d.ended());
+    d.step(1.0 + COMPLETION_WAIT_SEC + 0.1, false, &go);
+    assert_refused(&mut d, UnsupportedNegotiation::CompletionDeadline);
+}
+
+/// The driver asks to be woken for the keep-alive, whether or not anything arrives.
+#[test]
+fn the_loop_is_woken_for_the_keep_alive() {
+    let (_world, d, _login) = connected();
+    let next = d.next_deadline(1.0).expect("a deadline");
+    assert!(
+        next <= super::super::session_phase::LOG_INTERVAL_SEC,
+        "{next}"
+    );
+}
+
+/// While the queue panel shows (`official-entry.md` §8.4), no progress event replaces it;
+/// its end, or the next step, brings the keep-alive back.
+#[test]
+fn the_keep_alive_leaves_the_queue_panel_alone() {
+    let queue_status = |result: u32, queue: Option<crate::session::LoginQueuePosition>| {
+        let status = LoginQueueStatusMessage {
+            login_result: result,
+            detail_text: String::new(),
+            queue,
+        };
+        encode_event_envelope(&status.encode().expect("encode"))
+    };
+    let (world, mut d, mut login) = connected();
+    let queued = queue_status(
+        crate::session::LOGON_RESULT_QUEUED,
+        Some(crate::session::LoginQueuePosition {
+            position: 3,
+            total: 9,
+        }),
+    );
+    world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
+    d.step(1.0, true, &go);
+    let events = d.take_events();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Account(AccountEvent::LoginQueueChanged { .. }))),
+        "{events:?}"
+    );
+    // A skipped message and the passing time make no progress event while queued.
+    world.deliver(queue1(&mut login, 0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+    let progress = transport_only_server(&world, &mut d, &login, 12.0, 50.0);
+    assert_eq!(progress, [] as [f64; 0]);
+
+    // Accepted: the progress screen, and the keep-alive after it.
+    let accepted = queue_status(0, None);
+    world.deliver(queue1(&mut login, 0x130, &accepted), LOGIN_SERVER);
+    let progress = transport_only_server(&world, &mut d, &login, 50.0, 75.0);
+    assert!(progress.len() >= 3, "{progress:?}");
+    assert_eq!(progress[0], 50.0, "the acceptance's own event");
+}
+
+/// pending spec pass 10 fix 13: a packet that stays refused while the server keeps sending ends
+/// the attempt, by the age of its gap.
+#[test]
+fn a_gap_that_stays_open_ends_the_attempt() {
+    let (world, mut d, mut login) = connected();
+    // Sequence number of the packet that cannot be taken: a later valid one opens the gap.
+    login.seq += 1;
+    let _ = login.isaac.next_mask();
+    world.deliver(queue1(&mut login, 0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+    d.step(1.0, true, &go);
+    let mut t = 2.0;
+    while t < 1.0 + MAX_GAP_AGE_SEC {
+        world.deliver(queue1(&mut login, 0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+        d.step(t, true, &go);
+        assert!(!d.ended(), "{t}");
+        t += 10.0;
+    }
+    d.step(1.0 + MAX_GAP_AGE_SEC + 0.1, false, &go);
+    d.step(1.0 + MAX_GAP_AGE_SEC + 0.2, false, &go);
+    assert_refused(&mut d, UnsupportedNegotiation::TrafficRefused);
+    assert_no_ticket_after(&world, &mut d, 1.0 + MAX_GAP_AGE_SEC + 1.0);
+}
+
+/// Datagrams that match only the source and recipient are counted and end nothing.
+#[test]
+fn refused_datagrams_alone_end_nothing() {
     let (world, mut d, _login) = connected();
     // A fragment on queue 5 (OPEN-SESSION-12): the whole datagram is refused, unacknowledged.
     let mut wire = vec![0u8; 22];
@@ -742,12 +985,16 @@ fn refused_datagrams_end_the_attempt_at_their_limit() {
     wire[6..10].copy_from_slice(&flags.to_be_bytes());
     wire[10..14].copy_from_slice(&2u32.to_be_bytes());
     wire.extend_from_slice(&[0x05, 0x40]);
-    for _ in 0..crate::session::MAX_REFUSED_DATAGRAMS {
+    for _ in 0..200 {
         world.deliver(wire.clone(), LOGIN_SERVER);
     }
     d.step(0.1, true, &go);
-    assert_refused(&mut d, UnsupportedNegotiation::TrafficRefused);
-    assert_no_ticket_after(&world, &mut d, 0.2);
+    assert!(!d.ended());
+    assert_eq!(d.counters().unsupported_results, 0);
+    let report = d
+        .handshake_report(false, 0.1)
+        .expect("the login connection");
+    assert_eq!(report.counts.refused_while_connected, 200);
 }
 
 // ---------------------------------------------------------------------------
@@ -793,6 +1040,41 @@ fn a_lost_advertisement_fragment_is_resent_on_a_nak() {
         sent.iter()
             .any(|p| p.opt_headers.out_of_order_ack.is_some())
     );
+}
+
+/// pending spec pass 10 fix 9: the client's one `0xF5` is resent on a NAK too: the server cannot
+/// go on without it.
+#[test]
+fn a_lost_completion_is_resent_on_a_nak() {
+    let (world, mut d, mut login) = connected();
+    world.deliver(
+        queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+        LOGIN_SERVER,
+    );
+    d.step(0.1, true, &go);
+    world.take_sent();
+    world.deliver(queue1(&mut login, 0xF5, &[0]), LOGIN_SERVER);
+    d.step(0.2, true, &go);
+    let sent = sent_packets(&world);
+    let lost = sent
+        .iter()
+        .find(|p| !p.fragments.is_empty())
+        .expect("the client's 0xF5");
+    world.deliver(
+        login.control(OptionalHeaders {
+            sequence_nak: Some(vec![lost.header.seq_num]),
+            ..OptionalHeaders::default()
+        }),
+        LOGIN_SERVER,
+    );
+    d.step(0.3, true, &go);
+    let again = sent_packets(&world)
+        .into_iter()
+        .find(|p| p.header.seq_num == lost.header.seq_num)
+        .expect("the resend");
+    assert_eq!(again.header.client_word, lost.header.client_word);
+    assert_eq!(again.fragments, lost.fragments);
+    assert_eq!(again.fragments[0].payload, [0x00]);
 }
 
 /// pending spec pass 10 fix 19: queue-2 blobs are delivered on completion; repeats and gaps of
@@ -860,6 +1142,229 @@ fn an_unreadable_session_start_has_its_own_result() {
     assert!(
         !events.iter().any(is_disconnected),
         "the list is offered again"
+    );
+}
+
+/// The live order: `0x6F`, the referral, then `0x90` on the world connection. No connection is
+/// left for another `0x6F`, so the session ends, with the unsupported result and not as if the
+/// server had not answered.
+#[test]
+fn an_unreadable_session_start_after_the_referral_ends_with_its_own_reason() {
+    let (world, mut d, login) = driver_at_characters(Service::default(), 0);
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    d.step(1.1, true, &go);
+    world.deliver(
+        login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+        LOGIN_SERVER,
+    );
+    d.step(1.2, true, &go);
+    let mut server = Server::new(0x0222, 0xBEEF_0002);
+    server.connect_to(&world, 0xBEEF_0002, WORLD_SERVER);
+    d.step(1.3, true, &go);
+    let _ = d.take_events();
+    world.deliver(server.blob(0x90, &[0x00, 0x7F, 0x01]), WORLD_SERVER);
+    d.step(1.4, true, &go);
+    let events = d.take_events();
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::EnterWorldFailed { reason, .. } if reason == UNSUPPORTED_SESSION_START
+        )),
+        "{events:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::Disconnected {
+                reason: DisconnectReason::Unsupported(text)
+            } if text == UNSUPPORTED_SESSION_START
+        )),
+        "{events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::Disconnected {
+                reason: DisconnectReason::TimedOut
+            }
+        )),
+        "{events:?}"
+    );
+}
+
+/// The entry deadline after a referral stays what it was: the world did not answer.
+#[test]
+fn the_entry_deadline_after_the_referral_is_a_time_out() {
+    let (world, mut d, login) = driver_at_characters(Service::default(), 0);
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    d.step(1.1, true, &go);
+    world.deliver(
+        login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+        LOGIN_SERVER,
+    );
+    d.step(1.2, true, &go);
+    let _ = d.take_events();
+    d.step(
+        1.0 + super::super::session_phase::ENTER_WORLD_TIMEOUT_SEC + 1.0,
+        false,
+        &go,
+    );
+    assert!(d.take_events().iter().any(|e| matches!(
+        e,
+        Event::Disconnected {
+            reason: DisconnectReason::TimedOut
+        }
+    )));
+}
+
+// ---------------------------------------------------------------------------
+// A cancel
+// ---------------------------------------------------------------------------
+
+/// Once the attempt is cancelled nothing is answered, whichever check of the pass the cancel
+/// falls between: `0xEC` and `0xF5` never go out, only the goodbye. Run with the cancel landing
+/// at each point of the pass in turn.
+#[test]
+fn a_cancel_at_any_point_of_the_pass_sends_no_advertisement() {
+    for checks_before_cancel in 0..64 {
+        let (world, mut d, mut login) = connected();
+        world.deliver(
+            queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+            LOGIN_SERVER,
+        );
+        let checks = std::cell::Cell::new(0usize);
+        let stop = || {
+            checks.set(checks.get() + 1);
+            checks.get() > checks_before_cancel
+        };
+        d.step(0.1, true, &stop);
+        if checks.get() <= checks_before_cancel {
+            // The cancel would come after the pass, which was entitled to send: all covered.
+            assert!(checks_before_cancel > 0);
+            break;
+        }
+        d.begin_shutdown(0.1);
+        let mut t = 0.1;
+        while d.shutdown_step(t) && t < 30.0 {
+            t += 0.5;
+        }
+        let sent = sent_packets(&world);
+        assert!(
+            opcodes(&sent).is_empty(),
+            "cancel after {checks_before_cancel} checks: {:x?}",
+            opcodes(&sent)
+        );
+        assert!(sent.iter().all(|p| p.fragments.is_empty()));
+    }
+}
+
+#[test]
+fn a_cancelled_attempt_answers_no_completion_and_no_version_request() {
+    for (op, data) in [(0xF5u32, vec![0u8]), (0x12F, vec![0x00])] {
+        let (world, mut d, mut login) = connected();
+        world.deliver(
+            queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+            LOGIN_SERVER,
+        );
+        d.step(0.1, true, &go);
+        world.take_sent();
+        world.deliver(queue1(&mut login, op, &data), LOGIN_SERVER);
+        d.step(0.2, true, &cancelled);
+        assert!(!d.initial_stages().f5_sent, "{op:#x}");
+        assert!(d.initial_stages().ignored >= 1, "{op:#x}");
+        d.begin_shutdown(0.2);
+        assert!(opcodes(&sent_packets(&world)).is_empty(), "{op:#x}");
+    }
+}
+
+/// A login stopped from outside past its handshake says how far it got, with the counts.
+#[test]
+fn a_cancel_past_the_handshake_logs_how_far_the_login_got() {
+    let ((), logs) = logs_of(|| {
+        let (world, mut d, mut login) = connected();
+        world.deliver(queue1(&mut login, 0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+        world.deliver(
+            queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+            LOGIN_SERVER,
+        );
+        d.step(0.1, true, &go);
+        d.begin_shutdown(0.2);
+        // A second shutdown of the same session logs nothing more.
+        d.begin_shutdown(0.3);
+    });
+    let lines: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("login ended before the character list"))
+        .collect();
+    assert_eq!(lines.len(), 1, "{logs}");
+    for field in ["reason=cancelled", "ec_sent=true", "skipped_149=1"] {
+        assert!(lines[0].contains(field), "{field} missing: {logs}");
+    }
+    assert_no_endpoint(&logs);
+}
+
+#[test]
+fn a_revoked_right_past_the_handshake_logs_how_far_the_login_got() {
+    let ((), logs) = logs_of(|| {
+        let (_world, mut d, _login) = connected();
+        d.abandon(0.2);
+    });
+    assert!(
+        logs.contains("login ended before the character list")
+            && logs.contains("reason=network right revoked"),
+        "{logs}"
+    );
+}
+
+/// The stage the owner reads: a server `0xF5` that could not be answered still counts as seen.
+#[test]
+fn a_completion_that_cannot_be_answered_is_reported_as_received() {
+    let ((), logs) = logs_of(|| {
+        let (world, mut d, mut login) = connected();
+        world.deliver(queue1(&mut login, 0xF5, &[0]), LOGIN_SERVER);
+        d.step(0.1, true, &go);
+        assert!(d.initial_stages().f5_received);
+        assert!(!d.initial_stages().f5_sent);
+    });
+    assert!(logs.contains("f5_received=true"), "{logs}");
+
+    // In an envelope that does not decode.
+    let (world, mut d, mut login) = connected();
+    world.deliver(queue1(&mut login, 0xF5, &[0x80, 0, 0]), LOGIN_SERVER);
+    d.step(0.1, true, &go);
+    assert!(d.initial_stages().f5_received);
+    assert_refused(&mut d, UnsupportedNegotiation::UnexpectedCompletion);
+}
+
+/// The log names which install check failed: a kind, safe to log, never a value.
+#[test]
+fn the_log_names_the_install_check_that_failed() {
+    let ((), logs) = logs_of(|| {
+        let (world, mut d, mut login) = connected_over(Arc::new(Answers {
+            rule: Err(InstallUnsupported::NameRuleDuplicate),
+            ..Answers::new()
+        }));
+        world.deliver(
+            queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+            LOGIN_SERVER,
+        );
+        d.step(0.1, true, &go);
+    });
+    assert!(
+        logs.contains(InstallUnsupported::NameRuleDuplicate.label()),
+        "{logs}"
     );
 }
 

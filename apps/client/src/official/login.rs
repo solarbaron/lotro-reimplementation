@@ -46,6 +46,15 @@ pub enum LoginScreen {
     },
 }
 
+/// A `LoginRefused` waiting for its `Disconnected` (§8.1).
+#[derive(Debug, Clone)]
+struct Refused {
+    reason: LoginRefusal,
+    retry: Option<u32>,
+    detail: Option<String>,
+    note: Option<String>,
+}
+
 /// One row of the world list (§8.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorldRow {
@@ -68,7 +77,8 @@ pub struct WorldRow {
 pub struct Message {
     /// Tessera's text.
     pub text: String,
-    /// "The service said: ⟨text⟩", when the service gave a detail.
+    /// The line under the text: "The service said: ⟨text⟩" when the service gave a detail, or
+    /// Tessera's own note on a refusal the service did not make.
     pub detail: Option<String>,
 }
 
@@ -119,7 +129,7 @@ pub struct LoginPresenter {
     last_event: Instant,
     queue_shown: Option<Instant>,
     queue_pending: Option<Vec<String>>,
-    refused: Option<(LoginRefusal, Option<u32>, Option<String>)>,
+    refused: Option<Refused>,
     /// The user left the queue: a `Disconnected { ClientRequested }` ends at the form.
     leaving_queue: bool,
     end: Option<LoginEnd>,
@@ -172,6 +182,13 @@ pub fn disconnect_message(reason: &DisconnectReason) -> Option<Message> {
         DisconnectReason::ServerClosed(why) => Message {
             text: text("official.error.server_closed").to_owned(),
             detail: (!why.trim().is_empty()).then(|| detail_line(why)),
+        },
+        // The server answered, and this client cannot go on: Tessera's own line under §8.6's
+        // text, not the service's words and not the "no answer" text. Engineering choice, §8.6
+        // has no row for a session that ends this way after the hand-over.
+        DisconnectReason::Unsupported(why) => Message {
+            text: text("official.error.unsupported_step").to_owned(),
+            detail: (!why.trim().is_empty()).then(|| plain(why, MAX_ACCOUNT_DETAIL_LEN)),
         },
         // `TransportFailed` and any later reason.
         _ => Message {
@@ -414,16 +431,27 @@ impl LoginPresenter {
                 reason,
                 retry_after_seconds,
                 detail,
+                note,
             } => {
-                self.refused = Some((*reason, *retry_after_seconds, detail.clone()));
+                self.refused = Some(Refused {
+                    reason: *reason,
+                    retry: *retry_after_seconds,
+                    detail: detail.clone(),
+                    note: note.clone(),
+                });
             }
             _ => {}
         }
     }
 
     fn on_disconnected(&mut self, reason: &DisconnectReason) {
-        if let Some((refusal, retry, detail)) = self.refused.take() {
-            self.finish(refusal_end(refusal, retry, detail.as_deref()));
+        if let Some(r) = self.refused.take() {
+            self.finish(refusal_end(
+                r.reason,
+                r.retry,
+                r.detail.as_deref(),
+                r.note.as_deref(),
+            ));
             return;
         }
         let form = |message: Option<Message>| LoginEnd {
@@ -561,9 +589,17 @@ impl LoginPresenter {
     }
 }
 
-/// The end of a login after `LoginRefused` (§8.6).
+/// The end of a login after `LoginRefused` (§8.6). `detail` is the service's words and `note`
+/// Tessera's own: a note is shown as it is, never as "The service said: ⟨text⟩" (nothing came
+/// from the service), and takes the place of a detail. Engineering choice: §8.6's detail row
+/// only knows the service's words.
 #[must_use]
-pub fn refusal_end(reason: LoginRefusal, retry: Option<u32>, detail: Option<&str>) -> LoginEnd {
+pub fn refusal_end(
+    reason: LoginRefusal,
+    retry: Option<u32>,
+    detail: Option<&str>,
+    note: Option<&str>,
+) -> LoginEnd {
     let (id, target) = match reason {
         LoginRefusal::BadCredentials => (
             "official.error.bad_credentials",
@@ -620,9 +656,14 @@ pub fn refusal_end(reason: LoginRefusal, retry: Option<u32>, detail: Option<&str
         target,
         message: Some(Message {
             text: msg_text,
-            detail: detail
-                .filter(|d| shows_detail && !d.trim().is_empty())
-                .map(detail_line),
+            detail: note
+                .filter(|n| !n.trim().is_empty())
+                .map(|n| plain(n, MAX_ACCOUNT_DETAIL_LEN))
+                .or_else(|| {
+                    detail
+                        .filter(|d| shows_detail && !d.trim().is_empty())
+                        .map(detail_line)
+                }),
         }),
         wait: wait.max(FAILURE_WAIT),
         rate_limited,

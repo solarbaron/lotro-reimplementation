@@ -18,14 +18,18 @@
 //! applies only when those opcodes arrive).
 //!
 //! Every local failure ends the attempt with one `LoginRefused` of
-//! [`LoginRefusal::UnsupportedStep`] ([`crate::initial::UnsupportedNegotiation`]) and sends
-//! the ticket no more. Not built, each marked where it would be:
+//! [`LoginRefusal::UnsupportedStep`] ([`crate::initial::UnsupportedNegotiation`]), with Tessera's
+//! own text as its `note`, and sends the ticket no more. While a wait of the exchange runs the
+//! driver keeps the client's progress screen alive on a timer (not while its queue panel shows),
+//! so the wait is the bound. Once the attempt is cancelled the login answers nothing and what it
+//! queued in its last pass stays unsent. Not built, each marked where it would be:
 //! - pending spec pass 10 fix 17: neither `0x13D` nor `0x19E` is emitted; after `0x6C` the
 //!   client goes to selection (`SessionDriver::character_list`). The spec gives their order
 //!   and queue but no source for `0x13D` or for the platform ID.
 //! - pending spec pass 10 fix 14: `0x90` keeps its historical prefix; one that fails to decode
 //!   is a distinct unsupported result of the entry ([`UNSUPPORTED_SESSION_START`]), not the
-//!   entry deadline's message.
+//!   entry deadline's message; after a referral the session ends with that result
+//!   ([`DisconnectReason::Unsupported`]), not as a time-out.
 //! - §6.5, OPEN-SESSION-16: the first world `0x30` is never emitted; its argument has no
 //!   specified source and no method's arguments are made up.
 //!
@@ -1321,6 +1325,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 reason,
                 retry_after_seconds: None,
                 detail: None,
+                note: None,
             }));
         self.end(DisconnectReason::TransportFailed(
             "official login refused".to_owned(),
@@ -1382,12 +1387,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return;
         }
         tracing::info!("official session: the world did not answer the entry");
-        self.fail_entry("The world did not answer.", now);
+        self.fail_entry("The world did not answer.", DisconnectReason::TimedOut, now);
     }
 
     /// The entry failed with `reason`: the character list is offered again, or the session
     /// ends when no connection is left for a later `0x6F`.
-    fn fail_entry(&mut self, reason: &str, now: f64) {
+    fn fail_entry(&mut self, reason: &str, ended: DisconnectReason, now: f64) {
         let Stage::Entering { name, .. } = &self.stage else {
             return;
         };
@@ -1406,19 +1411,27 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if self.login_referred {
             // The login connection was disconnected on the referral (§6.5 step 2) and the
             // world connection is gone: no connection is left for a later `0x6F`, so the
-            // session ends. Engineering choice, spec silent (`docs/m8-remediation.md` §15).
-            self.end(DisconnectReason::TimedOut);
+            // session ends, for this entry's own reason. Engineering choice, spec silent
+            // (`docs/m8-remediation.md` §15).
+            self.end(ended);
         }
     }
 
     /// The initial exchange's wait ended (`crate::initial::Negotiation`, pending spec pass 10
     /// fix 2): the attempt ends with that wait's own unsupported result.
+    ///
+    /// While a wait runs this also keeps the client's progress screen alive, whether or not
+    /// anything arrives, so the wait is the bound and not the screen's shorter watchdog
+    /// (`official-entry.md` §8.3): an answer later than the watchdog is still taken, and a wait
+    /// that runs out ends with its own result.
     fn initial_deadline(&mut self, now: f64) {
         if self.stage != Stage::Login || self.ended {
             return;
         }
         if let Some(why) = self.initial.expired(now) {
             self.refuse_unsupported(why, now);
+        } else if self.initial.keeps_progress() {
+            self.keep_progress(now);
         }
     }
 
@@ -1432,9 +1445,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         self.counters.unsupported_results = self.counters.unsupported_results.saturating_add(1);
         self.sync_initial();
-        tracing::info!(reason = why.label(), "official session: not supported");
+        // The Display form names the kind (never a value), so the log tells the checks apart.
+        let reason = why.to_string();
+        tracing::info!(reason = %reason, "official session: not supported");
         self.report(&self.login, false, now)
-            .log_login_ended(why.label());
+            .log_login_ended(&reason);
         if self.login.state() == Some(ConnectionState::Connected) {
             self.login.disconnect(now);
             let outgoing = self.codecs.outgoing.clone();
@@ -1447,7 +1462,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             .push_back(Event::Account(AccountEvent::LoginRefused {
                 reason: LoginRefusal::UnsupportedStep,
                 retry_after_seconds: None,
-                detail: Some(why.detail().to_owned()),
+                detail: None,
+                note: Some(why.detail().to_owned()),
             }));
         self.end(DisconnectReason::TransportFailed(
             "official login refused".to_owned(),
@@ -1459,8 +1475,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.login.initial = Some(self.initial.stages());
     }
 
-    /// The stages after a step: synced, one log line and a progress event, so the progress
-    /// screen's watchdog (`official-entry.md` §8.3) stays alive through a slow exchange.
+    /// The stages after a step: synced, one log line and a progress event.
     fn initial_step(&mut self, what: &str, now: f64) {
         self.sync_initial();
         self.report(&self.login, false, now).log_initial(what);
@@ -1471,8 +1486,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }));
     }
 
-    /// A message passed over while the login waits: one progress event per
-    /// [`LOG_INTERVAL_SEC`], so the watchdog stays alive while a slow server does send.
+    /// One progress event per [`LOG_INTERVAL_SEC`] while a wait of the initial exchange runs
+    /// ([`Self::initial_deadline`]).
     fn keep_progress(&mut self, now: f64) {
         if now - self.last_progress >= LOG_INTERVAL_SEC {
             self.last_progress = now;
@@ -1665,6 +1680,17 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     /// Logs the failure line once for each connection still in its handshake, which is
     /// about to be closed without a `Disconnected` event (a cancel, a revoked right).
+    /// The line of a login stopped from outside before its character list (a cancel, the
+    /// client's watchdog or a revoked network right), past its handshake: the handshake's own
+    /// line covers the rest. An attempt that already ended has logged its line.
+    fn log_login_abandoned(&mut self, reason: &str, now: f64) {
+        if self.ended || self.stage != Stage::Login || self.login.in_handshake() {
+            return;
+        }
+        self.sync_initial();
+        self.report(&self.login, false, now).log_login_ended(reason);
+    }
+
     fn log_abandoned_handshakes(&self, reason: &str, now: f64) {
         for world in [false, true] {
             if let Some(l) = self.link_of(world).filter(|l| l.in_handshake()) {
@@ -1783,7 +1809,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 return;
             }
             if let Some(m) = self.inbox.pop_front() {
-                self.message(&m, now);
+                // Once the attempt is cancelled the login answers nothing (`step`).
+                if self.stage == Stage::Login && stop() {
+                    self.initial.ignored();
+                } else {
+                    self.message(&m, now);
+                }
                 continue;
             }
             let next = match self.login.pop_event() {
@@ -1861,7 +1892,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     Err(e) => {
                         self.counters.decode_errors += 1;
                         tracing::debug!(error = %e, "official session: message refused");
-                        self.initial_envelope_refused(&blob, world, now);
+                        if !stop() {
+                            self.initial_envelope_refused(&blob, world, now);
+                        }
                     }
                 }
             }
@@ -2057,7 +2090,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             PlayerSessionReady::EVENT_ID => return self.session_ready(body, now),
             _ => {}
         }
-        if self.login_window_skips(m, now) {
+        if self.login_window_skips(m) {
             return;
         }
         if body.first() != Some(&0) {
@@ -2075,7 +2108,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// answered and no decode error. Before the list every opcode of the login connection
     /// but the eviction is; after it, `0x149` (§9.3.1's rows after the list and before the
     /// referral).
-    fn login_window_skips(&mut self, m: &Inbound, now: f64) -> bool {
+    fn login_window_skips(&mut self, m: &Inbound) -> bool {
         if m.world {
             return false;
         }
@@ -2087,9 +2120,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if skips {
             self.initial.skipped(m.opcode, m.body.len());
             self.sync_initial();
-            if self.stage == Stage::Login {
-                self.keep_progress(now);
-            }
         }
         skips
     }
@@ -2107,6 +2137,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 UnsupportedNegotiation::MalformedRequest
             }
             OPCODE_COMPLETION if !self.initial.stages().f5_sent => {
+                self.initial.completion_seen();
                 UnsupportedNegotiation::UnexpectedCompletion
             }
             CharacterListResponse::EVENT_ID => UnsupportedNegotiation::ListEnvelope,
@@ -2166,28 +2197,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
             .name_rule_languages(request.name_rule_key)
             .map_err(UnsupportedNegotiation::NameRule)?;
         check_language_allowed(&languages, prepared.language_key)?;
-        let Some(connection) = self.login.mux.connection_mut(self.login.conn) else {
-            return Err(UnsupportedNegotiation::AdvertisementNotSent);
-        };
         // pending spec pass 10 fix 11: `send_sequenced_packet` allocates the FlowControl-only
         // packet first when it has not gone out (§5.5, §6.4.1), so `0xEC` follows it; the
         // default recipient as in the spec's fixtures, its fragments by §5.6.4's path.
-        // pending spec pass 10 fix 9: its packets stay resendable for a bounded window.
-        let (queue, group) = outbound_queue(OPCODE_INSTALL_ADVERTISEMENT, &[]);
-        connection
-            .send_blob_retained(
-                queue,
-                group,
-                OPCODE_INSTALL_ADVERTISEMENT,
-                &prepared.data,
-                now,
-                self.codecs.outgoing.as_deref(),
-            )
-            .map_err(|e| {
-                self.counters.send_failures += 1;
-                tracing::debug!(error = %e, "official session: advertisement not queued");
-                UnsupportedNegotiation::AdvertisementNotSent
-            })?;
+        if !self.send_retained_on_login(OPCODE_INSTALL_ADVERTISEMENT, &prepared.data, now) {
+            return Err(UnsupportedNegotiation::AdvertisementNotSent);
+        }
         tracing::info!(
             entries = prepared.entries,
             bytes = prepared.data.len(),
@@ -2207,6 +2222,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.initial.ignored();
             return;
         }
+        self.initial.completion_seen();
         let exact = m.queue == QUEUE_UNRELIABLE
             && m.top_level
             && m.envelope_flags == 0
@@ -2215,7 +2231,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.refuse_unsupported(UnsupportedNegotiation::UnexpectedCompletion, now);
             return;
         }
-        if !self.send_on_login(OPCODE_COMPLETION, &COMPLETION_DATA, now) {
+        if !self.send_retained_on_login(OPCODE_COMPLETION, &COMPLETION_DATA, now) {
             self.refuse_unsupported(UnsupportedNegotiation::CompletionNotSent, now);
             return;
         }
@@ -2227,7 +2243,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         match m {
             ControlMessage::VersionRequest => {
                 // §9.3: only an actual `0x12F` asks for `0x12C`.
-                self.initial.version_requested();
+                self.initial.version_requested(now);
                 if self.version_sent {
                     return;
                 }
@@ -2277,6 +2293,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 // §9.3: accepted; the character list follows. The progress screen leaves
                 // the queue (engineering choice).
                 LogonOutcome::Accepted if self.stage == Stage::Login => {
+                    self.initial.queue_left(now);
+                    self.last_progress = now;
                     self.events
                         .push_back(Event::Account(AccountEvent::LoginProgress {
                             stage: LoginStage::JoiningWorld,
@@ -2429,7 +2447,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 self.counters.decode_errors += 1;
                 tracing::debug!(error = %e, "official session: session start refused");
                 if matches!(self.stage, Stage::Entering { .. }) {
-                    self.fail_entry(UNSUPPORTED_SESSION_START, now);
+                    // pending spec pass 10 fix 14: its own result, also when the session
+                    // ends with it after a referral: the server did answer.
+                    self.fail_entry(
+                        UNSUPPORTED_SESSION_START,
+                        DisconnectReason::Unsupported(UNSUPPORTED_SESSION_START.to_owned()),
+                        now,
+                    );
                 }
                 return;
             }
@@ -2890,6 +2914,36 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
+    /// pending spec pass 10 fix 9: `0xEC` and the client's `0xF5` stay resendable for a bounded
+    /// window. Each goes out once on an unreliable queue, and the server has no other way to
+    /// recover one lost datagram: the login would stall (labelled engineering choice).
+    fn send_retained_on_login(&mut self, opcode: u32, data: &[u8], now: f64) -> bool {
+        let (queue, group) = outbound_queue(opcode, &[]);
+        let sent = self
+            .login
+            .mux
+            .connection_mut(self.login.conn)
+            .map(|connection| {
+                connection.send_blob_retained(
+                    queue,
+                    group,
+                    opcode,
+                    data,
+                    now,
+                    self.codecs.outgoing.as_deref(),
+                )
+            });
+        match sent {
+            Some(Ok(_)) => true,
+            Some(Err(e)) => {
+                self.counters.send_failures += 1;
+                tracing::debug!(opcode, error = %e, "official session: message not queued");
+                false
+            }
+            None => false,
+        }
+    }
+
     fn send_on_login(&mut self, opcode: u32, env: &[u8], now: f64) -> bool {
         // Only `0x24`'s queue depends on its payload (`outbound_queue`); this path never
         // carries one.
@@ -3332,6 +3386,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// Play messages not yet queued on a connection are dropped. No ticket refresh starts
     /// after this, and a running one is stopped.
     pub fn begin_shutdown(&mut self, now: f64) {
+        self.log_login_abandoned("cancelled", now);
+        // What the login queued in its last pass (`0xEC` among it) stays unsent: nothing more
+        // goes out after a cancel but the goodbye.
+        if self.stage == Stage::Login
+            && let Some(connection) = self.login.mux.connection_mut(self.login.conn)
+        {
+            connection.discard_unsent_datagrams();
+        }
         self.ended = true;
         self.shutting_down = true;
         // Nobody takes them any more; reading must go on for the disconnect's answers.
@@ -3357,6 +3419,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// could be sent): every connection is closed locally and the chat client dropped. A
     /// connection still in its handshake logs its counts once, at `now`.
     pub fn abandon(&mut self, now: f64) {
+        self.log_login_abandoned("network right revoked", now);
         self.ended = true;
         self.shutting_down = true;
         self.events.clear();
@@ -3535,6 +3598,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 && let Some(t) = self.initial.deadline()
             {
                 at(t);
+                if self.initial.keeps_progress() {
+                    at(self.last_progress + LOG_INTERVAL_SEC);
+                }
             }
             // Portal space's loading time-out (§4.5 item 4; `portal_step` notes when it
             // began on its first pass), until the client gate is set: then the exit waits

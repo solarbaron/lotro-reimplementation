@@ -61,7 +61,7 @@ use tessera_compat::world::{
     EncodedPropertyValue, LocalizedTokenText, LocalizedTokenTextArg, LocalizedTokenTextArgPayload,
     LocalizedTokenTextContent, PortalStateSchema, PropertyType, TextSource,
 };
-use tessera_dat::{ArchiveKind, ArchiveSet, SetMember, SetOptions, Severity, inflate_record};
+use tessera_dat::{ArchiveKind, ArchiveSet, SetMember, SetOptions, inflate_record};
 use tessera_formats::gameplay::misc::NameFilterTable;
 use tessera_formats::property::{PropertyDictionary, PropertyValue};
 use tessera_formats::property_set::{PropertySet, PropertySetRecord, object_property_set_did};
@@ -855,11 +855,24 @@ const PORTAL_KINDS: [ArchiveKind; 7] = [
 /// The spec's open question is which mounted archives count. pending spec pass 10 fix 1,
 /// labelled engineering choice until it answers: one entry per mounted base of the portal
 /// sets, of the region sets present for non-zero keys of the region map, and only the selected
-/// language's base. A region key with no file does not count as missing. An archive that is
-/// present but failed to open, a set with a missing part, an archive of an unknown family, a
-/// region archive outside the region keys, an identifier disagreeing with its file name or
-/// unusable iteration metadata makes the answer unsupported; none is silently omitted. Other
-/// languages stay members of the set (`crates/dat/src/set.rs`) and are filtered here.
+/// language's base. A region key with neither file does not count as missing; region 1's two
+/// bases are required when the map has that key (`dat-container.md` §2.4: its failure fails
+/// the client's archive initialisation), and half of a region pair is a partial inventory
+/// (`install-layout.md` §3.3). None of the unsupported cases is silently omitted:
+///
+/// - any problem [`ArchiveSet`] recorded for an archive of these sets, whatever its severity:
+///   a file that failed to open, a missing part, a membership record that disagrees or is
+///   absent, two names differing only in case (§9.3.4 item 2: every auxiliary part is
+///   associated with its base, no base is ambiguous);
+/// - an auxiliary part beyond the base's count, of another identifier than its base's, without
+///   a base, or under a name with no canonical part number (`dat-container.md` §2.3 and §3.4);
+/// - an overlay next to a listed base (`dat-container.md` §2.5: the set's records may be out
+///   of date, which is an unresolved mount entry under §9.3.4 item 2; a labelled choice, as
+///   whether an overlay can hold the iteration record is not settled);
+/// - an archive of an unknown family, a region archive outside the region keys, an identifier
+///   disagreeing with its file name, or unusable iteration metadata.
+///
+/// Other languages stay members of the set (`crates/dat/src/set.rs`) and are filtered here.
 ///
 /// # Errors
 ///
@@ -872,24 +885,7 @@ pub fn archive_inventory(
     let other_language = |kind: &ArchiveKind| {
         matches!(kind, ArchiveKind::Local(_)) && !is_selected_language(kind, language)
     };
-    for problem in set.problems() {
-        let id = problem
-            .path
-            .as_deref()
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str())
-            .and_then(tessera_dat::ArchiveId::from_file_name);
-        if id.is_some_and(|id| other_language(&id.kind)) {
-            continue;
-        }
-        // Severity Error: unusable; invariants 1 and 2 on a file: a named archive too short or
-        // without the magic, which `ArchiveSet` keeps as a warning (`dat-container.md` §2.1).
-        if problem.severity == Severity::Error
-            || (problem.path.is_some() && matches!(problem.invariant, 1 | 2))
-        {
-            return Err(InstallUnsupported::ArchiveFailed);
-        }
-    }
+    check_set_problems(set, &other_language)?;
     let mut bases: Vec<&SetMember> = Vec::new();
     for member in set.members() {
         let kind = &member.id.kind;
@@ -915,7 +911,129 @@ pub fn archive_inventory(
     {
         return Err(InstallUnsupported::ArchiveMissing);
     }
+    check_region_pairs(&bases, region_keys)?;
+    check_set_parts(set, &bases, &other_language)?;
+    check_stray_parts(set, &bases, &other_language)?;
     bases.into_iter().map(advertised_base).collect()
+}
+
+/// A problem of an archive of the listed sets makes the inventory unsupported. A problem naming
+/// no file (a missing part, an implausible count) cannot be told apart by language, so it counts
+/// too: a labelled choice under pending spec pass 10 fix 1, on the side of not sending.
+fn check_set_problems(
+    set: &ArchiveSet,
+    other_language: &dyn Fn(&ArchiveKind) -> bool,
+) -> Result<(), InstallUnsupported> {
+    for problem in set.problems() {
+        let id = problem
+            .path
+            .as_deref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .and_then(tessera_dat::ArchiveId::from_file_name);
+        if !id.is_some_and(|id| other_language(&id.kind)) {
+            return Err(InstallUnsupported::ArchiveFailed);
+        }
+    }
+    Ok(())
+}
+
+/// Each region key's two bases: both or neither, and both for region 1.
+fn check_region_pairs(bases: &[&SetMember], region_keys: &[u32]) -> Result<(), InstallUnsupported> {
+    for &r in region_keys {
+        let cell = bases.iter().any(|m| m.id.kind == ArchiveKind::Cell(r));
+        let map = bases.iter().any(|m| m.id.kind == ArchiveKind::Map(r));
+        if cell != map || (r == 1 && !cell) {
+            return Err(InstallUnsupported::ArchiveMissing);
+        }
+    }
+    Ok(())
+}
+
+/// Every auxiliary part of the listed sets belongs to a base, carries its identifier, and the
+/// parts add up to the base's count (`dat-container.md` §2.3 step 5, §3.4).
+fn check_set_parts(
+    set: &ArchiveSet,
+    bases: &[&SetMember],
+    other_language: &dyn Fn(&ArchiveKind) -> bool,
+) -> Result<(), InstallUnsupported> {
+    for member in set.members() {
+        if member.id.part == 0 || other_language(&member.id.kind) {
+            continue;
+        }
+        let base = bases
+            .iter()
+            .find(|b| b.id.kind == member.id.kind)
+            .ok_or(InstallUnsupported::ArchiveFailed)?;
+        let (ours, theirs) = (member.archive.header(), base.archive.header());
+        if (ours.dataset, ours.subset) != (theirs.dataset, theirs.subset) {
+            return Err(InstallUnsupported::ArchiveIdentifier);
+        }
+    }
+    for base in bases {
+        let count = base
+            .archive
+            .membership()
+            .map_err(|_| InstallUnsupported::ArchiveFailed)?
+            .ok_or(InstallUnsupported::ArchiveFailed)?
+            .part_count;
+        let parts = set
+            .members()
+            .iter()
+            .filter(|m| m.id.kind == base.id.kind)
+            .count();
+        if u32::try_from(parts) != Ok(count) {
+            return Err(InstallUnsupported::ArchiveFailed);
+        }
+    }
+    Ok(())
+}
+
+/// What [`ArchiveSet`] does not open and the listing shows: a name matching
+/// `client_<name>_aux_*.datx` with no canonical part number, which the original counts as a
+/// part (`dat-container.md` §2.1, §2.3), and an overlay next to a listed base (§2.5, matched
+/// ASCII case-insensitively as the names of the set are). A listing that fails answers the same
+/// way: nothing is known about those files.
+fn check_stray_parts(
+    set: &ArchiveSet,
+    bases: &[&SetMember],
+    other_language: &dyn Fn(&ArchiveKind) -> bool,
+) -> Result<(), InstallUnsupported> {
+    let overlays: HashSet<String> = bases
+        .iter()
+        .map(|b| format!("{}.ovl", b.id.file_name()).to_ascii_lowercase())
+        .collect();
+    let listing = std::fs::read_dir(set.dir()).map_err(|_| InstallUnsupported::ArchiveFailed)?;
+    for entry in listing {
+        let entry = entry.map_err(|_| InstallUnsupported::ArchiveFailed)?;
+        // A name that is not text is no name of the set.
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if overlays.contains(&name.to_ascii_lowercase()) {
+            return Err(InstallUnsupported::ArchiveOverlay);
+        }
+        if tessera_dat::ArchiveId::from_file_name(&name).is_some() {
+            continue;
+        }
+        if let Some(key) = stray_part_key(&name) {
+            // The language label keeps its case in the name; `from_file_name` gives the kind.
+            let of_other_language = tessera_dat::ArchiveId::from_file_name(&format!("{key}.dat"))
+                .is_some_and(|id| other_language(&id.kind));
+            if !of_other_language {
+                return Err(InstallUnsupported::ArchiveFailed);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The `client_<name>` of a name matching `client_<name>_aux_*.datx`, in the name's own case.
+fn stray_part_key(name: &str) -> Option<&str> {
+    let lower = name.to_ascii_lowercase();
+    let stem = lower.strip_prefix("client_")?.strip_suffix(".datx")?;
+    let at = stem.rfind("_aux_")?;
+    name.get(..at + "client_".len())
 }
 
 /// The real identifier and iteration metadata of one mounted base.

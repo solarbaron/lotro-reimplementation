@@ -19,6 +19,12 @@
 //!   tie-break.
 //! - fix 10: `0xF5` is answered once, only after `0xEC` was sent, only when its data is `00`.
 //! - fix 2: the deadlines of [`Negotiation`] and the checks before the first datagram.
+//! - fix 1: which archives the inventory lists and which problems refuse it (the client's
+//!   `archive_inventory`) and the caps here.
+//! - fix 9: `0xEC` and the client's `0xF5` stay resendable for a bounded window
+//!   ([`crate::session::RETAINED_BLOB_RESEND_WINDOW_SEC`]).
+//! - fix 13: a sequence gap that stays open ends the attempt
+//!   ([`crate::session::MAX_GAP_AGE_SEC`]).
 //!
 //! No rule here comes from the spec's description of the original's own walk over its
 //! archives (§9.3.4, the paragraph that says it is not a rule). Everything sent is the user's
@@ -65,6 +71,10 @@ pub const DD_WAIT_SEC: f64 = 180.0;
 pub const COMPLETION_WAIT_SEC: f64 = 120.0;
 /// Wait from the client's `0xF5` to `0x6C`. pending spec pass 10 fix 2: as [`DD_WAIT_SEC`].
 pub const LIST_WAIT_SEC: f64 = 120.0;
+/// Wait from an actual `0x12F` to `0xDD` or `0x6C` on the historical version path (§9.3).
+/// pending spec pass 10 fix 2: as [`DD_WAIT_SEC`]; §9.3 does not lift §9.3.4's rule against
+/// waiting indefinitely for a character list.
+pub const VERSION_PATH_WAIT_SEC: f64 = 180.0;
 
 /// Errors of the initial exchange's decoders and builder.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -417,6 +427,8 @@ pub enum InstallUnsupported {
     ArchiveUnknown,
     /// An archive's resource identifier does not agree with its file name.
     ArchiveIdentifier,
+    /// An overlay lies next to a base archive: the set's records may be out of date.
+    ArchiveOverlay,
     /// A base archive has no usable iteration metadata.
     ArchiveIteration,
     /// More archives than [`MAX_ADVERTISED_ARCHIVES`].
@@ -443,6 +455,7 @@ impl InstallUnsupported {
             Self::ArchiveFailed => "archive failed or set incomplete",
             Self::ArchiveUnknown => "archive of an unknown family",
             Self::ArchiveIdentifier => "archive identifier disagrees",
+            Self::ArchiveOverlay => "overlay next to an archive",
             Self::ArchiveIteration => "iteration metadata unusable",
             Self::ArchiveCount => "too many archives",
             Self::InventoryMaps => "inventory maps unreadable",
@@ -497,14 +510,18 @@ pub enum UnsupportedNegotiation {
     /// No `0x6C` within [`LIST_WAIT_SEC`] of the client's `0xF5`.
     #[error("no character list arrived in time")]
     ListDeadline,
+    /// No `0xDD` or `0x6C` within [`VERSION_PATH_WAIT_SEC`] of an actual `0x12F`.
+    #[error("the version exchange did not lead to a character list in time")]
+    VersionPathDeadline,
     /// `0x6C` did not decode (§9.3.5: list display stops; no character is invented).
     #[error("the character list cannot be read")]
     ListDecode,
     /// `0x6C` is compressed or routed (pending spec pass 10 fix 16).
     #[error("a compressed or routed character list is not supported")]
     ListEnvelope,
-    /// The connection refused too many datagrams (pending spec pass 10 fix 13).
-    #[error("too many datagrams could not be read")]
+    /// A sequence gap stayed open because its packet cannot be taken, while the server kept
+    /// sending (pending spec pass 10 fix 13).
+    #[error("a packet of the server could not be taken")]
     TrafficRefused,
 }
 
@@ -527,13 +544,15 @@ impl UnsupportedNegotiation {
             Self::RequestDeadline => "install request deadline",
             Self::CompletionDeadline => "completion deadline",
             Self::ListDeadline => "character list deadline",
+            Self::VersionPathDeadline => "version path deadline",
             Self::ListDecode => "character list decode",
             Self::ListEnvelope => "character list envelope",
-            Self::TrafficRefused => "datagrams refused",
+            Self::TrafficRefused => "sequence gap stayed open",
         }
     }
 
-    /// The text beside the refusal on the client's error screen. Tessera's own text.
+    /// The line under the refusal on the client's error screen. Tessera's own text, never the
+    /// service's: it goes in `LoginRefused`'s `note`, not its `detail`.
     #[must_use]
     pub const fn detail(self) -> &'static str {
         match self {
@@ -546,13 +565,24 @@ impl UnsupportedNegotiation {
             | Self::TrafficRefused => {
                 "The server sent a message of the official login Tessera does not support yet."
             }
-            Self::NameRule(_) | Self::NameRuleEmpty | Self::LanguageNotAllowed => {
-                "The server's configuration does not allow this install's language."
+            // The install's own table, not the server's answer.
+            Self::NameRule(InstallUnsupported::NameTable) => {
+                "This install's name-rule table could not be read."
+            }
+            Self::NameRule(InstallUnsupported::NameRuleMissing) => {
+                "This install has no name rule for the one the server selected."
+            }
+            Self::NameRule(_) => "This install's name rules are not usable.",
+            Self::NameRuleEmpty | Self::LanguageNotAllowed => {
+                "The name rule the server selected does not allow this install's language."
             }
             Self::AdvertisementNotSent | Self::CompletionNotSent => {
                 "A message of the official login could not be sent."
             }
-            Self::RequestDeadline | Self::CompletionDeadline | Self::ListDeadline => {
+            Self::RequestDeadline
+            | Self::CompletionDeadline
+            | Self::ListDeadline
+            | Self::VersionPathDeadline => {
                 "The server did not continue the official login in time."
             }
             Self::ListDecode | Self::ListEnvelope => {
@@ -614,7 +644,7 @@ pub struct InitialStages {
     pub dd_seen: bool,
     /// `0xEC` was queued.
     pub ec_sent: bool,
-    /// The server's `0xF5` arrived.
+    /// A server `0xF5` of the login connection arrived, usable or not.
     pub f5_received: bool,
     /// The client's `0xF5` was queued.
     pub f5_sent: bool,
@@ -623,7 +653,7 @@ pub struct InitialStages {
     /// The messages passed over while waiting, by opcode.
     pub skipped: SkippedMessages,
     /// Further `0xDD` and `0xF5` that made no reply (later ones, or on another connection,
-    /// queue or envelope level).
+    /// queue or envelope level), and messages left unhandled because the attempt was cancelled.
     pub ignored: u64,
 }
 
@@ -680,8 +710,8 @@ enum Phase {
     AwaitingCompletion(f64),
     /// The client's `0xF5` sent; waiting for `0x6C` since the time held.
     AwaitingList(f64),
-    /// An actual `0x12F` arrived: the historical version path (§9.3), no deadline of ours.
-    Historical,
+    /// An actual `0x12F` arrived at the time held: the historical version path (§9.3).
+    Historical(f64),
     /// The list arrived.
     Finished,
 }
@@ -691,6 +721,9 @@ enum Phase {
 pub struct Negotiation {
     phase: Phase,
     stages: InitialStages,
+    /// The login queue says the account waits: the client shows its queue panel, whose watchdog
+    /// does not run (`official-entry.md` §8.4), until the queue ends or the next step.
+    in_queue: bool,
 }
 
 impl Default for Negotiation {
@@ -723,6 +756,7 @@ impl Negotiation {
                 },
                 ignored: 0,
             },
+            in_queue: false,
         }
     }
 
@@ -745,44 +779,68 @@ impl Negotiation {
         }
     }
 
-    /// An actual `0x12F` arrived: only then does the historical version path apply (§9.3).
-    pub fn version_requested(&mut self) {
+    /// An actual `0x12F` arrived at `now`: only then does the historical version path apply
+    /// (§9.3), with a wait of its own.
+    pub fn version_requested(&mut self, now: f64) {
         if matches!(self.phase, Phase::Connecting | Phase::AwaitingRequest(_)) {
-            self.phase = Phase::Historical;
+            self.phase = Phase::Historical(now);
         }
     }
 
-    /// The login queue says the account still waits: the current wait starts again.
-    pub fn queued(&mut self, now: f64) {
+    /// The current wait starts again at `now`.
+    fn restart_wait(&mut self, now: f64) {
         self.phase = match self.phase {
             Phase::AwaitingRequest(_) => Phase::AwaitingRequest(now),
             Phase::AwaitingCompletion(_) => Phase::AwaitingCompletion(now),
             Phase::AwaitingList(_) => Phase::AwaitingList(now),
+            Phase::Historical(_) => Phase::Historical(now),
             other => other,
         };
+    }
+
+    /// The login queue says the account still waits: the current wait starts again.
+    pub fn queued(&mut self, now: f64) {
+        self.in_queue = true;
+        self.restart_wait(now);
+    }
+
+    /// The login queue accepted the account: the wait of a queued login starts again at `now`.
+    pub fn queue_left(&mut self, now: f64) {
+        if self.in_queue {
+            self.in_queue = false;
+            self.restart_wait(now);
+        }
     }
 
     /// A valid `0xDD` arrived.
     pub fn request_seen(&mut self) {
         self.stages.dd_seen = true;
+        self.in_queue = false;
     }
 
     /// `0xEC` was queued at `now`.
     pub fn advertisement_sent(&mut self, now: f64) {
         self.stages.ec_sent = true;
+        self.in_queue = false;
         self.phase = Phase::AwaitingCompletion(now);
     }
 
-    /// The server's `0xF5` arrived and the client's was queued at `now`.
-    pub fn completion_sent(&mut self, now: f64) {
+    /// A server `0xF5` of the login connection arrived, whether or not it can be answered.
+    pub fn completion_seen(&mut self) {
         self.stages.f5_received = true;
+    }
+
+    /// The client's `0xF5` was queued at `now`.
+    pub fn completion_sent(&mut self, now: f64) {
         self.stages.f5_sent = true;
+        self.in_queue = false;
         self.phase = Phase::AwaitingList(now);
     }
 
     /// The character list was decoded.
     pub fn list_received(&mut self) {
         self.stages.list_received = true;
+        self.in_queue = false;
         self.phase = Phase::Finished;
     }
 
@@ -803,8 +861,17 @@ impl Negotiation {
             Phase::AwaitingRequest(t) => Some(t + DD_WAIT_SEC),
             Phase::AwaitingCompletion(t) => Some(t + COMPLETION_WAIT_SEC),
             Phase::AwaitingList(t) => Some(t + LIST_WAIT_SEC),
-            Phase::Connecting | Phase::Historical | Phase::Finished => None,
+            Phase::Historical(t) => Some(t + VERSION_PATH_WAIT_SEC),
+            Phase::Connecting | Phase::Finished => None,
         }
+    }
+
+    /// Whether the driver keeps the client's progress screen alive: a wait of this module is
+    /// the bound, not the screen's shorter watchdog (`official-entry.md` §8.3). Not while the
+    /// queue panel shows, which a progress event would replace (§8.4).
+    #[must_use]
+    pub fn keeps_progress(&self) -> bool {
+        self.deadline().is_some() && !self.in_queue
     }
 
     /// The unsupported result of a wait that ended by `now`.
@@ -817,7 +884,8 @@ impl Negotiation {
             Phase::AwaitingRequest(_) => Some(UnsupportedNegotiation::RequestDeadline),
             Phase::AwaitingCompletion(_) => Some(UnsupportedNegotiation::CompletionDeadline),
             Phase::AwaitingList(_) => Some(UnsupportedNegotiation::ListDeadline),
-            Phase::Connecting | Phase::Historical | Phase::Finished => None,
+            Phase::Historical(_) => Some(UnsupportedNegotiation::VersionPathDeadline),
+            Phase::Connecting | Phase::Finished => None,
         }
     }
 }
@@ -943,8 +1011,58 @@ mod tests {
         assert_eq!(n.deadline(), None);
         let mut h = Negotiation::new();
         h.connected(0.0);
-        h.version_requested();
-        assert_eq!(h.deadline(), None);
+        h.version_requested(5.0);
+        assert_eq!(h.deadline(), Some(5.0 + VERSION_PATH_WAIT_SEC));
+        assert_eq!(
+            h.expired(5.0 + VERSION_PATH_WAIT_SEC),
+            Some(UnsupportedNegotiation::VersionPathDeadline)
+        );
+        h.queued(50.0);
+        assert_eq!(h.deadline(), Some(50.0 + VERSION_PATH_WAIT_SEC));
+    }
+
+    #[test]
+    fn the_queue_panel_holds_the_keep_alive_until_the_queue_or_the_next_step_ends_it() {
+        let mut n = Negotiation::new();
+        assert!(!n.keeps_progress(), "nothing awaited yet");
+        n.connected(0.0);
+        assert!(n.keeps_progress());
+        n.queued(10.0);
+        assert!(!n.keeps_progress());
+        n.queue_left(20.0);
+        assert!(n.keeps_progress());
+        assert_eq!(n.deadline(), Some(20.0 + DD_WAIT_SEC));
+        // Leaving a queue that never began changes no wait.
+        n.queue_left(25.0);
+        assert_eq!(n.deadline(), Some(20.0 + DD_WAIT_SEC));
+        n.queued(30.0);
+        n.request_seen();
+        assert!(n.keeps_progress());
+        n.list_received();
+        assert!(!n.keeps_progress(), "nothing awaited any more");
+    }
+
+    #[test]
+    fn a_completion_counts_as_seen_before_it_is_answered() {
+        let mut n = Negotiation::new();
+        n.completion_seen();
+        let stages = n.stages();
+        assert!(stages.f5_received && !stages.f5_sent);
+    }
+
+    #[test]
+    fn local_failures_of_the_name_table_are_not_the_servers_refusal() {
+        let table = UnsupportedNegotiation::NameRule(InstallUnsupported::NameTable).detail();
+        let refused = UnsupportedNegotiation::LanguageNotAllowed.detail();
+        assert_ne!(table, refused);
+        assert!(table.contains("install"));
+        // The log's form names the kind.
+        let text =
+            UnsupportedNegotiation::Inventory(InstallUnsupported::ArchiveMissing).to_string();
+        assert!(
+            text.contains(InstallUnsupported::ArchiveMissing.label()),
+            "{text}"
+        );
     }
 
     #[test]

@@ -26,7 +26,7 @@ use tessera_net::{
 };
 
 use super::data::SchemaView;
-use super::data::{InstallData, LocalPaths};
+use super::data::{InstallData, InstallDataLoader, LocalPaths};
 use super::net::{ConnectorNet, NetFactory, SendHttpClient, carries_secret, is_https};
 // The synthetic world's builders, for the world-feed tests (`world_feed`).
 use super::session_phase::{
@@ -821,6 +821,19 @@ fn proof_dir() -> (tempfile::TempDir, consent::Acceptance) {
 /// A backend over the live connector and the synthetic service; the install's datacenter
 /// URL is `gls` (`None`: no install at all).
 fn backend(service: Service, gls: Option<&str>) -> (tempfile::TempDir, World, Box<dyn Backend>) {
+    backend_over(
+        service,
+        gls,
+        Box::new(|_, _| Ok(Arc::new(records()) as Arc<dyn InstallData>)),
+    )
+}
+
+/// [`backend`] with the install answers of `loader`.
+fn backend_over(
+    service: Service,
+    gls: Option<&str>,
+    loader: InstallDataLoader,
+) -> (tempfile::TempDir, World, Box<dyn Backend>) {
     let (dir, acc) = proof_dir();
     let root = dir.path().join("install");
     std::fs::create_dir_all(&root).expect("root");
@@ -840,7 +853,7 @@ fn backend(service: Service, gls: Option<&str>) -> (tempfile::TempDir, World, Bo
             user_settings_dir: None,
             network_version: Some("9999".to_owned()),
         },
-        loader: Box::new(|_, _| Ok(Arc::new(records()) as Arc<dyn InstallData>)),
+        loader,
         locate: None,
     };
     let connector = LiveConnector::with_factory(config, FakeFactory(world.clone()));
@@ -2819,6 +2832,7 @@ fn a_refusal_and_its_disconnect_are_never_parted() {
         reason: LoginRefusal::Other,
         retry_after_seconds: None,
         detail: None,
+        note: None,
     });
     let gone = Event::Disconnected {
         reason: DisconnectReason::TimedOut,

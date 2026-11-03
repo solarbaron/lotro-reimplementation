@@ -262,6 +262,7 @@ impl<C: Connector> CompatBackend<C> {
                         reason: LoginRefusal::NotAvailable,
                         retry_after_seconds: None,
                         detail: None,
+                        note: None,
                     }));
                 self.pending_events.push(Event::Disconnected {
                     reason: DisconnectReason::TransportFailed(

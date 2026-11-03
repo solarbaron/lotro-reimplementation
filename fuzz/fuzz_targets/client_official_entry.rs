@@ -141,6 +141,7 @@ fn event(b: &mut Bytes<'_>) -> Event {
             },
             retry_after_seconds: b.opt_u32(),
             detail: b.opt_text(270),
+            note: b.opt_text(270),
         }),
         5 => Event::Connected {
             characters: (0..b.u8() % 4)

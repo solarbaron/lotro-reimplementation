@@ -209,12 +209,38 @@ fn out_of_bound_events_are_dropped() {
 }
 
 #[test]
+fn a_refusals_note_is_bounded_and_cleaned_like_its_detail() {
+    let (mut s, b, now) = connecting();
+    b.push(Event::Account(AccountEvent::LoginRefused {
+        reason: LoginRefusal::UnsupportedStep,
+        retry_after_seconds: None,
+        detail: None,
+        note: Some("n".repeat(257)),
+    }));
+    assert!(s.poll(now).is_empty(), "an oversized note is dropped");
+    b.push(Event::Account(AccountEvent::LoginRefused {
+        reason: LoginRefusal::UnsupportedStep,
+        retry_after_seconds: None,
+        detail: Some("d\u{7}".into()),
+        note: Some("n\u{7}".into()),
+    }));
+    let events = s.poll(now);
+    let Some(Event::Account(AccountEvent::LoginRefused { detail, note, .. })) = events.first()
+    else {
+        panic!("{events:?}");
+    };
+    assert_eq!(detail.as_deref(), Some("d "));
+    assert_eq!(note.as_deref(), Some("n "));
+}
+
+#[test]
 fn after_login_refused_only_disconnected_follows() {
     let (mut s, b, now) = connecting();
     b.push(Event::Account(AccountEvent::LoginRefused {
         reason: LoginRefusal::BadCredentials,
         retry_after_seconds: None,
         detail: None,
+        note: None,
     }));
     b.push(list(&[1]));
     b.push(Event::Connected { characters: vec![] });
@@ -235,6 +261,7 @@ fn commands_after_login_refused_are_refused_but_disconnect() {
         reason: LoginRefusal::Other,
         retry_after_seconds: Some(5),
         detail: Some("x".into()),
+        note: None,
     }));
     assert_eq!(s.poll(now).len(), 2);
     assert!(matches!(

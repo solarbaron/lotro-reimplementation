@@ -3728,39 +3728,197 @@ fn a_retained_blob_is_resent_inside_its_window_only() {
     assert_eq!(conn.state(), ConnectionState::DisconnectSent);
 }
 
-/// pending spec pass 10 fix 13: refused datagrams are counted, and at the labelled limit the
-/// connection closes rather than NAK forever.
-#[test]
-fn too_many_refused_datagrams_close_the_connection() {
-    use tessera_compat::session::MAX_REFUSED_DATAGRAMS;
-    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 66), 9000);
-    let mut conn = connected_connection(peer, 0x0000_0067);
-    // A fragment on queue 5 (OPEN-SESSION-12), sequence 2.
+/// A fragment on queue 5 (OPEN-SESSION-12) at `seq`: refused whole, whoever sent it.
+fn refused_fragment(seq: u32) -> Vec<u8> {
     let mut wire = vec![0u8; 22];
     wire[2..4].copy_from_slice(&0x0100u16.to_be_bytes());
     wire[4..6].copy_from_slice(&2u16.to_be_bytes());
     let flags = FLAG_MASKED_CHECKSUM | FLAG_HAS_FRAGMENTED_BLOBS;
     wire[6..10].copy_from_slice(&flags.to_be_bytes());
-    wire[10..14].copy_from_slice(&2u32.to_be_bytes());
+    wire[10..14].copy_from_slice(&seq.to_be_bytes());
     wire.extend_from_slice(&[0x05, 0x40]);
-    for i in 1..MAX_REFUSED_DATAGRAMS {
+    wire
+}
+
+/// A valid sequenced packet of the peer, one blob, masked with its stream's next word.
+fn peer_packet(server: &mut IsaacCipher, seq: u32) -> Vec<u8> {
+    let frags = split_blob(1, 0xFFFF, 0, 0, None, 0x149, &[0]).unwrap();
+    encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0100,
+            seq_num: seq,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders::default(),
+        &frags,
+        Some(server.next_mask()),
+        None,
+    )
+    .unwrap()
+}
+
+/// pending spec pass 10 fix 13: a refused packet leaves a sequence gap, and a gap that stays
+/// open while the peer keeps sending closes the connection rather than NAK forever. Each of the
+/// three kinds of refusal counts, a plain duplicate does not.
+#[test]
+fn a_gap_that_stays_open_closes_the_connection() {
+    use tessera_compat::session::MAX_GAP_AGE_SEC;
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 66), 9000);
+    let seed = 0x0000_0067;
+    let mut conn = connected_connection(peer, seed);
+    let mut server = IsaacCipher::from_seed(seed);
+    // The confirming packet was unmasked, so sequence 2 has the stream's first word.
+    let lost_mask = server.next_mask();
+    // Sequence 2 cannot be taken; sequence 3 passes its checksum and opens the gap.
+    assert!(
+        conn.receive_datagram(&refused_fragment(2), peer, 1.0, WireCodecs::NONE)
+            .is_err()
+    );
+    conn.receive_datagram(&peer_packet(&mut server, 3), peer, 1.0, WireCodecs::NONE)
+        .unwrap();
+    assert_eq!(conn.missing_gap_count(), 1);
+    assert_eq!(conn.handshake_counts().refused_while_connected, 1);
+
+    // Its retransmission keeps being refused, also with a wrong checksum; the other kinds count.
+    let wrong = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0100,
+            seq_num: 2,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders::default(),
+        &split_blob(1, 0xFFFF, 0, 0, None, 0x149, &[0]).unwrap(),
+        Some(lost_mask ^ 1),
+        None,
+    )
+    .unwrap();
+    assert!(matches!(
+        conn.receive_datagram(&wrong, peer, 1.5, WireCodecs::NONE),
+        Err(SessionError::ChecksumMismatch { .. })
+    ));
+    assert_eq!(conn.handshake_counts().refused_while_connected, 2);
+    let encrypted = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0100,
+            seq_num: 2,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders::default(),
+        &{
+            let mut f = split_blob(1, 0xFFFF, 0, 0, None, 0x149, &[0]).unwrap();
+            f[0].header.blob_flags |= 0x08;
+            f
+        },
+        Some(lost_mask),
+        None,
+    )
+    .unwrap();
+    assert!(
+        conn.receive_datagram(&encrypted, peer, 1.6, WireCodecs::NONE)
+            .is_err()
+    );
+    assert_eq!(conn.handshake_counts().refused_while_connected, 3);
+    // A plain duplicate of an accepted sequence number is overlap, not a refusal.
+    assert!(matches!(
+        conn.receive_datagram(&refused_duplicate(3), peer, 1.7, WireCodecs::NONE),
+        Err(SessionError::DuplicateSequence { .. })
+    ));
+    assert_eq!(conn.handshake_counts().refused_while_connected, 3);
+
+    // The peer stays alive. Up to the limit the gap is NAKed, then the connection closes.
+    let mut seq = 3;
+    let mut t = 2.0;
+    while t < 1.0 + MAX_GAP_AGE_SEC {
+        seq += 1;
+        conn.receive_datagram(&peer_packet(&mut server, seq), peer, t, WireCodecs::NONE)
+            .unwrap();
+        conn.tick(t).unwrap();
+        assert_eq!(conn.state(), ConnectionState::Connected, "{t}");
+        t += 10.0;
+    }
+    assert!(
+        conn.next_deadline()
+            .is_some_and(|d| d <= 1.0 + MAX_GAP_AGE_SEC)
+    );
+    conn.tick(1.0 + MAX_GAP_AGE_SEC + 0.1).unwrap();
+    assert_eq!(conn.state(), ConnectionState::Closing);
+    assert!(std::iter::from_fn(|| conn.pop_event()).any(|e| e
+        == SessionEvent::Disconnected {
+            reason: DisconnectReason::UnsupportedTraffic
+        }));
+}
+
+/// A packet at `seq` that the sequence check refuses as a duplicate.
+fn refused_duplicate(seq: u32) -> Vec<u8> {
+    encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0100,
+            seq_num: seq,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders::default(),
+        &[],
+        Some(0),
+        None,
+    )
+    .unwrap()
+}
+
+/// pending spec pass 10 fix 13: datagrams that match only the source address and recipient are
+/// not authenticated: however many arrive they are only counted, and nothing closes.
+#[test]
+fn unauthenticated_junk_is_counted_and_closes_nothing() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 67), 9000);
+    let mut conn = connected_connection(peer, 0x0000_0068);
+    for i in 1..=1000u64 {
         assert!(matches!(
-            conn.receive_datagram(&wire, peer, 0.1, WireCodecs::NONE),
+            conn.receive_datagram(&refused_fragment(2), peer, 0.1, WireCodecs::NONE),
             Err(SessionError::UnsupportedReceiveQueue { .. })
         ));
         assert_eq!(conn.handshake_counts().refused_while_connected, i);
-        assert_eq!(conn.state(), ConnectionState::Connected, "{i}");
     }
     assert_eq!(conn.recv_seq_expected(), 1, "nothing committed");
-    assert!(
-        conn.receive_datagram(&wire, peer, 0.1, WireCodecs::NONE)
-            .is_err()
-    );
-    assert_eq!(conn.state(), ConnectionState::Closing);
-    assert_eq!(
-        conn.pop_event(),
-        Some(SessionEvent::Disconnected {
-            reason: DisconnectReason::UnsupportedTraffic
-        })
-    );
+    assert_eq!(conn.missing_gap_count(), 0);
+    conn.tick(30.0).unwrap();
+    assert_eq!(conn.state(), ConnectionState::Connected);
+}
+
+/// A peer that says the packet will never come closes the gap (§5.4), and nothing ends.
+#[test]
+fn an_out_of_order_acknowledgement_ends_the_gaps_clock() {
+    use tessera_compat::session::MAX_GAP_AGE_SEC;
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 68), 9000);
+    let seed = 0x0000_0069;
+    let mut conn = connected_connection(peer, seed);
+    let mut server = IsaacCipher::from_seed(seed);
+    server.next_mask();
+    conn.receive_datagram(&peer_packet(&mut server, 3), peer, 1.0, WireCodecs::NONE)
+        .unwrap();
+    assert_eq!(conn.missing_gap_count(), 1);
+    let answer = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0100,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders {
+            out_of_order_ack: Some(vec![2]),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    conn.receive_datagram(&answer, peer, 1.5, WireCodecs::NONE)
+        .unwrap();
+    assert_eq!(conn.missing_gap_count(), 0);
+    conn.receive_datagram(
+        &peer_packet(&mut server, 4),
+        peer,
+        1.0 + MAX_GAP_AGE_SEC,
+        WireCodecs::NONE,
+    )
+    .unwrap();
+    conn.tick(1.0 + MAX_GAP_AGE_SEC + 1.0).unwrap();
+    assert_eq!(conn.state(), ConnectionState::Connected);
 }

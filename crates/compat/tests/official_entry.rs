@@ -530,6 +530,7 @@ fn oe_t9_placeholder_refuses_with_not_available_and_disconnects() {
                 reason: LoginRefusal::NotAvailable,
                 retry_after_seconds: None,
                 detail: None,
+                note: None,
             }),
             Event::Disconnected {
                 reason: DisconnectReason::TransportFailed(

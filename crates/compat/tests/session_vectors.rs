@@ -673,6 +673,14 @@ fn vector_8_referral_to_referral_auth() {
     world.tick(2.4).expect("tick");
     assert_eq!(world.pop_outbound_datagram(), Some(sent.clone()));
 
+    // Must fail: Vector 5's challenge cookie in place of the referral's.
+    let mut borrowed_cookie = SessionConnection::new(world_addr, 0.3);
+    borrowed_cookie.set_codec_uuids(UUIDS);
+    borrowed_cookie
+        .start_world_login(VECTOR_5_COOKIE, 0.3)
+        .expect("referral auth");
+    assert_ne!(borrowed_cookie.pop_outbound_datagram(), Some(sent.clone()));
+
     // Must fail: the cookie echoed without reversal, and the login connection's recipient,
     // sequence or mask borrowed.
     let unreversed = encode_datagram(
@@ -812,6 +820,18 @@ fn vector_9_standalone_ack() {
     assert_eq!(ack.opt_headers.cumulative_ack, Some(2));
     assert_eq!(conn.send_seq_num(), 2, "no sequence allocated");
 
+    // The Ack drew no word of the outgoing generator: the next sequenced packet carries the
+    // word right after the flow-only packet's.
+    conn.send_blob(1, 0, 0x10, &[0], 2.4, None).expect("queued");
+    let next = conn.pop_outbound_datagram().expect("the next packet");
+    let next = decode_datagram(&next, false, None, false).expect("decodes");
+    assert_eq!(next.header.seq_num, 3);
+    let mut outgoing = IsaacCipher::from_seed(0x5566_7788);
+    let flow_word = outgoing.next_mask();
+    verify_packet_checksum(flow.header, flow.payload_sum, Some(flow_word)).expect("the first word");
+    verify_packet_checksum(next.header, next.payload_sum, Some(outgoing.next_mask()))
+        .expect("the second word: the Ack took none");
+
     // Must fail: an advanced sequence or word, or the acknowledged sequence as the sequence.
     for bad in [
         DatagramHeader { seq_num: 3, ..hdr },
@@ -825,6 +845,18 @@ fn vector_9_standalone_ack() {
             hex(VECTOR_9_ACK)
         );
     }
+    // Must fail: drawing an ISAAC mask for the standalone Ack.
+    assert_ne!(
+        encode_datagram(
+            hdr,
+            &opt,
+            &[],
+            Some(IsaacCipher::from_seed(0x5566_7788).next_mask()),
+            None
+        )
+        .expect("encodes"),
+        hex(VECTOR_9_ACK)
+    );
 }
 
 // ---------------------------------------------------------------------------

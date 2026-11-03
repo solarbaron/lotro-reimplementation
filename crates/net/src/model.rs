@@ -214,6 +214,9 @@ pub enum DisconnectReason {
     TimedOut,
     /// The transport failed (I/O error or protocol violation), with detail.
     TransportFailed(String),
+    /// The session reached a step this client does not support, with Tessera's own text. The
+    /// other side did answer, so this is neither a time-out nor a transport failure.
+    Unsupported(String),
 }
 
 /// Maximum length in bytes of a chat message accepted by [`Session`](crate::Session).

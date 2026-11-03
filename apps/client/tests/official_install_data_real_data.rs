@@ -253,7 +253,7 @@ fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
 
     // The full key's fold is the selected language archive's subset.
     let key = inputs.language_key.expect("the language key");
-    assert_ne!(key, 0);
+    assert!(key != 0, "the language key is zero");
     let selected = set
         .members()
         .iter()
@@ -262,7 +262,10 @@ fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
                 && matches!(&m.id.kind, ArchiveKind::Local(l) if l.eq_ignore_ascii_case(&lang))
         })
         .expect("the language's base");
-    assert_eq!(selected.archive.header().subset, fold_language_code(key));
+    assert!(
+        selected.archive.header().subset == fold_language_code(key),
+        "the selected language archive's subset is not the fold of the key"
+    );
 
     // Some installed name rule allows it; every rule's list is read.
     let rules = inputs.name_rules.as_ref().expect("the name rules");
@@ -289,7 +292,7 @@ fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
     ids.dedup();
     assert_eq!(ids.len(), inventory.len(), "unique identifiers");
     for archive in inventory {
-        assert!(archive.iteration_count > 0);
+        assert!(archive.iteration_count > 0, "an empty iteration list");
     }
 
     // Each entry's iteration description, written by the §9.3.2 serializer rule, equals the
@@ -306,14 +309,17 @@ fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
         let Some(listed) = inventory.iter().find(|a| a.resource_id == id) else {
             continue;
         };
-        assert_eq!(
-            &advertised_archive(id, &raw, entry.stamp).expect("parses"),
-            listed
+        assert!(
+            &advertised_archive(id, &raw, entry.stamp).expect("parses") == listed,
+            "the listed entry differs from its base's record"
         );
         // With a stamp-2 record the description is the record itself.
-        assert_eq!(entry.stamp, 2, "every iteration record has stamp 2 here");
+        assert!(entry.stamp == 2, "an iteration record has another stamp");
         let single = build_install_advertisement(key, std::slice::from_ref(listed)).expect("one");
-        assert_eq!(&single[21..single.len() - 8], raw.as_slice());
+        assert!(
+            &single[21..single.len() - 8] == raw.as_slice(),
+            "the rewritten iteration description differs from the stored record"
+        );
         rewritten += 1;
     }
     assert_eq!(rewritten, inventory.len());
@@ -332,12 +338,21 @@ fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
         at += single.len() - 21;
     }
     assert_eq!(at + 8, data.len(), "M and the terminal field end the data");
-    assert_eq!(&data[data.len() - 8..], &[0u8; 8]);
+    assert!(
+        data[data.len() - 8..] == [0u8; 8],
+        "M and the terminal field are not zero"
+    );
 
     // The connector's preparation gets the same data through the trait.
     let archive_data = install_data_at(&root, &lang).expect("the install opens");
     let prepared = prepare_advertisement(&archive_data).expect("prepared");
-    assert_eq!(prepared.language_key, key);
-    assert_eq!(prepared.data, data);
+    assert!(
+        prepared.language_key == key,
+        "the connector's preparation has another language key"
+    );
+    assert!(
+        prepared.data == data,
+        "the connector's preparation has other advertisement data"
+    );
     eprintln!("advertisement bytes: {}", prepared.data.len());
 }

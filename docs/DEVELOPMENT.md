@@ -516,17 +516,24 @@ handshake, never an address, port, account or ticket (`crates/compat/src/connect
   (`dd_seen`, `ec_sent`, `f5_received`, `f5_sent`, `list_received`), the messages of that
   window skipped per opcode (`skipped_149`, `skipped_aa`, `skipped_30000040`, `skipped_43`,
   `skipped_fe`, `skipped_54`, `skipped_other`), `ignored` (a later `0xDD` or `0xF5`, or one on
-  another connection or queue) and `refused` (datagrams refused before anything was committed;
-  64 of them on a connected connection end it, a labelled engineering limit). The advertisement
+  another connection or queue, or anything left unhandled after a cancel) and `refused`
+  (datagrams refused before anything was committed, a diagnostic: such a datagram is not
+  authenticated). What ends a stalled connection is a sequence gap still open after 90 s while
+  the server keeps sending, a labelled engineering limit. The advertisement
   is sent once per login connection, from the real install, and is never retried with other
   data; no line names an archive, an identifier, an iteration value, a language key or a path.
 - `official session: install advertisement sent` (`info`): how many archives it lists and its
   size, no value.
 - `official session: not supported` and `official session: login ended before the character
-  list` (`info`): the login ended at one of those steps, with its reason as a label
-  (`crate::initial::UnsupportedNegotiation`) and the stages it reached. The checks that do not
-  depend on the server (the language key and the archive inventory) run before the first
-  datagram, so they end the attempt with `official session: not started` and the ticket unspent.
+  list` (`info`): the login ended at one of those steps, with its reason, which names the kind of
+  check that failed and no value (`crate::initial::UnsupportedNegotiation`), the stages it reached
+  and the skipped messages. A login cancelled past its handshake (by the user or the progress
+  screen's watchdog) or stopped by a withdrawal logs the same line. While a wait of the exchange
+  runs the session keeps the progress screen alive, so the labelled waits decide: 180 s to `0xDD`
+  or, on the version path, from `0x12F`, 120 s from `0xEC` to the server's `0xF5` and 120 s from
+  the client's `0xF5` to the list. The checks that do not depend on the server (the language key
+  and the archive inventory) run before the first datagram, so they end the attempt with
+  `official session: not started` and the ticket unspent.
 
 A live run now tries to reach the character list through that exchange under interim policies
 that are known to differ from, or are not confirmed against, the official client

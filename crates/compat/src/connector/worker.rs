@@ -144,6 +144,22 @@ impl Out {
                 reason,
                 retry_after_seconds: None,
                 detail,
+                note: None,
+            }),
+            Event::Disconnected {
+                reason: DisconnectReason::TransportFailed("official login refused".to_owned()),
+            },
+        ]);
+    }
+
+    /// [`Self::refuse`] for a refusal of Tessera's own: its `note`, no service words.
+    fn refuse_locally(&mut self, reason: LoginRefusal, note: &str) {
+        self.send(vec![
+            Event::Account(AccountEvent::LoginRefused {
+                reason,
+                retry_after_seconds: None,
+                detail: None,
+                note: Some(note.to_owned()),
             }),
             Event::Disconnected {
                 reason: DisconnectReason::TransportFailed("official login refused".to_owned()),
@@ -425,8 +441,8 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         // Nothing was sent: the ticket is not spent on an install that cannot answer
         // (`crate::initial`, pending spec pass 10 fix 2).
         Err(StartFailure::Unsupported(why)) => {
-            tracing::info!(reason = why.label(), "official session: not started");
-            out.refuse(LoginRefusal::UnsupportedStep, Some(why.detail().to_owned()));
+            tracing::info!(reason = %why, "official session: not started");
+            out.refuse_locally(LoginRefusal::UnsupportedStep, why.detail());
             return;
         }
     };
@@ -907,6 +923,7 @@ mod tests {
             reason: LoginRefusal::Other,
             retry_after_seconds: None,
             detail: None,
+            note: None,
         }));
         events.push(revoked());
         out.push(events);

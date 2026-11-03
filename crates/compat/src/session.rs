@@ -172,20 +172,25 @@ pub const MAX_ORDER_GROUPS: usize = 256;
 // pending spec pass 10 fix 9: how long a sent queue-1 blob stays resendable.
 /// How long a blob sent with [`SessionConnection::send_blob_retained`] stays resendable on a
 /// `SequenceNakHeader`, from its send. §5.3 expires unreliable fragments and sends
-/// `OutOfOrderAckHeader` instead; for the initial `0xEC`, one lost fragment would then stall
-/// the login, so its packets stay eligible for this window. Labelled engineering choice, not
-/// an observed official rule, generous against the `0.6` s NAK interval of §5.3.
+/// `OutOfOrderAckHeader` instead; for the initial `0xEC` and the client's `0xF5`, one lost
+/// datagram would then stall the login, so their packets stay eligible for this window. Labelled
+/// engineering choice, not an observed official rule, generous against the `0.6` s NAK interval
+/// of §5.3.
 pub const RETAINED_BLOB_RESEND_WINDOW_SEC: f64 = 30.0;
 
 // pending spec pass 10 fix 13: rejected datagrams can stall a connection.
-/// Datagrams a connected connection refuses before committing anything (§5.6.3, §6.5:
-/// no sequence, generator, reassembly or Ack change) until it closes with
-/// [`DisconnectReason::UnsupportedTraffic`]. Such a datagram's sequence number stays missing,
-/// so the gap would otherwise be NAKed for as long as the peer keeps answering and its
-/// retransmission keeps being refused. At the `0.6` s NAK interval this is at least about
-/// 38 s for one stuck packet; a healthy connection has none. Labelled engineering choice,
-/// not an observed official rule.
-pub const MAX_REFUSED_DATAGRAMS: u64 = 64;
+/// How long a connected connection keeps a sequence gap open before it closes with
+/// [`DisconnectReason::UnsupportedTraffic`]. A datagram refused before anything was committed
+/// (§5.6.3, §6.5: no sequence, generator, reassembly or Ack change) leaves its sequence number
+/// missing, so while later packets keep arriving the gap would be NAKed for as long as the peer
+/// keeps answering and its retransmission keeps being refused. A gap opens only after a later
+/// packet passed its masked checksum, so datagrams from anyone else cannot start this clock.
+///
+/// Labelled engineering choice, not an observed official rule: longer than
+/// [`SILENCE_TIMEOUT_SEC`], so a peer that went silent is still reported as silent, and shorter
+/// than the login's waits, so a stuck login reports this rather than a wait that ran out. A
+/// peer that cannot resend says so with `OutOfOrderAckHeader` (§5.4), which closes the gap.
+pub const MAX_GAP_AGE_SEC: f64 = 90.0;
 
 // Session timers. [`SessionConnection::tick`] (and the multiplexer's cleanup) acts on them
 // and [`SessionConnection::next_deadline`] reports them: both read these constants, so the
@@ -4938,7 +4943,7 @@ pub enum DisconnectReason {
     /// A local disconnect finished: `DisconnectHeader` was retransmitted for `20.0` s in
     /// State `7` (§6.1, §8.2).
     LocalDisconnect,
-    /// The connection refused [`MAX_REFUSED_DATAGRAMS`] datagrams it cannot take (§5.6.3,
+    /// A sequence gap stayed open for [`MAX_GAP_AGE_SEC`] with the peer still sending (§5.6.3,
     /// §6.5): labelled engineering limit, pending spec pass 10 fix 13.
     UnsupportedTraffic,
 }
@@ -4988,6 +4993,16 @@ enum SequenceCommit {
         skipped_masks: Vec<(u32, u32)>,
         seq: u32,
     },
+}
+
+/// A missing incoming sequence number (§5.3, §7.2).
+#[derive(Debug, Clone, Copy)]
+struct SequenceGap {
+    /// The ISAAC mask drawn for it when a later packet was accepted.
+    mask: u32,
+    /// The `now_sec` of that packet: gaps open in sequence order, so the lowest sequence number
+    /// is the oldest ([`MAX_GAP_AGE_SEC`]).
+    opened_at: f64,
 }
 
 /// Saved outbound sequenced packet in the retransmission table (§5.1, §5.3).
@@ -5049,7 +5064,8 @@ pub struct HandshakeCounts {
     /// (`OPEN-SESSION-14`) ([`SessionError::UnsupportedFragment`]).
     pub unsupported_fragment_drops: u64,
     /// Received datagrams a connected connection refused before committing anything,
-    /// whatever the reason; [`MAX_REFUSED_DATAGRAMS`] of them close it.
+    /// whatever the reason, a duplicate of a sequence number already taken apart. A diagnostic:
+    /// such datagrams are not authenticated, and [`MAX_GAP_AGE_SEC`] is what ends a stall.
     pub refused_while_connected: u64,
     /// Sent packets resent on a `SequenceNakHeader` inside their retained window
     /// ([`SessionConnection::send_blob_retained`]).
@@ -5246,7 +5262,7 @@ pub struct SessionConnection {
     recv_seq_expected: u32,
     outgoing_isaac: Option<IsaacCipher>,
     incoming_isaac: Option<IsaacCipher>,
-    missing_gaps: BTreeMap<u32, u32>,
+    missing_gaps: BTreeMap<u32, SequenceGap>,
     retransmit_table: BTreeMap<u32, SentPacketRecord>,
     out_of_order_ack_queue: VecDeque<u32>,
     dropped_out_of_order_acks: u64,
@@ -5868,8 +5884,8 @@ impl SessionConnection {
     /// sequence number, mask and client word (§4.2, §5.3); after the window a request for
     /// one is answered with `OutOfOrderAckHeader` as for any expired fragment (§5.4).
     ///
-    /// pending spec pass 10 fix 9: labelled engineering choice for the initial `0xEC`
-    /// (§9.3.2), whose loss would otherwise stall the login.
+    /// pending spec pass 10 fix 9: labelled engineering choice for the initial `0xEC` and the
+    /// client's `0xF5` (§9.3.2, §9.3.3), whose loss would otherwise stall the login.
     ///
     /// # Errors
     ///
@@ -5969,6 +5985,13 @@ impl SessionConnection {
         }
     }
 
+    /// Drops the datagrams queued and not yet handed to the socket. A cancelled login uses
+    /// this so that nothing it queued in its last pass goes out before its goodbye; the
+    /// sequence state stays as it is, and the connection is on its way out.
+    pub fn discard_unsent_datagrams(&mut self) {
+        self.outbound_datagrams.clear();
+    }
+
     /// Initiates a local graceful disconnect (`State 5 -> State 6`, §6.1, §8.2).
     pub fn request_disconnect(&mut self, now_sec: f64) {
         if self.state == ConnectionState::Connected {
@@ -6025,13 +6048,8 @@ impl SessionConnection {
         // datagram refused here commits no checksum generator, sequence, Ack, reassembly or
         // delivery state and is not acknowledged; the connection goes on under its timeouts
         // (§5.6.3 P10-23-POLICY).
-        let pkt = match decode_datagram(datagram, true, self.receive_codec(codecs.incoming), true) {
-            Ok(pkt) => pkt,
-            Err(err) => {
-                self.count_refused(&err, now_sec);
-                return Err(err);
-            }
-        };
+        let pkt = decode_datagram(datagram, true, self.receive_codec(codecs.incoming), true)
+            .map_err(|err| self.refused(err))?;
         let hdr = pkt.header;
 
         if let Some(cr) = &pkt.opt_headers.connect_challenge {
@@ -6044,7 +6062,8 @@ impl SessionConnection {
                     state = ?self.state,
                     "ConnectChallengeHeader outside States 1 and 2 dropped"
                 );
-                return Err(SessionError::UnexpectedConnectChallenge { state: self.state });
+                let err = SessionError::UnexpectedConnectChallenge { state: self.state };
+                return Err(self.refused(err));
             }
             // §6.3: the incoming recipient is the challenge datagram header's recId and the
             // outgoing one payload bytes 18..19; Tessera adopts only non-zero IDs.
@@ -6083,11 +6102,13 @@ impl SessionConnection {
 
         // Rule 8: every fragment is checked before anything is committed.
         self.reassembler
-            .check_packet(sender_rec_id, &pkt.fragments, now_sec)?;
+            .check_packet(sender_rec_id, &pkt.fragments, now_sec)
+            .map_err(|err| self.refused(err))?;
 
         // Rules 5 & 6: sequence window and checksum, computed on copies (§5.1, §7.2).
         let commit = if (hdr.flags & FLAG_MASKED_CHECKSUM) != 0 {
-            self.check_sequenced(hdr, pkt.payload_sum)?
+            self.check_sequenced(hdr, pkt.payload_sum)
+                .map_err(|err| self.refused(err))?
         } else {
             SequenceCommit::Unsequenced
         };
@@ -6105,7 +6126,13 @@ impl SessionConnection {
             } => {
                 self.incoming_isaac = Some(*isaac);
                 for (skipped_seq, mask) in skipped_masks {
-                    self.missing_gaps.insert(skipped_seq, mask);
+                    self.missing_gaps.insert(
+                        skipped_seq,
+                        SequenceGap {
+                            mask,
+                            opened_at: now_sec,
+                        },
+                    );
                 }
                 self.recv_seq_expected = seq;
             }
@@ -6146,13 +6173,14 @@ impl SessionConnection {
         Ok(pkt)
     }
 
-    /// Counts a datagram refused before anything was committed. pending spec pass 10 fix 13:
-    /// its sequence number stays missing, and with a peer that keeps retransmitting it the
-    /// gap would be NAKed forever, so [`MAX_REFUSED_DATAGRAMS`] of them on a connected
-    /// connection close it with [`DisconnectReason::UnsupportedTraffic`] (labelled engineering
-    /// limit). Only State `5` counts: the handshake has its own `20.0` s timeout.
-    fn count_refused(&mut self, err: &SessionError, now_sec: f64) {
-        match err {
+    /// Counts a datagram refused before anything was committed, for the diagnostics, and hands
+    /// the error back. pending spec pass 10 fix 13: the count closes nothing, because such a
+    /// datagram is not authenticated: what ends a stalled connection is the age of its sequence
+    /// gap ([`MAX_GAP_AGE_SEC`]). A duplicate of a sequence number already taken is ordinary
+    /// retransmission overlap and is not a refusal; only State `5` counts, since the handshake
+    /// has its own `20.0` s timeout.
+    fn refused(&mut self, err: SessionError) -> SessionError {
+        match &err {
             // §5.6.2, §5.6.3: queues 5/6 (OPEN-SESSION-12).
             SessionError::UnsupportedReceiveQueue { .. } => {
                 self.counts.unsupported_queue_drops =
@@ -6166,17 +6194,13 @@ impl SessionConnection {
             }
             _ => {}
         }
-        if self.state != ConnectionState::Connected {
-            return;
+        if self.state == ConnectionState::Connected
+            && !matches!(err, SessionError::DuplicateSequence { .. })
+        {
+            self.counts.refused_while_connected =
+                self.counts.refused_while_connected.saturating_add(1);
         }
-        self.counts.refused_while_connected = self.counts.refused_while_connected.saturating_add(1);
-        if self.counts.refused_while_connected >= MAX_REFUSED_DATAGRAMS {
-            tracing::info!(
-                refused = self.counts.refused_while_connected,
-                "official session: too many datagrams refused; closing the connection"
-            );
-            self.close(DisconnectReason::UnsupportedTraffic, now_sec);
-        }
+        err
     }
 
     /// Checks a masked (sequenced) packet against the window, the gap table and its ISAAC
@@ -6199,7 +6223,7 @@ impl SessionConnection {
             });
         }
         if seq <= self.recv_seq_expected {
-            let Some(&saved_mask) = self.missing_gaps.get(&seq) else {
+            let Some(gap) = self.missing_gaps.get(&seq) else {
                 // Duplicate or already processed sequence number: its ISAAC mask was consumed
                 // and not kept, so the checksum cannot be verified. Drop the packet before any
                 // optional header acts or the receive timestamp moves (§10.1 rule 6).
@@ -6208,7 +6232,7 @@ impl SessionConnection {
                     expected: self.recv_seq_expected,
                 });
             };
-            verify_packet_checksum(hdr, payload_sum, Some(saved_mask))?;
+            verify_packet_checksum(hdr, payload_sum, Some(gap.mask))?;
             return Ok(SequenceCommit::FillGap(seq));
         }
         let new_gaps = (seq - self.recv_seq_expected - 1) as usize;
@@ -6579,6 +6603,21 @@ impl SessionConnection {
                     return Ok(());
                 }
 
+                // pending spec pass 10 fix 13: a gap that stays open while later packets keep
+                // arriving ends the connection rather than being NAKed forever.
+                if self
+                    .oldest_gap_opened_at()
+                    .is_some_and(|t| now_sec - t > MAX_GAP_AGE_SEC)
+                {
+                    tracing::info!(
+                        refused = self.counts.refused_while_connected,
+                        gaps = self.missing_gaps.len(),
+                        "official session: a sequence gap stayed open; closing the connection"
+                    );
+                    self.close(DisconnectReason::UnsupportedTraffic, now_sec);
+                    return Ok(());
+                }
+
                 // Flush up to 114 OutOfOrderAckHeader entries if any (§5.4)
                 if !self.out_of_order_ack_queue.is_empty() {
                     let count = self.out_of_order_ack_queue.len().min(MAX_NAK_ENTRIES);
@@ -6699,7 +6738,8 @@ impl SessionConnection {
                     // goes out on the first tick after State 5 (§5.5).
                     at(f64::NEG_INFINITY);
                 }
-                if !self.missing_gaps.is_empty() {
+                if let Some(opened) = self.oldest_gap_opened_at() {
+                    at(opened + MAX_GAP_AGE_SEC);
                     at(self.last_ack_nak_sent_sec + SEQUENCE_NAK_INTERVAL_SEC);
                 } else if self.recv_seq_expected > 1 {
                     at(self.last_ack_nak_sent_sec + CUMULATIVE_ACK_INTERVAL_SEC);
@@ -6722,6 +6762,13 @@ impl SessionConnection {
             | ConnectionState::ServerConnectSent => {}
         }
         next
+    }
+
+    /// When the oldest open sequence gap opened (its sequence number is the lowest).
+    fn oldest_gap_opened_at(&self) -> Option<f64> {
+        self.missing_gaps
+            .first_key_value()
+            .map(|(_, gap)| gap.opened_at)
     }
 
     /// Whether a sent packet with reliable content still waits for its acknowledgement

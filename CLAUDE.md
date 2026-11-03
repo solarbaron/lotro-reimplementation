@@ -588,11 +588,31 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   items O140–O155, P6 items O160–O175, P8 items O196–O200, which do block P8). They
   do not block the
   Tessera-side work.
+- **After a game update (2026-10-31):** tier-2 goldens carry over to the new install version when
+  unchanged and changed ones wait for the owner (`tools/golden-review.sh`, decision 0031 amendment);
+  real-data counts use local per-install baselines (`crates/testkit`, `tools/census-drift.sh`,
+  decision 0045), so an update lists drift instead of failing the gate.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
 - **M8 (official-server compatibility) is in scope** by the owner's decision of 2026-10-11
   (`docs/decisions/0034-official-server-compatibility.md`); **partly done and needs more
   work** (`docs/ROADMAP.md` M8 status):
+  - **Spec pass 10 and C8 (2026-10-31 to 11-04; the current state, read this first):** from two
+    passive captures of the owner's own sessions, pass 10 on branch `m8-spec-pass-10` (Review, not
+    merged, fresh dirty-room review pending; checks in its `docs/m8-remediation.md` §21–§26) corrects
+    the checksum, first sequence numbers, flags, compact integers, challenge and accept, ISAAC seeds and
+    codec directions, and adds the referral, the world handshake, the initial install advertisement
+    (0xEC after 0xDD), the character-list appearance codec and the 6F destination. Where the branch and
+    the stage-1 specs below disagree, the branch is current. C8 (`crates/compat/src/initial.rs`,
+    `session`, `connector`, `world`) follows the branch at 9e71f8f2 and is merged by the owner's decision
+    without waiting for spec acceptance (decision 0046; a deliberate exception to decision 0018).
+    No live run has been made yet. Production login reaches the character list and selection, then the
+    world handshake and 0x90, and stops at the readiness wait: no F4 and no `WorldEntered`, because
+    OPEN-WORLD-9 and OPEN-SESSION-18 are open. Interim rules (header word, FlowControl, counters, EC
+    order) are labelled in the code and known or suspected to differ from the official client.
+    Decision 0046 records the owner's scope: any user past the warning; truthful install data only;
+    0x13D, 0x19E, the first world RPC and chat at login omitted; create and delete withheld.
+    Diagnostics: `TESSERA_OFFICIAL_DUMP_DIR`, `TESSERA_OFFICIAL_LOGIN_SERVER`.
   - **Specs: stage 1 Accepted (2026-10-25).** `official-login.md`, `official-session.md`,
     `official-messages-world.md`, `official-messages-play.md` and `property-system.md` §10
     passed independent review and the default-mode audit with notes after seven remediation
@@ -716,6 +736,7 @@ fine. Format-level terms like "DID" or "landblock" are fine.
 - `crates/net` — transport-agnostic session layer, gameplay event and command groups (`domain`), a local sandbox backend with the scenario feed (`scenario`, P0) and the test-server backend (`remote`)
 - `crates/compat` — official-server compatibility crate (M8, decision 0034; partly done, needs more work): `CompatBackend` shell (`backend`), launcher configuration, SOAP login flow, queue and version discovery (`login`, `version_resource`), UDP session and transport layer (`session`: datagram framing, checksums, blob fragmentation, message envelopes), and compact wire value, encoded property table and world-session message codecs (`world`); play/gameplay message handlers and live client connector wiring wait for the M8 specs (decision 0042); never linked by `tessera-server`
 - `crates/protocol` — Tessera's own network protocol: messages, framing, codec, session state machines, key pinning, QUIC setup
+- `crates/testkit` — dev-only test helpers: local per-install census baselines (decision 0045); never in a release graph
 - `crates/render` — wgpu renderer (mesh/material/terrain pipelines, GPU skinning, golden-image tests, the particle pipeline)
 - `crates/script` — plugin-free sandboxed Lua 5.1 core: apartment profiles, limits and budget, protected calls, pattern matcher, neutral Lua-table data reader (no plugin API namespace, `import` or chat state; decision 0023)
 - `crates/plugins` — plugin host on the script core: `.plugin` discovery, apartments, `import`, the compatible plugin API (its UI classes bind `crates/ui` elements), plugin data, the clean-room class helper

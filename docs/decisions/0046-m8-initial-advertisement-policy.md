@@ -34,7 +34,6 @@ not only wire or observable facts.
    and to continue. It is not treated as a contamination incident under `docs/CLEAN_ROOM.md` §10.
    Implementers still take no rule from a description the spec itself says is not a rule; the rules
    they need are stated as wire or observable facts.
-
 5. **Omissions.** Not sending 0x13D, 0x19E and the first world RPC is accepted for any user past the
    warning and consent gate, as a labelled interim policy and a known difference from the observed
    client. Neither capture omits 0x13D or 0x19E, so the server's treatment of this is untested.
@@ -44,6 +43,14 @@ not only wire or observable facts.
    OPEN-WORLD-10 is answered. The result text must say this is a Tessera limit, not an account fault.
 7. **Character create and delete** on the official service are left to the spec writer to specify
    or withhold. Nothing sends them until the spec gives a rule.
+8. **Selection.** Any user past the warning and consent gate may send the character selection on the
+   official service, even while the client's final ready message cannot be sent. A selection may
+   therefore take a real character into the world on the server's side and end at a deadline, until
+   OPEN-WORLD-9 and OPEN-SESSION-18 are answered. The server's reaction is unknown. The result text
+   must say this is a Tessera limit, not a service outage.
+9. **Further known differences.** Tessera opens no chat connection at login, though both captures
+   show one, and it may repeatedly ask for a resend of a datagram it dropped for an undefined flag
+   bit, for up to 30 seconds. Both are accepted and listed where a refusal is analysed.
 
 ## Consequences
 

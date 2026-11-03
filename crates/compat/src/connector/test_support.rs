@@ -25,8 +25,10 @@
 //! | `SessionAuthHeader` | the connect challenge |
 //! | `ConnectAcceptHeader` | `0x149` (with ClockSync), `0xAA`, five `0x149`, `0x30000040`, two `0xAA`, `0x43`, `0xDD` |
 //! | a complete `0xEC` | `0x149`, `0xF5` |
-//! | a complete `0xF5` | `0xFE`, `0xAA`, `0x54`, the list `0x6C` |
-//! | a complete `0x6F` | `0x149`, one queue-2 `0x30`, two queue-1 `0x30`; no referral, nothing more |
+//! | a complete `0xF5` | `0xFE`, `0xAA`, `0x54`, the list `0x6C` with one nonempty entry and account table ([`character_list`]) |
+//! | a complete `0x6F` | `0x149`, one queue-2 `0x30`, two queue-1 `0x30`, then the referral to its world server |
+//! | `ReferralAuthHeader` (world) | the connect challenge |
+//! | `ConnectAcceptHeader` (world) | the stream of [`observed_world_stream`], with `0x90` and no readiness |
 //!
 //! A test plays the rest of the world with [`SyntheticService::send_world_event`] and the
 //! payload builders below ([`entity_batch`], [`position`], [`chat_line`]): other entities,
@@ -62,10 +64,11 @@ use crate::session::{
 };
 use crate::world::{
     CharacterListResponse, CharacterSummaryEntry, EncodedPropertyTable, EncodedPropertyValue,
-    EnterPortalSpace, EntityAppearanceDesc, EntityCreate, EntityPlacement, LocalizedTokenText,
-    PID_AGENT_SPECIES, PID_ENTITY_DISPLAY_NAME, PID_SEX, PlayerSessionReady, PositionUpdate,
-    PropertyTableUpdate, PropertyType, SubEventBatch, SubEventFrame, WirePosition,
-    encode_event_envelope,
+    EnterPortalSpace, EntityCreate, EntityPlacement, LocalizedTokenText,
+    PID_ACCOUNT_NUM_CHARACTERS_ALLOWED, PID_AGENT_CLASS, PID_AGENT_SPECIES,
+    PID_CHARGEN_CHARACTER_HAS_DATA, PID_CHARGEN_CHARACTER_LEVEL, PID_ENTITY_DISPLAY_NAME, PID_SEX,
+    PlayerSessionReady, PositionUpdate, PropertyTableUpdate, PropertyType, SubEventBatch,
+    SubEventFrame, VisualDescriptionUpdate, WirePosition, encode_event_envelope,
 };
 
 /// The `scene_id` of the synthetic world entry's `0x5E`.
@@ -122,8 +125,6 @@ pub const OUTGOING_UUID: [u8; 16] = [
 /// The selected language's full key of the synthetic install (`official-session.md` §10.2 Vector
 /// 10's synthetic key, never a value for the service).
 pub const SYNTHETIC_LANGUAGE_KEY: u32 = 0x1000_0005;
-/// The test-only destination of a requested `0x6F`: invented, neither the default recipient nor
-/// the list's. No production path has one ([`ConnectorNet::entry_destination`]).
 /// The name-rule key of the synthetic server's `0xDD` and the synthetic install's rule
 /// (§10.2 Vector 11's synthetic key).
 pub const SYNTHETIC_NAME_RULE: u32 = 7;
@@ -156,6 +157,14 @@ pub fn synthetic_inventory() -> Vec<AdvertisedArchive> {
 
 /// The name of the one character the synthetic account has.
 pub const CHARACTER: &str = "Aldo";
+/// Its synthetic `agent_species` key.
+pub const CHARACTER_SPECIES: u32 = 0x47;
+/// Its `sex` key (`official-messages-world.md` §3.1.3).
+pub const CHARACTER_SEX: u32 = 0x1000;
+/// Its synthetic `agent_class` key.
+pub const CHARACTER_CLASS: u32 = 0x18;
+/// Its character-screen level.
+pub const CHARACTER_LEVEL: i32 = 12;
 /// The player entity of the synthetic world.
 pub const PLAYER: u64 = 0x0100_0000_0000_0007;
 /// Where the synthetic world places the player (offsets in its landblock, metres).
@@ -180,12 +189,16 @@ pub const NPC_AT: [f32; 3] = [20.0, 40.0, 6.0];
 /// tokenized texts (type 13, whose literal is a prefixed UTF-16LE string); real runs take
 /// every type from the install's property dictionary (`0x34000000`), and the chat line
 /// reads either form (`crate::play::chat`).
-pub const DICTIONARY: [(u32, PropertyType); 9] = [
+pub const DICTIONARY: [(u32, PropertyType); 13] = [
     (PID_ENTITY_DISPLAY_NAME, PropertyType::LocalizedTokenText),
     (PID_IS_NPC_AGENT, PropertyType::Boolean),
     (PID_IS_INANIMATE_PROP, PropertyType::Boolean),
     (PID_AGENT_SPECIES, PropertyType::Enum),
     (PID_SEX, PropertyType::Enum),
+    (PID_AGENT_CLASS, PropertyType::Enum),
+    (PID_CHARGEN_CHARACTER_LEVEL, PropertyType::Int),
+    (PID_CHARGEN_CHARACTER_HAS_DATA, PropertyType::Boolean),
+    (PID_ACCOUNT_NUM_CHARACTERS_ALLOWED, PropertyType::Int),
     (PID_CHAT_CATEGORY, PropertyType::Enum),
     (PID_CHAT_TEXT, PropertyType::LocalizedTokenText),
     (PID_CHAT_SENDER_NAME, PropertyType::LocalizedTokenText),
@@ -712,22 +725,7 @@ fn observed_world_answer(st: &mut State, datagram: &[u8]) {
     };
     if pkt.opt_headers.connect_accept.is_some() && !server.greeted {
         server.greeted = true;
-        let stream: [(u8, u32, Vec<u8>); 13] = [
-            (1, 0x149, opaque_body(0x149)),
-            (2, 0x88, opaque_body(0x88)),
-            (4, 0x92, opaque_body(0x92)),
-            (4, 0xA8, opaque_body(0xA8)),
-            (4, 0x89, OBSERVED_APPEARANCE.to_vec()),
-            (4, 0x92, opaque_body(0x92)),
-            (2, 0x88, opaque_body(0x88)),
-            (1, 0x90, session_ready()),
-            (2, 0x4C, observed_batch()),
-            (1, PositionUpdate::EVENT_ID, placement()),
-            (1, 0x149, opaque_body(0x149)),
-            (1, 0x7C, vec![0x00]),
-            (1, 0x0D, vec![0x00]),
-        ];
-        for (queue, opcode, data) in stream {
+        for (queue, opcode, data) in observed_world_stream() {
             if let Some(d) = server.observed_on(queue, opcode, &data) {
                 st.deliver(d);
             }
@@ -739,6 +737,35 @@ fn observed_world_answer(st: &mut State, datagram: &[u8]) {
         }
     }
     st.world_server = Some(server);
+}
+
+/// The world server's complete messages in the observed-order script, as `(queue, opcode, data)`:
+/// the observed messages up to `0x90` and the checked ones after it (§9.3.8), with no readiness
+/// the client could act on.
+#[must_use]
+pub fn observed_world_stream() -> Vec<(u8, u32, Vec<u8>)> {
+    vec![
+        (1, 0x149, opaque_body(0x149)),
+        (2, 0x88, opaque_body(0x88)),
+        (4, 0x92, opaque_body(0x92)),
+        (4, 0xA8, opaque_body(0xA8)),
+        (4, 0x89, OBSERVED_APPEARANCE.to_vec()),
+        (4, 0x92, opaque_body(0x92)),
+        (2, 0x88, opaque_body(0x88)),
+        (1, 0x90, session_ready()),
+        (2, 0x4C, observed_batch()),
+        (1, PositionUpdate::EVENT_ID, placement()),
+        (1, EnterPortalSpace::EVENT_ID, entry_portal_space()),
+        (1, 0x149, opaque_body(0x149)),
+        (1, 0x7C, vec![0x00]),
+        (1, 0x0D, vec![0x00]),
+    ]
+}
+
+/// Vector 16's complete `0x89` data (`official-session.md` §10.2).
+#[must_use]
+pub const fn observed_appearance() -> &'static [u8] {
+    &OBSERVED_APPEARANCE
 }
 
 /// A `0x4C` with an embedded `0x98` and `0x52`, each with its own one shared byte (§9.3.8).
@@ -1152,23 +1179,49 @@ fn login_ok() -> String {
     )
 }
 
-fn character_list() -> Vec<u8> {
+/// The list's one entry, through the real encoder (`official-messages-world.md` §3.1.2): nonempty
+/// public and private tables, Vector 16's appearance, and a nonempty account table.
+#[must_use]
+pub fn character_list() -> Vec<u8> {
+    let mut public_props = EncodedPropertyTable::new();
+    public_props.push(
+        PID_AGENT_SPECIES,
+        EncodedPropertyValue::Enum(CHARACTER_SPECIES),
+    );
+    public_props.push(PID_SEX, EncodedPropertyValue::Enum(CHARACTER_SEX));
+    public_props.push(PID_AGENT_CLASS, EncodedPropertyValue::Enum(CHARACTER_CLASS));
+    public_props.push(
+        PID_CHARGEN_CHARACTER_LEVEL,
+        EncodedPropertyValue::Int(CHARACTER_LEVEL),
+    );
+    let mut private_props = EncodedPropertyTable::new();
+    private_props.push(
+        PID_CHARGEN_CHARACTER_HAS_DATA,
+        EncodedPropertyValue::Boolean(true),
+    );
+    let mut account_props = EncodedPropertyTable::new();
+    account_props.push(
+        PID_ACCOUNT_NUM_CHARACTERS_ALLOWED,
+        EncodedPropertyValue::Int(3),
+    );
     CharacterListResponse {
         characters: vec![CharacterSummaryEntry {
             character_id: 0x0200_0000_0000_0042,
             name: CHARACTER.to_owned(),
             status_or_world: 0,
-            public_props: EncodedPropertyTable::new(),
-            private_props: EncodedPropertyTable::new(),
+            public_props,
+            private_props,
             metadata_a: 0,
-            visual_desc: EntityAppearanceDesc::default(),
+            visual_desc: VisualDescriptionUpdate::from_bytes(&OBSERVED_APPEARANCE)
+                .map(|u| u.visual_desc)
+                .unwrap_or_default(),
             metadata_b: 0,
             metadata_c: u32::MAX,
             metadata_d: 0,
             metadata_e: u32::MAX,
             timestamp_or_meta: 0,
         }],
-        account_props: EncodedPropertyTable::new(),
+        account_props,
     }
     .to_bytes()
     .unwrap_or_default()

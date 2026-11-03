@@ -317,6 +317,7 @@ impl Runtime {
             surface: args.surface,
             count_entries: !args.no_entry_count && !walker,
             showcase: !walker,
+            names_paths: !is_handed,
         })?;
         let walker_shared = args.walker().then(|| {
             Arc::new(Mutex::new(SourceShared {
@@ -386,7 +387,10 @@ impl Runtime {
         let root = data_root(args);
         let plugins_dir = args.plugins.clone().unwrap_or_else(|| root.join("Plugins"));
         if !plugins_dir.is_dir() {
-            if args.plugins.is_some() {
+            if is_handed {
+                // No directory on an official run: its path can name the user.
+                tracing::info!("no plugins folder");
+            } else if args.plugins.is_some() {
                 tracing::warn!(dir = %plugins_dir.display(), "plugins folder does not exist");
             } else {
                 tracing::info!(dir = %plugins_dir.display(), "no plugins folder (use --plugins)");

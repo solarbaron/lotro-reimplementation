@@ -1285,6 +1285,43 @@ fn a_portal_space_begun_by_the_server_waits_for_a_fresh_loading_signal() {
     assert_eq!(sent_payloads(&world, 0xF4).len(), 1);
 }
 
+/// §9.3.8's observed form of `0xF4`, on the synthetic in-world path: queue 1, the default recipient
+/// (`0x40` set, logical recipient 2), no extension word and one zero body byte, with the header
+/// `01 40 80 F4 01 00` the fragment encoder makes of those. It goes out only there: no production
+/// path has its readiness or target (OPEN-WORLD-9).
+#[test]
+fn the_sent_portal_exit_has_its_observed_form() {
+    let (world, mut d, mut login) = in_world();
+    deliver(&world, &mut d, login.event(0xC7, &[0]), 1.2);
+    deliver(
+        &world,
+        &mut d,
+        login.event(0xCE, &stamped_placement(0)),
+        1.25,
+    );
+    world.take_sent();
+    d.command(&Command::WorldLoaded, 1.3).expect("loaded");
+    d.step(1.4, true, &go);
+    let frags: Vec<crate::session::BlobFragment> = world
+        .take_sent()
+        .into_iter()
+        .filter_map(|(d, _)| decode_client_datagram(&d, false).ok())
+        .flat_map(|pkt| pkt.fragments)
+        .filter(|f| f.header.blob_header_word == Some(0xF4))
+        .collect();
+    let [frag] = frags.as_slice() else {
+        panic!("one `0xF4`: {frags:?}");
+    };
+    assert_eq!(frag.payload, [0]);
+    assert_eq!(frag.header.queue_id, 1);
+    assert_eq!(frag.header.blob_flags & 0x40, 0x40);
+    assert_eq!(frag.header.recipient_id, 2);
+    assert_eq!(frag.header.ext_word, None);
+    let mut wire = Vec::new();
+    frag.encode(&mut wire).expect("encodes");
+    assert_eq!(wire, [0x01, 0x40, 0x80, 0xF4, 0x01, 0x00, 0x00]);
+}
+
 #[test]
 fn a_placement_before_its_portal_space_keeps_its_loading_signal() {
     // §4.5 item 2 lets the stamped `0xCE` come before `0x5E`. The client loads that

@@ -238,6 +238,12 @@ impl AccountForm {
         std::iter::repeat_n(BULLET, self.password.char_count()).collect()
     }
 
+    /// Until when Log in is held back (§8.6), whether or not that time has passed.
+    #[must_use]
+    pub fn blocked_until(&self) -> Option<Instant> {
+        self.blocked_until
+    }
+
     /// Seconds left of a `RateLimited` wait at `now` (for the countdown), if one runs.
     #[must_use]
     pub fn rate_limit_left(&self, now: Instant) -> Option<u64> {

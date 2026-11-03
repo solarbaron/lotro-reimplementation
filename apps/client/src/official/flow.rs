@@ -721,7 +721,8 @@ impl Flow {
     /// account form shows with both fields empty (§8.7, §4.5), with §8.6's message for a
     /// session that ended (none when the player left), or, when the client itself failed,
     /// Tessera's own text for the kind of failure ([`HandOverFailure::message_text`], no
-    /// service detail). The warning is not shown again.
+    /// service detail). After a failure Log in stays disabled for 2 s (§8.6). The warning is not
+    /// shown again.
     pub fn characters_ended(&mut self, end: HandOverEnd) {
         if !self.handed_over {
             return;
@@ -736,9 +737,19 @@ impl Flow {
                 detail: None,
             }),
         };
-        if let Some(m) = message {
-            self.show(m);
+        self.after_failure(message, Instant::now());
+    }
+
+    /// §8.6 for a session that ended on the way to or at the character screens: its message on the
+    /// account form, with Log in disabled for 2 s. Without a message nothing failed.
+    fn after_failure(&mut self, message: Option<Message>, now: Instant) {
+        let Some(message) = message else {
+            return;
+        };
+        if let Some(form) = self.form.as_mut() {
+            form.block_until(now + super::login::FAILURE_WAIT, false);
         }
+        self.show(message);
     }
 
     /// Leaves the interim character screen (Back, Escape or closing the window): the session
@@ -916,13 +927,16 @@ impl Flow {
             let mut events = std::mem::take(&mut self.events);
             events.clear();
             session.poll_into(now, &mut events);
-            let ended = events
-                .iter()
-                .any(|e| matches!(e, Event::Disconnected { .. }));
+            let ended = events.iter().find_map(|e| match e {
+                Event::Disconnected { reason } => Some(reason.clone()),
+                _ => None,
+            });
             let kept = events.clone();
             self.events = events;
-            if ended {
+            if let Some(reason) = ended {
+                // Ended before the window took it: §8.6's message, as after the hand-over.
                 self.leave_characters();
+                self.after_failure(super::login::disconnect_message(&reason), now);
             } else {
                 self.keep_for_hand_over(kept);
             }

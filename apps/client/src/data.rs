@@ -42,6 +42,10 @@ pub struct LoaderConfig {
     /// Decode the showcase texture (the M0 view). The world walker does not show it, so
     /// it leaves this off and the loader stops right after opening the archives.
     pub showcase: bool,
+    /// Whether log lines and no-data reasons may name directories. Off for a session the official
+    /// login handed over: there the log names files only, because an install's path can name the
+    /// user.
+    pub names_paths: bool,
 }
 
 /// A surface decoded to RGBA8, ready for upload.
@@ -233,6 +237,13 @@ fn run(config: &LoaderConfig, ctx: &Ctx) {
     }
     let install = match find_install(config.game_dir.as_deref()) {
         Ok(i) => i,
+        Err(_) if !config.names_paths => {
+            tracing::warn!("no usable install; running in no-data mode");
+            ctx.send(LoaderEvent::NoData {
+                reason: "no usable install".to_owned(),
+            });
+            return;
+        }
         Err(reason) => {
             tracing::warn!(
                 "{reason}; running in no-data mode (set {} or pass --game-dir)",
@@ -242,7 +253,7 @@ fn run(config: &LoaderConfig, ctx: &Ctx) {
             return;
         }
     };
-    log_install(&install);
+    log_install(&install, config.names_paths);
     if ctx.cancelled() {
         return;
     }
@@ -251,7 +262,11 @@ fn run(config: &LoaderConfig, ctx: &Ctx) {
     let set = match ArchiveSet::open(&install.root, SetOptions::default()) {
         Ok(s) => Arc::new(s),
         Err(e) => {
-            let reason = format!("cannot open the archive set: {e}");
+            let reason = if config.names_paths {
+                format!("cannot open the archive set: {e}")
+            } else {
+                format!("cannot open the archive set: {}", e.without_path())
+            };
             tracing::error!("{reason}");
             ctx.send(LoaderEvent::NoData { reason });
             return;
@@ -356,7 +371,23 @@ pub fn find_install(explicit: Option<&Path>) -> Result<GameInstall, String> {
         .ok_or_else(|| "no install found".to_owned())
 }
 
-fn log_install(install: &GameInstall) {
+/// The line of the install found. On an official run it names no directory and no source's path:
+/// an install's path can name the user.
+fn log_install(install: &GameInstall, names_paths: bool) {
+    if !names_paths {
+        tracing::info!(
+            archives = install.archives.len(),
+            languages = %install.languages.join(","),
+            incomplete = install.incomplete,
+            sources = ?install.sources.iter().map(tessera_install::Source::kind).collect::<Vec<_>>(),
+            "install found"
+        );
+        tracing::debug!(project_version = ?install.project_version, game_type = ?install.game_type, "install identity");
+        for w in &install.warnings {
+            tracing::warn!("install: {w}");
+        }
+        return;
+    }
     tracing::info!(
         root = %install.root.display(),
         archives = install.archives.len(),

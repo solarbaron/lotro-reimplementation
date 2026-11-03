@@ -882,11 +882,15 @@ const REQUIRED_PORTAL_KINDS: [ArchiveKind; 5] = [
 ///   non-region-1 pair whose two files both failed to be read by the OS before their metadata
 ///   could be validated, which counts as absent, with a warning;
 /// - half of a region pair (`install-layout.md` §3.3), and region 1 absent;
-/// - an overlay or journal next to a listed base (`dat-container.md` §2.5: the set's records may be
-///   out of date).
+/// - an overlay next to a listed base (`dat-container.md` §2.5: the set's records may be out of
+///   date);
+/// - a pending journal on an active member, a base or one of its active parts: its header's 0x16C is
+///   not zero, so an update was interrupted and the archive may be half-applied (§3.6). A
+///   `.jrnl` file beside a member whose 0x16C is zero affects nothing: §3.6 calls it stale and a
+///   read-only reader ignores it, so it gets a warning and is never touched.
 ///
-/// A region archive outside the map's nonzero keys is not a candidate: it is ignored, as is an
-/// unrelated file.
+/// A region archive outside the map's nonzero keys is not a candidate: it is ignored with its
+/// auxiliary files, as is an unrelated file.
 ///
 /// Other languages stay members of the set (`crates/dat/src/set.rs`) and are filtered here.
 ///
@@ -925,11 +929,36 @@ pub fn archive_inventory(
     {
         return Err(InstallUnsupported::ArchiveMissing);
     }
+    // Not this login's parts or side files: another language, or a region outside the map's keys.
+    let not_candidate = |kind: &ArchiveKind| {
+        other_language(kind) || kind.region().is_some_and(|r| !region_keys.contains(&r))
+    };
     check_region_pairs(&bases, region_keys)?;
-    check_set_parts(set, &bases, &other_language)?;
+    check_set_parts(set, &bases, &not_candidate)?;
     check_set_problems(set, &bases, &other_language, region_keys)?;
-    check_stray_parts(set, &bases, &other_language)?;
+    check_stray_parts(set, &bases, &not_candidate)?;
+    check_pending_journals(set, &bases)?;
     bases.into_iter().map(advertised_base).collect()
+}
+
+/// `dat-container.md` §3.6 for every active member: a nonzero 0x16C on a base or on a part below its
+/// verified count is unsupported, whether or not its journal file is there (§9.3.7–§9.3.8: an
+/// overlay or journal affecting an active base or its metadata). Stale parts are not active. Run
+/// after [`check_set_parts`], which has verified every listed family.
+fn check_pending_journals(
+    set: &ArchiveSet,
+    bases: &[&SetMember],
+) -> Result<(), InstallUnsupported> {
+    for member in set.members() {
+        let Some(base) = bases.iter().find(|b| b.id.kind == member.id.kind) else {
+            continue;
+        };
+        let (count, _) = base_membership(base)?;
+        if member.id.part < count && member.archive.header().pending_journal() != 0 {
+            return Err(InstallUnsupported::ArchivePendingJournal);
+        }
+    }
+    Ok(())
 }
 
 /// The problems [`ArchiveSet`] recorded for named files, once [`check_set_parts`] has verified
@@ -1091,15 +1120,15 @@ fn active_parts<'a>(
 
 /// Checks every listed family's parts ([`active_parts`]). Its stale leftovers each get a warning:
 /// excluded, never deleted or modified (`official-session.md` §9.3.7). An auxiliary part with no
-/// base at all has no membership to verify against.
+/// base at all has no membership to verify against, unless its family is no candidate at all.
 fn check_set_parts(
     set: &ArchiveSet,
     bases: &[&SetMember],
-    other_language: &dyn Fn(&ArchiveKind) -> bool,
+    not_candidate: &dyn Fn(&ArchiveKind) -> bool,
 ) -> Result<(), InstallUnsupported> {
     for member in set.members() {
         if member.id.part != 0
-            && !other_language(&member.id.kind)
+            && !not_candidate(&member.id.kind)
             && !bases.iter().any(|b| b.id.kind == member.id.kind)
         {
             return Err(InstallUnsupported::ArchiveFailed);
@@ -1116,18 +1145,26 @@ fn check_set_parts(
 /// What [`ArchiveSet`] does not open and the listing shows: a name matching
 /// `client_<name>_aux_*.datx` with no canonical part number (`dat-container.md` §2.1, §2.3) is a
 /// stray: left out with a warning when its family has a verified base ([`active_parts`] holds for
-/// every listed base by now), unsupported when it has none, and of no concern for another
-/// language. An overlay next to a listed base (§2.5, matched ASCII case-insensitively as the names
-/// of the set are) is unsupported (§9.3.8). A listing that fails
+/// every listed base by now), unsupported when it has none, and of no concern when its family is
+/// no candidate (another language, or a region outside the map's keys). An overlay next to a listed
+/// base (§2.5, matched ASCII case-insensitively as the names of the set are) is unsupported
+/// (§9.3.8). A `.jrnl` file next to a listed base or active part gets a warning here: one that
+/// matters shows in that member's own header ([`check_pending_journals`]). A listing that fails
 /// answers the same way: nothing is known about those files.
 fn check_stray_parts(
     set: &ArchiveSet,
     bases: &[&SetMember],
-    other_language: &dyn Fn(&ArchiveKind) -> bool,
+    not_candidate: &dyn Fn(&ArchiveKind) -> bool,
 ) -> Result<(), InstallUnsupported> {
     let overlays: HashSet<String> = bases
         .iter()
         .map(|b| format!("{}.ovl", b.id.file_name()).to_ascii_lowercase())
+        .collect();
+    let journals: HashSet<String> = set
+        .members()
+        .iter()
+        .filter(|m| bases.iter().any(|b| b.id.kind == m.id.kind))
+        .map(|m| format!("{}.jrnl", m.id.file_name()).to_ascii_lowercase())
         .collect();
     let listing = std::fs::read_dir(set.dir()).map_err(|_| InstallUnsupported::ArchiveFailed)?;
     for entry in listing {
@@ -1139,6 +1176,12 @@ fn check_stray_parts(
         if overlays.contains(&name.to_ascii_lowercase()) {
             return Err(InstallUnsupported::ArchiveOverlay);
         }
+        if journals.contains(&name.to_ascii_lowercase()) {
+            tracing::warn!(
+                "official login: a journal file next to an archive is checked, not used"
+            );
+            continue;
+        }
         if tessera_dat::ArchiveId::from_file_name(&name).is_some() {
             continue;
         }
@@ -1146,7 +1189,7 @@ fn check_stray_parts(
             // The language label keeps its case in the name; `from_file_name` gives the kind.
             let family = tessera_dat::ArchiveId::from_file_name(&format!("{key}.dat"));
             match family {
-                Some(id) if other_language(&id.kind) => {}
+                Some(id) if not_candidate(&id.kind) => {}
                 Some(id) if bases.iter().any(|b| b.id.kind == id.kind) => {
                     tracing::warn!("official login: a stray auxiliary file is left out");
                 }

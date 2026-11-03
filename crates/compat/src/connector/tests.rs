@@ -34,6 +34,7 @@ use super::session_phase::{
     DRIVER_EVENT_CAP, PORTAL_LOADING_TIMEOUT_SEC, SessionDriver, SessionStart, refusal_cut,
 };
 // The synthetic service's world builders, used by `world_feed`.
+use super::test_support as service_support;
 use super::test_support::{
     DICTIONARY, NPC, NPC_AT, NPC_NAME, NPC_TEMPLATE, chat_line, entity_batch, entity_properties,
     position,
@@ -312,7 +313,6 @@ impl Gate {
 /// The service's behaviour, per test.
 #[derive(Debug, Clone)]
 struct Service {
-    /// The network answers no destination for `0x6F`, as every production path does.
     /// Like every production path: no source for readiness (OPEN-WORLD-9).
     no_readiness: bool,
     /// Like every production path: no source for the chat codec (OPEN-SESSION-1).
@@ -1096,6 +1096,35 @@ impl Server {
             return self.blob(opcode, inner);
         }
         self.blob(opcode, &encode_event_envelope(inner))
+    }
+
+    /// One blob on `queue`, with its word and blob ID both `word` and, on queue 3, `group`, to
+    /// `recipient` or the default recipient.
+    fn on_queue(
+        &mut self,
+        queue: u8,
+        word: u16,
+        group: u16,
+        recipient: Option<u64>,
+        opcode: u32,
+        envelope: &[u8],
+    ) -> Vec<u8> {
+        self.seq += 1;
+        let frags =
+            split_blob(queue, word, word, group, recipient, opcode, envelope).expect("split");
+        let mask = self.isaac.next_mask();
+        encode_datagram(
+            DatagramHeader {
+                rec_id: self.rec_id,
+                seq_num: self.seq,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders::default(),
+            &frags,
+            Some(mask),
+            None,
+        )
+        .expect("datagram")
     }
 
     /// An event addressed to `recipient` (`FragmentedBlob` field 7).

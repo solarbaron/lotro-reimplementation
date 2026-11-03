@@ -31,6 +31,8 @@ pub enum OwnText {
     /// The session refused `EnterWorld` while a character creation is still waiting for
     /// the server's answer (§7.3, §7.1.1 step 6).
     CreationStillOutstanding,
+    /// An official selection is under way (the character's name); Quit or Escape leaves it.
+    Entering(String),
     /// The session ended before world entry.
     Disconnected(String),
     /// The ghosted New button's tooltip (§7.1).
@@ -69,6 +71,10 @@ impl std::fmt::Display for OwnText {
             Self::CreationStillOutstanding => f.write_str(
                 "A character creation is still waiting for the server's answer; try again \
                  once it has arrived.",
+            ),
+            Self::Entering(name) => write!(
+                f,
+                "Entering the world as {name}. Quit or Escape leaves and ends the session."
             ),
             Self::Disconnected(why) => write!(f, "The connection ended ({why})."),
             Self::CreationNotAllowed => {

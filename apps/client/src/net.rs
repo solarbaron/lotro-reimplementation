@@ -473,6 +473,9 @@ pub struct World {
     /// Someone else polls the session ([`World::apply_polled`]): [`World::update`] does
     /// not.
     external_poll: bool,
+    /// What a handed-over session said for the character screens before they took over its poll:
+    /// list details and notices, at most [`MAX_HANDED_EVENTS`] (`official-entry.md` §8.7, §8.2).
+    screen_backlog: Vec<Event>,
     /// The player's social state (decision 0024 P4): chat lines in the original's forms,
     /// fellowship, lists, invitation, trade, performance events for the player music.
     social: crate::social::SocialState,
@@ -705,6 +708,13 @@ impl World {
         w
     }
 
+    /// What a handed-over session said for the character screens before they took over its poll
+    /// ([`seed_from_world`](crate::pre_world::seed_from_world) replays it).
+    #[must_use]
+    pub fn screen_backlog(&self) -> &[Event] {
+        &self.screen_backlog
+    }
+
     /// Whether the session was handed over by the official login ([`World::handed_over`]).
     #[must_use]
     pub fn is_handed_over(&self) -> bool {
@@ -754,6 +764,7 @@ impl World {
             p1_dropped: 0,
             manual_enter: false,
             external_poll: false,
+            screen_backlog: Vec::new(),
             social: crate::social::SocialState::new(true),
             p2: crate::combat::CombatState::new(),
             p2_changes: std::collections::VecDeque::new(),
@@ -1697,6 +1708,19 @@ impl World {
 
     fn apply(&mut self, now: Instant, ev: &Event) {
         self.events_seen += 1;
+        if self.handed
+            && !self.external_poll
+            && self.screen_backlog.len() < MAX_HANDED_EVENTS
+            && matches!(
+                ev,
+                Event::Character(
+                    tessera_net::CharacterEvent::CharacterInfo { .. }
+                        | tessera_net::CharacterEvent::CharacterRemoved { .. }
+                ) | Event::Account(tessera_net::account::AccountEvent::LoginNotice { .. })
+            )
+        {
+            self.screen_backlog.push(ev.clone());
+        }
         self.apply_combat(now, ev);
         let mut changes = Vec::new();
         self.p1.apply(ev, &mut changes);

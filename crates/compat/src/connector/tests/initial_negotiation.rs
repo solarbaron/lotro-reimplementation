@@ -55,7 +55,9 @@ pub(super) fn queue1(login: &mut Server, opcode: u32, data: &[u8]) -> Vec<u8> {
 
 /// A driver over `data` in State 5 (`Connected` confirmed, nothing else sent by the server),
 /// its first datagrams taken.
-fn connected_over(data: Arc<dyn InstallData>) -> (World, SessionDriver<FakeNet>, Server) {
+pub(super) fn connected_over(
+    data: Arc<dyn InstallData>,
+) -> (World, SessionDriver<FakeNet>, Server) {
     let mut start = session_start(0, None, Arc::default());
     start.schema = SchemaView(data);
     let world = new_world(Service::default());
@@ -236,15 +238,41 @@ fn a_full_run_in_the_observed_order_reaches_the_list_and_sends_the_selection() {
         Command::Account(AccountCommand::ChooseWorld { world }),
     )
     .expect("choose");
-    let connected = wait_for(&mut s, "Connected", |e| {
-        matches!(e, Event::Connected { .. })
-    });
-    let Event::Connected { characters } = connected else {
+    // A nonempty list decodes to exact exhaustion, and its screens get the entry's details
+    // (world §6) right after `Connected`.
+    let until = Instant::now() + Duration::from_secs(10);
+    let mut polled = Vec::new();
+    while !polled
+        .iter()
+        .any(|e| matches!(e, Event::Character(_) | Event::Disconnected { .. }))
+    {
+        polled.extend(s.poll(Instant::now()));
+        assert!(Instant::now() < until, "no list: {polled:?}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let at = polled
+        .iter()
+        .position(|e| matches!(e, Event::Connected { .. }))
+        .expect("Connected");
+    let Event::Connected { characters } = &polled[at] else {
         unreachable!("matched")
     };
     assert_eq!(characters.len(), 1);
     assert_eq!(characters[0].name, CHARACTER);
     assert_eq!(s.state(), SessionState::Connected);
+    assert!(
+        matches!(
+            &polled[at + 1],
+            Event::Character(tessera_net::CharacterEvent::CharacterInfo {
+                name,
+                body: Some(tessera_net::Body::Character { .. }),
+                class: Some(_),
+                level: Some(_),
+                look: None,
+            }) if name == CHARACTER
+        ),
+        "{polled:?}"
+    );
 
     let seen = service.seen();
     // The first sequenced client packet is the FlowControl-only one, sequence 2 (§6.4.1).

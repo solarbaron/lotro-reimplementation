@@ -46,6 +46,8 @@ pub fn same_name(a: &str, b: &str) -> bool {
 pub const CREATE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Most lines kept in `CharGen_ErrorTextList` (the oldest go first).
 pub const MAX_ERROR_LINES: usize = 8;
+/// Most service notices kept for the same list (the oldest go first).
+pub const MAX_NOTICE_LINES: usize = 4;
 /// Most rows of the selection list (hostile-input bound; the session lists at most 64).
 pub const MAX_ROWS: usize = 1024;
 /// Tessera's character limit shown in the slots label (§3; `scenario-feed.md` §5.1).
@@ -253,6 +255,9 @@ pub struct ScreenModel {
     confirm: Option<String>,
     delete_refused: bool,
     errors: VecDeque<ErrorLine>,
+    /// The session's informational lines (`official-entry.md` §8.2): no action, and no stage change
+    /// clears them.
+    notices: VecDeque<String>,
     outbox: Vec<Command>,
     turntable: Turntable,
     avatar_update_visible: bool,
@@ -287,6 +292,7 @@ impl ScreenModel {
             confirm: None,
             delete_refused: false,
             errors: VecDeque::new(),
+            notices: VecDeque::new(),
             outbox: Vec::new(),
             turntable: Turntable::default(),
             avatar_update_visible: true,
@@ -349,6 +355,24 @@ impl ScreenModel {
     /// The lines of `CharGen_ErrorTextList`, oldest first.
     pub fn errors(&self) -> impl Iterator<Item = &ErrorLine> {
         self.errors.iter()
+    }
+
+    /// The informational lines of the session, oldest first (`official-entry.md` §8.2).
+    pub fn notices(&self) -> impl Iterator<Item = &str> {
+        self.notices.iter().map(String::as_str)
+    }
+
+    /// Tessera's status line while an official selection is under way: each stage of that road
+    /// can take its full wait (`official-session.md` §9.3.8), and nothing else on the screen
+    /// moves meanwhile. Other backends answer at once and have no line.
+    #[must_use]
+    pub fn entering_line(&self) -> Option<OwnText> {
+        match (&self.status, &self.backend) {
+            (Status::Entering(name), BackendKind::Official) => {
+                Some(OwnText::Entering(name.clone()))
+            }
+            _ => None,
+        }
     }
 
     /// The name of the open delete confirmation.
@@ -672,6 +696,12 @@ impl ScreenModel {
                 self.set_rows(characters);
             }
             Event::Character(c) => self.character_event(c),
+            Event::Account(tessera_net::account::AccountEvent::LoginNotice { text }) => {
+                if self.notices.len() >= MAX_NOTICE_LINES {
+                    self.notices.pop_front();
+                }
+                self.notices.push_back(text.clone());
+            }
             Event::WorldEntered { name, .. } => {
                 self.last_entered = Some(name.clone());
                 self.status = Status::Entered(name.clone());
@@ -882,6 +912,16 @@ impl ScreenModel {
 
     /// Takes one action of the player.
     pub fn apply(&mut self, action: Action, now: Instant) {
+        // An official selection can wait for up to four stages (`official-session.md` §9.3.8): the
+        // player may leave meanwhile, which ends the session (`official-entry.md` §8.7).
+        if action == Action::Quit
+            && self.stage == Stage::Select
+            && self.backend == BackendKind::Official
+            && matches!(self.status, Status::Entering(_))
+        {
+            self.status = Status::Quit;
+            return;
+        }
         if !matches!(self.status, Status::Open) {
             return;
         }

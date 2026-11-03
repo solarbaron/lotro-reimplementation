@@ -505,6 +505,9 @@ pub enum InstallUnsupported {
     ArchiveOlderIdentifier,
     /// An overlay lies next to a base archive: the set's records may be out of date.
     ArchiveOverlay,
+    /// An active member's header holds a pending-journal checksum (`dat-container.md` §3.6): an
+    /// update was interrupted and the archive may be half-applied.
+    ArchivePendingJournal,
     /// A base archive has no usable iteration metadata.
     ArchiveIteration,
     /// More archives than [`MAX_ADVERTISED_ARCHIVES`].
@@ -533,6 +536,7 @@ impl InstallUnsupported {
             Self::ArchiveIdentifier => "archive identifier disagrees",
             Self::ArchiveOlderIdentifier => "older archive identifier encoding",
             Self::ArchiveOverlay => "overlay next to an archive",
+            Self::ArchivePendingJournal => "pending journal on an archive",
             Self::ArchiveIteration => "iteration metadata unusable",
             Self::ArchiveCount => "too many archives",
             Self::InventoryMaps => "inventory maps unreadable",
@@ -938,8 +942,11 @@ pub struct Negotiation {
     skips: SkipCounters,
     /// The latest opaque configuration word of a valid `0xDD`: kept, never compared (§9.3.8).
     server_config: Option<u32>,
-    /// When the queued login first queued: the base of its one absolute limit.
+    /// When the login first queued: the base of its one absolute limit, kept for the whole attempt
+    /// so that no later `0x130` can restart it (§9.3.8).
     queued_since: Option<f64>,
+    /// A ready `0x130` already started its list wait: a later one changes no clock.
+    queue_ready_taken: bool,
     /// An actual `0x12F` arrived before `0xEC`: `0xEC` is suppressed (§9.3.8).
     historical: bool,
 }
@@ -980,6 +987,7 @@ impl Negotiation {
                 ignored: 0,
             },
             queued_since: None,
+            queue_ready_taken: false,
             historical: false,
         }
     }
@@ -1050,14 +1058,23 @@ impl Negotiation {
         self.stages.ec_sent
     }
 
-    /// `0x12D` status `1` at `now`: the 30-second list wait starts.
-    pub fn version_accepted(&mut self, now: f64) {
-        self.queued_since = None;
+    /// `0x12D` status `1` at `now`. The first, while an actual `0x12F`'s response wait runs, starts
+    /// the 30-second list wait and answers `true` (§9.3.8). Any other is counted with no clock
+    /// change, because other traffic restarts nothing: a repeat, one during the queue's limit, and
+    /// (engineering choice, §9.3.8 gives status 1 only on the historical path) an unsolicited one
+    /// during the `0xDD`, `0xF5` or list wait.
+    pub fn version_accepted(&mut self, now: f64) -> bool {
+        if !matches!(self.phase, Phase::Historical(_)) {
+            self.ignored();
+            return false;
+        }
         self.phase = Phase::HistoricalList(now);
+        true
     }
 
-    /// A queued `0x130` at `now` replaces the running wait by one absolute limit, which another
-    /// `0x130` never extends (§9.3.8). Answers whether this was the first.
+    /// A queued `0x130` at `now` replaces the running wait by one absolute limit from the first
+    /// queued status of this attempt, which no other `0x130` extends (§9.3.8), a ready one between
+    /// them included. Answers whether this was the first.
     pub fn queued(&mut self, now: f64) -> bool {
         let first = self.queued_since.is_none();
         let since = *self.queued_since.get_or_insert(now);
@@ -1065,10 +1082,23 @@ impl Negotiation {
         first
     }
 
-    /// A ready `0x130` at `now`: the 30-second list wait starts (§9.3.8).
-    pub fn queue_ready(&mut self, now: f64) {
-        self.queued_since = None;
+    /// A ready `0x130` at `now`. The first, on the historical path or in the queue, starts the
+    /// 30-second list wait and answers `true` (§9.3.8). Any other is counted with no clock change:
+    /// a repeat, so that queued and ready cannot alternate past the queue's limit, and (engineering
+    /// choice, as for [`Self::version_accepted`]) an unsolicited one during the `0xDD`, `0xF5` or
+    /// list wait.
+    pub fn queue_ready(&mut self, now: f64) -> bool {
+        let answers = matches!(
+            self.phase,
+            Phase::Historical(_) | Phase::HistoricalList(_) | Phase::Queued(_)
+        );
+        if self.queue_ready_taken || !answers {
+            self.ignored();
+            return false;
+        }
+        self.queue_ready_taken = true;
         self.phase = Phase::HistoricalList(now);
+        true
     }
 
     /// The first valid `0xDD` arrived, with its opaque word.
@@ -1087,7 +1117,6 @@ impl Negotiation {
     /// The last fragment of `0xEC` first went out at `now`: the guard window opens.
     pub fn advertisement_sent(&mut self, now: f64) {
         self.stages.ec_sent = true;
-        self.queued_since = None;
         self.phase = Phase::AwaitingCompletion(now);
     }
 
@@ -1099,14 +1128,12 @@ impl Negotiation {
     /// The client's one `0xF5` was allocated at `now`.
     pub fn completion_sent(&mut self, now: f64) {
         self.stages.f5_sent = true;
-        self.queued_since = None;
         self.phase = Phase::AwaitingList(now);
     }
 
     /// The character list was decoded: every wait ends (§9.3.8).
     pub fn list_received(&mut self) {
         self.stages.list_received = true;
-        self.queued_since = None;
         self.phase = Phase::Finished;
     }
 
@@ -1116,7 +1143,8 @@ impl Negotiation {
         self.skips.note(opcode);
     }
 
-    /// Counts one `0xDD` or `0xF5` that makes no reply.
+    /// Counts one `0xDD`, `0xF5`, `0x12F`, `0x12D` or `0x130` that makes no reply and changes no
+    /// clock.
     pub fn ignored(&mut self) {
         self.stages.ignored = self.stages.ignored.saturating_add(1);
     }
@@ -1363,7 +1391,7 @@ mod tests {
             h.expired(35.0),
             Some(UnsupportedNegotiation::VersionPathDeadline)
         );
-        h.version_accepted(30.0);
+        assert!(h.version_accepted(30.0));
         assert_eq!(h.deadline(), Some(60.0));
         assert_eq!(
             h.expired(60.0),
@@ -1384,10 +1412,86 @@ mod tests {
             n.expired(350.0),
             Some(UnsupportedNegotiation::QueueDeadline)
         );
-        n.queue_ready(300.0);
+        assert!(n.queue_ready(300.0));
         assert_eq!(n.deadline(), Some(330.0));
         n.list_received();
         assert_eq!(n.deadline(), None);
+    }
+
+    /// §9.3.8: queued, ready and queued again keep the first limit, however often they alternate,
+    /// and only the first ready starts a list wait.
+    #[test]
+    fn queued_and_ready_cannot_alternate_past_the_limit() {
+        let mut n = Negotiation::new();
+        n.connected(0.0);
+        assert!(n.queued(0.0));
+        assert!(n.queue_ready(290.0));
+        assert_eq!(n.deadline(), Some(320.0));
+        assert!(!n.queued(291.0));
+        assert_eq!(n.deadline(), Some(300.0), "the first limit, not a new one");
+        let ignored = n.stages().ignored;
+        assert!(!n.queue_ready(292.0));
+        assert_eq!(n.deadline(), Some(300.0));
+        assert_eq!(n.stages().ignored, ignored + 1);
+        assert_eq!(
+            n.expired(300.0),
+            Some(UnsupportedNegotiation::QueueDeadline)
+        );
+    }
+
+    /// §9.3.8: a repeated status 1 or ready result restarts no list wait, and neither replaces a
+    /// running `0xDD` or `0xF5` wait.
+    #[test]
+    fn a_repeat_or_unsolicited_status_changes_no_clock() {
+        // A repeat of status 1 and a ready result after it: one more start for the ready result,
+        // which §9.3 places after status 1, and then none.
+        let mut h = Negotiation::new();
+        h.connected(0.0);
+        assert!(h.version_requested(1.0));
+        assert!(h.version_accepted(2.0));
+        for t in [10.0, 20.0, 31.0] {
+            assert!(!h.version_accepted(t));
+            assert_eq!(h.deadline(), Some(32.0));
+        }
+        assert!(h.queue_ready(31.5));
+        assert_eq!(h.deadline(), Some(61.5));
+        for t in [40.0, 60.0] {
+            assert!(!h.queue_ready(t));
+            assert!(!h.version_accepted(t));
+            assert_eq!(h.deadline(), Some(61.5));
+        }
+        assert_eq!(
+            h.expired(61.5),
+            Some(UnsupportedNegotiation::HistoricalListDeadline)
+        );
+
+        // Unsolicited, during the initial waits: counted, and the wait goes on.
+        let mut n = Negotiation::new();
+        n.connected(0.0);
+        assert!(!n.version_accepted(5.0));
+        assert!(!n.queue_ready(6.0));
+        assert_eq!(n.deadline(), Some(DD_WAIT_SEC));
+        n.request_seen(1);
+        n.advertisement_sent(10.0);
+        assert!(!n.version_accepted(11.0));
+        assert!(!n.queue_ready(12.0));
+        assert_eq!(n.deadline(), Some(10.0 + COMPLETION_WAIT_SEC));
+        assert_eq!(n.stages().ignored, 4);
+    }
+
+    /// §9.3.8: the queue's limit keeps its base across the initial steps too.
+    #[test]
+    fn the_queue_limit_survives_the_initial_steps() {
+        let mut n = Negotiation::new();
+        n.connected(0.0);
+        assert!(n.queued(10.0));
+        n.request_seen(1);
+        n.advertisement_sent(20.0);
+        assert!(!n.queued(25.0));
+        assert_eq!(n.deadline(), Some(10.0 + QUEUE_WAIT_SEC));
+        n.completion_sent(30.0);
+        assert!(!n.queued(35.0));
+        assert_eq!(n.deadline(), Some(10.0 + QUEUE_WAIT_SEC));
     }
 
     #[test]

@@ -767,6 +767,76 @@ fn enter_refused_while_a_creation_is_outstanding() {
     );
 }
 
+/// An official selection's model, at the selection screen with one row.
+fn official_model() -> (ScreenModel, std::time::Instant) {
+    let now = std::time::Instant::now();
+    let mut m = ScreenModel::new(synthetic_data(), BackendKind::Official);
+    m.handle_event(
+        &Event::Connected {
+            characters: vec![tessera_net::CharacterSummary {
+                name: "Wanderer".into(),
+            }],
+        },
+        now,
+    );
+    (m, now)
+}
+
+/// `official-session.md` §9.3.8 gives a selection up to four 30-second stages: the screen says so,
+/// and Quit and Escape leave it (`official-entry.md` §8.7). The other backends keep their rules.
+#[test]
+fn an_official_selection_shows_a_line_and_can_be_left() {
+    let (mut m, now) = official_model();
+    assert_eq!(m.entering_line(), None);
+    m.apply(Action::Enter, now);
+    assert!(matches!(m.status(), Status::Entering(_)));
+    assert_eq!(
+        m.entering_line(),
+        Some(OwnText::Entering("Wanderer".into()))
+    );
+    // Nothing else goes through while it waits.
+    m.apply(Action::New, now);
+    assert!(matches!(m.status(), Status::Entering(_)));
+    m.apply(Action::Quit, now);
+    assert_eq!(m.status(), &Status::Quit);
+    assert_eq!(m.entering_line(), None);
+
+    let (mut sandbox, now) = select_model();
+    sandbox.apply(Action::Enter, now);
+    assert_eq!(sandbox.entering_line(), None);
+    sandbox.apply(Action::Quit, now);
+    assert!(matches!(sandbox.status(), Status::Entering(_)), "unchanged");
+}
+
+/// `official-entry.md` §8.2: a notice at the character list or while entering is an informational
+/// line: no stage change clears it, it acts on nothing, and at most a few are kept.
+#[test]
+fn a_service_notice_is_a_line_on_the_character_screens() {
+    let (mut m, now) = official_model();
+    let notice = |text: &str| {
+        Event::Account(tessera_net::account::AccountEvent::LoginNotice {
+            text: text.to_owned(),
+        })
+    };
+    m.handle_event(&notice("Maintenance tonight."), now);
+    assert_eq!(m.notices().collect::<Vec<_>>(), ["Maintenance tonight."]);
+    assert_eq!(m.status(), &Status::Open);
+    assert_eq!(m.stage(), Stage::Select);
+    assert_eq!(m.errors().count(), 0, "not an error");
+    m.apply(Action::Enter, now);
+    m.handle_event(&notice("Second."), now);
+    assert!(matches!(m.status(), Status::Entering(_)), "acts on nothing");
+    assert_eq!(m.notices().count(), 2);
+    for i in 0..10 {
+        m.handle_event(&notice(&format!("n{i}")), now);
+    }
+    assert_eq!(
+        m.notices().count(),
+        tessera_client::screens::model::MAX_NOTICE_LINES
+    );
+    assert_eq!(m.notices().last(), Some("n9"));
+}
+
 /// `tessera-protocol.md` §6.2.11 and Appendix A: the session's `EnterWorldFailed` keeps
 /// the session, so the screens go back from entering to the selection, show the reason as
 /// an error line and enable Enter again; a second Enter sends `EnterWorld` again.

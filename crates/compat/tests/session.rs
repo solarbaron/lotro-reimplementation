@@ -1728,6 +1728,13 @@ fn multi_frag(frag_index: u32, num_frags: u32, len: usize) -> BlobFragment {
     }
 }
 
+/// [`multi_frag`] on queue 1: the only queue an unmasked packet's fragments are taken on.
+fn unmasked_frag(frag_index: u32, num_frags: u32, len: usize) -> BlobFragment {
+    let mut f = multi_frag(frag_index, num_frags, len);
+    f.header.queue_id = 1;
+    f
+}
+
 #[test]
 fn reassembly_rejects_final_fragment_past_buffer_end() {
     let mut reassembler = BlobReassembler::default();
@@ -2400,7 +2407,7 @@ fn reassembly_table_capacity_is_checked_before_commit() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 34), 9000);
     let mut conn = challenged_connection(peer, 0x0100, 3);
     let open = |blob_id: u16| {
-        let mut f = multi_frag(0, 2, 8);
+        let mut f = unmasked_frag(0, 2, 8);
         f.header.blob_id = blob_id;
         f
     };
@@ -2452,7 +2459,7 @@ fn flow_control_interval_keeps_the_low_16_bits() {
     let mut conn = challenged_connection(peer, 0x0100, 4);
     // Receive at least 1,400 bytes (unsequenced packets with single-fragment blobs).
     for i in 0..4u16 {
-        let mut frag = multi_frag(0, 1, 400);
+        let mut frag = unmasked_frag(0, 1, 400);
         frag.header.blob_id = i;
         let dgram = encode_datagram(
             DatagramHeader::default(),
@@ -2639,7 +2646,7 @@ fn fragments_beside_a_challenge_are_keyed_by_the_new_server_id() {
     let early = encode_datagram(
         DatagramHeader::default(),
         &OptionalHeaders::default(),
-        &[multi_frag(0, 3, 8)],
+        &[unmasked_frag(0, 3, 8)],
         None,
         None,
     )
@@ -2657,7 +2664,7 @@ fn fragments_beside_a_challenge_are_keyed_by_the_new_server_id() {
             connect_challenge: Some(template_challenge()),
             ..OptionalHeaders::default()
         },
-        &[multi_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD)],
+        &[unmasked_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD)],
         None,
         None,
     )
@@ -2673,7 +2680,7 @@ fn fragments_beside_a_challenge_are_keyed_by_the_new_server_id() {
             ..DatagramHeader::default()
         },
         &OptionalHeaders::default(),
-        &[multi_frag(1, 2, 8)],
+        &[unmasked_frag(1, 2, 8)],
         None,
         None,
     )
@@ -2875,8 +2882,18 @@ fn login_queue_status_reads_the_queue_only_when_queued() {
             total: 9
         })
     );
-    // Queued but the position is missing: malformed.
+    // Queued with part of the position: malformed. With none of it, §9.3.8's optional fields are
+    // absent, and the position and total read as unknown.
     assert!(LoginQueueStatusMessage::decode(&body[..body.len() - 1]).is_err());
+    let absent = LoginQueueStatusMessage::decode(&body[..body.len() - 8]).unwrap();
+    assert_eq!(absent.queue, None);
+    assert_eq!(
+        absent.outcome(),
+        LogonOutcome::Queued(LoginQueuePosition {
+            position: 0,
+            total: 0
+        })
+    );
 
     // Accepted: `logonResult` and an empty `detailText` (5 bytes after envelopeFlags).
     let accepted = [0u8, 0, 0, 0, 0];
@@ -3020,7 +3037,8 @@ fn queue_3_fragments_carry_no_blob_id_and_queues_5_and_6_are_dropped() {
         (0x70, vec![8u8; 500])
     );
     assert_eq!(table.incomplete_len(), 0);
-    // Fragments of one identity must name one recipient (§5.6.4 rule 3).
+    // The recipient is part of the identity (§5.6.4 rule 3): a fragment that names another one
+    // opens its own entry instead of joining this one.
     let mut strange = frags[1].clone();
     strange.header.recipient_id = 7;
     strange.header.blob_flags &= !0x40;
@@ -3031,10 +3049,8 @@ fn queue_3_fragments_carry_no_blob_id_and_queues_5_and_6_are_dropped() {
             .unwrap()
             .is_none()
     );
-    assert_eq!(
-        table.ingest(0x0304, strange, 100.0),
-        Err(SessionError::FragmentRecipientMismatch)
-    );
+    assert_eq!(table.ingest(0x0304, strange, 100.0), Ok(None));
+    assert_eq!(table.incomplete_len(), 2);
 
     // Queues 5 and 6: their framing is unspecified (OPEN-SESSION-12): refused, and a
     // connection counts the dropped datagram.

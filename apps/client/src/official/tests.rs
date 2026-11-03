@@ -3877,9 +3877,19 @@ fn the_hand_over_carries_later_events_and_its_end_shows_the_reason() {
             .collect();
         assert_eq!(names, ["D"], "the later events were applied");
         drop(world);
+        let before = std::time::Instant::now();
         f.flow.characters_ended(end.clone());
         assert_eq!(f.flow.screen(), Screen::Form, "{end:?}");
         assert_eq!(f.flow.form().map(AccountForm::account_text), Some(""));
+        // §8.6: after any failure Log in stays disabled for 2 s; nothing failed when the player left.
+        let blocked = f.flow.form().and_then(AccountForm::blocked_until);
+        match want {
+            None => assert_eq!(blocked, None, "{end:?}"),
+            Some(_) => assert!(
+                blocked.is_some_and(|t| t >= before + super::login::FAILURE_WAIT),
+                "{end:?}"
+            ),
+        }
         match want {
             None => assert!(f.flow.notice().is_none(), "{end:?}"),
             Some((text, detail)) => {
@@ -3889,6 +3899,59 @@ fn the_hand_over_carries_later_events_and_its_end_shows_the_reason() {
             }
         }
     }
+}
+
+/// A session that ends between `Connected` and the hand-over: §8.6's message and wait, not a bare
+/// account form.
+#[test]
+fn a_session_that_ends_before_the_hand_over_shows_its_reason() {
+    let mut f = fixture(Availability::Available);
+    f.reach_login("a", "b");
+    f.push(Event::Connected {
+        characters: vec![CharacterSummary { name: "C".into() }],
+    });
+    f.flow.tick(f.t0);
+    f.push(Event::Disconnected {
+        reason: DisconnectReason::TimedOut,
+    });
+    f.flow.tick(f.t0);
+    assert_eq!(f.flow.screen(), Screen::Form);
+    assert!(f.flow.take_hand_over().is_none());
+    let m = &f.flow.notice().expect("a message").message;
+    assert!(m.text.starts_with("No answer from the official service."));
+    let blocked = f.flow.form().and_then(AccountForm::blocked_until);
+    assert_eq!(blocked, Some(f.t0 + super::login::FAILURE_WAIT));
+}
+
+/// The list's details and a notice polled before the character screens took over the poll reach the
+/// screens (`official-entry.md` §8.2, §8.7): the world keeps them for the screens' seed.
+#[test]
+fn what_came_before_the_screens_is_kept_for_them() {
+    let mut f = fixture(Availability::Available);
+    f.reach_login("a", "b");
+    f.push(Event::Connected {
+        characters: vec![CharacterSummary { name: "C".into() }],
+    });
+    let info = Event::Character(tessera_net::CharacterEvent::CharacterInfo {
+        name: "C".into(),
+        body: Some(tessera_net::Body::Character {
+            species: 3,
+            sex: 0x1000,
+        }),
+        class: Some(4),
+        level: Some(5),
+        look: None,
+    });
+    let notice = Event::Account(tessera_net::account::AccountEvent::LoginNotice {
+        text: "Maintenance tonight.".to_owned(),
+    });
+    f.push(info.clone());
+    f.push(notice.clone());
+    f.flow.tick(f.t0);
+    assert_eq!(f.flow.take_request(), Some(FlowRequest::HandOver));
+    let handed = f.flow.take_hand_over().expect("the session");
+    let world = crate::net::World::handed_over(f.t0, handed);
+    assert_eq!(world.screen_backlog(), [info, notice]);
 }
 
 /// The handed-over client's options come from an allowlist: no scripted or automation
@@ -4051,6 +4114,29 @@ fn the_official_flow_hands_its_session_to_the_character_screens_and_back() {
         ScreenOptions::default(),
     );
     crate::pre_world::seed_from_world(&mut screens, &world, Instant::now());
+    // The list's details reach the rows (world §6's row of `0x6C`): from the batch of `Connected`
+    // or the next poll, whichever it came in.
+    let mut polled = Vec::new();
+    while screens
+        .model()
+        .rows()
+        .first()
+        .and_then(|r| r.level)
+        .is_none()
+    {
+        assert!(Instant::now() < until, "no details");
+        polled.clear();
+        let now = Instant::now();
+        screens.pump(world.session_mut(), now, &mut polled);
+        world.apply_polled(now, &polled);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let first = &screens.model().rows()[0];
+    assert!(first.character_body().is_some() && first.class.is_some());
+    assert_eq!(
+        first.look, None,
+        "no spec maps the appearance to a look yet"
+    );
     let rows: Vec<&str> = screens
         .model()
         .rows()

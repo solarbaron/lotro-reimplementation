@@ -52,6 +52,7 @@ pub fn seed_from_world(screens: &mut CharacterScreens, world: &World, now: Insta
         screens.handle_events(&[Event::ReturnedToCharacterSelect { characters }], now);
     } else {
         screens.handle_events(&[Event::Connected { characters }], now);
+        screens.handle_events(world.screen_backlog(), now);
     }
 }
 

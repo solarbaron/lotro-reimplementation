@@ -11,20 +11,25 @@
 //! binder, bit 5 a ticket lifetime (so the refresh runs, against a client that always
 //! fails), bit 6 a cancelled attempt (the driver's stop predicate and the refresh thread's
 //! cancel flag hold), bit 7 the end without sending (a revoked right, `abandon`) instead of
-//! the graceful shutdown. Then arbitrary
+//! the graceful shutdown. The second byte: bit 0 a network with a source for readiness, so the
+//! session reaches the world (no production path has one: with the bit clear the entry stops at
+//! its readiness wait, and the world's messages go through the pending-entry counts), bit 1 leaves
+//! the setup's `0x90` out, so the input decides what the wait for it sees. Then arbitrary
 //! datagrams from the login, world and chat servers, arbitrary messages wrapped in valid
-//! sequenced datagrams of the login or world connection (the widened opcodes of the bytes
-//! 0xC0 and above fall in the world-teardown band; a selector byte addresses them to no
-//! recipient, the local player, a fixed entity or a recipient from the input), neutral
-//! commands (`LeaveWorld` and `WorldLoaded` among them) and clock steps follow. A chunk
+//! sequenced datagrams of the world connection once it exists, else of the login connection (the
+//! widened opcodes of the bytes 0xC0 and above fall in the world-teardown band; a selector byte
+//! addresses them to no recipient, the local player, a fixed entity or a recipient from the
+//! input), neutral commands (`LeaveWorld` and `WorldLoaded` among them) and clock steps follow. A chunk
 //! whose kind byte has bit 7 set has a 2-byte length. The synthetic install types the
 //! entity and chat properties as the connector's test service does and has a baseline for
 //! one template, and answers the initial exchange (`official-session.md` §9.3.2–§9.3.5): its
 //! language key, name rules (7, 8 empty, 9 another language) and two archives; the first byte
-//! `0xFF` asks for the unsupported answer instead. A message's selector byte with bit 7 set
-//! sends it on queue 1 (`0xDD`, `0xF5` and the window's other opcodes among them), as those
-//! come; otherwise on queue 2. No panic, bounded state: the entity feed stays within its limits
-//! after every step.
+//! `0xFF` asks for the unsupported answer instead. A message's selector byte chooses its queue with
+//! bits 6 and 7 (queues 1 to 4, `0xDD`, `0xF5` and the window's other opcodes among queue 1's), and
+//! with bit 5 a small fixed word and blob ID, so identities repeat across messages and the
+//! tombstones, the queue-3 gate and the conflict rule of §9.3.8 are driven; bits 2 and 3 are the
+//! sequence group. No panic, bounded state: the entity feed stays within its limits after every
+//! step.
 #![no_main]
 
 use std::collections::VecDeque;
@@ -57,7 +62,7 @@ use tessera_compat::session::{
 use tessera_compat::world::{
     CharacterListResponse, CharacterSummaryEntry, EncodedPropertyTable, EncodedPropertyValue,
     EntityAppearanceDesc, PID_AGENT_SPECIES, PID_ENTITY_DISPLAY_NAME, PID_SEX, PlayerSessionReady,
-    PropertyType, encode_event_envelope,
+    PortalStateSchema, PropertyType, encode_event_envelope,
 };
 use tessera_net::{ChatChannel, Command, Location, SocialCommand, Vec3};
 
@@ -94,6 +99,8 @@ const DICTIONARY: [(u32, PropertyType); 9] = [
 struct NoData {
     /// The install answers the initial exchange's questions.
     answers: bool,
+    /// The one `0xCC` state schema, under every ID, so that message decodes.
+    portal: PortalStateSchema,
 }
 
 impl InstallData for NoData {
@@ -117,6 +124,10 @@ impl InstallData for NoData {
     /// Only the one template counts as decoded: the others go through the read budget.
     fn template_cached(&self, template_did: u32) -> bool {
         template_did == TEMPLATE
+    }
+
+    fn portal_state_schema(&self, _id: u32) -> Option<&PortalStateSchema> {
+        Some(&self.portal)
     }
 
     fn selected_language_key(&self) -> Result<u32, InstallUnsupported> {
@@ -323,16 +334,19 @@ impl Server {
     }
 
     /// A blob to `recipient` as sequenced datagrams of one fragment each, so a long
-    /// message (a 2-byte length) still fits.
+    /// message (a 2-byte length) still fits. `identity`: `(queue, word and blob ID, group)`, where
+    /// a word and blob ID of `None` are fresh ones.
     fn blob_to(
         &mut self,
-        queue: u8,
+        identity: (u8, Option<u16>, u16),
         opcode: u32,
         recipient: Option<u64>,
         envelope: &[u8],
     ) -> Vec<Vec<u8>> {
-        let blob_id = (self.seq.wrapping_add(1) & 0xFFFF) as u16;
-        let Ok(frags) = split_blob(queue, blob_id, 1, 0, recipient, opcode, envelope) else {
+        let (queue, repeated, group) = identity;
+        let fresh = (self.seq.wrapping_add(1) & 0xFFFF) as u16;
+        let word = repeated.unwrap_or(fresh);
+        let Ok(frags) = split_blob(queue, word, word, group, recipient, opcode, envelope) else {
             return Vec::new();
         };
         let mut out = Vec::new();
@@ -457,6 +471,7 @@ fn start(net: &mut Net, flags: u8) -> Option<SessionDriver<Net>> {
         codec_uuids,
         schema: SchemaView(Arc::new(NoData {
             answers: flags != 0xFF,
+            portal: PortalStateSchema::default(),
         })),
         cancel: Arc::new(AtomicBool::new(flags & 0x40 != 0)),
         // Bit 5 of the first byte: `Net.ComputeUniquePort` off (§3.2 Case C).
@@ -482,11 +497,12 @@ fn ack() -> OptionalHeaders {
 fuzz_target!(|data: &[u8]| {
     let session = Arc::new(Mutex::new(Queues::default()));
     let flags = data.first().copied().unwrap_or(0);
+    let extra = data.get(1).copied().unwrap_or(0);
     let chat = (flags & 0x10 != 0).then(|| Arc::new(Mutex::new(Queues::default())));
     let mut net = Net {
         session: Arc::clone(&session),
         chat: chat.clone(),
-        readiness: flags & 0x20 == 0,
+        readiness: extra & 0x01 != 0,
     };
     let Some(mut driver) = start(&mut net, flags) else {
         return;
@@ -498,7 +514,9 @@ fuzz_target!(|data: &[u8]| {
     };
     let mut login = Server::new(LOGIN_SEED);
     let mut world = Server::new(WORLD_SEED);
-    let mut in_world = false;
+    // The world server takes the messages once its connection exists: on the production path that
+    // is well before any world entry.
+    let mut referred = false;
     let mut now = 0.0f64;
     let step = |driver: &mut SessionDriver<Net>, now: f64| {
         // Bit 6 of the first byte: the attempt is cancelled (no referral, no refresh, no
@@ -548,17 +566,19 @@ fuzz_target!(|data: &[u8]| {
                 step(&mut driver, now);
                 deliver(&session, challenge(0x0111, WORLD_SEED), WORLD);
                 deliver(&session, world.control(ack()), WORLD);
-                deliver(
-                    &session,
-                    session_ready().and_then(|r| world.event(0x90, &r)),
-                    WORLD,
-                );
+                if extra & 0x02 == 0 {
+                    deliver(
+                        &session,
+                        session_ready().and_then(|r| world.event(0x90, &r)),
+                        WORLD,
+                    );
+                }
                 step(&mut driver, now);
-                in_world = driver.in_world();
+                referred = true;
             }
         }
     }
-    let mut rest = data.get(1..).unwrap_or_default();
+    let mut rest = data.get(2..).unwrap_or_default();
     let mut steps = 0;
     while let Some((&kind, tail)) = rest.split_first() {
         steps += 1;
@@ -593,7 +613,9 @@ fuzz_target!(|data: &[u8]| {
                 // The selector byte: no recipient, the player, the fixed entity, or eight
                 // bytes of the input.
                 let selector = chunk.get(1).copied().unwrap_or(0);
-                let queue = if selector & 0x80 != 0 { 1 } else { 2 };
+                let queue = 1 + (selector >> 6);
+                let repeated = (selector & 0x20 != 0).then_some(u16::from(selector & 0x03));
+                let group = u16::from((selector >> 2) & 0x03);
                 let (recipient, body) = match selector % 4 {
                     0 => (None, chunk.get(2..)),
                     1 => (Some(PLAYER), chunk.get(2..)),
@@ -607,12 +629,12 @@ fuzz_target!(|data: &[u8]| {
                     }
                 };
                 let body = body.unwrap_or_default();
-                let (server, src) = if in_world {
+                let (server, src) = if referred {
                     (&mut world, WORLD)
                 } else {
                     (&mut login, LOGIN)
                 };
-                for d in server.blob_to(queue, opcode, recipient, body) {
+                for d in server.blob_to((queue, repeated, group), opcode, recipient, body) {
                     deliver(&session, Some(d), src);
                 }
             }

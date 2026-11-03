@@ -151,7 +151,8 @@ pub enum Source {
 impl Source {
     /// The kind of location, for a log line: never the path a source holds (a Steam
     /// library, a launcher config, a prefix are all below the user's home).
-    fn kind(&self) -> &'static str {
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
         match self {
             Self::Explicit => "named by the user",
             Self::Environment => "environment variable",

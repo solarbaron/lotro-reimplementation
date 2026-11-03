@@ -494,9 +494,14 @@ pub enum SessionError {
         /// The bound.
         limit: usize,
     },
-    /// The fragments of one multi-fragment blob name different recipients (§5.6.4 rule 3).
-    #[error("fragments of one blob with different recipients")]
-    FragmentRecipientMismatch,
+    /// An unmasked packet carries a fragment on queues 2–4: its checksum has no key, so it is
+    /// dropped and counted and changes no identity (engineering choice, see
+    /// [`SessionConnection::receive_datagram`]).
+    #[error("an unmasked packet with a fragment on queue {queue_id}")]
+    UnmaskedReliableFragment {
+        /// The fragment's `queueId`.
+        queue_id: u8,
+    },
     /// A `ConnectChallengeHeader` whose datagram header `recId` or payload bytes `18..19`
     /// (the incoming and outgoing recipients, §6.3) are zero: Tessera adopts only non-zero
     /// IDs (§6.3; refusing zero is an engineering choice).
@@ -618,8 +623,8 @@ pub enum SessionError {
         /// Raw `envelopeFlags` byte.
         flags: u8,
     },
-    /// A checksum-valid fragment conflicts with an active or remembered identity on queues 2–4:
-    /// another body, count or recipient (§9.3.8).
+    /// A checksum-valid fragment conflicts with that same active or remembered identity on queues
+    /// 2–4: another body or count (§9.3.8). The recipient is part of the identity (§5.6.4 rule 3).
     #[error("a fragment conflicts with its blob identity")]
     ConflictingBlobIdentity,
 
@@ -4356,7 +4361,6 @@ struct BlobTombstone {
     key: BlobKey,
     at: f64,
     num_frags: u32,
-    recipient_id: u64,
     hashes: Vec<u64>,
 }
 
@@ -4386,16 +4390,29 @@ fn fragment_hash(hdr: &BlobFragmentHeader, data: &[u8]) -> u64 {
     h.finish().max(1)
 }
 
-/// The identity of an incomplete blob (§5.6.4 rule 3): the sender's recipient ID, the
-/// queue, and the blob ID for queues `1`, `2` and `4`, or the sequence group and ordering
-/// number for queue `3`, which carries no blob ID (P10-22-POLICY).
-type BlobKey = (u16, u8, u16, u16);
+/// The identity of a blob (§5.6.4 rule 3): the sender's recipient ID, the queue, the blob ID for
+/// queues `1`, `2` and `4` or the sequence group and ordering number for queue `3`, which carries
+/// no blob ID (P10-22-POLICY), and the fragment's own 64-bit recipient (field 7, or its default)
+/// on every queue. Another recipient is another identity, never a conflict.
+type BlobKey = (u16, u8, u16, u16, u64);
 
 fn blob_key(sender_rec_id: u16, hdr: &BlobFragmentHeader) -> BlobKey {
     if hdr.queue_id == 3 {
-        (sender_rec_id, 3, hdr.seq_group, hdr.order_num)
+        (
+            sender_rec_id,
+            3,
+            hdr.seq_group,
+            hdr.order_num,
+            hdr.recipient_id,
+        )
     } else {
-        (sender_rec_id, hdr.queue_id, hdr.blob_id, 0)
+        (
+            sender_rec_id,
+            hdr.queue_id,
+            hdr.blob_id,
+            0,
+            hdr.recipient_id,
+        )
     }
 }
 
@@ -4485,15 +4502,16 @@ impl BlobReassembler {
         self.tombstones.push_back(tombstone);
     }
 
-    /// §9.3.8: whether a fragment of this packet conflicts with an active or remembered identity
-    /// on queues `2..=4` or with another of this packet: a different body or count, or another
-    /// recipient. Asked only after the packet's checksum held, because such a conflict is a
+    /// §9.3.8: whether a fragment of this packet conflicts with that same active or remembered
+    /// identity on queues `2..=4`, or with another of this packet: a different body or count. The
+    /// recipient is part of the identity (§5.6.4 rule 3), so another recipient never conflicts.
+    /// Asked only after the packet's checksum held, because such a conflict is a
     /// checksum-validated ambiguity and ends the connection, and nothing changes here.
     #[must_use]
     pub fn conflicts(&self, sender_rec_id: u16, fragments: &[BlobFragment], now_sec: f64) -> bool {
         let live =
             |entry: &IncompleteBlob| now_sec - entry.created_at_sec <= BLOB_REASSEMBLY_EXPIRY_SEC;
-        let mut seen: Vec<(BlobKey, u32, u32, u64, u64)> = Vec::new();
+        let mut seen: Vec<(BlobKey, u32, u32, u64)> = Vec::new();
         for frag in fragments {
             let hdr = &frag.header;
             if !matches!(hdr.queue_id, 2..=4) {
@@ -4502,33 +4520,29 @@ impl BlobReassembler {
             let key = blob_key(sender_rec_id, hdr);
             let hash = fragment_hash(hdr, &frag.payload);
             let index = hdr.frag_index as usize;
-            let clash = |num_frags: u32, recipient: u64, hashes: &[u64]| {
+            let clash = |num_frags: u32, hashes: &[u64]| {
                 num_frags != hdr.num_frags
-                    || recipient != hdr.recipient_id
                     || hashes
                         .get(index)
                         .is_some_and(|known| *known != 0 && *known != hash)
             };
             if let Some(t) = self.tombstone(&key, now_sec)
-                && clash(t.num_frags, t.recipient_id, &t.hashes)
+                && clash(t.num_frags, &t.hashes)
             {
                 return true;
             }
             if let Some(e) = self.incomplete.get(&key).filter(|e| live(e))
-                && clash(e.num_frags, e.recipient_id, &e.hashes)
+                && clash(e.num_frags, &e.hashes)
             {
                 return true;
             }
-            let other = seen.iter().any(|(k, n, i, r, h)| {
-                *k == key
-                    && (*n != hdr.num_frags
-                        || *r != hdr.recipient_id
-                        || (*i == hdr.frag_index && *h != hash))
+            let other = seen.iter().any(|(k, n, i, h)| {
+                *k == key && (*n != hdr.num_frags || (*i == hdr.frag_index && *h != hash))
             });
             if other {
                 return true;
             }
-            seen.push((key, hdr.num_frags, hdr.frag_index, hdr.recipient_id, hash));
+            seen.push((key, hdr.num_frags, hdr.frag_index, hash));
         }
         false
     }
@@ -4577,7 +4591,7 @@ impl BlobReassembler {
     /// of its group is superseded (§9.3.8). A completed blob is not touched.
     fn supersede_older(&mut self, sender_rec_id: u16, group: u16, order: u16) {
         let before = self.incomplete.len();
-        self.incomplete.retain(|&(sender, queue, g, o), _| {
+        self.incomplete.retain(|&(sender, queue, g, o, _), _| {
             !(sender == sender_rec_id
                 && queue == 3
                 && g == group
@@ -4684,7 +4698,7 @@ impl BlobReassembler {
     ) -> Result<(), SessionError> {
         let live =
             |entry: &IncompleteBlob| now_sec - entry.created_at_sec <= BLOB_REASSEMBLY_EXPIRY_SEC;
-        let mut new_keys: Vec<(BlobKey, u32, u64)> = Vec::new();
+        let mut new_keys: Vec<(BlobKey, u32)> = Vec::new();
         for frag in fragments {
             self.check_fragment(frag)?;
             let hdr = &frag.header;
@@ -4700,27 +4714,19 @@ impl BlobReassembler {
                 .incomplete
                 .get(&key)
                 .filter(|e| live(e))
-                .map(|e| (e.num_frags, e.recipient_id))
-                .or_else(|| {
-                    new_keys
-                        .iter()
-                        .find(|(k, _, _)| *k == key)
-                        .map(|&(_, n, r)| (n, r))
-                });
+                .map(|e| e.num_frags)
+                .or_else(|| new_keys.iter().find(|(k, _)| *k == key).map(|&(_, n)| n));
             match open {
                 // On queues 2–4 this is a conflict: judged after the checksum (`conflicts`).
                 Some(_) if matches!(hdr.queue_id, 2..=4) => {}
-                Some((n, _)) if n != hdr.num_frags => {
+                Some(n) if n != hdr.num_frags => {
                     return Err(SessionError::InvalidFragmentBounds {
                         frag_index: hdr.frag_index,
                         num_frags: hdr.num_frags,
                     });
                 }
-                Some((_, r)) if r != hdr.recipient_id => {
-                    return Err(SessionError::FragmentRecipientMismatch);
-                }
                 Some(_) => {}
-                None => new_keys.push((key, hdr.num_frags, hdr.recipient_id)),
+                None => new_keys.push((key, hdr.num_frags)),
             }
         }
         let live_count = self.incomplete.values().filter(|e| live(e)).count();
@@ -4773,7 +4779,6 @@ impl BlobReassembler {
                     key: blob_key(sender_rec_id, hdr),
                     at: now_sec,
                     num_frags: 1,
-                    recipient_id: hdr.recipient_id,
                     hashes: vec![fragment_hash(hdr, &frag.payload)],
                 });
             }
@@ -4826,9 +4831,6 @@ impl BlobReassembler {
                 num_frags: hdr.num_frags,
             });
         }
-        if entry.recipient_id != hdr.recipient_id {
-            return Err(SessionError::FragmentRecipientMismatch);
-        }
 
         let word_idx = (hdr.frag_index as usize) >> 5;
         let bit_mask = 1u32 << (hdr.frag_index & 0x1F);
@@ -4861,7 +4863,6 @@ impl BlobReassembler {
                     key: key_tuple,
                     at: now_sec,
                     num_frags: completed.num_frags,
-                    recipient_id: completed.recipient_id,
                     hashes: std::mem::take(&mut completed.hashes),
                 });
             }
@@ -6275,6 +6276,9 @@ impl SessionConnection {
 
     /// Queues one standalone `DisconnectHeader` at once, with no flush wait (§9.3.7, "Unsequenced
     /// controls"). The caller then closes the connection locally. Nothing is sent before State 5.
+    /// What was queued and not sent yet is discarded first ([`Self::discard_unsent_datagrams`]): a
+    /// local terminal close sends at most that one Disconnect (§9.3.8), and no application data
+    /// follows the decision.
     ///
     /// # Errors
     ///
@@ -6283,6 +6287,7 @@ impl SessionConnection {
         if self.state != ConnectionState::Connected {
             return Ok(());
         }
+        self.discard_unsent_datagrams();
         self.queue_control(OptionalHeaders {
             disconnect: true,
             ..OptionalHeaders::default()
@@ -6423,15 +6428,32 @@ impl SessionConnection {
         };
 
         // §9.3.8: a known-layout unsupported form or a conflicting identity is judged here, with
-        // the checksum verified and nothing committed: one terminal result, no Ack. An unmasked
-        // packet proves nothing about its sender, so it is only dropped and counted.
+        // the checksum verified and nothing committed: one terminal result, no Ack.
+        //
+        // Engineering choice, one rule for an unmasked packet (spec silent; question for the next
+        // spec pass: is a keyless checksum "valid" for §9.3.8's row of `0x02`?): its checksum has no
+        // key, so it proves nothing about the sender. Such a packet never ends a session, and its
+        // fragments on queues `2..=4` are dropped and counted, so they cannot leave an identity
+        // behind that would make a later masked blob a conflict.
+        let masked = (hdr.flags & FLAG_MASKED_CHECKSUM) != 0;
         let bit = pkt
             .fragments
             .iter()
             .find(|f| unsupported_control_bit(&f.header));
-        let conflict = self
-            .reassembler
-            .conflicts(sender_rec_id, &pkt.fragments, now_sec);
+        if !masked
+            && bit.is_none()
+            && let Some(f) = pkt
+                .fragments
+                .iter()
+                .find(|f| matches!(f.header.queue_id, 2..=4))
+        {
+            let queue_id = f.header.queue_id;
+            return Err(self.refused(SessionError::UnmaskedReliableFragment { queue_id }));
+        }
+        let conflict = masked
+            && self
+                .reassembler
+                .conflicts(sender_rec_id, &pkt.fragments, now_sec);
         if bit.is_some() || conflict {
             let err = bit.map_or(SessionError::ConflictingBlobIdentity, |f| {
                 SessionError::UnsupportedFragment {
@@ -6439,7 +6461,7 @@ impl SessionConnection {
                     blob_flags: f.header.blob_flags,
                 }
             });
-            if (hdr.flags & FLAG_MASKED_CHECKSUM) != 0 {
+            if masked {
                 if self.queue_standalone_disconnect().is_err() {
                     tracing::debug!("official session: the closing Disconnect was not encoded");
                 }
@@ -7932,8 +7954,8 @@ pub struct LoginQueueStatusMessage {
 }
 
 impl LoginQueueStatusMessage {
-    /// What `logonResult` means (§9.3). A queued result without its position (which
-    /// [`Self::decode`] never gives) counts as position and total `0`.
+    /// What `logonResult` means (§9.3). A queued result without its position (§9.3.8: all optional
+    /// fields may be absent) counts as position and total `0`, which the driver reports as absent.
     #[must_use]
     pub fn outcome(&self) -> LogonOutcome {
         match self.login_result {
@@ -7972,7 +7994,9 @@ impl LoginQueueStatusMessage {
     /// Decodes `LoginQueueStatusMessage` (`0x00000130`) from inner payload bytes starting at
     /// Offset `0x00` (§9.3). `queuePosition` and `queueTotal` are read only when
     /// `logonResult` is [`LOGON_RESULT_QUEUED`]; bytes after the last field are not read
-    /// (engineering choice, spec silent).
+    /// (engineering choice, spec silent). A queued result may end right after its text: §9.3.8
+    /// emits only the fields actually available, and all optional fields may be absent. A part of
+    /// the two words is truncated, not absent.
     ///
     /// # Errors
     ///
@@ -7989,7 +8013,7 @@ impl LoginQueueStatusMessage {
         let (detail_text, ws_len) =
             decode_wstring(body.get(4..).unwrap_or_default()).map_err(|_| bad())?;
         let pos = 4 + ws_len;
-        let queue = if login_result == LOGON_RESULT_QUEUED {
+        let queue = if login_result == LOGON_RESULT_QUEUED && body.len() > pos {
             let word = |at: usize| {
                 body.get(at..at + 4)
                     .and_then(|b| <[u8; 4]>::try_from(b).ok())

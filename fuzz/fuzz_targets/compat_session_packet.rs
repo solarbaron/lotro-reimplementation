@@ -229,6 +229,32 @@ fuzz_target!(|data: &[u8]| {
         while negotiated.pop_outbound_datagram().is_some() {}
     }
 
+    // Several decoded fragments through one table, each as its own packet (§5.6.4, §9.3.8): repeats,
+    // tombstones, conflicts across messages, the queue-3 gate and expiry stay bounded.
+    let mut fragments = Vec::new();
+    let mut left = data;
+    while fragments.len() < 32 {
+        let Ok((frag, used)) = BlobFragment::decode(left) else {
+            break;
+        };
+        left = left.get(used.max(1)..).unwrap_or_default();
+        fragments.push(frag);
+    }
+    let mut table = BlobReassembler::new(8, 65_536);
+    let mut clock = 0.0f64;
+    for frag in &fragments {
+        let one = std::slice::from_ref(frag);
+        if table.check_packet(1, one, clock).is_ok()
+            && !table.conflicts(1, one, clock)
+            && let Ok(Some(blob)) = table.ingest(1, frag.clone(), clock)
+        {
+            assert_eq!(blob.queue_id, frag.header.queue_id);
+            assert_eq!(blob.recipient_id, frag.header.recipient_id);
+        }
+        assert!(table.incomplete_len() <= 8);
+        clock += f64::from(frag.header.frag_data_len & 0x0F);
+    }
+
     let _ = decode_message(1, data, 65_536);
     let _ = dispatch_message(OPCODE_BATCH_CONTAINER, data, 65_536, 4);
     let _ = dispatch_message(OPCODE_SINGLE_WRAPPER, data, 65_536, 4);

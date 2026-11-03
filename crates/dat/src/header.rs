@@ -40,7 +40,8 @@ pub struct Header {
     pub free_count: u32,
     /// 0x160: offset of the root directory node allocation.
     pub root_offset: u32,
-    /// 0x164: three unused words (0 in observed data).
+    /// 0x164: two unused words, then 0x16C, the pending-journal checksum
+    /// ([`Self::pending_journal`]); 0 in observed data.
     pub unused_164: [u32; 3],
     /// 0x170: "master map" DID (non-zero only in the general archive).
     pub master_map_did: u32,
@@ -133,6 +134,13 @@ impl Header {
     /// Archive kind within the dataset type, byte 0x14E (spec §3.4).
     pub fn archive_kind_code(&self) -> u8 {
         self.dataset.to_le_bytes()[2]
+    }
+
+    /// The pending-journal checksum at 0x16C (`dat-container.md` §3.6): 0 means no pending journal
+    /// and a consistent archive; anything else means an update was interrupted and the archive may
+    /// be half-updated.
+    pub fn pending_journal(&self) -> u32 {
+        self.unused_164[2]
     }
 
     /// Whether the journal area holds the "empty journal" pattern (spec §3.2, I-7).

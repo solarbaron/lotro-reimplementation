@@ -164,6 +164,17 @@ pub enum Error {
 }
 
 impl Error {
+    /// This error's text with no file system path in it: an install's path can name the user, so
+    /// a log line or a stored problem names files separately, by name only.
+    #[must_use]
+    pub fn without_path(&self) -> String {
+        match self {
+            Self::Io { source, .. } => format!("I/O error: {source}"),
+            Self::NoArchives { .. } => "no client_*.dat archives found".to_owned(),
+            other => other.to_string(),
+        }
+    }
+
     pub(crate) fn corrupt(offset: u64, reason: impl Into<String>) -> Self {
         Self::Corrupt {
             offset,

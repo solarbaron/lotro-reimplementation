@@ -1142,13 +1142,15 @@ impl ScreenUi {
 
         // Error lines.
         let lines: Vec<String> = model
-            .errors()
-            .map(|e| e.text(&|t| texts.reason(t)))
+            .notices()
+            .map(str::to_owned)
+            .chain(model.errors().map(|e| e.text(&|t| texts.reason(t))))
             .chain(
                 model
                     .confirming()
                     .map(|n| super::texts::OwnText::ConfirmDelete(n.to_owned()).to_string()),
             )
+            .chain(model.entering_line().map(|t| t.to_string()))
             .collect();
         if lines != self.errors
             && let (Some(list), Some(tpl)) = (

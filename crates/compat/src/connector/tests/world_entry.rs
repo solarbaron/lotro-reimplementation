@@ -3,15 +3,22 @@
 //! on a virtual clock, on a network with no source for readiness, like every production path.
 
 use super::*;
+use crate::connector::data::{InstallData, SchemaView};
 use crate::connector::session_phase::{
     ENTER_WORLD_TIMEOUT_SEC, ENTRY_REFUSED, EntryWait, SELECTION_DESTINATION,
     UNSUPPORTED_ENTRY_ANSWER,
 };
+use crate::initial::{AdvertisedArchive, InstallUnsupported};
 use crate::session::{
     DisconnectReason as LinkEnd, FLAG_HAS_FRAGMENTED_BLOBS, FLAG_MASKED_CHECKSUM,
     TransportErrorHeader, combine_packet_checksum, compute_datagram_checksum,
 };
-use crate::world::{SubEventBatch, SubEventFrame};
+use crate::world::{
+    CompactDid, DEFAULT_PORTAL_STATE_SCHEMA_ID, EnterPortalSpace, EntityCreate, PortalPositionSync,
+    PortalStateSchema, PropertyScope, PropertyTableUpdate, PropertyType, SubEventBatch,
+    SubEventFrame, WirePosition,
+};
+use std::collections::BTreeMap;
 
 fn no_readiness() -> Service {
     Service {
@@ -173,7 +180,7 @@ fn the_session_start_is_not_world_entry_and_the_stage_is_named() {
         event_id: SubEventBatch::EVENT_ID_SUB_EVENT,
         frames: vec![SubEventFrame::Event {
             sub_event_id: 0x98,
-            payload: vec![0x00, 1, 2],
+            payload: checked_message(0x98),
         }],
         entry_batch_tail_flag: None,
     }
@@ -186,16 +193,17 @@ fn the_session_start_is_not_world_entry_and_the_stage_is_named() {
     world.deliver(server.blob(0x4C, &shifted), WORLD_SERVER);
     world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
     world.deliver(server.event(0x0D, &[0x00]), WORLD_SERVER);
+    // Without its schema and to exact exhaustion, `0xCC` does not count as a placement.
     world.deliver(server.event(0xCC, &[0x00, 0x00]), WORLD_SERVER);
     d.step(3.0, true, &go);
     let progress = d.entry_progress();
     assert!(progress.referred && progress.world_connected && progress.session_started);
     assert_eq!(progress.batches, 1);
     assert_eq!(progress.creations, 1);
-    assert_eq!(progress.unread, 1, "the shifted batch");
+    assert_eq!(progress.unread, 2, "the shifted batch and the short `0xCC`");
     assert_eq!(progress.readiness_seen, 1, "seen, not acted on");
     assert_eq!(progress.unsupported_batches, 1);
-    assert_eq!(progress.placements, 1);
+    assert_eq!(progress.placements, 0);
     let events = d.take_events();
     assert!(events.is_empty(), "nothing is published: {events:?}");
     let sent = opcodes(&sent_packets(&world));
@@ -226,6 +234,538 @@ fn the_session_start_is_not_world_entry_and_the_stage_is_named() {
         "one Disconnect"
     );
     assert!(!opcodes(&sent).contains(&0xF4));
+}
+
+/// A valid complete message of each checked opcode, with its one shared byte.
+fn checked_message(opcode: u32) -> Vec<u8> {
+    match opcode {
+        0x98 => EntityCreate {
+            template_did: 0x7000_0123,
+            entity_id: 0x0300_0000_0000_0101,
+        }
+        .to_bytes()
+        .expect("0x98"),
+        0x52 => {
+            let mut w = crate::world::WireWriter::new();
+            PropertyTableUpdate {
+                scope: PropertyScope::Entity,
+                properties: EncodedPropertyTable::new(),
+            }
+            .encode(&mut w)
+            .expect("0x52");
+            w.into_vec()
+        }
+        0xCE => service_support::position(0x0300_0000_0000_0101, [1.0, 2.0, 3.0], 0, [0.0; 3]),
+        0xCC => PortalPositionSync {
+            sync_bit_0: false,
+            sequence_or_reason: 3,
+            position: WirePosition::from_components(
+                1,
+                0x10,
+                0x20,
+                0,
+                0,
+                [1.0, 2.0, 3.0],
+                [1.0, 0.0, 0.0, 0.0],
+            ),
+            heading_raw: 64,
+            movement_mode: 1,
+            linear_velocity: [None, None, None],
+            angular_velocity: [None, None, None],
+            anim_or_context_did: CompactDid(0x0900_0001),
+            state_schema_id: DEFAULT_PORTAL_STATE_SCHEMA_ID,
+            bool_states: Vec::new(),
+            enum_states: Vec::new(),
+            extra_blob: Vec::new(),
+        }
+        .to_bytes(&BTreeMap::from([(
+            DEFAULT_PORTAL_STATE_SCHEMA_ID,
+            PortalStateSchema::default(),
+        )]))
+        .expect("0xCC"),
+        0x5E => EnterPortalSpace {
+            stamp: 1,
+            scene_id: 2,
+        }
+        .to_bytes()
+        .expect("0x5E"),
+        0x89 => service_support::observed_appearance().to_vec(),
+        _ => unreachable!("a checked opcode"),
+    }
+}
+
+/// The synthetic install with one `0xCC` state schema and the service's dictionary.
+#[derive(Debug)]
+struct WithSchema(Records, PortalStateSchema);
+
+impl InstallData for WithSchema {
+    fn record(&self, did: u32, max_bytes: usize) -> Option<Vec<u8>> {
+        self.0.record(did, max_bytes)
+    }
+    fn property_type(&self, pid: u32) -> Option<PropertyType> {
+        service_support::DICTIONARY
+            .iter()
+            .find(|(p, _)| *p == pid)
+            .map(|(_, t)| *t)
+    }
+    fn portal_state_schema(&self, id: u32) -> Option<&PortalStateSchema> {
+        (id == DEFAULT_PORTAL_STATE_SCHEMA_ID).then_some(&self.1)
+    }
+    fn selected_language_key(&self) -> Result<u32, InstallUnsupported> {
+        self.0.selected_language_key()
+    }
+    fn check_name_table(&self) -> Result<(), InstallUnsupported> {
+        self.0.check_name_table()
+    }
+    fn name_rule_languages(&self, rule_key: u32) -> Result<Vec<u32>, InstallUnsupported> {
+        self.0.name_rule_languages(rule_key)
+    }
+    fn archive_inventory(&self) -> Result<Vec<AdvertisedArchive>, InstallUnsupported> {
+        self.0.archive_inventory()
+    }
+}
+
+fn with_schema() -> SessionStart {
+    let mut start = session_start(0, None, Arc::default());
+    start.schema = SchemaView(Arc::new(WithSchema(
+        records(),
+        PortalStateSchema::default(),
+    )));
+    start
+}
+
+/// [`at_session_start`] on an install with the service's dictionary and a `0xCC` schema.
+fn at_session_start_with_schema() -> (World, SessionDriver<FakeNet>, Server) {
+    let (world, mut d, login) = driver_at_characters_from(no_readiness(), with_schema());
+    d.command(&ENTER(), 1.0).expect("enter");
+    d.step(1.1, true, &go);
+    world.deliver(
+        login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+        LOGIN_SERVER,
+    );
+    d.step(1.2, true, &go);
+    let server = Server::new(0x0222, 0xBEEF_0002);
+    server.connect_to(&world, 0xBEEF_0002, WORLD_SERVER);
+    d.step(1.3, true, &go);
+    (world, d, server)
+}
+
+/// §9.3.8: each checked message counts only when it decodes to exact exhaustion, top level and
+/// embedded, each slice with its own one byte. A doubled prefix or a cut body counts as unread, and
+/// nothing is published either way.
+#[test]
+fn checked_messages_count_only_when_they_decode() {
+    type Counted = fn(&crate::connector::session_phase::EntryProgress) -> u64;
+    let cases: [(u32, Counted); 6] = [
+        (0x98, |p| p.creations),
+        (0x52, |p| p.creations),
+        (0xCE, |p| p.positions),
+        (0xCC, |p| p.placements),
+        (0x5E, |p| p.portal_spaces),
+        (0x89, |p| p.appearances),
+    ];
+    let embed = |opcode: u32, payload: Vec<u8>| {
+        SubEventBatch {
+            event_id: SubEventBatch::EVENT_ID_SUB_EVENT,
+            frames: vec![SubEventFrame::Event {
+                sub_event_id: opcode,
+                payload,
+            }],
+            entry_batch_tail_flag: None,
+        }
+        .to_bytes()
+        .expect("batch")
+    };
+    let doubled = |data: &[u8]| {
+        let mut out = vec![0x00];
+        out.extend_from_slice(data);
+        out
+    };
+    for (opcode, counted) in cases {
+        let data = checked_message(opcode);
+        let (world, mut d, mut server) = at_session_start_with_schema();
+        world.deliver(server.event(opcode, &data), WORLD_SERVER);
+        d.step(2.0, true, &go);
+        let p = d.entry_progress();
+        assert_eq!((counted(&p), p.unread), (1, 0), "top level {opcode:#x}");
+
+        world.deliver(server.event(opcode, &doubled(&data)), WORLD_SERVER);
+        d.step(2.1, true, &go);
+        let p = d.entry_progress();
+        assert_eq!((counted(&p), p.unread), (1, 1), "doubled {opcode:#x}");
+
+        world.deliver(
+            server.event(0x4C, &embed(opcode, data.clone())),
+            WORLD_SERVER,
+        );
+        d.step(2.2, true, &go);
+        let p = d.entry_progress();
+        assert_eq!((counted(&p), p.unread), (2, 1), "embedded {opcode:#x}");
+
+        world.deliver(
+            server.event(0x4C, &embed(opcode, doubled(&data))),
+            WORLD_SERVER,
+        );
+        d.step(2.3, true, &go);
+        let p = d.entry_progress();
+        assert_eq!(
+            (counted(&p), p.unread, p.batches, p.sub_events),
+            (2, 2, 2, 2),
+            "embedded doubled {opcode:#x}"
+        );
+
+        let cut = &data[..data.len() - 1];
+        world.deliver(server.event(opcode, cut), WORLD_SERVER);
+        d.step(2.4, true, &go);
+        let p = d.entry_progress();
+        assert_eq!((counted(&p), p.unread), (2, 3), "cut {opcode:#x}");
+        assert!(d.take_events().is_empty(), "nothing is published");
+        assert!(!d.ended());
+    }
+}
+
+/// The world stream of the observed-order service through the real decoders, on its own queues.
+#[test]
+fn the_observed_world_stream_reads_to_the_readiness_wait() {
+    let (world, mut d, _login, mut server) = at_session_start(1.0);
+    for (queue, opcode, data) in service_support::observed_world_stream() {
+        let word = u16::try_from(server.seq & 0xFFFF).expect("small");
+        world.deliver(
+            server.on_queue(queue, word, 0, None, opcode, &data),
+            WORLD_SERVER,
+        );
+    }
+    d.step(2.0, true, &go);
+    let p = d.entry_progress();
+    assert!(p.session_started);
+    assert_eq!((p.batches, p.sub_events, p.creations), (1, 2, 2));
+    assert_eq!((p.positions, p.portal_spaces, p.appearances), (1, 1, 1));
+    assert_eq!((p.readiness_seen, p.unsupported_batches), (1, 1));
+    assert_eq!((p.other, p.unread), (7, 0));
+    assert!(!d.in_world());
+    assert!(d.take_events().is_empty());
+}
+
+/// Session §5.6.4 rule 3: the recipient is part of the identity on every queue. Two blobs with the
+/// same word and blob ID to two entities are two fresh identities, both delivered. Only another
+/// body for the same recipient is §9.3.8's conflict.
+#[test]
+fn another_recipient_is_another_identity() {
+    const A: u64 = 0x0300_0000_0000_0101;
+    const B: u64 = 0x0300_0000_0000_0102;
+    for queue in [2u8, 3, 4] {
+        let (world, mut d, _login, mut server) = at_session_start(1.0);
+        let body = |t: u8| [0x00, t];
+        world.deliver(
+            server.on_queue(queue, 77, 9, Some(A), 0x149, &body(1)),
+            WORLD_SERVER,
+        );
+        world.deliver(
+            server.on_queue(queue, 77, 9, Some(B), 0x149, &body(2)),
+            WORLD_SERVER,
+        );
+        d.step(2.0, true, &go);
+        assert!(!d.ended(), "queue {queue}");
+        assert_eq!(d.entry_progress().other, 2, "both delivered, queue {queue}");
+        let counts = d.counters().reassembly;
+        assert_eq!(counts.duplicates, 0);
+        if queue == 3 {
+            assert_eq!(counts.queue3_equal, 1, "an equal word in its group");
+        }
+        // An exact repeat for B is ignored.
+        world.deliver(
+            server.on_queue(queue, 77, 9, Some(B), 0x149, &body(2)),
+            WORLD_SERVER,
+        );
+        d.step(2.1, true, &go);
+        assert_eq!(d.counters().reassembly.duplicates, 1, "queue {queue}");
+        assert!(!d.ended());
+        // Another body for A is the conflict.
+        world.deliver(
+            server.on_queue(queue, 77, 9, Some(A), 0x149, &body(3)),
+            WORLD_SERVER,
+        );
+        d.step(2.2, true, &go);
+        assert!(d.ended(), "queue {queue}");
+        let events = d.take_events();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Disconnected {
+                    reason: DisconnectReason::TransportFailed(text)
+                } if !text.is_empty()
+            )),
+            "{events:?}"
+        );
+    }
+}
+
+/// An unmasked packet's checksum has no key: its fragment on queues 2–4 is dropped and leaves no
+/// identity behind, so the masked blob after it is no conflict (engineering choice, session.rs).
+#[test]
+fn an_unmasked_fragment_leaves_no_identity_behind() {
+    let (world, mut d, _login, mut server) = at_session_start(1.0);
+    let frags = split_blob(2, 500, 500, 0, None, 0x149, &[0x00, 1]).expect("split");
+    let unmasked = encode_datagram(
+        crate::session::DatagramHeader {
+            rec_id: server.rec_id,
+            seq_num: server.seq,
+            ..crate::session::DatagramHeader::default()
+        },
+        &OptionalHeaders::default(),
+        &frags,
+        None,
+        None,
+    )
+    .expect("datagram");
+    world.deliver(unmasked, WORLD_SERVER);
+    d.step(2.0, true, &go);
+    assert!(!d.ended());
+    assert_eq!(d.entry_progress().other, 0, "dropped");
+    world.deliver(
+        server.on_queue(2, 500, 500, None, 0x149, &[0x00, 2]),
+        WORLD_SERVER,
+    );
+    d.step(2.1, true, &go);
+    assert!(!d.ended());
+    assert_eq!(d.entry_progress().other, 1);
+}
+
+/// §9.3.8: the wait from `0x6F` is stopped only by a valid referral or a terminal or refusal result,
+/// and the `0x90` wait starts at the world connection's State 5. A `0x90` on the login connection
+/// is counted and skipped: no stage moves, no clock restarts, and a malformed one ends nothing.
+#[test]
+fn a_session_start_on_the_login_connection_stops_no_wait() {
+    let ready = PlayerSessionReady {
+        player_id: 0x0100_0000_0000_0007,
+        session_props: EncodedPropertyTable::new(),
+    }
+    .to_bytes()
+    .expect("encodes");
+
+    // The referral wait still ends on its own clock, with its own text.
+    let (world, mut d, mut login) = driver_at_characters(no_readiness(), 0);
+    d.command(&ENTER(), 1.0).expect("enter");
+    d.step(1.1, true, &go);
+    world.deliver(login.event(0x90, &ready), LOGIN_SERVER);
+    world.deliver(login.event(0x90, &[0x00, 1, 2]), LOGIN_SERVER);
+    d.step(29.0, true, &go);
+    assert!(!d.ended(), "a malformed one is only counted");
+    assert_eq!(d.skip_counters().count(0x90), 2);
+    assert!(!d.entry_progress().session_started);
+    d.step(1.0 + ENTER_WORLD_TIMEOUT_SEC, false, &go);
+    assert!(timed_out_with(
+        &d.take_events(),
+        EntryWait::Referral.deadline_text()
+    ));
+
+    // A real referral after it still moves the wait, and only the world's `0x90` starts the last.
+    let (world, mut d, mut login) = driver_at_characters(no_readiness(), 0);
+    d.command(&ENTER(), 1.0).expect("enter");
+    d.step(1.1, true, &go);
+    world.deliver(login.event(0x90, &ready), LOGIN_SERVER);
+    d.step(20.0, true, &go);
+    world.deliver(
+        login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+        LOGIN_SERVER,
+    );
+    d.step(21.0, true, &go);
+    assert!(d.entry_progress().referred);
+    let mut server = Server::new(0x0222, 0xBEEF_0002);
+    server.connect_to(&world, 0xBEEF_0002, WORLD_SERVER);
+    d.step(22.0, true, &go);
+    assert!(d.entry_progress().world_connected);
+    assert!(!d.entry_progress().session_started);
+    world.deliver(server.event(0x90, &ready), WORLD_SERVER);
+    d.step(23.0, true, &go);
+    assert!(d.entry_progress().session_started);
+    // A second `0x90`, malformed or not, moves nothing: the readiness clock runs from the first.
+    world.deliver(server.event(0x90, &[0x00, 1, 2]), WORLD_SERVER);
+    world.deliver(server.event(0x90, &ready), WORLD_SERVER);
+    d.step(30.0, true, &go);
+    assert!(!d.ended());
+    assert_eq!(
+        d.entry_progress().other,
+        2,
+        "counted with the other traffic"
+    );
+    d.step(23.0 + ENTER_WORLD_TIMEOUT_SEC, false, &go);
+    assert!(timed_out_with(
+        &d.take_events(),
+        EntryWait::Readiness.deadline_text()
+    ));
+}
+
+/// §9.3.8: a local terminal close sends at most one standalone Disconnect, so what the same pass
+/// queued stays unsent, here the `0xEC` that a `0xDD` asked for just before a `0xB3`.
+#[test]
+fn nothing_queued_goes_out_after_a_terminal_decision() {
+    use super::initial_negotiation::{RULE, connected, install_request, queue1};
+    let (world, mut d, mut login) = connected();
+    world.deliver(
+        queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+        LOGIN_SERVER,
+    );
+    world.deliver(login.event(0xB3, &[0x00, 4, 3, 2, 1]), LOGIN_SERVER);
+    world.take_sent();
+    d.step(0.1, true, &go);
+    assert!(d.ended());
+    let sent = sent_packets(&world);
+    assert!(opcodes(&sent).is_empty(), "{:x?}", opcodes(&sent));
+    assert_eq!(sent.iter().filter(|p| p.opt_headers.disconnect).count(), 1);
+}
+
+/// A valid `0x6D` after the referral: the refusal is the event of §9.3.8, and the session's end names
+/// what happened in Tessera's words, not a close by the service.
+#[test]
+fn a_refusal_after_the_referral_ends_in_tesseras_words() {
+    use crate::connector::session_phase::ENTRY_REFUSED_AFTER_REFERRAL;
+    let (world, mut d, _login, mut server) = at_session_start(1.0);
+    world.deliver(server.event(0x6D, &[0x00, 4, 3, 2, 1]), WORLD_SERVER);
+    d.step(2.0, true, &go);
+    let events = d.take_events();
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::EnterWorldFailed { reason, .. } if reason == ENTRY_REFUSED
+        )),
+        "{events:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::Disconnected { reason: DisconnectReason::TransportFailed(text) }
+                if text == ENTRY_REFUSED_AFTER_REFERRAL
+        )),
+        "{events:?}"
+    );
+    assert!(crate::backend::names_tessera_limit(
+        ENTRY_REFUSED_AFTER_REFERRAL
+    ));
+}
+
+/// World §6's row of `0x6C`: a nonempty list reaches the screens with each entry's body, class and
+/// level, and the account table triggers nothing. No spec maps the appearance to a look yet.
+#[test]
+fn a_nonempty_list_gives_the_screens_its_details() {
+    use tessera_net::{Body, CharacterEvent};
+    let (world, mut d, mut login) = {
+        use super::initial_negotiation::connected_over;
+        connected_over(Arc::new(WithSchema(
+            records(),
+            PortalStateSchema::default(),
+        )))
+    };
+    world.deliver(
+        login.event(0x6C, &service_support::character_list()),
+        LOGIN_SERVER,
+    );
+    world.take_sent();
+    d.step(0.1, true, &go);
+    let events = d.take_events();
+    let at = events
+        .iter()
+        .position(|e| matches!(e, Event::Connected { .. }))
+        .expect("the list decodes to exact exhaustion");
+    assert_eq!(
+        events[at + 1..],
+        [Event::Character(CharacterEvent::CharacterInfo {
+            name: service_support::CHARACTER.to_owned(),
+            body: Some(Body::Character {
+                species: service_support::CHARACTER_SPECIES,
+                sex: service_support::CHARACTER_SEX,
+            }),
+            class: Some(service_support::CHARACTER_CLASS),
+            level: Some(u32::try_from(service_support::CHARACTER_LEVEL).expect("small")),
+            look: None,
+        })]
+    );
+    assert!(opcodes(&sent_packets(&world)).is_empty());
+}
+
+/// §9.3.8's historical rows at driver level: repeats restart no list wait and emit no progress, and
+/// a queued status with no position words still shows the queue.
+#[test]
+fn historical_repeats_have_one_clock() {
+    use super::initial_negotiation::connected;
+    use crate::initial::UnsupportedNegotiation as U;
+    use tessera_net::account::LoginStage;
+
+    let status = |value: u32| {
+        crate::world::encode_event_envelope(
+            &crate::session::VersionStatusMessage {
+                status: value,
+                server_version_info: "x".to_owned(),
+            }
+            .encode()
+            .expect("encodes"),
+        )
+    };
+    let progress = |events: &[Event]| {
+        events.iter().any(|e| {
+            matches!(
+                e,
+                Event::Account(AccountEvent::LoginProgress {
+                    stage: LoginStage::JoiningWorld
+                })
+            )
+        })
+    };
+    let (world, mut d, mut login) = connected();
+    world.deliver(login.event(0x12F, &[]), LOGIN_SERVER);
+    d.step(0.1, true, &go);
+    world.deliver(login.blob(0x12D, &status(1)), LOGIN_SERVER);
+    d.step(1.0, true, &go);
+    assert!(progress(&d.take_events()), "the real stage change");
+    for t in [10.0, 20.0, 30.0] {
+        world.deliver(login.blob(0x12D, &status(1)), LOGIN_SERVER);
+        d.step(t, true, &go);
+        assert!(!progress(&d.take_events()), "a repeat at {t}");
+        assert!(!d.ended());
+    }
+    d.step(31.0, false, &go);
+    let events = d.take_events();
+    assert!(d.ended(), "{events:?}");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::Account(AccountEvent::LoginRefused { note: Some(n), .. })
+                if n == U::HistoricalListDeadline.detail()
+        )),
+        "{events:?}"
+    );
+
+    // An unsolicited status 1 replaces no running `0xDD` wait.
+    let (world, mut d, mut login) = connected();
+    world.deliver(login.blob(0x12D, &status(1)), LOGIN_SERVER);
+    d.step(29.0, true, &go);
+    assert!(!progress(&d.take_events()));
+    d.step(31.0, false, &go);
+    assert!(d.take_events().iter().any(|e| matches!(
+        e,
+        Event::Account(AccountEvent::LoginRefused { note: Some(n), .. })
+            if n == U::RequestDeadline.detail()
+    )));
+
+    // Queued, with its text and no position: the queue panel with nothing known, on its limit.
+    let (world, mut d, mut login) = connected();
+    let mut queued = crate::session::LOGON_RESULT_QUEUED.to_le_bytes().to_vec();
+    queued.push(0);
+    world.deliver(
+        login.blob(0x130, &crate::world::encode_event_envelope(&queued)),
+        LOGIN_SERVER,
+    );
+    d.step(1.0, true, &go);
+    assert!(d.take_events().iter().any(|e| matches!(
+        e,
+        Event::Account(AccountEvent::LoginQueueChanged {
+            position: None,
+            length: None,
+            wait_seconds: None,
+        })
+    )));
+    d.step(200.0, false, &go);
+    assert!(!d.ended(), "the queue's limit, not the `0xDD` wait");
 }
 
 /// §9.3.8's rows after `Connected`: a closing header gets no reply and no Account event, `0x6D`

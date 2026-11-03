@@ -1733,3 +1733,170 @@ fn the_completion_fixture() {
     assert_eq!(header, hex("01 40 80 F5 01 00"));
     assert_eq!(frags[0].payload, [0x00]);
 }
+
+// ---------------------------------------------------------------------------
+// World §2.8 and §3.1.2: fixed bytes with every exercised appearance branch
+// ---------------------------------------------------------------------------
+
+/// World §2.8 with mask `0x07E2`: secondary, scale, scalar A, scalar B, one tint, a primary part
+/// with an ID and a sub-map, and a nonempty part map, written by hand and not by the crate's encoder.
+const APPEARANCE_ALL_BRANCHES: &str = "E2 07 00 00 11 22 33 44 \
+     00 00 80 3F 00 00 00 40 00 00 00 3F \
+     00 00 C0 3F \
+     00 00 80 3E \
+     01 00 00 00 01 00 00 00 02 00 00 00 04 03 02 01 05 00 00 00 06 00 00 00 \
+     21 00 00 00 AA BB CC DD 01 00 00 00 03 00 00 00 01 01 DF 9B 57 13 E0 AC 68 24 \
+     01 01 09 00 00 00 02 00 00 00 88 77 66 55";
+
+#[test]
+fn appearance_with_every_exercised_branch() {
+    use tessera_compat::world::{
+        EntityAppearanceDesc, VisualDescriptionUpdate, WireReader, WireWriter,
+    };
+    let bytes = hex(APPEARANCE_ALL_BRANCHES);
+    let mut r = WireReader::new(&bytes);
+    let desc = EntityAppearanceDesc::decode(&mut r).expect("decodes");
+    r.finish().expect("to exact exhaustion");
+    assert_eq!(desc.flags(), 0x07E2);
+    assert_eq!(desc.secondary_did, Some(0x4433_2211));
+    assert_eq!(desc.scale, Some([1.0, 2.0, 0.5]));
+    assert_eq!(desc.param_a, Some(1.5));
+    assert_eq!(desc.param_b, Some(0.25));
+    let tints = desc.tint_entries.as_ref().expect("the tint");
+    assert_eq!(
+        (tints.len(), tints[0].color_bgra, tints[0].field_e),
+        (1, 0x0102_0304, 6)
+    );
+    let part = desc.primary_part.as_ref().expect("the part");
+    assert_eq!(part.part_ids[0], Some(0xDDCC_BBAA));
+    let (sub_key, table) = &part.sub_map.as_ref().expect("the sub-map")[0];
+    assert_eq!(
+        (*sub_key, table.entries[0].key, table.entries[0].value),
+        (3, 0x1357_9BDF, 0x2468_ACE0)
+    );
+    let (_, map) = desc.part_map.as_ref().expect("the part map");
+    assert_eq!(map[0].0, 9);
+    assert_eq!(map[0].1.part_ids[1], Some(0x5566_7788));
+    let mut w = WireWriter::new();
+    desc.encode(&mut w).expect("encodes");
+    assert_eq!(w.as_slice(), bytes.as_slice());
+
+    // `0x89` has its one shared byte and then this, and a second one does not read.
+    let mut data = vec![0x00];
+    data.extend_from_slice(&bytes);
+    assert_eq!(
+        VisualDescriptionUpdate::from_bytes(&data)
+            .expect("decodes")
+            .visual_desc,
+        desc
+    );
+    let mut doubled = vec![0x00];
+    doubled.extend_from_slice(&data);
+    assert!(VisualDescriptionUpdate::from_bytes(&doubled).is_err());
+    // Must fail: a byte over, or a byte short.
+    let mut over = data.clone();
+    over.push(0);
+    assert!(VisualDescriptionUpdate::from_bytes(&over).is_err());
+    assert!(VisualDescriptionUpdate::from_bytes(&data[..data.len() - 1]).is_err());
+    // Must fail: scalar B after the collections reads as something else than 0.25.
+    let scalar_b_at_the_end: Vec<u8> = {
+        let mut moved = bytes.clone();
+        let b: Vec<u8> = moved.drain(24..28).collect();
+        moved.extend_from_slice(&b);
+        moved
+    };
+    let mut r = WireReader::new(&scalar_b_at_the_end);
+    let moved = EntityAppearanceDesc::decode(&mut r);
+    assert!(moved.is_err() || r.finish().is_err());
+}
+
+/// World §3.1.1–§3.1.2: two entries with real tables, and an account table, to exact exhaustion.
+#[test]
+fn a_nonempty_list_with_tables_reads_to_exact_exhaustion() {
+    use std::collections::BTreeMap;
+    use tessera_compat::world::{
+        CharacterListResponse, EncodedPropertyTable, EncodedPropertyValue,
+        PID_ACCOUNT_NUM_CHARACTERS_ALLOWED, PID_AGENT_SPECIES, PID_CHARGEN_CHARACTER_LEVEL,
+        PropertyType, WireWriter,
+    };
+    let dictionary: BTreeMap<u32, PropertyType> = BTreeMap::from([
+        (PID_AGENT_SPECIES, PropertyType::Enum),
+        (PID_CHARGEN_CHARACTER_LEVEL, PropertyType::Int),
+        (PID_ACCOUNT_NUM_CHARACTERS_ALLOWED, PropertyType::Int),
+    ]);
+    let table = |pid: u32, value: EncodedPropertyValue| {
+        let mut t = EncodedPropertyTable::new();
+        t.push(pid, value);
+        let mut w = WireWriter::new();
+        t.encode(&mut w).expect("encodes");
+        w.into_vec()
+    };
+    let appearance = hex(APPEARANCE_ALL_BRANCHES);
+    let entry = |id: u8, name: &[u8]| {
+        // `character_id`, a name of its own, `status_or_world`.
+        let mut out = vec![id, 0, 0, 0, 0, 0, 0, 1];
+        out.push(u8::try_from(name.len()).expect("short"));
+        for b in name {
+            out.extend_from_slice(&[*b, 0]);
+        }
+        out.extend_from_slice(&[1, 0, 0, 0]);
+        out.extend_from_slice(&table(PID_AGENT_SPECIES, EncodedPropertyValue::Enum(7)));
+        out.extend_from_slice(&table(
+            PID_CHARGEN_CHARACTER_LEVEL,
+            EncodedPropertyValue::Int(9),
+        ));
+        // `metadata_a`, the appearance, `metadata_b`..`e` and the timestamp.
+        out.extend_from_slice(&[2, 0, 0, 0]);
+        out.extend_from_slice(&appearance);
+        for word in [3u32, u32::MAX, 4, u32::MAX] {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+        out.extend_from_slice(&5u64.to_le_bytes());
+        out
+    };
+    let mut list = vec![0x00, 2, 0, 0, 0];
+    list.extend_from_slice(&entry(1, b"Fixture"));
+    list.extend_from_slice(&entry(2, b"Sample"));
+    list.extend_from_slice(&table(
+        PID_ACCOUNT_NUM_CHARACTERS_ALLOWED,
+        EncodedPropertyValue::Int(3),
+    ));
+    let decoded =
+        CharacterListResponse::from_envelope_body(&list[1..], &dictionary).expect("decodes");
+    assert_eq!(decoded.characters.len(), 2);
+    assert_eq!(decoded.characters[0].name, "Fixture");
+    assert_eq!(decoded.characters[1].name, "Sample");
+    assert_eq!(decoded.characters[1].character_id, 0x0100_0000_0000_0002);
+    assert_eq!(decoded.characters[1].visual_desc.flags(), 0x07E2);
+    assert_eq!(
+        decoded.characters[0].property(PID_AGENT_SPECIES),
+        Some(&EncodedPropertyValue::Enum(7))
+    );
+    assert_eq!(
+        decoded
+            .account_props
+            .get(PID_ACCOUNT_NUM_CHARACTERS_ALLOWED),
+        Some(&EncodedPropertyValue::Int(3))
+    );
+    assert_eq!(decoded.to_bytes().expect("encodes"), list);
+    // Must fail, with no partial list: a byte over, a byte short, an entry more than there is, an
+    // unknown base-model appearance, or a PID the dictionary does not type.
+    let mut over = list[1..].to_vec();
+    over.push(0);
+    assert!(CharacterListResponse::from_envelope_body(&over, &dictionary).is_err());
+    assert!(
+        CharacterListResponse::from_envelope_body(&list[1..list.len() - 1], &dictionary).is_err()
+    );
+    let mut more = list[1..].to_vec();
+    more[0] = 3;
+    assert!(CharacterListResponse::from_envelope_body(&more, &dictionary).is_err());
+    let at = list
+        .windows(4)
+        .position(|w| w == [0xE2, 0x07, 0x00, 0x00])
+        .expect("the mask");
+    let mut base_model = list[1..].to_vec();
+    base_model[at - 1] = 0xE3;
+    assert!(CharacterListResponse::from_envelope_body(&base_model, &dictionary).is_err());
+    let empty: BTreeMap<u32, PropertyType> = BTreeMap::new();
+    assert!(CharacterListResponse::from_envelope_body(&list[1..], &empty).is_err());
+}

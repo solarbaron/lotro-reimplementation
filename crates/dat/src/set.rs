@@ -324,14 +324,6 @@ fn file_name_of(path: &Path) -> std::borrow::Cow<'_, str> {
         .map_or(std::borrow::Cow::Borrowed(""), |n| n.to_string_lossy())
 }
 
-/// An open failure's text for a log line, with no path in it ([`file_name_of`]).
-fn without_path(e: &Error) -> String {
-    match e {
-        Error::Io { source, .. } => format!("I/O error: {source}"),
-        other => other.to_string(),
-    }
-}
-
 /// Where [`ArchiveSet::locate`] found a DID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Located {
@@ -424,14 +416,14 @@ impl ArchiveSet {
                     // The file's name, never its directory: the install's path can name the user.
                     tracing::warn!(
                         file = %file_name_of(&path),
-                        error = %without_path(&e),
+                        error = %e.without_path(),
                         "skipping archive"
                     );
                     problems.push(SetProblem::new(
                         Some(path),
                         severity,
                         invariant,
-                        format!("not opened: {e}"),
+                        format!("not opened: {}", e.without_path()),
                     ));
                 }
             }

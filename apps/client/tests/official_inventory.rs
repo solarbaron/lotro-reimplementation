@@ -1039,6 +1039,121 @@ fn an_overlay_next_to_a_listed_base_is_refused() {
     assert_eq!(inventory_of(dir.path()), Ok(10));
 }
 
+/// Stores a pending-journal checksum in a member's header (`dat-container.md` §3.6).
+fn with_pending_journal(dir: &Path, name: &str) {
+    let path = dir.join(name);
+    let mut bytes = std::fs::read(&path).expect("read");
+    bytes[0x16C..0x170].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+    std::fs::write(&path, bytes).expect("written");
+}
+
+/// §9.3.7–§9.3.8, `dat-container.md` §3.6: a nonzero 0x16C on an active member, a base or an active
+/// auxiliary part, is an interrupted update, whether or not its journal file is there.
+#[test]
+fn a_pending_journal_on_an_active_member_is_refused() {
+    for name in [
+        "client_general.dat",
+        "client_cell_1.dat",
+        "client_local_DE.dat",
+        "client_mesh_aux_1.datx",
+    ] {
+        refused(
+            |d| with_pending_journal(d, name),
+            InstallUnsupported::ArchivePendingJournal,
+        );
+    }
+}
+
+/// `dat-container.md` §3.6: a journal file beside an archive whose 0x16C is zero is stale and a
+/// read-only reader ignores it. A member that is not active is not this login's either way.
+#[test]
+fn a_journal_that_affects_no_active_member_refuses_nothing() {
+    let dir = fresh();
+    for name in [
+        "client_general.dat.jrnl",
+        "CLIENT_CELL_1.DAT.JRNL",
+        "client_mesh_aux_1.datx.jrnl",
+    ] {
+        std::fs::write(dir.path().join(name), b"x").expect("written");
+    }
+    assert_eq!(inventory_of(dir.path()), Ok(10));
+    assert_eq!(
+        std::fs::read(dir.path().join("client_general.dat.jrnl")).expect("read"),
+        b"x",
+        "never touched"
+    );
+
+    // A stale part past its family's count, another language, a region outside the map's keys.
+    let dir = fresh();
+    write(
+        dir.path(),
+        "client_mesh_aux_2.datx",
+        &aux(0x0102_0000, 0, 2, 2),
+    );
+    with_pending_journal(dir.path(), "client_mesh_aux_2.datx");
+    write(
+        dir.path(),
+        "client_local_FR.dat",
+        &base(0x0303_0000, 0x1003, 1),
+    );
+    with_pending_journal(dir.path(), "client_local_FR.dat");
+    write(dir.path(), "client_cell_9.dat", &base(0x0203_0000, 9, 1));
+    with_pending_journal(dir.path(), "client_cell_9.dat");
+    assert_eq!(inventory_of(dir.path()), Ok(10));
+}
+
+/// §9.3.7–§9.3.8: a region outside the map's keys is no candidate, and neither are its auxiliary
+/// files, canonical or stray, with or without their base.
+#[test]
+fn an_auxiliary_file_of_a_region_outside_the_keys_is_ignored() {
+    for base_there in [false, true] {
+        let dir = fresh();
+        if base_there {
+            write(dir.path(), "client_cell_9.dat", &base(0x0203_0000, 9, 2));
+        }
+        write(
+            dir.path(),
+            "client_cell_9_aux_1.datx",
+            &aux(0x0203_0000, 9, 1, 2),
+        );
+        std::fs::write(dir.path().join("client_map_9_aux_x.datx"), b"x").expect("written");
+        assert_eq!(inventory_of(dir.path()), Ok(10), "base there: {base_there}");
+    }
+    // Inside the keys, the same leftover has no membership to verify against.
+    refused(
+        |d| {
+            write(d, "client_cell_2_aux_1.datx", &aux(0x0203_0000, 2, 1, 2));
+        },
+        InstallUnsupported::ArchiveFailed,
+    );
+}
+
+/// `dat-container.md` §2.1: a member that fails to open is named by its file; its stored problem
+/// holds no directory, because an install's path can name the user.
+#[cfg(unix)]
+#[test]
+fn a_stored_set_problem_names_no_directory() {
+    let parent = tempfile::tempdir().expect("a directory");
+    let dir = parent.path().join("marker-user-name");
+    std::fs::create_dir(&dir).expect("made");
+    healthy(&dir);
+    let unreadable = dir.join("client_cell_2.dat");
+    std::fs::write(&unreadable, b"x").expect("written");
+    let mode = std::os::unix::fs::PermissionsExt::from_mode(0o000);
+    std::fs::set_permissions(&unreadable, mode).expect("the mode");
+    let set = open(&dir);
+    let problem = set
+        .problems()
+        .iter()
+        .find(|p| p.message.starts_with("not opened: "))
+        .expect("the problem");
+    assert!(!problem.message.contains("marker-user-name"), "{problem:?}");
+    // (A superuser reads the file anyway, and the fault is its size instead.)
+    if std::fs::File::open(&unreadable).is_err() {
+        assert!(problem.message.contains("I/O error"), "{problem:?}");
+    }
+}
+
 /// Region 1 is required, and half of another pair is unsupported (§9.3.8). A region archive outside
 /// the map's keys is not a candidate.
 #[test]

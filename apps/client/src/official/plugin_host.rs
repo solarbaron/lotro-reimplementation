@@ -43,7 +43,7 @@ impl PluginHostControl for PluginSlot {
     fn start(&mut self) {
         if self.host.is_none() {
             self.starts += 1;
-            self.host = Some(Plugins::start(
+            self.host = Some(Plugins::start_without_paths(
                 &self.plugins_dir,
                 self.data_root.clone(),
                 &[],
@@ -69,5 +69,21 @@ impl PluginHostControl for PluginSlot {
 
     fn starts(&self) -> u32 {
         self.starts
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A path can name the user: this host's log lines name no directory.
+    #[test]
+    fn the_slot_starts_a_host_that_names_no_directory() {
+        let dir = tempfile::tempdir().expect("a directory");
+        let mut slot = PluginSlot::new(dir.path().join("Plugins"), dir.path().join("data"));
+        slot.start();
+        let host = slot.host.as_ref().expect("started");
+        assert!(!host.manager().names_paths());
+        slot.stop();
     }
 }

@@ -20,6 +20,7 @@ use tessera_script::{api_fn, call_protected, format_number_g14, host_error};
 use crate::apartment::report_ctx;
 use crate::host::DataScope;
 use crate::object::Builder;
+use crate::paths::path_for_log;
 use crate::plugindata::{self, PluginDataError, data_to_lua, serialize};
 use crate::shared::{
     ApartmentCtx, Item, MAX_DATA_ITEMS, MAX_WRITE_CALLBACKS, Shared, lock, max_pending_write_bytes,
@@ -92,11 +93,12 @@ fn read_now(lua: &Lua, ctx: &ApartmentCtx, shared: &Shared, path: &Path) -> mlua
         Ok(Some(v)) => data_to_lua(lua, &v),
         Ok(None) => Ok(Value::Nil),
         Err(e) => {
-            tracing::warn!(apartment = %ctx.name, path = %path.display(), "plugin data unreadable: {e}");
-            shared.host.script_log(
-                &ctx.name,
-                &format!("PluginData.Load({}): {e}", path.display()),
-            );
+            let shown = path_for_log(path, shared.names_paths);
+            let why = e.for_log(shared.names_paths);
+            tracing::warn!(apartment = %ctx.name, path = %shown, "plugin data unreadable: {why}");
+            shared
+                .host
+                .script_log(&ctx.name, &format!("PluginData.Load({shown}): {why}"));
             Ok(Value::Nil)
         }
     }

@@ -33,7 +33,8 @@ impl std::io::Write for Buf {
     }
 }
 
-/// What `f` logs on this thread at every level (as `RUST_LOG=trace` would show it).
+/// What `f` logs on this thread at every level (as `RUST_LOG=trace` would show it), without the
+/// time of day: its microseconds would match a test's numeric needle by chance.
 pub(super) fn logs_of<T>(f: impl FnOnce() -> T) -> (T, String) {
     let buf = Buf::default();
     let out = buf.clone();
@@ -41,6 +42,7 @@ pub(super) fn logs_of<T>(f: impl FnOnce() -> T) -> (T, String) {
         .with_writer(move || out.clone())
         .with_max_level(tracing::Level::TRACE)
         .with_ansi(false)
+        .without_time()
         .finish();
     // With a single registered subscriber `tracing` asks only the current thread's subscriber
     // about a new callsite, so a callsite another test's thread reaches first would stay
@@ -56,6 +58,16 @@ pub(super) fn logs_of<T>(f: impl FnOnce() -> T) -> (T, String) {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
     (value, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// A numeric needle over [`logs_of`] finds a logged value and nothing else: the helper's own text
+/// has no digit, so the tests' checks cannot match by chance and do match what is really logged.
+#[test]
+fn the_log_capture_shows_values_and_no_clock() {
+    let ((), logs) = logs_of(|| tracing::warn!(flags = 132, "refused"));
+    assert!(logs.contains("flags=132"), "{logs}");
+    let rest = logs.replace("flags=132", "");
+    assert!(!rest.contains(|c: char| c.is_ascii_digit()), "{logs}");
 }
 
 /// No address, port or host of the synthetic service in `logs`.
@@ -1158,7 +1170,7 @@ fn the_queue_step_logs_counts_labels_and_polls_and_no_host() {
     let queued = lines_with(&logs, "official login: queued");
     assert_eq!(queued.len(), 1, "{logs}");
     let line = queued.first().copied().unwrap_or_default();
-    assert!(line.contains(" DEBUG "), "{line}");
+    assert!(line.starts_with("DEBUG "), "{line}");
     assert!(line.contains("position=3"), "{line}");
     let step = lines_with(&logs, "official login: queue step (TakeANumber)");
     assert_eq!(step.len(), 1, "{logs}");

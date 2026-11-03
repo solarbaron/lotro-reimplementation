@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use tessera_dat::ArchiveSet;
+use tessera_plugins::paths::path_for_log;
 use tessera_plugins::{
     CHAT_TYPE_STANDARD, CoreHost, DataScope, HostApi, ManagerConfig, PluginDataLocation,
     PluginManager, ScriptErrorReport,
@@ -393,6 +394,21 @@ impl Plugins {
     /// Discover plugins in `plugins_dir` (read-only) and queue loads of the named ones; they
     /// run in [`Self::pump`] once the first plugin file index is ready.
     pub fn start(plugins_dir: &Path, data_root: PathBuf, load: &[String]) -> Self {
+        Self::start_logged(plugins_dir, data_root, load, true)
+    }
+
+    /// [`Self::start`] for a run whose paths can name the user: the host's log lines name no
+    /// directory (`ManagerConfig::names_paths`); a descriptor shows its file name.
+    pub fn start_without_paths(plugins_dir: &Path, data_root: PathBuf, load: &[String]) -> Self {
+        Self::start_logged(plugins_dir, data_root, load, false)
+    }
+
+    fn start_logged(
+        plugins_dir: &Path,
+        data_root: PathBuf,
+        load: &[String],
+        names_paths: bool,
+    ) -> Self {
         // Client built-ins are registered before any plugin loads (decision 0020 item 6),
         // and the plugin host's shell commands go to the same registry.
         let dispatcher = Dispatcher::new();
@@ -405,6 +421,7 @@ impl Plugins {
         // The clean-room class helper (decision 0016), used only when the user's Plugins
         // folder has no Turbine package of its own (`plugin-class-helper.md` §5.1).
         config.builtins = Some(tessera_plugins::class_helper::ClassHelper::provider());
+        config.names_paths = names_paths;
         let mut manager = PluginManager::new(config, host_dyn);
         // A missing folder is normal (no plugins installed); only scan one that exists.
         let report = if plugins_dir.is_dir() {
@@ -412,20 +429,31 @@ impl Plugins {
         } else {
             tessera_plugins::RefreshReport::default()
         };
-        tracing::info!(
-            dir = %plugins_dir.display(),
-            found = report.found,
-            skipped = report.skipped.len(),
-            "plugins discovered"
-        );
+        if names_paths {
+            tracing::info!(
+                dir = %plugins_dir.display(),
+                found = report.found,
+                skipped = report.skipped.len(),
+                "plugins discovered"
+            );
+        } else {
+            tracing::info!(
+                found = report.found,
+                skipped = report.skipped.len(),
+                "plugins discovered"
+            );
+        }
         for (path, why) in &report.skipped {
-            tracing::warn!(path = %path.display(), "plugin descriptor skipped: {why}");
+            tracing::warn!(
+                path = %path_for_log(path, names_paths),
+                "plugin descriptor skipped: {why}"
+            );
         }
         for p in manager.available_plugins() {
             tracing::debug!(
                 name = %p.descriptor.name,
                 apartment = p.apartment(),
-                path = %p.path.display(),
+                path = %path_for_log(&p.path, names_paths),
                 "plugin available"
             );
         }

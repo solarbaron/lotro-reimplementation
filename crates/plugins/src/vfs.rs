@@ -74,9 +74,18 @@ impl PluginFileIndex {
     /// `root`. Never fails: an unreadable or missing root gives an empty index.
     #[must_use]
     pub fn build(root: &Path) -> Self {
+        Self::build_logged(root, true)
+    }
+
+    /// [`Self::build`] with the log lines of [`crate::ManagerConfig::names_paths`].
+    pub(crate) fn build_logged(root: &Path, names_paths: bool) -> Self {
         let mut idx = Self::empty(root);
         let Ok(canon_root) = root.canonicalize() else {
-            tracing::info!(dir = %root.display(), "no plugins folder; the plugin file index is empty");
+            if names_paths {
+                tracing::info!(dir = %root.display(), "no plugins folder; the plugin file index is empty");
+            } else {
+                tracing::info!("no plugins folder; the plugin file index is empty");
+            }
             return idx;
         };
         let mut stack: Vec<(PathBuf, String, usize)> = vec![(root.to_path_buf(), String::new(), 0)];
@@ -245,9 +254,20 @@ pub(crate) struct IndexState {
     first_ready: bool,
     probes: HashMap<String, Result<CheckedImage, ImageCheckError>>,
     probe_bytes: usize,
+    /// [`crate::ManagerConfig::names_paths`].
+    names_paths: bool,
 }
 
 impl IndexState {
+    /// The state before any walk, with the log lines of
+    /// [`crate::ManagerConfig::names_paths`].
+    pub(crate) fn new(names_paths: bool) -> Self {
+        Self {
+            names_paths,
+            ..Self::default()
+        }
+    }
+
     /// Start a walk of `root` on a worker, with a discovery scan when `discover` is set;
     /// the previous index (and available list) serves until the result is swapped in.
     /// While a walk runs, the request is remembered and one more walk starts when it
@@ -259,9 +279,11 @@ impl IndexState {
         }
         let (tx, rx) = mpsc::channel();
         self.pending = Some(rx);
+        let names_paths = self.names_paths;
         host.spawn_worker(Box::new(move || {
-            let discovered = discover.then(|| crate::discovery::discover(&root));
-            let index = PluginFileIndex::build(&root);
+            let discovered =
+                discover.then(|| crate::discovery::discover_logged(&root, names_paths));
+            let index = PluginFileIndex::build_logged(&root, names_paths);
             let _ = tx.send(ScanResult { index, discovered });
         }));
     }
@@ -369,8 +391,9 @@ impl IndexState {
         }
         let found = match &self.current {
             Some(idx) => idx.lookup(path),
-            None => split_resource_path(path)
-                .and_then(|c| crate::paths::resolve_ci(root, &c, crate::paths::Kind::File)),
+            None => split_resource_path(path).and_then(|c| {
+                crate::paths::resolve_ci(root, &c, crate::paths::Kind::File, self.names_paths)
+            }),
         };
         let Some(file) = found else {
             return Err(ImageCheckError::NotFound(path.to_owned()));

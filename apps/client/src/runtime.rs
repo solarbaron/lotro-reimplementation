@@ -396,7 +396,12 @@ impl Runtime {
                 tracing::info!(dir = %plugins_dir.display(), "no plugins folder (use --plugins)");
             }
         }
-        let mut plugins = Plugins::start(&plugins_dir, root.join("plugindata"), &args.load_plugins);
+        let data = root.join("plugindata");
+        let mut plugins = if is_handed {
+            Plugins::start_without_paths(&plugins_dir, data, &args.load_plugins)
+        } else {
+            Plugins::start(&plugins_dir, data, &args.load_plugins)
+        };
         plugins.set_music(crate::audio::player_music::PlayerMusic::new(
             crate::audio::player_music::MusicConfig::from_args(args, &root),
         ));

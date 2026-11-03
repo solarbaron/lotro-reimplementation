@@ -68,6 +68,18 @@ pub enum PluginDataError {
     },
 }
 
+impl PluginDataError {
+    /// The error's text for a log line: with `names_paths` off
+    /// ([`crate::ManagerConfig::names_paths`]) an I/O error names no path.
+    #[must_use]
+    pub fn for_log(&self, names_paths: bool) -> String {
+        match self {
+            Self::Io { source, .. } if !names_paths => format!("i/o error: {source}"),
+            other => other.to_string(),
+        }
+    }
+}
+
 /// Windows device names a key could spell (`plugin-descriptor.md` §11.1 OPEN): refused on
 /// a Windows host.
 const DEVICE_NAMES: [&str; 22] = [

@@ -17,7 +17,7 @@ use tessera_script::{CrtRandom, Limits};
 
 use crate::apartment::{Apartment, LoadedPlugin};
 use crate::descriptor::PluginDescriptor;
-use crate::discovery::{AvailablePlugin, RefreshReport, discover};
+use crate::discovery::{AvailablePlugin, RefreshReport, discover_logged};
 use crate::error::PluginError;
 use crate::gameplay::{GameplayEvent, LocalPlayerSource};
 use crate::host::HostApi;
@@ -59,6 +59,9 @@ pub struct ManagerConfig {
     pub writes_on_worker: bool,
     /// Built-in packages (the class helper, decision 0016), consulted in built-in mode.
     pub builtins: Option<Arc<dyn BuiltinPackages>>,
+    /// The host's log lines may name directories. `false`, for a run whose paths can name the
+    /// user: they show a file name at most ([`crate::paths::path_for_log`]).
+    pub names_paths: bool,
 }
 
 impl std::fmt::Debug for ManagerConfig {
@@ -70,6 +73,7 @@ impl std::fmt::Debug for ManagerConfig {
             .field("index_on_worker", &self.index_on_worker)
             .field("writes_on_worker", &self.writes_on_worker)
             .field("builtins", &self.builtins.is_some())
+            .field("names_paths", &self.names_paths)
             .finish()
     }
 }
@@ -84,6 +88,7 @@ impl ManagerConfig {
             index_on_worker: true,
             writes_on_worker: true,
             builtins: None,
+            names_paths: true,
         }
     }
 
@@ -158,18 +163,20 @@ impl PluginManager {
             index_on_worker,
             writes_on_worker,
             builtins,
+            names_paths,
         } = config;
         let shared = Arc::new(Shared {
             host,
-            io: Arc::new(crate::data_io::DataIo::default()),
+            io: Arc::new(crate::data_io::DataIo::new(names_paths)),
             writes_on_worker,
             plugins_dir,
+            names_paths,
             limits,
             slice: deferred_slice,
             random: Arc::new(Mutex::new(CrtRandom::new())),
             builtins,
             state: Mutex::new(SharedState::default()),
-            index: Mutex::new(IndexState::default()),
+            index: Mutex::new(IndexState::new(names_paths)),
             gameplay: Mutex::new(None),
             inventory: Mutex::new(None),
             party: Mutex::new(crate::party::PartyModel::default()),
@@ -205,6 +212,12 @@ impl PluginManager {
         &self.shared.plugins_dir
     }
 
+    /// Whether the host's log lines may name directories ([`ManagerConfig::names_paths`]).
+    #[must_use]
+    pub fn names_paths(&self) -> bool {
+        self.shared.names_paths
+    }
+
     /// Set the built-in package provider. Only possible while no apartment exists (none
     /// was created yet, or all have closed): returns whether it was set. Prefer
     /// [`ManagerConfig::builtins`].
@@ -225,7 +238,8 @@ impl PluginManager {
     /// tools; inside the frame loop use [`Self::request_refresh`] (`docs/ARCHITECTURE.md`
     /// §21).
     pub fn refresh(&mut self) -> RefreshReport {
-        let (available, report) = discover(&self.shared.plugins_dir);
+        let (available, report) =
+            discover_logged(&self.shared.plugins_dir, self.shared.names_paths);
         lock(&self.shared.state).available = available;
         let mut index = lock(&self.shared.index);
         if self.index_on_worker {
@@ -235,7 +249,10 @@ impl PluginManager {
                 false,
             );
         } else {
-            index.set(PluginFileIndex::build(&self.shared.plugins_dir));
+            index.set(PluginFileIndex::build_logged(
+                &self.shared.plugins_dir,
+                self.shared.names_paths,
+            ));
         }
         report
     }

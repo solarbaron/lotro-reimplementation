@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use crate::host::HostApi;
+use crate::paths::path_for_log;
 
 /// One physical write waiting in the queue.
 #[derive(Debug)]
@@ -58,9 +59,19 @@ struct IoState {
 pub(crate) struct DataIo {
     state: Mutex<IoState>,
     cond: Condvar,
+    /// [`crate::ManagerConfig::names_paths`].
+    names_paths: bool,
 }
 
 impl DataIo {
+    /// A writer with the log lines of [`crate::ManagerConfig::names_paths`].
+    pub(crate) fn new(names_paths: bool) -> Self {
+        Self {
+            names_paths,
+            ..Self::default()
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, IoState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -172,7 +183,7 @@ impl DataIo {
             {
                 st.in_flight = Some(job.seq);
                 drop(st);
-                let ok = write_job(&job);
+                let ok = write_job(&job, self.names_paths);
                 st = self.lock();
                 self.complete(&mut st, &job, ok);
                 continue;
@@ -216,7 +227,7 @@ impl DataIo {
             };
             st.in_flight = Some(job.seq);
             drop(st);
-            let ok = write_job(&job);
+            let ok = write_job(&job, self.names_paths);
             st = self.lock();
             self.complete(&mut st, &job, ok);
         }
@@ -233,11 +244,15 @@ fn finish_save(st: &mut IoState, path: &Path, len: usize) {
     }
 }
 
-fn write_job(job: &Job) -> bool {
+fn write_job(job: &Job, names_paths: bool) -> bool {
     match crate::plugindata::write_atomic(&job.path, &job.bytes) {
         Ok(()) => true,
         Err(e) => {
-            tracing::warn!(path = %job.path.display(), "plugin data write failed: {e}");
+            tracing::warn!(
+                path = %path_for_log(&job.path, names_paths),
+                "plugin data write failed: {}",
+                e.for_log(names_paths)
+            );
             false
         }
     }

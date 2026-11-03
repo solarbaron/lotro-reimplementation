@@ -5,6 +5,7 @@
 //! Spec: `plugin-descriptor.md` §3.2 (case and path rules), §4.2 (order), §7.1 (package
 //! grammar), §7.2 (resolution); `lua-plugin-api.md` §4.4, §7.2.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
@@ -64,6 +65,18 @@ pub fn eq_fold(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
 
+/// `path` as a log line of the plugin host shows it: whole, or with `names_paths` off
+/// ([`crate::ManagerConfig::names_paths`]) its file name alone.
+#[must_use]
+pub fn path_for_log(path: &Path, names_paths: bool) -> Cow<'_, str> {
+    if names_paths {
+        path.to_string_lossy()
+    } else {
+        path.file_name()
+            .map_or(Cow::Borrowed("-"), |name| name.to_string_lossy())
+    }
+}
+
 /// Is `path` inside `root` once symlinks are followed? Both must exist.
 pub(crate) fn is_confined(root: &Path, path: &Path) -> bool {
     match (root.canonicalize(), path.canonicalize()) {
@@ -74,8 +87,14 @@ pub(crate) fn is_confined(root: &Path, path: &Path) -> bool {
 
 /// Resolve `components` below `root`, matching every component case-insensitively (first
 /// match in name order wins) and requiring the final path to be of `kind`. The result is
-/// guaranteed (after following symlinks) to lie inside `root`.
-pub(crate) fn resolve_ci(root: &Path, components: &[&str], kind: Kind) -> Option<PathBuf> {
+/// guaranteed (after following symlinks) to lie inside `root`. `names_paths` is
+/// [`crate::ManagerConfig::names_paths`], for the log lines.
+pub(crate) fn resolve_ci(
+    root: &Path,
+    components: &[&str],
+    kind: Kind,
+    names_paths: bool,
+) -> Option<PathBuf> {
     if components.is_empty() || !components.iter().all(|c| is_valid_component(c)) {
         return None;
     }
@@ -86,12 +105,15 @@ pub(crate) fn resolve_ci(root: &Path, components: &[&str], kind: Kind) -> Option
         } else {
             Kind::Dir
         };
-        cur = find_entry(&cur, comp, want)?;
+        cur = find_entry(&cur, comp, want, names_paths)?;
     }
     if is_confined(root, &cur) {
         Some(cur)
     } else {
-        tracing::warn!(path = %cur.display(), "plugin path escapes the plugins folder; ignored");
+        tracing::warn!(
+            path = %path_for_log(&cur, names_paths),
+            "plugin path escapes the plugins folder; ignored"
+        );
         None
     }
 }
@@ -126,27 +148,36 @@ impl DiskPackage {
 /// `plugins_dir`. Names that fail the grammar never resolve.
 #[must_use]
 pub fn resolve_package(plugins_dir: &Path, package: &str) -> Option<DiskPackage> {
+    resolve_package_logged(plugins_dir, package, true)
+}
+
+/// [`resolve_package`] with the log lines of [`crate::ManagerConfig::names_paths`].
+pub(crate) fn resolve_package_logged(
+    plugins_dir: &Path,
+    package: &str,
+    names_paths: bool,
+) -> Option<DiskPackage> {
     if !is_valid_package_name(package) {
         return None;
     }
     let comps: Vec<&str> = package.split('.').collect();
-    if resolve_ci(plugins_dir, &comps, Kind::Dir).is_some() {
+    if resolve_ci(plugins_dir, &comps, Kind::Dir, names_paths).is_some() {
         let mut init = comps;
         init.push("__init__.lua");
-        return resolve_ci(plugins_dir, &init, Kind::File)
+        return resolve_ci(plugins_dir, &init, Kind::File, names_paths)
             .map(|file| DiskPackage { file, folder: true });
     }
     let k = comps.len();
     let file_name = format!("{}.lua", comps[k - 1]);
     let mut file: Vec<&str> = comps[..k - 1].to_vec();
     file.push(&file_name);
-    resolve_ci(plugins_dir, &file, Kind::File).map(|file| DiskPackage {
+    resolve_ci(plugins_dir, &file, Kind::File, names_paths).map(|file| DiskPackage {
         file,
         folder: false,
     })
 }
 
-fn find_entry(dir: &Path, name: &str, kind: Kind) -> Option<PathBuf> {
+fn find_entry(dir: &Path, name: &str, kind: Kind, names_paths: bool) -> Option<PathBuf> {
     let rd = std::fs::read_dir(dir).ok()?;
     let mut matches: Vec<String> = Vec::new();
     for entry in rd.take(MAX_DIR_ENTRIES).flatten() {
@@ -158,7 +189,14 @@ fn find_entry(dir: &Path, name: &str, kind: Kind) -> Option<PathBuf> {
         }
     }
     if matches.len() > 1 {
-        tracing::warn!(dir = %dir.display(), name, "several entries match case-insensitively; taking the first");
+        if names_paths {
+            tracing::warn!(dir = %dir.display(), name, "several entries match case-insensitively; taking the first");
+        } else {
+            tracing::warn!(
+                name,
+                "several entries match case-insensitively; taking the first"
+            );
+        }
     }
     matches.sort_by(|a, b| name_order(a, b));
     matches
@@ -212,10 +250,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("Author/Plug")).unwrap();
         std::fs::write(dir.path().join("Author/Plug/main.lua"), b"").unwrap();
-        let p = resolve_ci(dir.path(), &["author", "PLUG", "Main.lua"], Kind::File).unwrap();
+        let p = resolve_ci(
+            dir.path(),
+            &["author", "PLUG", "Main.lua"],
+            Kind::File,
+            true,
+        )
+        .unwrap();
         assert!(p.ends_with("Author/Plug/main.lua"));
-        assert!(resolve_ci(dir.path(), &["author", "PLUG"], Kind::File).is_none());
-        assert!(resolve_ci(dir.path(), &["author", ".."], Kind::Dir).is_none());
+        assert!(resolve_ci(dir.path(), &["author", "PLUG"], Kind::File, true).is_none());
+        assert!(resolve_ci(dir.path(), &["author", ".."], Kind::Dir, true).is_none());
     }
 
     #[test]

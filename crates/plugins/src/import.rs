@@ -12,7 +12,7 @@ use mlua::{Lua, Table, Value};
 use tessera_script::{api_fn, call_protected, compile_source, format_number_g14, host_error};
 
 use crate::packages::{PackageContext, PackageShape};
-use crate::paths::{is_valid_package_name, resolve_package};
+use crate::paths::{is_valid_package_name, resolve_package_logged};
 use crate::shared::{ApartmentCtx, lock};
 
 /// Registry name of the apartment's real global table.
@@ -76,7 +76,9 @@ pub(crate) fn import_package(lua: &Lua, ctx: &ApartmentCtx, name: &str) -> mlua:
                 PackageShape::File => comps.len() - 1,
             };
             disk = Some((DiskPart::Builtin, ns_len));
-        } else if let Some(p) = resolve_package(&shared.plugins_dir, name) {
+        } else if let Some(p) =
+            resolve_package_logged(&shared.plugins_dir, name, shared.names_paths)
+        {
             let ns_len = p.namespace_len(comps.len());
             disk = Some((DiskPart::File(p.file), ns_len));
         }
@@ -169,14 +171,14 @@ fn run_disk_chunk(
     globals: &Table,
     shared: &crate::shared::Shared,
 ) -> mlua::Result<()> {
-    let len = std::fs::metadata(path)
-        .map_err(|e| host_error(format!("import: cannot open '{}': {e}", path.display())))?
-        .len();
     let rel = path
         .strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/");
+    let len = std::fs::metadata(path)
+        .map_err(|e| host_error(format!("import: cannot open '{rel}': {e}")))?
+        .len();
     if len > shared.limits.max_source_bytes {
         return Err(host_error(format!(
             "import: '{rel}' is larger than {} bytes",

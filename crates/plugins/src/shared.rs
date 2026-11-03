@@ -343,6 +343,8 @@ pub(crate) struct Shared {
     /// Asynchronous plugin-data writes run on a host worker.
     pub writes_on_worker: bool,
     pub plugins_dir: PathBuf,
+    /// [`crate::ManagerConfig::names_paths`].
+    pub names_paths: bool,
     pub limits: Limits,
     pub slice: Duration,
     pub random: SharedRandom,

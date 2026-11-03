@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::descriptor::{MAX_DESCRIPTOR_BYTES, PluginDescriptor, parse_descriptor};
-use crate::paths::{MAX_DIR_ENTRIES, is_confined, name_order};
+use crate::paths::{MAX_DIR_ENTRIES, is_confined, name_order, path_for_log};
 
 /// A plugin found by discovery.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,10 +84,22 @@ fn read_descriptor(plugins_dir: &Path, path: &Path) -> Result<PluginDescriptor, 
 /// a name (compared ASCII case-insensitively) wins. A missing folder gives an empty list.
 #[must_use]
 pub fn discover(plugins_dir: &Path) -> (Vec<AvailablePlugin>, RefreshReport) {
+    discover_logged(plugins_dir, true)
+}
+
+/// [`discover`] with the log lines of [`crate::ManagerConfig::names_paths`].
+pub(crate) fn discover_logged(
+    plugins_dir: &Path,
+    names_paths: bool,
+) -> (Vec<AvailablePlugin>, RefreshReport) {
     let mut report = RefreshReport::default();
     let mut available: Vec<AvailablePlugin> = Vec::new();
     let Some(top) = sorted_entries(plugins_dir) else {
-        tracing::debug!(dir = %plugins_dir.display(), "no plugins folder");
+        if names_paths {
+            tracing::debug!(dir = %plugins_dir.display(), "no plugins folder");
+        } else {
+            tracing::debug!("no plugins folder");
+        }
         return (available, report);
     };
     for (_, folder, is_dir) in top {
@@ -108,14 +120,17 @@ pub fn discover(plugins_dir: &Path) -> (Vec<AvailablePlugin>, RefreshReport) {
                         .any(|a| a.descriptor.name.eq_ignore_ascii_case(&descriptor.name))
                     {
                         let why = format!("duplicate plugin name {:?}", descriptor.name);
-                        tracing::warn!(path = %path.display(), "{why}");
+                        tracing::warn!(path = %path_for_log(&path, names_paths), "{why}");
                         report.skipped.push((path, why));
                     } else {
                         available.push(AvailablePlugin { descriptor, path });
                     }
                 }
                 Err(why) => {
-                    tracing::warn!(path = %path.display(), "skipping plugin descriptor: {why}");
+                    tracing::warn!(
+                        path = %path_for_log(&path, names_paths),
+                        "skipping plugin descriptor: {why}"
+                    );
                     report.skipped.push((path, why));
                 }
             }

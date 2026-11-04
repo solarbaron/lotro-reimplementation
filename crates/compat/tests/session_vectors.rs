@@ -1703,7 +1703,7 @@ fn vector_17_standalone_ack_before_any_sequenced_send() {
         .expect("server packet");
     while conn.pop_outbound_datagram().is_some() {}
     assert_eq!(conn.send_seq_num(), 1);
-    conn.queue_standalone_disconnect().expect("queued");
+    conn.queue_standalone_disconnect(1.0).expect("queued");
     let end = conn.pop_outbound_datagram().expect("the Disconnect");
     let end = decode_datagram(&end, false, None, false).expect("decodes");
     assert!(end.opt_headers.disconnect);

@@ -252,12 +252,19 @@ fuzz_target!(|data: &[u8]| {
         }
         let (datagram, after) = rest.split_at(length.min(rest.len()));
         rest = after;
-        table.purge_expired(clock);
-        let before = table.clone();
+        // Nothing purges first: the expiry inside the check is compared with the one inside the
+        // step, which runs on a table the check never saw. A malformed datagram changes nothing at
+        // all, not even the expiry.
+        let mut purged = table.clone();
+        if table.check_fragments(datagram).is_ok() {
+            purged.purge_expired(clock);
+        }
+        let mut unchecked = table.clone();
         let checked = table.check_packet(1, datagram, clock);
-        assert!(table.same_state(&before), "the check changed the table");
-        let taken = table.ingest_packet(1, datagram, clock);
+        assert!(table.same_state(&purged), "the check changed the table");
+        let taken = unchecked.ingest_packet(1, datagram, clock);
         assert_eq!(checked, taken.as_ref().map(|_| ()).map_err(Clone::clone));
+        table = unchecked;
         match &taken {
             Ok(blobs) => {
                 for blob in blobs {
@@ -270,7 +277,7 @@ fuzz_target!(|data: &[u8]| {
                     }));
                 }
             }
-            Err(_) => assert!(table.same_state(&before), "a refusal changed the table"),
+            Err(_) => assert!(table.same_state(&purged), "a refusal changed the table"),
         }
         // §9.3.9's caps on what stays of completed identities, past any repeat or reuse.
         let (tombstones, bytes) = table.tombstone_sizes();
@@ -298,6 +305,7 @@ fuzz_target!(|data: &[u8]| {
     let mut mux = SessionMultiplexer::new();
     if let Ok(id) = mux.create_connection(peer, 0.0) {
         if let (Some(conn), Ok(auth)) = (mux.connection_mut(id), account_auth("A", 0)) {
+            conn.enable_evidence("fuzz", 0.0);
             conn.set_codec_uuids(FUZZ_CODEC_UUIDS);
             let _ = conn.start_login(auth, 0.0);
         }

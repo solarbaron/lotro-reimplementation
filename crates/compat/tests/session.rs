@@ -529,6 +529,61 @@ fn session_auth_accepts_and_emits_only_the_listed_modes() {
 // §6.3–§6.4 ConnectChallengeHeader -> ConnectAcceptHeader (§10.2 Vector 5)
 // ---------------------------------------------------------------------------
 
+/// §9.3.9: a bad checksum drops a datagram with no commit. A challenge with the masked flag has had
+/// no checksum verified (no generator exists yet), so a zero recipient in it ends nothing: a corrupt
+/// one and an otherwise exact one are refused alike, the auth retries go on and the real challenge is
+/// still taken.
+#[test]
+fn a_masked_zero_recipient_challenge_ends_nothing() {
+    let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 7), 9000);
+    let mut conn = SessionConnection::new(server, 0.0);
+    conn.set_codec_uuids(UUIDS);
+    conn.start_login(account_auth("A", 0).unwrap(), 0.0)
+        .unwrap();
+    conn.pop_outbound_datagram();
+    for (header_rec_id, outgoing) in [(0u16, 0x0304u16), (0x0102, 0)] {
+        let challenge = ConnectChallengeHeader {
+            outgoing_rec_id: outgoing,
+            incoming_codec_guid: guid_fields_swapped(IN_UUID),
+            ..ConnectChallengeHeader::default()
+        };
+        let mut dgram = encode_datagram(
+            DatagramHeader {
+                rec_id: header_rec_id,
+                peer_word: 0x3344,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders {
+                connect_challenge: Some(challenge),
+                ..OptionalHeaders::default()
+            },
+            &[],
+            Some(0x1234_5678),
+            None,
+        )
+        .unwrap();
+        for corrupt in [false, true] {
+            if corrupt {
+                dgram[12] ^= 0xFF;
+            }
+            let refused = conn.receive_datagram(&dgram, server, 0.1, WireCodecs::NONE);
+            assert!(
+                refused.is_err() && refused != Err(SessionError::InvalidChallengeRecipient),
+                "{refused:?}"
+            );
+            assert_eq!(conn.state(), ConnectionState::SessionAuthSent);
+            assert!(conn.pop_event().is_none());
+            assert!(conn.pop_outbound_datagram().is_none(), "no accept");
+        }
+    }
+    // The retries go on, and the real challenge is taken.
+    conn.tick(2.5).unwrap();
+    assert!(conn.pop_outbound_datagram().is_some(), "the auth again");
+    conn.receive_datagram(&challenge_for(0x0100, 3), server, 3.0, WireCodecs::NONE)
+        .expect("the real challenge");
+    assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
+}
+
 #[test]
 fn zero_recipient_ids_in_a_challenge_are_refused() {
     // §6.3: the incoming recipient is the challenge header's recId, the outgoing one payload
@@ -1742,7 +1797,7 @@ fn multi_frag(frag_index: u32, num_frags: u32, len: usize) -> BlobFragment {
 }
 
 /// [`multi_frag`] on queue 1: the only queue an unmasked packet's fragments are taken on.
-fn unmasked_frag(frag_index: u32, num_frags: u32, len: usize) -> BlobFragment {
+fn queue_1_frag(frag_index: u32, num_frags: u32, len: usize) -> BlobFragment {
     let mut f = multi_frag(frag_index, num_frags, len);
     f.header.queue_id = 1;
     f
@@ -2413,27 +2468,30 @@ fn a_bad_fragment_rejects_the_packet_before_any_commit() {
 fn reassembly_table_capacity_is_checked_before_commit() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 34), 9000);
     let mut conn = challenged_connection(peer, 0x0100, 3);
+    let mut isaac = IsaacCipher::from_seed(3);
+    let mut seq = 1;
     let open = |blob_id: u16| {
-        let mut f = unmasked_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD);
+        let mut f = queue_1_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD);
         f.header.blob_id = blob_id;
         f
     };
-    // 64 incomplete blobs over four unsequenced packets of 16 fragments.
+    let hdr = |seq| DatagramHeader {
+        rec_id: 0x0100,
+        seq_num: seq,
+        ..DatagramHeader::default()
+    };
+    // 64 incomplete blobs over four sequenced packets of 16 fragments.
     for packet in 0..4u16 {
+        seq += 1;
         let frags: Vec<BlobFragment> = (0..16).map(|i| open(packet * 16 + i + 1)).collect();
         let dgram = encode_datagram(
-            DatagramHeader::default(),
+            hdr(seq),
             &OptionalHeaders::default(),
             &frags,
-            None,
+            Some(isaac.next_mask()),
             None,
         )
         .unwrap();
-        let mut dgram = dgram;
-        let mut parsed = decode_datagram(&dgram, true, None, false).unwrap();
-        parsed.header.checksum =
-            combine_packet_checksum(parsed.header, parsed.payload_sum, None).unwrap();
-        dgram[2..22].copy_from_slice(&parsed.header.to_wire_bytes());
         conn.receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE)
             .unwrap();
     }
@@ -2441,13 +2499,13 @@ fn reassembly_table_capacity_is_checked_before_commit() {
     while conn.pop_event().is_some() {}
     let state = conn.state();
     let one_more = encode_datagram(
-        DatagramHeader::default(),
+        hdr(seq + 1),
         &OptionalHeaders {
             disconnect: true,
             ..OptionalHeaders::default()
         },
         &[open(999)],
-        None,
+        Some(isaac.next_mask()),
         None,
     )
     .unwrap();
@@ -2457,6 +2515,11 @@ fn reassembly_table_capacity_is_checked_before_commit() {
     );
     assert_eq!(conn.state(), state, "DisconnectHeader did not act");
     assert!(conn.pop_event().is_none());
+    assert_eq!(
+        conn.recv_seq_expected(),
+        seq,
+        "the sequence is not committed"
+    );
 }
 
 /// §5.5: `intervalMs` is `floor(elapsed * 1000)` truncated to `u16` (the low 16 bits).
@@ -2466,7 +2529,7 @@ fn flow_control_interval_keeps_the_low_16_bits() {
     let mut conn = challenged_connection(peer, 0x0100, 4);
     // Receive at least 1,400 bytes (unsequenced packets with single-fragment blobs).
     for i in 0..4u16 {
-        let mut frag = unmasked_frag(0, 1, 400);
+        let mut frag = queue_1_frag(0, 1, 400);
         frag.header.blob_id = i;
         let dgram = encode_datagram(
             DatagramHeader::default(),
@@ -2643,25 +2706,26 @@ fn connection_debug_redacts_credentials() {
 /// `ConnectChallengeHeader` are checked and ingested under one sender key, the challenge's
 /// `serverRecId`.
 #[test]
-fn fragments_beside_a_challenge_are_keyed_by_the_new_server_id() {
+fn a_challenge_beside_an_unmasked_part_is_refused_with_its_datagram() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 41), 9000);
     let mut conn = SessionConnection::new(peer, 0.0);
     conn.set_codec_uuids(UUIDS);
     conn.start_login(account_auth("A", 0).unwrap(), 0.0)
         .unwrap();
-    // While `serverRecId` is 0, blob 7 opens with 3 fragments.
+    // No masked datagram can come yet, and an unmasked part of a multi-part blob touches no table.
     let early = encode_datagram(
         DatagramHeader::default(),
         &OptionalHeaders::default(),
-        &[unmasked_frag(0, 3, MAX_BLOB_FRAG_PAYLOAD)],
+        &[queue_1_frag(0, 3, MAX_BLOB_FRAG_PAYLOAD)],
         None,
         None,
     )
     .unwrap();
-    conn.receive_datagram(&early, peer, 0.1, WireCodecs::NONE)
-        .unwrap();
-    // The challenge packet opens blob 7 with 2 fragments. It is keyed by serverRecId
-    // 0x0304, so it does not clash with the 3-fragment blob under ID 0.
+    assert_eq!(
+        conn.receive_datagram(&early, peer, 0.1, WireCodecs::NONE),
+        Err(SessionError::UnmaskedMultiPartFragment { queue_id: 1 })
+    );
+    // The challenge in such a datagram is not acted on: a whole datagram goes or stays.
     let opening = encode_datagram(
         DatagramHeader {
             rec_id: 0x0102,
@@ -2672,37 +2736,37 @@ fn fragments_beside_a_challenge_are_keyed_by_the_new_server_id() {
             connect_challenge: Some(template_challenge()),
             ..OptionalHeaders::default()
         },
-        &[unmasked_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD)],
+        &[queue_1_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD)],
         None,
         None,
     )
     .unwrap();
-    conn.receive_datagram(&opening, peer, 0.2, WireCodecs::NONE)
-        .expect("checked and ingested under serverRecId 0x0304");
-    assert_eq!(conn.server_rec_id(), 0x0304);
-    while conn.pop_event().is_some() {}
-    // Its second fragment completes the blob under the same key.
-    let closing = encode_datagram(
+    assert_eq!(
+        conn.receive_datagram(&opening, peer, 0.2, WireCodecs::NONE),
+        Err(SessionError::UnmaskedMultiPartFragment { queue_id: 1 })
+    );
+    assert_eq!(conn.server_rec_id(), 0);
+    assert_eq!(conn.state(), ConnectionState::SessionAuthSent);
+    // The challenge alone is taken.
+    let plain = encode_datagram(
         DatagramHeader {
             rec_id: 0x0102,
+            peer_word: 0x3344,
             ..DatagramHeader::default()
         },
-        &OptionalHeaders::default(),
-        &[unmasked_frag(1, 2, 8)],
+        &OptionalHeaders {
+            connect_challenge: Some(template_challenge()),
+            ..OptionalHeaders::default()
+        },
+        &[],
         None,
         None,
     )
     .unwrap();
-    conn.receive_datagram(&closing, peer, 0.3, WireCodecs::NONE)
-        .unwrap();
-    let mut blobs = Vec::new();
-    while let Some(ev) = conn.pop_event() {
-        if let SessionEvent::BlobReceived(blob) = ev {
-            blobs.push(blob);
-        }
-    }
-    assert_eq!(blobs.len(), 1);
-    assert_eq!(blobs[0].payload.len(), MAX_BLOB_FRAG_PAYLOAD + 8);
+    conn.receive_datagram(&plain, peer, 0.3, WireCodecs::NONE)
+        .expect("the challenge alone");
+    assert_eq!(conn.server_rec_id(), 0x0304);
+    assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
 }
 
 /// §4.1.1, §7.3: before the challenge negotiates the directional codecs a datagram with a
@@ -3828,7 +3892,7 @@ fn the_standalone_disconnect_waits_for_nothing() {
     conn.send_blob(2, 0, 0x10, &[0], 0.5, None).unwrap();
     while conn.pop_outbound_datagram().is_some() {}
     let seq = conn.send_seq_num();
-    conn.queue_standalone_disconnect().unwrap();
+    conn.queue_standalone_disconnect(1.0).unwrap();
     let packets = drained_packets(&mut conn);
     assert_eq!(packets.len(), 1);
     assert!(packets[0].opt_headers.disconnect);
@@ -3837,7 +3901,7 @@ fn the_standalone_disconnect_waits_for_nothing() {
     assert_eq!(conn.send_seq_num(), seq);
 
     let mut idle = SessionConnection::new(peer, 0.0);
-    idle.queue_standalone_disconnect().unwrap();
+    idle.queue_standalone_disconnect(1.0).unwrap();
     assert!(idle.pop_outbound_datagram().is_none());
 }
 

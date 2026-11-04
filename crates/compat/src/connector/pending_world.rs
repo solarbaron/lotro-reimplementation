@@ -63,8 +63,9 @@ pub struct WithheldSend {
 /// three are decision 0046 item 5's fixed omissions, the next four its item 10's: they stay unsent
 /// for any user past the warning and consent gate until a source for their contents exists. All are
 /// labelled known differences from the observed client, the server's reaction is untested, and the
-/// run ends at `UnsupportedTimeout` (`docs/m8-remediation.md` §27 fix 5, which waits on the owner's
-/// answer being carried into the spec). `0xF4` itself has no source yet (OPEN-WORLD-9).
+/// run ends at `UnsupportedTimeout` (`docs/m8-remediation.md` §27 fix 5; the owner's answer is
+/// recorded as item 10, and the spec text at e5e0eebc does not carry it yet). `0xF4` itself has no
+/// source yet (OPEN-WORLD-9).
 pub const WITHHELD_BEFORE_F4: [WithheldSend; 8] = [
     WithheldSend {
         family: "0x13D",

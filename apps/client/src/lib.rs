@@ -84,6 +84,9 @@ pub mod walker_host;
 
 pub use cli::Args;
 
+/// How long an exit waits for an official session it just let go.
+const ENDING_SESSION_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Runs the client as configured by `args` and returns the process exit code: 0 on
 /// success, 1 on failure, and for `--scenario` the codes of `scenario-feed.md` §12.2
 /// ([`scenario::run`]).
@@ -92,13 +95,18 @@ pub fn run_to_exit_code(args: Args) -> u8 {
     if dispatch(&args) == Dispatch::Scenario {
         return scenario::run(args);
     }
-    match run(args) {
+    let code = match run(args) {
         Ok(()) => 0,
         Err(e) => {
             tracing::error!("{e:#}");
             1
         }
-    }
+    };
+    // A window closed in an official session: its thread still says Disconnect and writes the
+    // connection's last log lines. Engineering choice: longer than that takes, shorter than a user
+    // notices much; a thread that is stuck loses its network right to the reaper anyway.
+    tessera_compat::connector::wait_for_ending_sessions(ENDING_SESSION_WAIT);
+    code
 }
 
 /// Run the client as configured by `args` (`--scenario` runs go through

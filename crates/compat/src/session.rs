@@ -507,6 +507,14 @@ pub enum SessionError {
         /// The fragment's `queueId`.
         queue_id: u8,
     },
+    /// An unmasked packet carries a part of a multi-part blob, on any queue: its checksum has no
+    /// key, so it is dropped and counted and cannot touch the reassembly table (engineering choice,
+    /// see [`SessionConnection::receive_datagram`]).
+    #[error("an unmasked packet with a part of a multi-part blob on queue {queue_id}")]
+    UnmaskedMultiPartFragment {
+        /// The fragment's `queueId`.
+        queue_id: u8,
+    },
     /// A `ConnectChallengeHeader` whose datagram header `recId` or payload bytes `18..19`
     /// (the incoming and outgoing recipients, §6.3) are zero: Tessera adopts only non-zero
     /// IDs (§6.3; refusing zero is an engineering choice).
@@ -4370,14 +4378,16 @@ struct IncompleteBlob {
 }
 
 impl IncompleteBlob {
+    /// Whether the part `index` was received.
+    fn has_part(&self, index: u32) -> bool {
+        self.received_mask
+            .get((index as usize) >> 5)
+            .is_some_and(|w| w & (1u32 << (index & 0x1F)) != 0)
+    }
+
     /// Whether `other` is the same entry, compared where parts were received
     /// ([`BlobReassembler::same_state`]).
     fn same_parts(&self, other: &Self) -> bool {
-        let received = |index: u32| {
-            self.received_mask
-                .get((index as usize) >> 5)
-                .is_some_and(|w| w & (1u32 << (index & 0x1F)) != 0)
-        };
         let part = |entry: &Self, index: u32| {
             let offset = (index as usize).saturating_mul(MAX_BLOB_FRAG_PAYLOAD);
             let end = if index.saturating_add(1) == entry.num_frags {
@@ -4399,7 +4409,7 @@ impl IncompleteBlob {
             && self.trimmed_len == other.trimmed_len
             && self.created_at_sec == other.created_at_sec
             && (0..self.num_frags)
-                .filter(|i| received(*i))
+                .filter(|i| self.has_part(*i))
                 .all(|i| part(self, i) == part(other, i))
     }
 }
@@ -4548,15 +4558,10 @@ fn agrees_with(entry: &IncompleteBlob, hdr: &BlobFragmentHeader, data: &[u8]) ->
     if entry.num_frags != hdr.num_frags {
         return false;
     }
-    let index = hdr.frag_index as usize;
-    let taken = entry
-        .received_mask
-        .get(index >> 5)
-        .is_some_and(|w| w & (1u32 << (hdr.frag_index & 0x1F)) != 0);
-    if !taken {
+    if !entry.has_part(hdr.frag_index) {
         return true;
     }
-    let offset = index.saturating_mul(MAX_BLOB_FRAG_PAYLOAD);
+    let offset = (hdr.frag_index as usize).saturating_mul(MAX_BLOB_FRAG_PAYLOAD);
     let same_data = entry
         .buffer
         .get(offset..offset.saturating_add(data.len()))
@@ -5115,22 +5120,30 @@ impl BlobReassembler {
             return Ok(self.completed(key, fields, frag.payload.clone(), tx, now_sec));
         }
 
-        if !self.incomplete.contains_key(&key) {
-            // §9.3.9: an exact repeat of a part of a completed identity is ignored and opens nothing.
-            //
-            // OPEN for the spec writer: a reused identity whose new body shares such a part cannot
-            // be told from a repeat when that part comes first. The part is then ignored and, once
-            // acknowledged, does not come again, so the new body's entry expires under §5.6.4
-            // instead of being delivered. No local rule avoids a merge here (a later part cannot
-            // show whether the old bytes belong to the new body), so nothing is taken from the old
-            // body.
-            if self
+        // §9.3.9: an exact repeat of a part of a completed identity is ignored: it opens nothing and
+        // fills no free slot, whether or not an entry of that identity is open, so an old part can
+        // never join a differing body ("never merge conflicting in-progress fragments").
+        //
+        // Labelled, OPEN for the spec writer: a reused identity whose new body shares such a part
+        // cannot be told from a repeat, in either order of its parts. The part is ignored and, once
+        // acknowledged, does not come again, so the new body's entry expires under §5.6.4 instead of
+        // being delivered ("a complete differing body ... is delivered once" is not met for it). The
+        // other way would deliver a body the server never sent, so nothing is taken from the old
+        // body. A taken slot is judged by `agrees_with` above.
+        let slot_taken = self
+            .incomplete
+            .get(&key)
+            .is_some_and(|entry| entry.has_part(hdr.frag_index));
+        if !slot_taken
+            && self
                 .tombstone(&key)
                 .is_some_and(|t| t.holds_part(hdr, &frag.payload))
-            {
-                self.counts.duplicates = self.counts.duplicates.saturating_add(1);
-                return Ok(None);
-            }
+        {
+            self.counts.duplicates = self.counts.duplicates.saturating_add(1);
+            return Ok(None);
+        }
+
+        if !self.incomplete.contains_key(&key) {
             // The one action at the cap (labelled, `docs/m8-remediation.md` §27 fix 15): the whole
             // datagram is dropped and counted, with no Ack and no terminal result.
             if self.incomplete.len() >= self.max_concurrent_blobs {
@@ -5715,13 +5728,31 @@ pub const INITIAL_CLIENT_WORD: u16 = 1;
 /// ticket, seed, cookie, name, ID, path, identifier or payload. They cannot show the official
 /// producer's rules.
 pub const EVIDENCE_TARGET: &str = "official_evidence";
-/// Most lines of one connection's sends and controls.
+/// Most lines of one connection's packets that carry something (a fragment or a resend), past the
+/// first of each opcode (at most [`MAX_EVIDENCE_OPCODES`] more). Acks and flow reports cannot use
+/// these up.
 pub const MAX_EVIDENCE_SEND_LINES: u32 = 400;
+/// Most lines of one connection's standalone Acks, NAKs, OutOfOrderAcks and flow-only reports.
+pub const MAX_EVIDENCE_CONTROL_LINES: u32 = 120;
+/// Most lines of one connection's handshake packets and Disconnects.
+pub const MAX_EVIDENCE_LIFECYCLE_LINES: u32 = 64;
 /// Most lines of one connection's accepted datagrams and delivered blobs, past the first of each
 /// opcode (at most [`MAX_EVIDENCE_OPCODES`] more).
 pub const MAX_EVIDENCE_RECEIVE_LINES: u32 = 400;
-/// §9.3.7's cap on distinct opcodes, for the first-of-each lines.
+/// §9.3.7's cap on distinct opcodes, for the first-of-each lines of each direction.
 pub const MAX_EVIDENCE_OPCODES: usize = 256;
+/// The newest lines past their budget that are kept and written when the connection ends, so that
+/// what came just before a close is in the log however long the connection ran.
+pub const MAX_EVIDENCE_TAIL_LINES: usize = 64;
+/// Most evidence lines of one connection, totals included (they may go out twice: at its close, and
+/// when it is dropped if anything happened since).
+pub const MAX_EVIDENCE_LINES_PER_CONNECTION: usize = (MAX_EVIDENCE_SEND_LINES
+    + MAX_EVIDENCE_CONTROL_LINES
+    + MAX_EVIDENCE_LIFECYCLE_LINES
+    + MAX_EVIDENCE_RECEIVE_LINES) as usize
+    + 2 * MAX_EVIDENCE_OPCODES
+    + MAX_EVIDENCE_TAIL_LINES
+    + 2;
 /// What the flow accumulator counts (§5.5 P10-22-POLICY).
 const FLOW_SCOPE: &str = "udp-payload-of-accepted-datagrams";
 
@@ -5736,6 +5767,8 @@ enum WordInput {
     ResendSaved,
     /// The accept: the interim first word (§4.2, §6.4).
     AcceptInitial,
+    /// A handshake packet that does not move the word: the auth, and a repeated accept.
+    HandshakeUnchanged,
 }
 
 impl WordInput {
@@ -5745,20 +5778,57 @@ impl WordInput {
             Self::ControlUnchanged => "control-unchanged",
             Self::ResendSaved => "resend-saved",
             Self::AcceptInitial => "accept-initial",
+            Self::HandshakeUnchanged => "handshake-unchanged",
         }
     }
 }
 
-/// One sent packet's evidence line.
+/// What kind of packet a send line is (§9.3.9: retransmit versus new send).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SendKind {
+    New,
+    Resend,
+    Ack,
+    Nak,
+    OutOfOrderAck,
+    Auth,
+    AuthResend,
+    Accept,
+    AcceptResend,
+    Disconnect,
+    DisconnectResend,
+}
+
+impl SendKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Resend => "resend",
+            Self::Ack => "ack",
+            Self::Nak => "nak",
+            Self::OutOfOrderAck => "out-of-order-ack",
+            Self::Auth => "auth",
+            Self::AuthResend => "auth-resend",
+            Self::Accept => "accept",
+            Self::AcceptResend => "accept-resend",
+            Self::Disconnect => "disconnect",
+            Self::DisconnectResend => "disconnect-resend",
+        }
+    }
+}
+
+/// One sent packet's evidence line. Nothing of a packet's contents is copied here but the flow
+/// counters and the first fragment's numbers: no ticket, cookie or body.
 #[derive(Debug, Clone, Copy)]
 struct SendEvidence {
-    kind: &'static str,
+    kind: SendKind,
     seq: u32,
     word_before: u16,
     word_after: u16,
     input: WordInput,
     flow_event: &'static str,
     flow: Option<FlowControlHeader>,
+    /// What the flow accumulator holds as this line is written ([`SessionConnection::note_send`]).
     flow_accumulated: u32,
     /// The first fragment's queue, opcode (its first part only), index and count, and how many.
     fragment: Option<(u8, Option<u32>, u32, u32)>,
@@ -5766,7 +5836,7 @@ struct SendEvidence {
 }
 
 impl SendEvidence {
-    fn of(kind: &'static str, seq: u32, opt: &OptionalHeaders, frags: &[BlobFragment]) -> Self {
+    fn of(kind: SendKind, seq: u32, opt: &OptionalHeaders, frags: &[BlobFragment]) -> Self {
         Self {
             kind,
             seq,
@@ -5792,23 +5862,64 @@ impl SendEvidence {
     }
 }
 
+/// One line of a connection's evidence log, as it is written or kept for the tail.
+#[derive(Debug, Clone, Copy)]
+enum EvidenceLine {
+    Send(SendEvidence, bool),
+    Datagram {
+        seq: u32,
+        bytes: usize,
+        fragments: usize,
+        gaps: usize,
+    },
+    Blob {
+        queue: u8,
+        opcode: u32,
+        group: u16,
+        order: u16,
+        bytes: usize,
+        first: bool,
+    },
+}
+
+/// A line past its budget, with the stage and time it belongs to.
+#[derive(Debug, Clone, Copy)]
+struct KeptLine {
+    stage: &'static str,
+    ms: u64,
+    line: EvidenceLine,
+}
+
 /// A connection's evidence log: off unless the connector turns it on (only its official runs do), and
-/// bounded ([`MAX_EVIDENCE_SEND_LINES`], [`MAX_EVIDENCE_RECEIVE_LINES`], [`MAX_EVIDENCE_OPCODES`]). A
-/// line past the bound is only counted, and the totals line goes out when the connection is dropped.
+/// bounded ([`MAX_EVIDENCE_LINES_PER_CONNECTION`]). Each class of line has its own budget, so Acks
+/// and flow reports cannot use up the lines of what carries an opcode. A line past its budget goes
+/// to a ring of the newest ([`MAX_EVIDENCE_TAIL_LINES`]), written with `tail=true` at the
+/// connection's close, so what came before the close is there; only what falls out of the ring is
+/// counted as not shown. The totals line goes out at the close, or when the connection is dropped.
 #[derive(Debug)]
 struct Evidence {
     role: &'static str,
     stage: &'static str,
     stage_since: f64,
     send_left: u32,
+    control_left: u32,
+    lifecycle_left: u32,
     receive_left: u32,
     opcodes: BTreeSet<u32>,
+    sent_opcodes: BTreeSet<u32>,
+    tail: VecDeque<KeptLine>,
     sends: u64,
     resends: u64,
     controls: u64,
+    handshakes: u64,
+    handshake_resends: u64,
+    disconnects: u64,
+    queued_not_sent: u64,
     datagrams: u64,
     blobs: u64,
     not_shown: u64,
+    /// The sum of the counts when the totals last went out.
+    totals_written: Option<u64>,
 }
 
 impl Evidence {
@@ -5818,14 +5929,23 @@ impl Evidence {
             stage: "handshake",
             stage_since: now_sec,
             send_left: MAX_EVIDENCE_SEND_LINES,
+            control_left: MAX_EVIDENCE_CONTROL_LINES,
+            lifecycle_left: MAX_EVIDENCE_LIFECYCLE_LINES,
             receive_left: MAX_EVIDENCE_RECEIVE_LINES,
             opcodes: BTreeSet::new(),
+            sent_opcodes: BTreeSet::new(),
+            tail: VecDeque::new(),
             sends: 0,
             resends: 0,
             controls: 0,
+            handshakes: 0,
+            handshake_resends: 0,
+            disconnects: 0,
+            queued_not_sent: 0,
             datagrams: 0,
             blobs: 0,
             not_shown: 0,
+            totals_written: None,
         }
     }
 
@@ -5834,98 +5954,203 @@ impl Evidence {
         ((now_sec - self.stage_since).max(0.0) * 1000.0) as u64
     }
 
-    fn sent(&mut self, line: SendEvidence, now_sec: f64) {
-        match line.input {
-            WordInput::Sequenced | WordInput::AcceptInitial => self.sends += 1,
-            WordInput::ControlUnchanged => self.controls += 1,
-            WordInput::ResendSaved => self.resends += 1,
+    /// Whether a line may go out on the budget `left`, which it then uses.
+    fn budgeted(left: &mut u32) -> bool {
+        if *left == 0 {
+            return false;
         }
-        if self.send_left == 0 {
-            self.not_shown += 1;
+        *left -= 1;
+        true
+    }
+
+    /// Writes `line` now when `shown`, or keeps it for the tail.
+    fn put(&mut self, line: EvidenceLine, shown: bool, now_sec: f64) {
+        let kept = KeptLine {
+            stage: self.stage,
+            ms: self.ms(now_sec),
+            line,
+        };
+        if shown {
+            self.write(kept, false);
             return;
         }
-        self.send_left -= 1;
-        let (queue, opcode, part, parts) = line.fragment.unwrap_or((0, None, 0, 0));
-        let flow = line.flow.unwrap_or(FlowControlHeader {
-            bytes_received_delta: 0,
-            interval_ms: 0,
-        });
-        tracing::info!(
-            target: EVIDENCE_TARGET,
-            role = self.role,
-            stage = self.stage,
-            ms = self.ms(now_sec),
-            dir = "send",
-            kind = line.kind,
-            seq = line.seq,
-            word_before = line.word_before,
-            word_after = line.word_after,
-            word_input = line.input.label(),
-            queue,
-            opcode = format_args!("{:#x}", opcode.unwrap_or(0)),
-            part,
-            parts,
-            fragments = line.fragments,
-            flow_event = line.flow_event,
-            flow_reported_bytes = flow.bytes_received_delta,
-            flow_reported_ms = flow.interval_ms,
-            flow_accumulated = line.flow_accumulated,
-            flow_scope = FLOW_SCOPE,
-            "official evidence: packet"
-        );
+        if self.tail.len() >= MAX_EVIDENCE_TAIL_LINES {
+            self.tail.pop_front();
+            self.not_shown += 1;
+        }
+        self.tail.push_back(kept);
+    }
+
+    fn write(&self, kept: KeptLine, tail: bool) {
+        let KeptLine { stage, ms, line } = kept;
+        match line {
+            EvidenceLine::Send(line, first_of_opcode) => {
+                let (queue, opcode, part, parts) = line.fragment.unwrap_or((0, None, 0, 0));
+                let flow = line.flow.unwrap_or(FlowControlHeader {
+                    bytes_received_delta: 0,
+                    interval_ms: 0,
+                });
+                tracing::info!(
+                    target: EVIDENCE_TARGET,
+                    role = self.role,
+                    stage,
+                    ms,
+                    dir = "send",
+                    kind = line.kind.label(),
+                    seq = line.seq,
+                    word_before = line.word_before,
+                    word_after = line.word_after,
+                    word_input = line.input.label(),
+                    queue,
+                    opcode = format_args!("{:#x}", opcode.unwrap_or(0)),
+                    part,
+                    parts,
+                    fragments = line.fragments,
+                    first_of_opcode,
+                    flow_event = line.flow_event,
+                    flow_reported_bytes = flow.bytes_received_delta,
+                    flow_reported_ms = flow.interval_ms,
+                    flow_accumulated = line.flow_accumulated,
+                    flow_scope = FLOW_SCOPE,
+                    tail,
+                    "official evidence: packet"
+                );
+            }
+            EvidenceLine::Datagram {
+                seq,
+                bytes,
+                fragments,
+                gaps,
+            } => {
+                tracing::info!(
+                    target: EVIDENCE_TARGET,
+                    role = self.role,
+                    stage,
+                    ms,
+                    dir = "recv",
+                    seq,
+                    bytes,
+                    fragments,
+                    gaps,
+                    tail,
+                    "official evidence: datagram"
+                );
+            }
+            EvidenceLine::Blob {
+                queue,
+                opcode,
+                group,
+                order,
+                bytes,
+                first,
+            } => {
+                tracing::info!(
+                    target: EVIDENCE_TARGET,
+                    role = self.role,
+                    stage,
+                    ms,
+                    dir = "recv",
+                    queue,
+                    opcode = format_args!("{opcode:#x}"),
+                    group,
+                    order,
+                    bytes,
+                    first_of_opcode = first,
+                    tail,
+                    "official evidence: blob"
+                );
+            }
+        }
+    }
+
+    fn sent(&mut self, line: SendEvidence, now_sec: f64) {
+        let mut first = false;
+        let shown = match line.kind {
+            SendKind::New | SendKind::Resend => {
+                if line.kind == SendKind::New {
+                    self.sends += 1;
+                    let opcode = line.fragment.and_then(|(_, opcode, _, _)| opcode);
+                    first = opcode.is_some_and(|op| {
+                        self.sent_opcodes.len() < MAX_EVIDENCE_OPCODES
+                            && self.sent_opcodes.insert(op)
+                    });
+                } else {
+                    self.resends += 1;
+                }
+                // A sequenced packet with no fragment (a flow-only report) is no carrier.
+                if line.fragment.is_none() && line.kind == SendKind::New {
+                    Self::budgeted(&mut self.control_left)
+                } else {
+                    first || Self::budgeted(&mut self.send_left)
+                }
+            }
+            SendKind::Ack | SendKind::Nak | SendKind::OutOfOrderAck => {
+                self.controls += 1;
+                Self::budgeted(&mut self.control_left)
+            }
+            SendKind::Auth | SendKind::Accept => {
+                self.handshakes += 1;
+                Self::budgeted(&mut self.lifecycle_left)
+            }
+            SendKind::AuthResend | SendKind::AcceptResend => {
+                self.handshake_resends += 1;
+                Self::budgeted(&mut self.lifecycle_left)
+            }
+            SendKind::Disconnect | SendKind::DisconnectResend => {
+                self.disconnects += 1;
+                Self::budgeted(&mut self.lifecycle_left)
+            }
+        };
+        self.put(EvidenceLine::Send(line, first), shown, now_sec);
     }
 
     fn accepted(&mut self, seq: u32, len: usize, fragments: usize, gaps: usize, now_sec: f64) {
         self.datagrams += 1;
-        if self.receive_left == 0 {
-            self.not_shown += 1;
-            return;
-        }
-        self.receive_left -= 1;
-        tracing::info!(
-            target: EVIDENCE_TARGET,
-            role = self.role,
-            stage = self.stage,
-            ms = self.ms(now_sec),
-            dir = "recv",
+        let shown = Self::budgeted(&mut self.receive_left);
+        let line = EvidenceLine::Datagram {
             seq,
-            bytes = len,
+            bytes: len,
             fragments,
             gaps,
-            "official evidence: datagram"
-        );
+        };
+        self.put(line, shown, now_sec);
     }
 
     fn delivered(&mut self, blob: &ReassembledBlob, now_sec: f64) {
         self.blobs += 1;
         let first =
             self.opcodes.len() < MAX_EVIDENCE_OPCODES && self.opcodes.insert(blob.blob_header_word);
-        if !first && self.receive_left == 0 {
-            self.not_shown += 1;
+        let shown = first || Self::budgeted(&mut self.receive_left);
+        let line = EvidenceLine::Blob {
+            queue: blob.queue_id,
+            opcode: blob.blob_header_word,
+            group: blob.seq_group,
+            order: blob.order_num,
+            bytes: blob.payload.len(),
+            first,
+        };
+        self.put(line, shown, now_sec);
+    }
+
+    /// The tail and the totals: at the connection's close, and when it is dropped if anything
+    /// happened since.
+    fn finish(&mut self) {
+        while let Some(kept) = self.tail.pop_front() {
+            self.write(kept, true);
+        }
+        let sum = self.sends
+            + self.resends
+            + self.controls
+            + self.handshakes
+            + self.handshake_resends
+            + self.disconnects
+            + self.queued_not_sent
+            + self.datagrams
+            + self.blobs;
+        if self.totals_written == Some(sum) {
             return;
         }
-        if !first {
-            self.receive_left -= 1;
-        }
-        tracing::info!(
-            target: EVIDENCE_TARGET,
-            role = self.role,
-            stage = self.stage,
-            ms = self.ms(now_sec),
-            dir = "recv",
-            queue = blob.queue_id,
-            opcode = format_args!("{:#x}", blob.blob_header_word),
-            group = blob.seq_group,
-            order = blob.order_num,
-            bytes = blob.payload.len(),
-            first_of_opcode = first,
-            "official evidence: blob"
-        );
-    }
-}
-
-impl Drop for Evidence {
-    fn drop(&mut self) {
+        self.totals_written = Some(sum);
         tracing::info!(
             target: EVIDENCE_TARGET,
             role = self.role,
@@ -5933,12 +6158,23 @@ impl Drop for Evidence {
             sends = self.sends,
             resends = self.resends,
             controls = self.controls,
+            handshakes = self.handshakes,
+            handshake_resends = self.handshake_resends,
+            disconnects = self.disconnects,
+            queued_not_sent = self.queued_not_sent,
             datagrams = self.datagrams,
             blobs = self.blobs,
             opcodes = self.opcodes.len(),
+            sent_opcodes = self.sent_opcodes.len(),
             lines_not_shown = self.not_shown,
             "official evidence: connection totals"
         );
+    }
+}
+
+impl Drop for Evidence {
+    fn drop(&mut self) {
+        self.finish();
     }
 }
 
@@ -6478,6 +6714,7 @@ impl SessionConnection {
         let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;
         self.outbound_datagrams.push_back(dgram);
         self.counts.session_auth = self.counts.session_auth.saturating_add(1);
+        self.note_handshake(SendKind::Auth, now_sec);
         Ok(())
     }
 
@@ -6512,6 +6749,7 @@ impl SessionConnection {
         let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;
         self.outbound_datagrams.push_back(dgram);
         self.counts.referral_auth = self.counts.referral_auth.saturating_add(1);
+        self.note_handshake(SendKind::Auth, now_sec);
         Ok(())
     }
 
@@ -6686,16 +6924,13 @@ impl SessionConnection {
         let codec = self.data_codec(outgoing_codec);
         let dgram = Self::encode_own(hdr, &opt_headers, &fragments, Some(xor_mask), codec)?;
 
-        if let Some(e) = self.evidence.as_mut() {
-            let mut line = SendEvidence::of("new", next_seq, &opt_headers, &fragments).word(
-                self.client_word,
-                client_word,
-                WordInput::Sequenced,
-            );
-            line.flow_event = flow_event;
-            line.flow_accumulated = self.flow.bytes;
-            e.sent(line, now_sec);
-        }
+        let mut line = SendEvidence::of(SendKind::New, next_seq, &opt_headers, &fragments).word(
+            self.client_word,
+            client_word,
+            WordInput::Sequenced,
+        );
+        line.flow_event = flow_event;
+        self.note_send(line, now_sec);
         self.outgoing_isaac = Some(generator);
         self.send_seq_num = next_seq;
         self.client_word = client_word;
@@ -6925,6 +7160,9 @@ impl SessionConnection {
     /// before its goodbye, also on a later `SequenceNakHeader`; the sequence state stays as it
     /// is, and the connection is on its way out.
     pub fn discard_unsent_datagrams(&mut self) {
+        if let Some(e) = self.evidence.as_mut() {
+            e.queued_not_sent += self.outbound_datagrams.len() as u64;
+        }
         self.outbound_datagrams.clear();
         self.retransmit_table.clear();
     }
@@ -6938,7 +7176,7 @@ impl SessionConnection {
     /// # Errors
     ///
     /// Returns [`SessionError`] if the packet cannot be encoded.
-    pub fn queue_standalone_disconnect(&mut self) -> Result<(), SessionError> {
+    pub fn queue_standalone_disconnect(&mut self, now_sec: f64) -> Result<(), SessionError> {
         if self.state != ConnectionState::Connected {
             return Ok(());
         }
@@ -6946,7 +7184,9 @@ impl SessionConnection {
         self.queue_control(OptionalHeaders {
             disconnect: true,
             ..OptionalHeaders::default()
-        })
+        })?;
+        self.note_control(SendKind::Disconnect, now_sec);
+        Ok(())
     }
 
     /// What the reassembler ignored, discarded or found odd (§9.3.9).
@@ -7006,6 +7246,30 @@ impl SessionConnection {
         codecs: WireCodecs<'_>,
         rec_id_in_use: &dyn Fn(u16) -> bool,
     ) -> Result<DecodedPacket, SessionError> {
+        let result =
+            self.receive_datagram_lines(datagram, source_addr, now_sec, codecs, rec_id_in_use);
+        self.finish_evidence_at_close();
+        result
+    }
+
+    /// A connection that closed writes its tail and totals as soon as the pass that closed it has
+    /// written its own lines, and not only when it is dropped ([`Evidence::finish`]).
+    fn finish_evidence_at_close(&mut self) {
+        if self.state == ConnectionState::Closing
+            && let Some(e) = self.evidence.as_mut()
+        {
+            e.finish();
+        }
+    }
+
+    fn receive_datagram_lines(
+        &mut self,
+        datagram: &[u8],
+        source_addr: SocketAddrV4,
+        now_sec: f64,
+        codecs: WireCodecs<'_>,
+        rec_id_in_use: &dyn Fn(u16) -> bool,
+    ) -> Result<DecodedPacket, SessionError> {
         // Rule 4: Source address binding for existing connections
         if source_addr != self.remote_addr {
             return Err(SessionError::SourceAddressMismatch {
@@ -7040,8 +7304,12 @@ impl SessionConnection {
             // after one was adopted is judged below instead.
             //
             // Labelled (`docs/m8-remediation.md` §27 fix 9): "zero" is the checksum-valid header
-            // recipient or payload bytes 18..19. The header's opaque peer word is not tested.
-            if hdr.rec_id == 0 || cr.outgoing_rec_id == 0 {
+            // recipient or payload bytes 18..19. The header's opaque peer word is not tested. A
+            // checksum is verified here only with the masked flag clear: a challenge with that flag
+            // has proved nothing, so it ends nothing and is refused below like any other masked
+            // packet before the generators are seeded.
+            let verified = (hdr.flags & FLAG_MASKED_CHECKSUM) == 0;
+            if verified && (hdr.rec_id == 0 || cr.outgoing_rec_id == 0) {
                 tracing::debug!("ConnectChallengeHeader with a zero recipient");
                 if self.state == ConnectionState::SessionAuthSent {
                     self.close(DisconnectReason::InvalidChallenge, now_sec);
@@ -7097,21 +7365,30 @@ impl SessionConnection {
         // spec pass: is a keyless checksum "valid" for §9.3.9's row of `0x02`?): its checksum has no
         // key, so it proves nothing about the sender. Such a packet never ends a session, and its
         // fragments on queues `2..=4` are dropped and counted, so they cannot leave an identity
-        // behind that would make a later masked blob look reused.
+        // behind that would make a later masked blob look reused. Its parts of a multi-part blob are
+        // dropped on queue 1 too, so that only a masked datagram touches the reassembly table: an
+        // unmasked part could complete a masked blob with bytes the server never sent, or fill the
+        // table against masked traffic. Every server blob form the spec gives is masked (§6.4.1,
+        // Vector 19), and an unfragmented queue-1 message has no identity and no table entry. The
+        // same question for the writer covers this: may an unmasked packet carry a blob at all?
         let masked = (hdr.flags & FLAG_MASKED_CHECKSUM) != 0;
         let bit = pkt
             .fragments
             .iter()
             .find(|f| unsupported_control_bit(&f.header));
-        if !masked
-            && bit.is_none()
-            && let Some(f) = pkt
+        if !masked && bit.is_none() {
+            if let Some(f) = pkt
                 .fragments
                 .iter()
                 .find(|f| matches!(f.header.queue_id, 2..=4))
-        {
-            let queue_id = f.header.queue_id;
-            return Err(self.refused(SessionError::UnmaskedReliableFragment { queue_id }));
+            {
+                let queue_id = f.header.queue_id;
+                return Err(self.refused(SessionError::UnmaskedReliableFragment { queue_id }));
+            }
+            if let Some(f) = pkt.fragments.iter().find(|f| f.header.num_frags > 1) {
+                let queue_id = f.header.queue_id;
+                return Err(self.refused(SessionError::UnmaskedMultiPartFragment { queue_id }));
+            }
         }
         let unsupported = bit.map(|f| SessionError::UnsupportedFragment {
             queue_id: f.header.queue_id,
@@ -7143,7 +7420,7 @@ impl SessionConnection {
             }
         };
         if let Some(err) = unsupported {
-            if self.queue_standalone_disconnect().is_err() {
+            if self.queue_standalone_disconnect(now_sec).is_err() {
                 tracing::debug!("official session: the closing Disconnect was not encoded");
             }
             self.close(DisconnectReason::UnsupportedTraffic, now_sec);
@@ -7351,6 +7628,7 @@ impl SessionConnection {
         self.adopted_challenge = Some((incoming.rec_id, *cr));
         self.codecs_negotiated = true;
         // §4.2, §6.4: the accept's own word and the challenge header's bytes 18..19.
+        let word_before = self.client_word;
         self.client_word = INITIAL_CLIENT_WORD;
         self.peer_word = incoming.peer_word;
         // §7.2: the incoming generator from payload bytes 20..23, the outgoing one from
@@ -7376,14 +7654,12 @@ impl SessionConnection {
         let dgram = Self::encode_own(hdr, &resp_opt, &[], None, None)?;
         self.outbound_datagrams.push_back(dgram);
         self.counts.connect_accept = self.counts.connect_accept.saturating_add(1);
-        if let Some(e) = self.evidence.as_mut() {
-            let line = SendEvidence::of("accept", 0, &resp_opt, &[]).word(
-                self.client_word,
-                self.client_word,
-                WordInput::AcceptInitial,
-            );
-            e.sent(line, now_sec);
-        }
+        let line = SendEvidence::of(SendKind::Accept, 0, &resp_opt, &[]).word(
+            word_before,
+            self.client_word,
+            WordInput::AcceptInitial,
+        );
+        self.note_send(line, now_sec);
 
         // Only State 1 reaches here (State 2 answers with [`Self::repeat_accept`]).
         self.state = ConnectionState::ChallengeAcceptSent;
@@ -7434,6 +7710,7 @@ impl SessionConnection {
         self.outbound_datagrams.push_back(dgram);
         self.counts.connect_accept_retransmits =
             self.counts.connect_accept_retransmits.saturating_add(1);
+        self.note_handshake(SendKind::AcceptResend, now_sec);
         Ok(())
     }
 
@@ -7484,12 +7761,22 @@ impl SessionConnection {
                         Some(rec.xor_mask),
                         codec,
                     )?;
-                    let line =
-                        SendEvidence::of("resend", rec.seq_num, &rec.opt_headers, &rec.fragments)
-                            .word(rec.client_word, rec.client_word, WordInput::ResendSaved);
-                    if let Some(e) = self.evidence.as_mut() {
-                        e.sent(line, now_sec);
+                    let mut line = SendEvidence::of(
+                        SendKind::Resend,
+                        rec.seq_num,
+                        &rec.opt_headers,
+                        &rec.fragments,
+                    )
+                    .word(
+                        rec.client_word,
+                        rec.client_word,
+                        WordInput::ResendSaved,
+                    );
+                    // The report it carries is the saved one, not a new report.
+                    if rec.opt_headers.flow_control.is_some() {
+                        line.flow_event = "resend-saved-report";
                     }
+                    self.note_send(line, now_sec);
                     self.outbound_datagrams.push_back(dgram);
                 } else if self.out_of_order_ack_queue.len() >= MAX_PENDING_OUT_OF_ORDER_ACKS {
                     self.dropped_out_of_order_acks =
@@ -7515,7 +7802,7 @@ impl SessionConnection {
         if let Some(ref_hdr) = &opt.world_referral {
             let addr = ref_hdr.target_addr;
             if addr.ip().is_unspecified() || addr.port() == 0 {
-                tracing::warn!("WorldReferralHeader without an address or port ignored");
+                tracing::debug!("WorldReferralHeader without an address or port ignored");
             } else {
                 self.events.push_back(SessionEvent::WorldReferralReceived {
                     cookie: ref_hdr.cookie,
@@ -7549,12 +7836,15 @@ impl SessionConnection {
             if let Some(ne) = err
                 && self.state != ConnectionState::Closing
             {
-                // §9.3.8: the numbers are for the local debug log only.
+                // §9.3.8: the numbers are for the local debug log only. Under the evidence target, so
+                // the documented directive turns on this line and not the crate's other debug lines.
                 tracing::debug!(
+                    target: EVIDENCE_TARGET,
+                    role = self.evidence.as_ref().map_or("other", |e| e.role),
                     fatal,
                     error_code = format_args!("{:#010x}", ne.error_code),
                     error_subcode = format_args!("{:#010x}", ne.error_subcode),
-                    "transport error from server; closing the connection"
+                    "official evidence: transport error from server; closing the connection"
                 );
                 self.close(
                     DisconnectReason::TransportError {
@@ -7614,6 +7904,16 @@ impl SessionConnection {
         now_sec: f64,
         outgoing_codec: Option<&dyn BitTreeCodec>,
     ) -> Result<(), SessionError> {
+        let result = self.tick_timers(now_sec, outgoing_codec);
+        self.finish_evidence_at_close();
+        result
+    }
+
+    fn tick_timers(
+        &mut self,
+        now_sec: f64,
+        outgoing_codec: Option<&dyn BitTreeCodec>,
+    ) -> Result<(), SessionError> {
         self.reassembler.purge_expired(now_sec);
 
         match self.state {
@@ -7634,6 +7934,7 @@ impl SessionConnection {
                     let dgram = Self::encode_own(hdr, &opt, &[], None, None)?;
                     self.outbound_datagrams.push_back(dgram);
                     self.counts.auth_retransmits = self.counts.auth_retransmits.saturating_add(1);
+                    self.note_handshake(SendKind::AuthResend, now_sec);
                 }
             }
             ConnectionState::ChallengeAcceptSent => {
@@ -7655,6 +7956,7 @@ impl SessionConnection {
                     self.outbound_datagrams.push_back(dgram);
                     self.counts.connect_accept_retransmits =
                         self.counts.connect_accept_retransmits.saturating_add(1);
+                    self.note_handshake(SendKind::AcceptResend, now_sec);
                 }
             }
             ConnectionState::Connected => {
@@ -7681,7 +7983,7 @@ impl SessionConnection {
                     );
                     // §9.3.8: one Disconnect if established, and this is the last moment it is,
                     // before the connection stops being State 5.
-                    if self.queue_standalone_disconnect().is_err() {
+                    if self.queue_standalone_disconnect(now_sec).is_err() {
                         tracing::debug!("official session: the closing Disconnect was not encoded");
                     }
                     self.close(DisconnectReason::GapDeadline, now_sec);
@@ -7696,7 +7998,7 @@ impl SessionConnection {
                         out_of_order_ack: Some(list),
                         ..OptionalHeaders::default()
                     })?;
-                    self.note_control("out-of-order-ack", now_sec);
+                    self.note_control(SendKind::OutOfOrderAck, now_sec);
                 }
 
                 // §5.5 P10-22-POLICY: the first FlowControl-only packet, then one for
@@ -7720,7 +8022,7 @@ impl SessionConnection {
                             sequence_nak: Some(list),
                             ..OptionalHeaders::default()
                         })?;
-                        self.note_control("nak", now_sec);
+                        self.note_control(SendKind::Nak, now_sec);
                     }
                 } else if self.recv_seq_expected > 1
                     && now_sec - self.last_ack_nak_sent_sec >= CUMULATIVE_ACK_INTERVAL_SEC
@@ -7730,7 +8032,7 @@ impl SessionConnection {
                         cumulative_ack: Some(self.recv_seq_expected),
                         ..OptionalHeaders::default()
                     })?;
-                    self.note_control("ack", now_sec);
+                    self.note_control(SendKind::Ack, now_sec);
                 }
             }
             ConnectionState::DisconnectingFlush => {
@@ -7744,6 +8046,7 @@ impl SessionConnection {
                         disconnect: true,
                         ..OptionalHeaders::default()
                     })?;
+                    self.note_control(SendKind::Disconnect, now_sec);
                 }
             }
             ConnectionState::DisconnectSent => {
@@ -7756,6 +8059,7 @@ impl SessionConnection {
                         disconnect: true,
                         ..OptionalHeaders::default()
                     })?;
+                    self.note_control(SendKind::DisconnectResend, now_sec);
                 }
             }
             ConnectionState::Idle
@@ -7839,14 +8143,33 @@ impl SessionConnection {
 
     /// A standalone control went into the queue: one evidence line, with the copied sequence and the
     /// unchanged word (§9.3.9).
-    fn note_control(&mut self, kind: &'static str, now_sec: f64) {
+    fn note_control(&mut self, kind: SendKind, now_sec: f64) {
         let (seq, word) = (self.send_seq_num, self.client_word);
+        let line = SendEvidence::of(kind, seq, &OptionalHeaders::default(), &[]).word(
+            word,
+            word,
+            WordInput::ControlUnchanged,
+        );
+        self.note_send(line, now_sec);
+    }
+
+    /// A handshake packet that does not move the word went into the queue, with sequence zero (§5.1,
+    /// §6.2, §6.4). Nothing of its ticket or cookie is in the line.
+    fn note_handshake(&mut self, kind: SendKind, now_sec: f64) {
+        let word = self.client_word;
+        let line = SendEvidence::of(kind, 0, &OptionalHeaders::default(), &[]).word(
+            word,
+            word,
+            WordInput::HandshakeUnchanged,
+        );
+        self.note_send(line, now_sec);
+    }
+
+    /// One send line, with what the flow accumulator holds now on every kind of line (§9.3.9): a
+    /// line that does not report leaves the accumulator as it is, and shows that.
+    fn note_send(&mut self, mut line: SendEvidence, now_sec: f64) {
+        line.flow_accumulated = self.flow.bytes;
         if let Some(e) = self.evidence.as_mut() {
-            let line = SendEvidence::of(kind, seq, &OptionalHeaders::default(), &[]).word(
-                word,
-                word,
-                WordInput::ControlUnchanged,
-            );
             e.sent(line, now_sec);
         }
     }

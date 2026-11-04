@@ -181,7 +181,8 @@ fn the_login_datagram_is_written_as_sent_with_its_credentials_replaced() {
         !txt.contains("CARRIED A PASSWORD"),
         "no password was sent:\n{txt}"
     );
-    // One line per file, with the kind and no path; the start line has the netVersion.
+    // One line per file, with the kind and no path; the start line says a netVersion is there and
+    // never its text, which holds the install's identifier.
     let written: Vec<&str> = logs
         .lines()
         .filter(|l| l.contains("official session: datagram dump written"))
@@ -191,12 +192,8 @@ fn the_login_datagram_is_written_as_sent_with_its_credentials_replaced() {
         written.iter().all(|l| l.contains("kind=\"login\"")),
         "{logs}"
     );
-    assert!(
-        logs.contains(
-            "net_version=\"180804_netver:9999; didver:00000000-0000-0000-0000-000000000000\""
-        ),
-        "{logs}"
-    );
+    assert!(logs.contains("net_version=\"present\""), "{logs}");
+    assert!(!logs.contains("didver"), "{logs}");
     let path = dir.path().to_string_lossy();
     assert!(!logs.contains(path.as_ref()), "a path was logged:\n{logs}");
     assert!(!logs.contains("first-datagram"), "a file name was logged");

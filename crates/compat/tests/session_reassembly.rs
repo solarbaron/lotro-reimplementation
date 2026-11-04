@@ -10,8 +10,8 @@ use tessera_compat::session::{
     ConnectChallengeHeader, ConnectionState, DatagramHeader, FLAG_HAS_FRAGMENTED_BLOBS,
     IsaacCipher, MAX_BLOB_FRAG_PAYLOAD, MAX_BLOB_TOMBSTONES, MAX_FRAGS_PER_PACKET,
     MAX_TOMBSTONE_BYTES, OptionalHeaders, ReassembledBlob, SessionAuthHeader, SessionError,
-    SessionEvent, SessionMultiplexer, WireCodecs, encode_datagram, encode_variable_u32,
-    guid_fields_swapped, parse_packet_payload, split_blob,
+    SessionEvent, SessionMultiplexer, WireCodecs, decode_datagram, encode_datagram,
+    encode_variable_u32, guid_fields_swapped, parse_packet_payload, split_blob,
 };
 
 const SERVER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 40), 9000);
@@ -341,6 +341,155 @@ fn a_repeated_old_part_never_joins_a_differing_body() {
     assert_eq!(r.incomplete_len(), 0, "no ghost entry");
 }
 
+/// C8P6-MERGE-OPEN-ENTRY: a repeat of an old part while a differing body is open does not fill the
+/// free slot of that body, in either order. The new body is delivered whole when its own part comes,
+/// once, and never a body the server did not send.
+#[test]
+fn an_old_part_repeated_while_a_new_body_is_open_never_joins_it() {
+    let old = parts(2, 1, 7, 0x55, &long_body(1));
+    let new = parts(2, 1, 7, 0x55, &long_body(100));
+
+    // On a real masked connection.
+    let mut link = Link::new();
+    link.send(&old, 1.0).expect("body A");
+    assert_eq!(link.delivered().len(), 1);
+    link.send(&new[1..], 2.0).expect("part 1 of body B");
+    assert!(link.delivered().is_empty());
+    link.send(&old[..1], 3.0).expect("A's part 0 again");
+    assert!(link.delivered().is_empty(), "no merged body");
+    let counts = link.counts();
+    assert_eq!((counts.duplicates, counts.reused_identities), (1, 0));
+    link.send(&new[..1], 4.0).expect("B's own part 0");
+    let delivered = link.delivered();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].payload, long_body(100));
+    assert_eq!(link.counts().reused_identities, 1);
+    assert_eq!(
+        link.mux
+            .connection_mut(link.id)
+            .expect("conn")
+            .recv_seq_expected(),
+        link.seq,
+        "every datagram was taken"
+    );
+
+    // The mirror, with the old part after the new one: B's part 0 is there, A's part 1 repeats.
+    let mut r = BlobReassembler::default();
+    assert_eq!(r.ingest_packet(1, &old, 0.0).expect("A").len(), 1);
+    let mirror = [new[0].clone(), old[1].clone()];
+    assert_eq!(r.check_packet(1, &mirror, 1.0), Ok(()));
+    assert!(r.ingest_packet(1, &mirror, 1.0).expect("taken").is_empty());
+    assert_eq!(r.counts().duplicates, 1);
+    assert_eq!(r.incomplete_len(), 1);
+    let done = r
+        .ingest_packet(1, &new[1..], 2.0)
+        .expect("B's own part 1")
+        .pop()
+        .expect("B whole");
+    assert_eq!(done.payload, long_body(100));
+    assert_eq!(r.incomplete_len(), 0);
+
+    // At parser level, A's part 0 with an entry open: no merge, and B's part 0 still joins.
+    let mut r = BlobReassembler::default();
+    assert_eq!(r.ingest_packet(1, &old, 0.0).expect("A").len(), 1);
+    assert_eq!(r.ingest(1, new[1].clone(), 1.0).unwrap(), None);
+    assert_eq!(r.ingest(1, old[0].clone(), 1.5).unwrap(), None);
+    assert_eq!(r.incomplete_len(), 1);
+    let done = r.ingest(1, new[0].clone(), 2.0).unwrap().expect("B whole");
+    assert_eq!(done.payload, long_body(100));
+}
+
+/// The cost of that rule, in the other order: a new body sharing a part of the old one, whose other
+/// part came first. It is the OPEN of `take_fragment`: nothing is delivered and nothing is merged.
+#[test]
+fn a_new_body_sharing_a_part_of_the_old_expires_in_either_order() {
+    let mut body = long_body(1);
+    if let Some(last) = body.last_mut() {
+        *last ^= 0xFF;
+    }
+    let old = parts(2, 1, 7, 0x55, &long_body(1));
+    let new = parts(2, 1, 7, 0x55, &body);
+    let mut r = BlobReassembler::default();
+    assert_eq!(r.ingest_packet(1, &old, 0.0).expect("A").len(), 1);
+    assert_eq!(r.ingest(1, new[1].clone(), 1.0).unwrap(), None);
+    assert_eq!(r.ingest(1, new[0].clone(), 1.0).unwrap(), None);
+    assert_eq!(r.incomplete_len(), 1);
+    assert_eq!(r.counts().reused_identities, 0);
+    r.purge_expired(40.0);
+    assert_eq!(r.incomplete_len(), 0);
+}
+
+// ----- C8P6-KEYLESS-QUEUE1-TABLE: only a masked datagram touches the table -----
+
+/// An unmasked datagram from the peer's address: its checksum has no key.
+fn unmasked(link: &Link, frags: &[BlobFragment]) -> Vec<u8> {
+    encode_datagram(
+        DatagramHeader {
+            rec_id: ASSIGNED,
+            seq_num: link.seq,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders::default(),
+        frags,
+        None,
+        None,
+    )
+    .expect("packet")
+}
+
+/// An unmasked part cannot complete a masked blob: nothing the server did not send is delivered.
+#[test]
+fn an_unmasked_part_does_not_complete_a_masked_blob() {
+    let mut link = Link::new();
+    let real = parts(1, 0, 5, 0x40, &long_body(1));
+    let forged = parts(1, 0, 5, 0x40, &long_body(100));
+    link.send(&real[..1], 1.0).expect("part 0, masked");
+    let dgram = unmasked(&link, &forged[1..]);
+    assert_eq!(
+        link.mux
+            .receive_from_peer(&dgram, SERVER, 1.1, WireCodecs::NONE)
+            .err(),
+        Some(SessionError::UnmaskedMultiPartFragment { queue_id: 1 })
+    );
+    assert!(link.delivered().is_empty());
+    link.send(&real[1..], 2.0).expect("part 1, masked");
+    let delivered = link.delivered();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].payload, long_body(1));
+    // An unfragmented queue-1 message has no table entry, and stays as it was.
+    let dgram = unmasked(&link, &[plain(0xF4, &[0])]);
+    link.mux
+        .receive_from_peer(&dgram, SERVER, 3.0, WireCodecs::NONE)
+        .expect("unfragmented");
+    assert_eq!(link.delivered().len(), 1);
+}
+
+/// Unmasked parts cannot fill the table against masked traffic: a masked multi-part datagram still
+/// goes in, and its sequence with it.
+#[test]
+fn unmasked_parts_do_not_fill_the_table() {
+    let mut link = Link::new();
+    for id in 0..80u16 {
+        let frags = parts(1, 0, 100 + id, 0x40, &long_body(id as u8));
+        let dgram = unmasked(&link, &frags[..1]);
+        assert!(
+            link.mux
+                .receive_from_peer(&dgram, SERVER, 1.0, WireCodecs::NONE)
+                .is_err()
+        );
+    }
+    let frags = parts(2, 1, 7, 0x55, &long_body(1));
+    let seq = link.seq + 1;
+    link.send(&frags[..1], 2.0).expect("a masked part");
+    assert_eq!(
+        link.mux
+            .connection_mut(link.id)
+            .expect("conn")
+            .recv_seq_expected(),
+        seq
+    );
+}
+
 /// W2-SEED-COMMIT: the same steps inside one datagram with a sibling, on a real connection: the
 /// datagram is taken whole, in any order of its parts, and nothing fails after its sequence.
 #[test]
@@ -551,13 +700,17 @@ fn the_packet_check_and_the_packet_step_answer_alike() {
                 .map(|_| generated_fragment(&mut g, ids))
                 .collect();
             clock += g.below(3) as f64 / 2.0;
-            r.purge_expired(clock);
-            let before = r.clone();
+            // What either call may do on its own at this time: the expiry. Nothing purges first, so
+            // the expiry inside the check is what is compared with the expiry inside the step.
+            let mut purged = r.clone();
+            purged.purge_expired(clock);
 
+            let mut unchecked = r.clone();
             let checked = r.check_packet(1, &datagram, clock);
-            assert!(r.same_state(&before), "the check changed the table");
+            assert!(r.same_state(&purged), "the check changed the table");
 
-            let ingested = r.ingest_packet(1, &datagram, clock);
+            // The step runs on a table the check never saw.
+            let ingested = unchecked.ingest_packet(1, &datagram, clock);
             assert_eq!(checked, ingested.as_ref().map(|_| ()).map_err(Clone::clone));
             match &ingested {
                 Ok(_) => taken += 1,
@@ -566,8 +719,9 @@ fn the_packet_check_and_the_packet_step_answer_alike() {
                 Err(other) => panic!("{other:?}"),
             }
             if ingested.is_err() {
-                assert!(r.same_state(&before), "a refusal changed the table");
+                assert!(unchecked.same_state(&purged), "a refusal changed the table");
             }
+            r = unchecked;
             let (tombstones, bytes) = r.tombstone_sizes();
             assert!(tombstones <= MAX_BLOB_TOMBSTONES);
             assert!(bytes <= MAX_TOMBSTONE_BYTES);
@@ -602,6 +756,10 @@ fn a_connection_commits_a_sequence_only_with_the_whole_datagram() {
         } else {
             dropped += 1;
             assert!(
+                conn.recv_seq_expected() < seq,
+                "a refused datagram's sequence was committed: {result:?}"
+            );
+            assert!(
                 link.delivered().is_empty(),
                 "a refused datagram delivered something: {result:?}"
             );
@@ -610,6 +768,61 @@ fn a_connection_commits_a_sequence_only_with_the_whole_datagram() {
     }
     assert!(taken > 50, "{taken}");
     assert!(dropped > 50, "{dropped}");
+}
+
+/// §9.3.9: a datagram dropped by the table does not resolve the gap it would have filled: the gap
+/// stays, is still asked for, and the same datagram is taken once it qualifies.
+#[test]
+fn a_refused_gap_filler_keeps_its_gap_and_its_resend_is_taken() {
+    let mut link = Link::new();
+    let open = parts(2, 1, 7, 0x55, &long_body(1));
+    let other = parts(2, 1, 7, 0x55, &long_body(100));
+    link.send(&open[..1], 1.0)
+        .expect("part 0 opens the identity");
+    // A datagram with a conflicting part 0, skipped on the wire: its sequence becomes a gap.
+    let filler = link.masked(std::slice::from_ref(&other[0]));
+    let filler_seq = link.seq;
+    link.send(&[sibling()], 1.1)
+        .expect("the next one opens the gap");
+    assert_eq!(link.delivered().len(), 1);
+    let highest = link.seq;
+
+    // The filler comes, and is refused: nothing changes.
+    let refused = link
+        .mux
+        .receive_from_peer(&filler, SERVER, 1.2, WireCodecs::NONE);
+    assert_eq!(refused.err(), Some(SessionError::ConflictingBlobIdentity));
+    assert!(link.delivered().is_empty());
+    let conn = link.mux.connection_mut(link.id).expect("conn");
+    assert_eq!(conn.recv_seq_expected(), highest);
+    while conn.pop_outbound_datagram().is_some() {}
+    conn.tick(2.0).expect("tick");
+    let mut naks = Vec::new();
+    while let Some(d) = conn.pop_outbound_datagram() {
+        let packet = decode_datagram(&d, false, None, false).expect("a control");
+        naks.extend(packet.opt_headers.sequence_nak.unwrap_or_default());
+    }
+    assert!(
+        naks.contains(&filler_seq),
+        "the gap is still asked for: {naks:?}"
+    );
+
+    // The identity completes, so the part no longer conflicts, and the resend is taken: not as a
+    // duplicate sequence, and it opens a reused identity of its own.
+    link.send(&open[1..], 2.5).expect("part 1 completes it");
+    assert_eq!(link.delivered().len(), 1);
+    link.mux
+        .receive_from_peer(&filler, SERVER, 3.0, WireCodecs::NONE)
+        .expect("the resend");
+    let conn = link.mux.connection_mut(link.id).expect("conn");
+    while conn.pop_outbound_datagram().is_some() {}
+    conn.tick(4.0).expect("tick");
+    let mut naks = Vec::new();
+    while let Some(d) = conn.pop_outbound_datagram() {
+        let packet = decode_datagram(&d, false, None, false).expect("a control");
+        naks.extend(packet.opt_headers.sequence_nak.unwrap_or_default());
+    }
+    assert!(naks.is_empty(), "the gap is resolved: {naks:?}");
 }
 
 #[test]

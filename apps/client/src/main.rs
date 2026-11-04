@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `tessera-client` binary entry point.
 
+use std::io::IsTerminal as _;
 use std::process::ExitCode;
 
 use clap::Parser as _;
@@ -67,9 +68,11 @@ fn env_filter(rust_log: Option<&str>) -> EnvFilter {
 fn subscriber(
     rust_log: Option<&str>,
     writer: BoxMakeWriter,
+    ansi: bool,
 ) -> impl tracing::Subscriber + Send + Sync {
     let caps = filter_fn(|meta| quiet_cap(meta.target()).is_none_or(|cap| *meta.level() <= cap));
     let layer = tracing_subscriber::fmt::layer()
+        .with_ansi(ansi)
         .with_writer(writer)
         .with_filter(env_filter(rust_log).and(caps));
     Registry::default().with(layer)
@@ -81,17 +84,24 @@ fn main() -> ExitCode {
         e.exit();
     }
     let rust_log = std::env::var(EnvFilter::DEFAULT_ENV).ok();
-    // A scenario log on standard output keeps standard output to itself.
-    let writer = if args
+    // A scenario log on standard output keeps standard output to itself. Colours only on a terminal:
+    // a log file holds the plain field forms that `docs/DEVELOPMENT.md` tells a reader to look for.
+    let (writer, ansi) = if args
         .scenario_log
         .as_deref()
         .is_some_and(|p| p.as_os_str() == "-")
     {
-        BoxMakeWriter::new(std::io::stderr)
+        (
+            BoxMakeWriter::new(std::io::stderr),
+            std::io::stderr().is_terminal(),
+        )
     } else {
-        BoxMakeWriter::new(std::io::stdout)
+        (
+            BoxMakeWriter::new(std::io::stdout),
+            std::io::stdout().is_terminal(),
+        )
     };
-    subscriber(rust_log.as_deref(), writer).init();
+    subscriber(rust_log.as_deref(), writer, ansi).init();
     ExitCode::from(tessera_client::run_to_exit_code(args))
 }
 
@@ -122,7 +132,7 @@ mod tests {
     fn logs_under(rust_log: Option<&str>) -> String {
         let buf = Buf::default();
         let out = buf.clone();
-        let sub = subscriber(rust_log, BoxMakeWriter::new(move || out.clone()));
+        let sub = subscriber(rust_log, BoxMakeWriter::new(move || out.clone()), false);
         tracing::subscriber::with_default(sub, || {
             // What the HTTP and TLS crates' records look like through the log bridge: their
             // module paths as targets, a host and a path in the message.

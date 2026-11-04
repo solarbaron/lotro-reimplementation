@@ -479,48 +479,84 @@ After an update (with the golden steps above):
 
 ### Reading a live official run
 
-The next step of M8 is a live run by the owner, and the log is the only evidence it gives. Run the
-client with the two debug lines that carry the server's closing codes:
+The next step of M8 is a live run by the owner, and the log is the only evidence it gives. The client
+writes its log to standard output (with `--scenario-log -` to standard error), so redirect that, and
+do it from the start of the run:
 
 ```sh
-RUST_LOG=info,tessera_compat=debug tessera-client --official 2> official-run.log
+RUST_LOG=info,official_evidence=debug cargo run --release -p tessera-client -- --official \
+  > official-run.log 2>&1
 ```
 
-No extra option is needed: every official run writes these lines at `info`, bounded per connection.
-The lines to read, in order (`grep official_evidence official-run.log`):
+A log that is no terminal has no colour codes, so the field forms below match it as they are. No extra
+option is needed: every official run writes these lines, bounded per connection (at most
+`MAX_EVIDENCE_LINES_PER_CONNECTION`, about 1,600, in `crates/compat/src/session.rs`). The `debug` part
+adds the server's codes and the refused datagrams and messages, also bounded; do not widen it to
+`tessera_compat=debug` for a run whose log you will paste, because the crate's other debug lines have
+no such bound. `official-run.log` should grow as soon as the window opens; if it stays empty, the
+redirect is wrong and the run gives no evidence.
+
+Take the lines to read and paste with one command:
+
+```sh
+grep -E 'official_evidence|official session:|official world entry:|official login:' official-run.log
+```
 
 - `official evidence: stage`: each stage reached, with `previous_ms` (how long the last one took)
   and `since_start_ms`. How far the run got is the last of these. The stages run from `handshake`
   through `login connection established`, the initial steps and `waiting for the referral` to
   `waiting for world readiness`.
 - `official evidence: packet` (`dir="send"`): each sent packet with `seq`, `word_before`,
-  `word_after`, `word_input` (the labelled policy that made the word), `kind` (`new`, `resend`,
-  `ack`, `nak`, `out-of-order-ack`, `accept`), `queue`, `opcode`, `flow_event`, the reported and
-  accumulated flow counters and `flow_scope`. These show which policy Tessera used
+  `word_after`, `word_input` (the labelled policy that made the word), `kind` (`new`, `resend`, `ack`,
+  `nak`, `out-of-order-ack`, `auth`, `auth-resend`, `accept`, `accept-resend`, `disconnect`,
+  `disconnect-resend`), `queue`, `opcode`, `first_of_opcode`, `flow_event`, the reported and
+  accumulated flow counters and `flow_scope`. `flow_accumulated` is what the accumulator holds at that
+  line on every kind of packet, so a report is where it falls to zero; `flow_event="resend-saved-report"`
+  marks a resend's saved report, which is no new one. These lines show which policy Tessera used
   (`official-session.md` §9.3.9 "Evidence for transport producers"). They cannot show the official
-  client's rules.
+  client's rules. A line is written when the packet is queued; `queued_not_sent` in the totals counts
+  what a close discarded before it went out.
 - `official evidence: datagram` and `official evidence: blob` (`dir="recv"`): accepted datagrams and
   delivered blobs with `seq`, `queue`, `opcode`, `order` and `bytes`; `first_of_opcode=true` marks
   the first of each opcode, which is logged even after the line budget has run out.
+- `tail=true` on those three kinds: the budgets ran out (packets with an opcode, Acks and flow-only
+  reports, handshake and Disconnect packets, and what was received each have their own), and this
+  line is one of the newest kept and written when the connection closed. Its `ms` is when it happened,
+  so the lines just before a close are there however long the run was.
+- `official evidence: first after the session start`: the first batch, creation, position and
+  placement after `0x90`, once each, with `since_session_start_ms`, `in_batch` and `kept`. The order of
+  these lines is the order of the events. A placement here is a `0xCC` that read; whose it is has no
+  source (OPEN-WORLD-9).
 - `official evidence: counts after the session start`: batches, creations, positions, placements
   and the rest after `0x90`, every 5 s during the readiness wait and again at its end.
 - `official evidence: client loading done` and `official evidence: entry deadline`: the load time
   against the 30-second clock (`load_ms`, `readiness_clock_ms`, `limit_ms`), with the two gates kept
   apart (`server_gate`, `local_gate`). While OPEN-WORLD-9 has no answer the expected end of a
   selection is `server_gate="no source (OPEN-WORLD-9)"` and `local_gate="no placement"`: a Tessera
-  limit, not a refusal.
+  limit, not a refusal. Decision 0046 item 10 holds later world `0x30`, `0x30000035`, `0x24` and
+  `0x19A` back too, which no line can show the server's reaction to except by what it then did.
+- `official evidence: transport error from server` (`debug`), right before the close it causes: the
+  server's `fatal`, `error_code` and `error_subcode`.
+- `official session: datagram refused`, `official session: message refused` and
+  `official session: control message refused` (`debug`): why something was not taken, by the kind of
+  error and with `opcode` where one is known; at most one each 10 s, with `skipped` for the rest.
+  `official session: the server ended the session` and the logon and character-operation lines
+  (`debug`) carry the server's number.
 - `official evidence: connection closed`: which connection closed, why and in which stage
-  (`retiring=true` is the old login connection, which no longer decides the session's end). If the
-  server closed it, the `debug` line `transport error from server` just before has its codes.
+  (`retiring=true` is the old login connection, which no longer decides the session's end).
 - `official world entry: stopped`: what an entry that stopped withheld (`withheld=`).
-- `official evidence: connection totals`: the counts when a connection goes, with
-  `lines_not_shown` for what passed the line budget.
+- `official evidence: connection totals`: the counts when a connection closes, or when it is let go
+  (`sends`, `resends`, `controls`, `handshakes`, `handshake_resends`, `disconnects`,
+  `queued_not_sent`, `datagrams`, `blobs`), with `lines_not_shown` for what passed both the line budget
+  and the tail. Closing the window waits up to 2 s for the session's Disconnect and these lines; a
+  thread stuck past that loses them.
 
-Paste those lines and the `official session:` lines around the end. They carry no address, port,
-account, ticket, seed, cookie, character name or ID, install path, identifier or iteration value.
-Read what you paste all the same, and do not paste the password prompt, a datagram dump
-(`TESSERA_OFFICIAL_DUMP_DIR`), a packet capture or anything from outside `official-run.log`. Do not
-commit the log: reports of live runs go in prose, without captured values.
+Paste what the command gives, from the last `official evidence: stage` you care about to the end if it
+is long. Those lines carry no address, port, account, ticket, seed, cookie, character name or ID,
+install path, identifier or iteration value. Read what you paste all the same, and do not paste the
+password prompt, a datagram dump (`TESSERA_OFFICIAL_DUMP_DIR`), a packet capture or anything from
+outside that command's output. Do not commit the log: reports of live runs go in prose, without
+captured values.
 
 ### Official session handshake diagnostics (M8 live verification)
 
@@ -536,8 +572,9 @@ handshake, never an address, port, account or ticket (`crates/compat/src/connect
   from, the form of the remote address (`remote`: `remoteHost:port`, `remoteHost` with `-p`,
   `localHost:remoteHost:port`, or for the world connection the referral address with its own
   IP or the login server's; `remote_name`: literal IPv4 or resolved name), the `authType`
-  mode of §6.2.1 and the `netVersion` string in full (`net_version`, a
-  version label; `none` on the world connection, whose `ReferralAuthHeader` carries none);
+  mode of §6.2.1 and whether the connection has a `netVersion` (`net_version`: `present`, never its
+  text, which holds the install's identifier; `none` on the world connection, whose
+  `ReferralAuthHeader` carries none);
 - `official session: handshake waiting` (`debug`, every 5 s while a connection is in its
   handshake) and `official session: handshake failed` (`info`, when a connection closes from
   its handshake, a `HandshakeTimeout` for example, or once with `reason=cancelled` or

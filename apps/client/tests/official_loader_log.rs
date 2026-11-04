@@ -580,6 +580,13 @@ fn any_other_run_names_its_keymap() {
     let mut runtime =
         Runtime::start_with(&runtime_args(&dir, data.path()), now, None).expect("runtime");
     assert!(tessera_client::log_paths::names_directories());
+    // The index walk ends while its folder is there, so no line of it lands in the next test's log.
+    assert!(
+        runtime
+            .plugins
+            .manager_mut()
+            .wait_for_index(Duration::from_secs(20))
+    );
     runtime.plugins.shutdown();
     drop(runtime);
     let keymap = parent.path().join(MARKER).join("keymap.toml");
@@ -601,6 +608,13 @@ fn any_other_runtime_names_its_plugin_directory() {
 
     let mut runtime = Runtime::start(&runtime_args(&dir, data.path()), now).expect("runtime");
     assert!(runtime.plugins.manager().names_paths());
+    // The index walk ends while its folder is there, so no line of it lands in the next test's log.
+    assert!(
+        runtime
+            .plugins
+            .manager_mut()
+            .wait_for_index(Duration::from_secs(20))
+    );
     runtime.plugins.shutdown();
     drop(runtime);
     let found = logs();

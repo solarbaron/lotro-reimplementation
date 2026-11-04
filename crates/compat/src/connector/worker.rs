@@ -418,6 +418,10 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
             return;
         }
         // §9.3.9: an I/O failure before `Connected`.
+        //
+        // OPEN for the spec writer: this is that row as written, but a local bind failure sent
+        // nothing to the service, and its panel names the service. Should a failure before the first
+        // datagram use `UnsupportedStep` or its own local text instead of the outage row?
         Err(StartFailure::Bind) => {
             out.refuse(LoginRefusal::ServiceUnavailable, None);
             return;

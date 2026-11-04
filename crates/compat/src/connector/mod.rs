@@ -69,6 +69,7 @@ pub mod worker;
 mod tests;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -138,6 +139,23 @@ struct Running {
     revocation: Revocation,
 }
 
+/// How many attempts are on their way out in a reaper ([`Running::stop`]).
+static ENDING_SESSIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// Waits at most `limit` for the attempts already told to stop: a process that exits at once would
+/// lose the Disconnect the session still owes (`official-session.md` §9.3.9, "window close") and the
+/// last lines of its log. Returns whether none is left. With none it returns at once.
+pub fn wait_for_ending_sessions(limit: Duration) -> bool {
+    let until = Instant::now() + limit;
+    while ENDING_SESSIONS.load(Ordering::SeqCst) > 0 {
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    true
+}
+
 impl Running {
     fn stop(&mut self) {
         self.control.cancel();
@@ -148,12 +166,17 @@ impl Running {
             return;
         };
         let revocation = self.revocation.clone();
+        ENDING_SESSIONS.fetch_add(1, Ordering::SeqCst);
         let reaper = std::thread::Builder::new()
             .name("tessera-official-reaper".into())
-            .spawn(move || reap(worker, &revocation));
+            .spawn(move || {
+                reap(worker, &revocation);
+                ENDING_SESSIONS.fetch_sub(1, Ordering::SeqCst);
+            });
         if reaper.is_err() {
             // Nothing can wait for the thread: its right ends now (its graceful disconnect
             // is lost).
+            ENDING_SESSIONS.fetch_sub(1, Ordering::SeqCst);
             self.revocation.revoke();
         }
     }

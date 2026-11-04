@@ -1524,8 +1524,18 @@ fn the_live_network_has_no_destination_and_no_re_entry() {
         .split("impl ConnectorNet for LiveNet")
         .nth(1)
         .expect("the live network");
-    assert!(!live.contains("fn entry_destination"));
-    assert!(!live.contains("fn re_entry_allowed"));
+    for hook in [
+        "fn entry_destination",
+        "fn re_entry_allowed",
+        // These would unlock an unsourced 0xF4, the historical Move and in-world RPCs, or a chat
+        // connection, and no other test would notice.
+        "fn server_gate",
+        "fn placement_scripted",
+        "fn readiness_specified",
+        "fn chat_codec_specified",
+    ] {
+        assert!(!live.contains(hook), "the live network overrides {hook}");
+    }
 }
 
 /// §9.3.8, Vector 12: the selection goes to the fixed reserved destination, with the explicit

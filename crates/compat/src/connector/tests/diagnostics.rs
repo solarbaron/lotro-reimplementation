@@ -1261,3 +1261,31 @@ fn a_failed_queue_step_logs_its_class_only() {
     assert!(!logs.contains("0x80004005"), "{logs}");
     assert_no_queue_address(&logs);
 }
+
+/// EV-12: closing the window lets the session go at once. A wait at the exit sees the thread's end:
+/// the session's Disconnect and its connection totals are out by then.
+#[test]
+fn an_exit_waits_for_the_session_it_just_let_go() {
+    let ((), logs) = logs_of(|| {
+        let mut run = start(Service::default(), true);
+        run.wait_event(is_world_list);
+        run.choose(0);
+        let _ = run.wait_sent();
+        let login = Server::new(0x0111, 0xBEEF_0001);
+        login.connect(&run, 0xBEEF_0001, LOGIN_SERVER);
+        let _ = run.wait_sent();
+        let _ = run.session.send(Instant::now(), Command::Disconnect);
+        drop(run);
+        assert!(crate::connector::wait_for_ending_sessions(
+            Duration::from_secs(10)
+        ));
+    });
+    assert!(
+        !lines_with(&logs, "official evidence: connection totals").is_empty(),
+        "{logs}"
+    );
+    assert!(
+        logs.contains("official session closed"),
+        "the thread's own end: {logs}"
+    );
+}

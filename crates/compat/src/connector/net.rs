@@ -71,8 +71,8 @@ pub trait ConnectorNet: Send + std::fmt::Debug + 'static {
     /// A fixture of the tests' synthetic networks for the in-world code: `true` enters the world at
     /// `0x90`, with no gate of §9.3.9's order and no `0xF4` of its own, and may carry the world on
     /// the login connection. It is no statement about the official service: nothing specifies such
-    /// an entry. [`LiveNet`] keeps this default, and nothing in a release graph can answer otherwise
-    /// (`tools/check-release-features.sh`).
+    /// an entry. [`LiveNet`] keeps this default, which a test scans its source for
+    /// (`the_live_network_has_no_destination_and_no_re_entry`).
     fn readiness_specified(&self) -> bool {
         false
     }

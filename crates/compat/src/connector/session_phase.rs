@@ -790,6 +790,46 @@ impl EntryWait {
     }
 }
 
+/// What the first-of-a-kind lines after `0x90` name ([`SessionDriver::note_entry_first`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EntryFirst {
+    Batch,
+    Creation,
+    Position,
+    Placement,
+}
+
+impl EntryFirst {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Batch => "batch",
+            Self::Creation => "creation",
+            Self::Position => "position",
+            Self::Placement => "placement",
+        }
+    }
+}
+
+/// Which of those lines went out for this entry.
+#[derive(Debug, Clone, Copy, Default)]
+struct EntryFirsts {
+    batch: bool,
+    creation: bool,
+    position: bool,
+    placement: bool,
+}
+
+impl EntryFirsts {
+    const fn of(&mut self, what: EntryFirst) -> &mut bool {
+        match what {
+            EntryFirst::Batch => &mut self.batch,
+            EntryFirst::Creation => &mut self.creation,
+            EntryFirst::Position => &mut self.position,
+            EntryFirst::Placement => &mut self.placement,
+        }
+    }
+}
+
 /// How far a world entry got, for the log lines: flags and counts, no value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EntryProgress {
@@ -1081,6 +1121,8 @@ pub struct SessionDriver<N: ConnectorNet> {
     returned_from_world: bool,
     /// How far the world entry got (§9.3.9), for its log lines.
     entry_progress: EntryProgress,
+    /// Which first-of-a-kind lines of this entry went out ([`Self::note_entry_first`]).
+    entry_firsts: EntryFirsts,
     /// What the world connection sent before `WorldEntered` (§9.3.9).
     pending: PendingWorld,
     /// The exact placement of the local player last given to the client.
@@ -1127,6 +1169,12 @@ pub struct SessionDriver<N: ConnectorNet> {
     refused_log: LogLimit,
     unknown_log: LogLimit,
     send_log: LogLimit,
+    /// A complete message refused: its lines are on the evidence target and a server could send
+    /// them for as long as a session stays open (`docs/DEVELOPMENT.md` "Reading a live official
+    /// run").
+    message_log: LogLimit,
+    /// The time of the message being handled, for [`Self::message_log`].
+    log_clock: f64,
     bind: BindCase,
     local_source: LocalSource,
     /// The first local IPv4 address (the Case B seed, §3.2), for the chat transport too.
@@ -1361,6 +1409,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             server_gate: net.server_gate(),
             returned_from_world: false,
             entry_progress: EntryProgress::default(),
+            entry_firsts: EntryFirsts::default(),
             pending: PendingWorld::default(),
             placement: None,
             local_ready: false,
@@ -1393,6 +1442,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             refused_log: LogLimit::default(),
             unknown_log: LogLimit::default(),
             send_log: LogLimit::default(),
+            message_log: LogLimit::default(),
+            log_clock: now,
             bind,
             local_source,
             first_local,
@@ -1887,7 +1938,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 l.close_dump(why);
                 l.close_quietly();
             } else if let Some(c) = l.mux.connection_mut(l.conn) {
-                let _ = c.queue_standalone_disconnect();
+                let _ = c.queue_standalone_disconnect(now);
             }
         }
         self.flush(now);
@@ -2266,6 +2317,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     self.counters.refused_datagrams += 1;
                     if let Some(skipped) = self.refused_log.allow(now) {
                         tracing::debug!(
+                            target: EVIDENCE_TARGET,
                             kind = %error_kind(&e),
                             skipped,
                             "official session: datagram refused"
@@ -2391,7 +2443,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     }
                     Err(e) => {
                         self.counters.decode_errors += 1;
-                        tracing::debug!(kind = %error_kind(&e), "official session: message refused");
+                        if let Some(skipped) = self.message_log.allow(now) {
+                            tracing::debug!(
+                                target: EVIDENCE_TARGET,
+                                kind = %error_kind(&e),
+                                skipped,
+                                "official session: message refused"
+                            );
+                        }
                         if !stop() {
                             self.envelope_refused(&blob, world, now);
                         }
@@ -2577,6 +2636,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     fn message(&mut self, m: &Inbound, now: f64) {
+        self.log_clock = now;
         let (opcode, recipient, body, world) = (m.opcode, m.recipient, m.body.as_slice(), m.world);
         if (OPCODE_CLIENT_VERSION..=OPCODE_LOGIN_QUEUE_STATUS).contains(&opcode) {
             match ControlMessage::decode(opcode, body) {
@@ -2586,11 +2646,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     self.counters.decode_errors += 1;
                     self.counters.malformed_control =
                         self.counters.malformed_control.saturating_add(1);
-                    tracing::debug!(
-                        opcode,
-                        kind = %error_kind(&e),
-                        "official session: control message refused"
-                    );
+                    if let Some(skipped) = self.message_log.allow(now) {
+                        tracing::debug!(
+                            target: EVIDENCE_TARGET,
+                            opcode = format_args!("{opcode:#x}"),
+                            kind = %error_kind(&e),
+                            skipped,
+                            "official session: control message refused"
+                        );
+                    }
                 }
             }
             return;
@@ -2932,6 +2996,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 // debug log.
                 LogonOutcome::Refused(code) => {
                     tracing::debug!(
+                        target: EVIDENCE_TARGET,
                         logon_result = format_args!("{code:#010x}"),
                         "official session: the service refused the logon"
                     );
@@ -2939,6 +3004,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
                 LogonOutcome::Unknown(code) => {
                     tracing::debug!(
+                        target: EVIDENCE_TARGET,
                         logon_result = format_args!("{code:#010x}"),
                         "official session: logon result with no meaning in the spec"
                     );
@@ -3091,7 +3157,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
         );
         match code {
             Some(code) if waiting && !m.world => {
-                tracing::debug!(code, "official session: character operation refused");
+                tracing::debug!(
+                    target: EVIDENCE_TARGET,
+                    code,
+                    "official session: character operation refused"
+                );
                 self.fail_entry();
             }
             _ => {
@@ -3235,6 +3305,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 Ok(c) => {
                     let stored = self.pending.create(c.entity_id, data);
                     self.entry_progress.creations += u64::from(stored == Stored::Kept);
+                    self.note_entry_first(EntryFirst::Creation, stored, depth, now);
                     stored
                 }
                 Err(_) => return self.pending_unread(),
@@ -3283,6 +3354,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     }
                     let stored = self.pending.position(u.entity_id, data, at);
                     self.entry_progress.positions += u64::from(stored == Stored::Kept);
+                    self.note_entry_first(EntryFirst::Position, stored, depth, now);
                     if stored == Stored::Kept
                         && let Some((l, h)) = self.exact_placement(u.entity_id, at)
                     {
@@ -3302,6 +3374,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                         }
                         let stored = self.pending.sync(target, data, at);
                         self.entry_progress.placements += u64::from(stored == Stored::Kept);
+                        self.note_entry_first(EntryFirst::Placement, stored, depth, now);
                         if stored == Stored::Kept
                             && let Some((l, h)) = self.exact_placement(target, at)
                         {
@@ -3370,6 +3443,32 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
+    /// The first batch, creation, position and placement after the valid `0x90`: one line each, with
+    /// the milliseconds since that `0x90`, so the order of these lines is the order of the events
+    /// (`docs/m8-remediation.md` §27 "Builder"; the counts lines give neither). A placement here is a
+    /// `0xCC` that read, kept or not: nothing says whose it is (OPEN-WORLD-9). No ID and no value.
+    fn note_entry_first(&mut self, what: EntryFirst, stored: Stored, depth: usize, now: f64) {
+        let Stage::Entering {
+            wait: EntryWait::Readiness,
+            since,
+            ..
+        } = &self.stage
+        else {
+            return;
+        };
+        if std::mem::replace(self.entry_firsts.of(what), true) {
+            return;
+        }
+        tracing::info!(
+            target: EVIDENCE_TARGET,
+            first = what.label(),
+            since_session_start_ms = ((now - *since).max(0.0) * 1000.0) as u64,
+            in_batch = depth > 0,
+            kept = stored == Stored::Kept,
+            "official evidence: first after the session start"
+        );
+    }
+
     /// A checked message that did not read: counted, nothing kept (§9.3.9).
     fn pending_unread(&mut self) {
         self.entry_progress.unread = self.entry_progress.unread.saturating_add(1);
@@ -3386,6 +3485,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return self.pending_unread();
         };
         self.entry_progress.batches = self.entry_progress.batches.saturating_add(1);
+        self.note_entry_first(EntryFirst::Batch, Stored::Kept, depth, now);
         let pairs = pair_initial_properties(&batch.frames);
         for (i, frame) in batch.frames.iter().enumerate() {
             let SubEventFrame::Event {
@@ -3454,7 +3554,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let Some(reason) = reason else {
             return self.refusal_unread(now);
         };
-        tracing::debug!(reason, "official session: the server ended the session");
+        tracing::debug!(
+            target: EVIDENCE_TARGET,
+            reason,
+            "official session: the server ended the session"
+        );
         self.end_by_table(
             TableRow::ServerRefused,
             false,
@@ -3595,10 +3699,25 @@ impl<N: ConnectorNet> SessionDriver<N> {
         };
         if let Err(e) = decoded {
             self.counters.decode_errors += 1;
-            tracing::debug!(opcode, error = %e, "official world: entity message refused");
+            self.log_message_refused(opcode, &e, "entity");
         }
         self.feed_output(out);
         outcome
+    }
+
+    /// One bounded line for a complete message that did not decode: its opcode and the kind of error,
+    /// never a value of it.
+    fn log_message_refused(&mut self, opcode: u32, error: &impl std::fmt::Debug, what: &str) {
+        if let Some(skipped) = self.message_log.allow(self.log_clock) {
+            tracing::debug!(
+                target: EVIDENCE_TARGET,
+                what,
+                opcode = format_args!("{opcode:#x}"),
+                kind = %error_kind(error),
+                skipped,
+                "official session: message refused"
+            );
+        }
     }
 
     /// A batch `0x0D` or `0x4C` (`official-messages-world.md` §5.1): its sub-events in
@@ -3617,7 +3736,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             Ok(b) => b,
             Err(e) => {
                 self.counters.decode_errors += 1;
-                tracing::debug!(opcode, error = %e, "official world: batch refused");
+                self.log_message_refused(opcode, &e, "batch");
                 return;
             }
         };
@@ -3698,7 +3817,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }
             Err(e) => {
                 self.counters.decode_errors += 1;
-                tracing::debug!(opcode, error = %e, "official session: play message refused");
+                self.log_message_refused(opcode, &e, "play");
                 return;
             }
         };
@@ -4211,6 +4330,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 self.local_ready = false;
                 self.server_ready = false;
                 self.entry_progress = EntryProgress::default();
+                self.entry_firsts = EntryFirsts::default();
                 self.placed_at = None;
                 self.loaded_at = None;
                 tracing::info!("official session: character selected; waiting for the referral");

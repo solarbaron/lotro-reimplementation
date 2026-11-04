@@ -539,8 +539,9 @@ impl HandshakeReport {
         self.counts.challenges > 0 || self.link.challenge_in_rejected > 0
     }
 
-    /// Logs the start line (`info`, module docs) with the connection's `netVersion`
-    /// (`None`: a `ReferralAuthHeader`, which carries none).
+    /// Logs the start line (`info`, module docs) with whether the connection has a `netVersion`
+    /// (`None`: a `ReferralAuthHeader`, which carries none). Never its text: that holds the
+    /// install's identifier (`official-session.md` §9.3.9 "Evidence for transport producers").
     pub fn log_start(&self, net_version: Option<&str>) {
         tracing::info!(
             world = self.world,
@@ -549,7 +550,11 @@ impl HandshakeReport {
             remote = self.remote.label(),
             remote_name = self.remote_name.label(),
             auth = self.auth.label(),
-            net_version = net_version.unwrap_or("none"),
+            net_version = if net_version.is_some() {
+                "present"
+            } else {
+                "none"
+            },
             "official session: handshake started"
         );
     }

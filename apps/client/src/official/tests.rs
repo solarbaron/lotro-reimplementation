@@ -4801,3 +4801,25 @@ fn a_login_notice_is_a_line_and_nothing_else() {
     assert_eq!(format!("{:?}", p.screen()), before);
     assert!(p.end().is_none());
 }
+
+/// `docs/DEVELOPMENT.md` "Reading a live official run": the client logs to standard output, so the
+/// command redirects that (a redirect of standard error alone leaves the file empty), with the filter
+/// whose lines are bounded, and one grep takes all the lines the section tells the owner to paste.
+#[test]
+fn the_documented_log_command_redirects_what_the_client_writes_to() {
+    let doc = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/DEVELOPMENT.md");
+    let text = std::fs::read_to_string(doc).expect("docs/DEVELOPMENT.md");
+    let (_, rest) = text
+        .split_once("### Reading a live official run")
+        .expect("the section");
+    let section = rest.split("\n### ").next().unwrap_or_default();
+    for needle in [
+        "RUST_LOG=info,official_evidence=debug cargo run --release -p tessera-client -- --official",
+        "> official-run.log 2>&1",
+        "grep -E 'official_evidence|official session:|official world entry:|official login:' \
+         official-run.log",
+    ] {
+        assert!(section.contains(needle), "{needle} not in:\n{section}");
+    }
+    assert!(!section.contains(" 2> official-run.log"), "{section}");
+}

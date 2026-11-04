@@ -1,0 +1,409 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! The evidence log of one connection (`docs/DEVELOPMENT.md` "Reading a live official run",
+//! `docs/specs/official-session.md` §9.3.9 "Evidence for transport producers"): every kind of packet
+//! has its line, the budgets are apart so Acks cannot use up what carries an opcode, and what came
+//! before a close survives. Every byte here is synthetic.
+
+use std::io::Write;
+use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::{Arc, Mutex, PoisonError};
+
+use tessera_compat::session::{
+    AuthConnection, CodecUuids, ConnectChallengeHeader, DatagramHeader, EVIDENCE_TARGET,
+    IsaacCipher, MAX_EVIDENCE_CONTROL_LINES, MAX_EVIDENCE_LINES_PER_CONNECTION,
+    MAX_EVIDENCE_SEND_LINES, MAX_EVIDENCE_TAIL_LINES, OptionalHeaders, SessionAuthHeader,
+    SessionConnection, WireCodecs, encode_datagram, guid_fields_swapped,
+};
+
+const PEER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 90), 9000);
+const SEED: u32 = 0xBEEF_0090;
+const ASSIGNED: u16 = 0x0111;
+const UUIDS: CodecUuids = CodecUuids {
+    incoming: [0x21; 16],
+    outgoing: [0x12; 16],
+};
+
+#[derive(Clone, Default)]
+struct Buf(Arc<Mutex<Vec<u8>>>);
+
+impl Write for Buf {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend_from_slice(b);
+        Ok(b.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The evidence lines `f` logs on this thread.
+fn evidence_of(f: impl FnOnce()) -> Vec<String> {
+    let buf = Buf::default();
+    let out = buf.clone();
+    let sub = tracing_subscriber::fmt()
+        .with_writer(move || out.clone())
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .without_time()
+        .finish();
+    // A second subscriber turns off `tracing`'s one-subscriber shortcut, as in the connector's tests.
+    let _second = tracing::Dispatch::new(tracing_subscriber::fmt().finish());
+    tracing::subscriber::with_default(sub, || {
+        tracing::callsite::rebuild_interest_cache();
+        f();
+    });
+    let bytes = buf.0.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .filter(|l| l.contains(EVIDENCE_TARGET))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn lines_of<'a>(lines: &'a [String], needle: &str) -> Vec<&'a String> {
+    lines.iter().filter(|l| l.contains(needle)).collect()
+}
+
+/// A connection with its evidence on, its auth sent.
+fn started() -> SessionConnection {
+    let mut conn = SessionConnection::new(PEER, 0.0);
+    conn.enable_evidence("login", 0.0);
+    conn.set_codec_uuids(UUIDS);
+    let auth = SessionAuthHeader::for_connection(
+        AuthConnection::Primary,
+        "netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10",
+        "A",
+        None,
+        None,
+        0,
+    )
+    .expect("auth");
+    conn.start_login(auth, 0.0).expect("login");
+    conn
+}
+
+fn challenge() -> Vec<u8> {
+    encode_datagram(
+        DatagramHeader {
+            rec_id: ASSIGNED,
+            peer_word: 0x3344,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders {
+            connect_challenge: Some(ConnectChallengeHeader {
+                clock_candidate: 1.0,
+                cookie: [1, 2, 3, 4, 5, 6, 7, 8],
+                reserved_16: [0, 0],
+                outgoing_rec_id: 0x0222,
+                incoming_seed: SEED,
+                outgoing_seed: 0xCAFE_1234,
+                incoming_codec_guid: guid_fields_swapped(UUIDS.incoming),
+            }),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .expect("challenge")
+}
+
+/// The server's side of a connection in State 5.
+struct Server {
+    isaac: IsaacCipher,
+    seq: u32,
+}
+
+impl Server {
+    fn packet(&mut self, opt: &OptionalHeaders) -> Vec<u8> {
+        self.seq += 1;
+        encode_datagram(
+            DatagramHeader {
+                rec_id: ASSIGNED,
+                seq_num: self.seq,
+                ..DatagramHeader::default()
+            },
+            opt,
+            &[],
+            Some(self.isaac.next_mask()),
+            None,
+        )
+        .expect("packet")
+    }
+}
+
+fn connected() -> (SessionConnection, Server) {
+    let mut conn = started();
+    conn.receive_datagram(&challenge(), PEER, 0.1, WireCodecs::NONE)
+        .expect("challenge");
+    let mut server = Server {
+        isaac: IsaacCipher::from_seed(SEED),
+        seq: 1,
+    };
+    conn.receive_datagram(
+        &server.packet(&OptionalHeaders::default()),
+        PEER,
+        0.2,
+        WireCodecs::NONE,
+    )
+    .expect("first packet");
+    while conn.pop_outbound_datagram().is_some() {}
+    (conn, server)
+}
+
+/// EV-5, EV-ACCEPT-WORD: the handshake's packets have lines with their sequence and word, the first
+/// accept shows the word's one step from 0 to 1, and the totals count them. No ticket and no cookie.
+#[test]
+fn the_handshake_packets_have_their_lines() {
+    let lines = evidence_of(|| {
+        let mut conn = started();
+        conn.tick(2.5).expect("the auth again");
+        conn.receive_datagram(&challenge(), PEER, 3.0, WireCodecs::NONE)
+            .expect("challenge");
+        conn.tick(3.7).expect("the accept again");
+        conn.receive_datagram(&challenge(), PEER, 3.8, WireCodecs::NONE)
+            .expect("the same challenge");
+    });
+    let of = |kind: &str| lines_of(&lines, &format!("kind=\"{kind}\""));
+    assert_eq!(of("auth").len(), 1, "{lines:#?}");
+    assert_eq!(of("auth-resend").len(), 1, "{lines:#?}");
+    assert_eq!(of("accept").len(), 1, "{lines:#?}");
+    assert_eq!(of("accept-resend").len(), 2, "{lines:#?}");
+    for line in [of("auth")[0], of("auth-resend")[0]] {
+        assert!(line.contains("seq=0 "), "{line}");
+        assert!(line.contains("word_before=0 word_after=0"), "{line}");
+        assert!(
+            line.contains("word_input=\"handshake-unchanged\""),
+            "{line}"
+        );
+    }
+    let accept = of("accept")[0];
+    assert!(accept.contains("word_before=0 word_after=1"), "{accept}");
+    assert!(accept.contains("word_input=\"accept-initial\""), "{accept}");
+    let again = of("accept-resend")[0];
+    assert!(again.contains("word_before=1 word_after=1"), "{again}");
+    let totals = lines_of(&lines, "connection totals");
+    assert_eq!(totals.len(), 1, "{lines:#?}");
+    assert!(totals[0].contains("handshakes=2"), "{}", totals[0]);
+    assert!(totals[0].contains("handshake_resends=3"), "{}", totals[0]);
+}
+
+/// EV-DISCONNECT-MISSING: all three roads of a Disconnect have a line, with the copied sequence and
+/// the unchanged word (§9.3.9 "Standalone control allocation").
+#[test]
+fn every_disconnect_has_its_line() {
+    let lines = evidence_of(|| {
+        let (mut conn, _) = connected();
+        conn.queue_standalone_disconnect(1.0).expect("standalone");
+    });
+    let standalone = lines_of(&lines, "kind=\"disconnect\"");
+    assert_eq!(standalone.len(), 1, "{lines:#?}");
+    assert!(standalone[0].contains("word_input=\"control-unchanged\""));
+    assert!(standalone[0].contains("seq=1 "), "{}", standalone[0]);
+
+    let lines = evidence_of(|| {
+        let (mut conn, _) = connected();
+        conn.request_disconnect(1.0);
+        conn.tick(1.1).expect("the first");
+        conn.tick(2.2).expect("the second");
+        conn.tick(3.3).expect("the third");
+    });
+    assert_eq!(
+        lines_of(&lines, "kind=\"disconnect\"").len(),
+        1,
+        "{lines:#?}"
+    );
+    assert_eq!(
+        lines_of(&lines, "kind=\"disconnect-resend\"").len(),
+        2,
+        "{lines:#?}"
+    );
+    let totals = lines_of(&lines, "connection totals");
+    assert!(totals[0].contains("disconnects=3"), "{}", totals[0]);
+}
+
+/// EV-6: a line that does not report shows what the accumulator holds, so the field says when it is
+/// reset; a resend's saved report has its own label and leaves the accumulator alone.
+#[test]
+fn the_accumulator_is_on_every_line() {
+    let lines = evidence_of(|| {
+        let (mut conn, mut server) = connected();
+        // One report goes first, and it empties the accumulator.
+        conn.tick(0.3).expect("the first report");
+        while conn.pop_outbound_datagram().is_some() {}
+        // Sequence 3 asked for, and never sent: an out-of-order Ack with bytes held.
+        let nak = OptionalHeaders {
+            sequence_nak: Some(vec![9_000]),
+            ..OptionalHeaders::default()
+        };
+        let packet = server.packet(&nak);
+        let held = packet.len();
+        conn.receive_datagram(&packet, PEER, 0.4, WireCodecs::NONE)
+            .expect("the NAK");
+        conn.tick(0.5).expect("the flush");
+        assert!(held > 0);
+    });
+    let ooa = lines_of(&lines, "kind=\"out-of-order-ack\"");
+    assert_eq!(ooa.len(), 1, "{lines:#?}");
+    assert!(!ooa[0].contains("flow_accumulated=0 "), "{}", ooa[0]);
+    assert!(ooa[0].contains("flow_event=\"none\""), "{}", ooa[0]);
+    let held = ooa[0]
+        .split("flow_accumulated=")
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .expect("the field")
+        .to_owned();
+    let report = lines
+        .iter()
+        .find(|l| {
+            l.contains("flow_event=\"report-unreported\"")
+                && l.contains(&format!("flow_reported_bytes={held} "))
+                && l.contains(&format!("flow_accumulated={held} "))
+        })
+        .unwrap_or_else(|| panic!("the report of those bytes: {lines:#?}"));
+    assert!(report.contains("kind=\"new\""), "{report}");
+
+    // A resend's report is the saved one.
+    let lines = evidence_of(|| {
+        let (mut conn, mut server) = connected();
+        conn.tick(0.3).expect("the first report");
+        // Bytes to report, attached to the next reliable blob.
+        conn.receive_datagram(
+            &server.packet(&OptionalHeaders::default()),
+            PEER,
+            0.4,
+            WireCodecs::NONE,
+        )
+        .expect("bytes");
+        let seqs = conn.send_blob(2, 0, 0x6F, &[0], 0.5, None).expect("a blob");
+        while conn.pop_outbound_datagram().is_some() {}
+        let nak = OptionalHeaders {
+            sequence_nak: Some(seqs),
+            ..OptionalHeaders::default()
+        };
+        conn.receive_datagram(&server.packet(&nak), PEER, 0.6, WireCodecs::NONE)
+            .expect("the NAK");
+    });
+    let resend = lines_of(&lines, "kind=\"resend\"");
+    assert_eq!(resend.len(), 1, "{lines:#?}");
+    assert!(
+        resend[0].contains("flow_event=\"resend-saved-report\""),
+        "{}",
+        resend[0]
+    );
+    assert!(resend[0].contains("word_input=\"resend-saved\""));
+}
+
+/// EV-3: an idle connection's Acks use up their own budget only: the message after them has its line,
+/// and the end of the run is there.
+#[test]
+fn acks_do_not_use_up_the_lines_of_what_carries_an_opcode() {
+    let lines = evidence_of(|| {
+        let (mut conn, mut server) = connected();
+        conn.receive_datagram(
+            &server.packet(&OptionalHeaders::default()),
+            PEER,
+            0.3,
+            WireCodecs::NONE,
+        )
+        .expect("something to acknowledge");
+        let mut t = 1.0;
+        for _ in 0..800 {
+            // Traffic keeps the connection alive; the Acks and reports are what is counted.
+            conn.receive_datagram(
+                &server.packet(&OptionalHeaders::default()),
+                PEER,
+                t,
+                WireCodecs::NONE,
+            )
+            .expect("traffic");
+            conn.tick(t).expect("tick");
+            while conn.pop_outbound_datagram().is_some() {}
+            t += 2.1;
+        }
+        conn.send_blob(2, 0, 0x6F, &[0], t, None).expect("the blob");
+        conn.send_blob(2, 0, 0x6F, &[1], t, None).expect("another");
+    });
+    let controls = lines
+        .iter()
+        .filter(|l| l.contains("kind=\"ack\"") || l.contains("flow_event=\"report-unreported\""))
+        .filter(|l| !l.contains("tail=true"))
+        .count();
+    assert!(
+        controls <= MAX_EVIDENCE_CONTROL_LINES as usize,
+        "{controls}"
+    );
+    let sends = lines_of(&lines, "opcode=0x6f");
+    assert_eq!(sends.len(), 2, "{lines:#?}");
+    assert!(sends[0].contains("first_of_opcode=true"), "{}", sends[0]);
+    assert!(sends[1].contains("first_of_opcode=false"), "{}", sends[1]);
+    assert!(lines.len() <= MAX_EVIDENCE_LINES_PER_CONNECTION);
+}
+
+/// EV-3: past their budget the first of a new opcode still has its line, and the newest of the rest
+/// are written when the connection closes, in order, so what came before the close is there.
+#[test]
+fn the_lines_before_a_close_survive_the_budget() {
+    let total = MAX_EVIDENCE_SEND_LINES as usize + 200;
+    let lines = evidence_of(|| {
+        let (mut conn, mut server) = connected();
+        for i in 0..total {
+            conn.send_blob(2, 0, 0x6F, &[0], 1.0 + i as f64 / 1000.0, None)
+                .expect("a blob");
+        }
+        conn.send_blob(2, 0, 0x7000, &[0], 2.0, None)
+            .expect("a new opcode");
+        conn.send_blob(2, 0, 0x6F, &[0], 2.0, None)
+            .expect("the last");
+        while conn.pop_outbound_datagram().is_some() {}
+        let fatal = OptionalHeaders {
+            disconnect: true,
+            ..OptionalHeaders::default()
+        };
+        conn.receive_datagram(&server.packet(&fatal), PEER, 3.0, WireCodecs::NONE)
+            .expect("the server's goodbye");
+    });
+    assert!(lines.len() <= MAX_EVIDENCE_LINES_PER_CONNECTION);
+    let first_of_new = lines_of(&lines, "opcode=0x7000");
+    assert_eq!(first_of_new.len(), 1, "{lines:#?}");
+    assert!(first_of_new[0].contains("first_of_opcode=true"));
+    let tail = lines_of(&lines, "tail=true");
+    assert_eq!(
+        tail.len(),
+        MAX_EVIDENCE_TAIL_LINES.min(total + 1 - MAX_EVIDENCE_SEND_LINES as usize)
+    );
+    // The sequence of the very last send is in the tail, and the totals come after it.
+    let seq_of = |line: &str| -> u32 {
+        line.split("seq=")
+            .nth(1)
+            .and_then(|r| r.split(' ').next())
+            .and_then(|v| v.parse().ok())
+            .expect("a sequence")
+    };
+    let seqs: Vec<u32> = tail
+        .iter()
+        .filter(|l| l.contains("official evidence: packet"))
+        .map(|l| seq_of(l))
+        .collect();
+    assert!(seqs.windows(2).all(|w| w[0] < w[1]), "{seqs:?}");
+    let highest = lines
+        .iter()
+        .filter(|l| l.contains("official evidence: packet"))
+        .map(|l| seq_of(l))
+        .max();
+    assert_eq!(seqs.last().copied(), highest);
+    let totals_at = lines
+        .iter()
+        .position(|l| l.contains("connection totals"))
+        .expect("the totals");
+    assert!(
+        lines[totals_at..].iter().all(|l| !l.contains("tail=true")),
+        "{lines:#?}"
+    );
+    // The totals are out at the close, and the drop does not repeat them.
+    assert_eq!(lines_of(&lines, "connection totals").len(), 1, "{lines:#?}");
+}

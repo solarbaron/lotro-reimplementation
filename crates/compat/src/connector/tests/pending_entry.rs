@@ -928,6 +928,69 @@ fn a_move_in_the_world_is_held() {
     assert!(d.in_world());
 }
 
+/// The evidence target's lines and the other lines `docs/DEVELOPMENT.md` tells the owner to paste, by
+/// the very pattern it gives.
+fn paste_lines(logs: &str) -> Vec<&str> {
+    logs.lines()
+        .filter(|l| {
+            [
+                "official_evidence",
+                "official session:",
+                "official world entry:",
+                "official login:",
+            ]
+            .iter()
+            .any(|needle| l.contains(needle))
+        })
+        .collect()
+}
+
+/// The lines under the documented `RUST_LOG=info,official_evidence=debug`: anything at `info` or above,
+/// and the evidence target at `debug`.
+fn lines_of_the_documented_filter(logs: &str) -> Vec<&str> {
+    logs.lines()
+        .filter(|l| {
+            let level = l.trim_start();
+            ["ERROR", "WARN", "INFO"]
+                .iter()
+                .any(|w| level.starts_with(w))
+                || (level.starts_with("DEBUG") && level.contains("official_evidence:"))
+        })
+        .collect()
+}
+
+/// No address, port, account, ticket, cookie, name, ID or identifier in any of `lines`, in any form
+/// the fixtures use.
+fn assert_nothing_private(lines: &[&str]) {
+    let peer = |a: SocketAddrV4| [a.ip().to_string(), a.port().to_string()];
+    for line in lines {
+        // These labels of the auth mode and the bind case name no value.
+        let line = &line
+            .replace("ticket text in extraBlob", "")
+            .replace("seed from the routed address", "")
+            .replace("(referral cookie)", "");
+        for private in peer(WORLD_SERVER).into_iter().chain(peer(LOGIN_SERVER)) {
+            assert!(!line.contains(&private), "{private} in {line}");
+        }
+        for private in [
+            "Aldo",
+            "acct",
+            "ticket",
+            "cookie",
+            "seed",
+            "0x100000000000007",
+            "72057594037927943",
+            "1122334455667788",
+            "1234605616436508552",
+            "password",
+            "didver",
+            "netver:",
+        ] {
+            assert!(!line.contains(private), "{private} in {line}");
+        }
+    }
+}
+
 /// `docs/DEVELOPMENT.md` "Reading a live official run", `official-session.md` §9.3.9 "Evidence for
 /// transport producers": a run's evidence lines name their stage, opcode, queue, sequence, local word
 /// and flow counters with times since the stage's start, keep the entry's two gates apart at its
@@ -945,16 +1008,6 @@ fn the_evidence_lines_say_what_ran_and_nothing_private() {
         d.step(7.5, true, &go);
         d.command(&Command::WorldLoaded, 8.0).expect("loaded");
         d.step(8.1, true, &go);
-        world.deliver(
-            server.control(OptionalHeaders {
-                transport_error: Some(crate::session::TransportErrorHeader {
-                    error_code: 0x0001_2345,
-                    error_subcode: 2,
-                }),
-                ..OptionalHeaders::default()
-            }),
-            WORLD_SERVER,
-        );
         d.step(32.5, false, &go);
     });
     let evidence: Vec<&str> = logs
@@ -970,6 +1023,14 @@ fn the_evidence_lines_say_what_ran_and_nothing_private() {
         "official evidence: packet",
         "dir=\"send\"",
         "kind=\"new\"",
+        // The handshake's packets and the one close of a local terminal end, with their words: the
+        // accept is the one step from 0 to 1.
+        "kind=\"auth\"",
+        "kind=\"accept\"",
+        "kind=\"disconnect\"",
+        "word_before=0 word_after=1 word_input=\"accept-initial\"",
+        "word_input=\"handshake-unchanged\"",
+        "word_input=\"control-unchanged\"",
         "opcode=0x6f",
         "queue=2",
         "word_before=",
@@ -995,62 +1056,270 @@ fn the_evidence_lines_say_what_ran_and_nothing_private() {
     ] {
         assert!(all.contains(needle), "{needle} not logged:\n{all}");
     }
-    // Nothing private, in any form the fixtures use.
-    let peer = |a: SocketAddrV4| [a.ip().to_string(), a.port().to_string()];
-    for line in &evidence {
-        for private in peer(WORLD_SERVER).into_iter().chain(peer(LOGIN_SERVER)) {
-            assert!(!line.contains(&private), "{private} in {line}");
-        }
-        for private in [
-            "Aldo",
-            "acct",
-            "ticket",
-            "cookie",
-            "seed",
-            "0x100000000000007",
-            "72057594037927943",
-            "1122334455667788",
-            "1234605616436508552",
-            "password",
-        ] {
-            assert!(!line.contains(private), "{private} in {line}");
-        }
-    }
+    let accept = evidence
+        .iter()
+        .find(|l| l.contains("kind=\"accept\""))
+        .expect("the accept");
+    assert!(accept.contains("seq=0 "), "{accept}");
+    let close = evidence
+        .iter()
+        .find(|l| l.contains("kind=\"disconnect\"") && l.contains("role=\"world\""))
+        .unwrap_or_else(|| panic!("the world's Disconnect:\n{all}"));
+    assert!(
+        close.contains("word_input=\"control-unchanged\""),
+        "{close}"
+    );
+    assert_nothing_private(&paste_lines(&logs));
     // Bounded per connection, and a connection's totals are there when it goes.
     assert!(evidence.len() < 2000, "{}", evidence.len());
 }
 
-/// The bounds of the evidence log: a chatty connection stays within them, however long it talks, and
-/// its totals say how much was not shown.
+/// The server's close: its codes are in the lines of the documented command, with no address, and the
+/// connection's end and totals follow.
 #[test]
-fn the_evidence_lines_are_bounded() {
-    use crate::session::{
-        MAX_EVIDENCE_OPCODES, MAX_EVIDENCE_RECEIVE_LINES, MAX_EVIDENCE_SEND_LINES,
-    };
+fn the_server_close_lines_say_the_code_and_nothing_private() {
+    for (fatal, reason) in [
+        (false, "server transport error"),
+        (true, "server fatal error"),
+    ] {
+        let (_, logs) = super::diagnostics::logs_of(|| {
+            let (world, mut d, mut server) = at_session_start(scripted());
+            world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+            d.step(2.0, true, &go);
+            let error = crate::session::TransportErrorHeader {
+                error_code: 0x0001_2345,
+                error_subcode: 2,
+            };
+            let headers = if fatal {
+                OptionalHeaders {
+                    transport_fatal_error: Some(error),
+                    ..OptionalHeaders::default()
+                }
+            } else {
+                OptionalHeaders {
+                    transport_error: Some(error),
+                    ..OptionalHeaders::default()
+                }
+            };
+            world.deliver(server.control(headers), WORLD_SERVER);
+            d.step(3.0, true, &go);
+            assert!(d.ended());
+        });
+        let filtered = lines_of_the_documented_filter(&logs);
+        let all = filtered.join("\n");
+        for needle in [
+            "transport error from server",
+            "error_code=0x00012345",
+            "error_subcode=0x00000002",
+            "official evidence: connection closed",
+            "official evidence: connection totals",
+            reason,
+        ] {
+            assert!(all.contains(needle), "{needle} not logged:\n{all}");
+        }
+        let code_at = paste_lines(&logs)
+            .iter()
+            .position(|l| l.contains("error_code=0x00012345"))
+            .unwrap_or_else(|| panic!("the code is not in the paste:\n{logs}"));
+        let closed_at = paste_lines(&logs)
+            .iter()
+            .position(|l| l.contains("official evidence: connection closed"))
+            .expect("closed");
+        assert!(code_at < closed_at, "{logs}");
+        assert_nothing_private(&paste_lines(&logs));
+    }
+}
+
+/// `docs/m8-remediation.md` §27 "Builder": the first batch, creation, position and placement after
+/// `0x90` have a line each, once, in the order they came, with the time since that `0x90`, and no ID.
+#[test]
+fn the_first_of_each_kind_after_the_session_start_is_logged_in_order() {
+    let (_, logs) = super::diagnostics::logs_of(|| {
+        let (world, mut d, mut server) = at_session_start_with_schema();
+        // Not after the `0x90` yet: no line for this one.
+        world.deliver(
+            server.on_queue(3, 1, 0, Some(PLAYER), 0xCE, &checked_message(0xCE)),
+            WORLD_SERVER,
+        );
+        d.step(1.5, true, &go);
+        world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+        d.step(2.0, true, &go);
+        let batch = crate::world::SubEventBatch {
+            event_id: crate::world::SubEventBatch::EVENT_ID_SUB_EVENT,
+            frames: vec![
+                crate::world::SubEventFrame::Event {
+                    sub_event_id: 0x98,
+                    payload: checked_message(0x98),
+                },
+                crate::world::SubEventFrame::Event {
+                    sub_event_id: 0xCE,
+                    payload: checked_message(0xCE),
+                },
+            ],
+            entry_batch_tail_flag: None,
+        }
+        .to_bytes()
+        .expect("batch");
+        world.deliver(server.on_queue(2, 2, 2, None, 0x4C, &batch), WORLD_SERVER);
+        d.step(2.25, true, &go);
+        // Seconds later, and whose it is has no source: it has its line all the same.
+        world.deliver(
+            server.on_queue(3, 2, 0, None, 0xCC, &checked_message(0xCC)),
+            WORLD_SERVER,
+        );
+        d.step(3.5, true, &go);
+        // The second of each kind has none.
+        world.deliver(
+            server.on_queue(3, 3, 0, Some(PLAYER), 0xCC, &checked_message(0xCC)),
+            WORLD_SERVER,
+        );
+        world.deliver(server.on_queue(2, 3, 3, None, 0x4C, &batch), WORLD_SERVER);
+        d.step(4.0, true, &go);
+    });
+    let firsts: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("official evidence: first after the session start"))
+        .collect();
+    let order: Vec<&str> = firsts
+        .iter()
+        .map(|l| {
+            ["batch", "creation", "position", "placement"]
+                .into_iter()
+                .find(|w| l.contains(&format!("first=\"{w}\"")))
+                .unwrap_or_else(|| panic!("{l}"))
+        })
+        .collect();
+    assert_eq!(
+        order,
+        ["batch", "creation", "position", "placement"],
+        "{logs}"
+    );
+    assert!(firsts[0].contains("since_session_start_ms=250"), "{logs}");
+    assert!(firsts[1].contains("in_batch=true"), "{logs}");
+    assert!(firsts[3].contains("since_session_start_ms=1500"), "{logs}");
+    assert!(firsts[3].contains("in_batch=false"), "{logs}");
+    assert_nothing_private(&firsts);
+}
+
+/// The bounds of the evidence log: a chatty connection stays within them, however long it talks, and
+/// what came just before its end is there. `tail=true` lines hold the last of it.
+#[test]
+fn the_evidence_lines_are_bounded_and_keep_the_end() {
+    use crate::session::MAX_EVIDENCE_LINES_PER_CONNECTION;
     let (_, logs) = super::diagnostics::logs_of(|| {
         let (world, mut d, mut server) = at_session_start(production());
         let mut t = 1.5;
-        for i in 0..1200u32 {
-            world.deliver(server.event(0x4000 + (i % 400), &[0x00]), WORLD_SERVER);
+        for i in 0..2000u32 {
+            world.deliver(server.event(0x4000 + (i % 100), &[0x00]), WORLD_SERVER);
             d.step(t, true, &go);
             t += 0.001;
         }
+        // One opcode more, long past the budget of the receive lines.
+        world.deliver(server.event(0x5555, &[0x00]), WORLD_SERVER);
+        d.step(t, true, &go);
+        d.begin_shutdown(t + 0.1);
     });
-    let world_lines = logs
+    let world_lines: Vec<&str> = logs
         .lines()
         .filter(|l| l.contains(crate::session::EVIDENCE_TARGET) && l.contains("role=\"world\""))
-        .count();
-    let most =
-        (MAX_EVIDENCE_SEND_LINES + MAX_EVIDENCE_RECEIVE_LINES) as usize + MAX_EVIDENCE_OPCODES + 8;
-    assert!(world_lines <= most, "{world_lines} of at most {most}");
-    let totals = logs
-        .lines()
-        .find(|l| {
-            l.contains("official evidence: connection totals") && l.contains("role=\"world\"")
-        })
+        .collect();
+    assert!(
+        world_lines.len() <= MAX_EVIDENCE_LINES_PER_CONNECTION,
+        "{} of at most {MAX_EVIDENCE_LINES_PER_CONNECTION}",
+        world_lines.len()
+    );
+    let totals = world_lines
+        .iter()
+        .find(|l| l.contains("official evidence: connection totals"))
         .unwrap_or_else(|| panic!("no totals:\n{logs}"));
     assert!(totals.contains("datagrams="), "{totals}");
+    assert!(totals.contains("disconnects=1"), "{totals}");
     assert!(!totals.contains("lines_not_shown=0"), "{totals}");
+    assert!(
+        world_lines
+            .iter()
+            .any(|l| l.contains("opcode=0x5555") && l.contains("first_of_opcode=true")),
+        "the new opcode:\n{logs}"
+    );
+    let tail: Vec<&&str> = world_lines
+        .iter()
+        .filter(|l| l.contains("tail=true"))
+        .collect();
+    assert!(!tail.is_empty(), "{logs}");
+    assert!(tail.len() <= crate::session::MAX_EVIDENCE_TAIL_LINES);
+    // The goodbye has its own budget, so it is no tail line, and it is the last send before the end.
+    assert!(
+        world_lines
+            .iter()
+            .any(|l| l.contains("kind=\"disconnect\"") && l.contains("tail=false")),
+        "{logs}"
+    );
+}
+
+/// EV-8: whatever a hostile or broken server sends, the lines of the documented command stay bounded:
+/// nothing at `info` and nothing on the evidence target grows with the messages.
+#[test]
+fn a_hostile_run_stays_within_the_documented_filter_bound() {
+    use crate::session::MAX_EVIDENCE_LINES_PER_CONNECTION;
+    let run = |rounds: u32| {
+        super::diagnostics::logs_of(|| {
+            let (world, mut d, mut server) = at_session_start(gated());
+            world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+            world.deliver(
+                server.event(0xCE, &service_support::player_position()),
+                WORLD_SERVER,
+            );
+            d.step(2.0, true, &go);
+            d.command(&Command::WorldLoaded, 2.1).expect("loaded");
+            world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+            d.step(2.2, true, &go);
+            assert!(d.in_world());
+            let mut t = 2.3;
+            for i in 0..rounds {
+                let hostile = [
+                    // An envelope that does not decode, and bodies of each kind that do not read.
+                    server.blob(0x4000 + (i % 7), &[0x80, 0, 0, 0]),
+                    server.blob(crate::session::OPCODE_LOGIN_QUEUE_STATUS, &[0x00]),
+                    server.event_to(0x40, PLAYER, &[1]),
+                    server.event_to(0x98, PLAYER, &[1, 2, 3]),
+                    server.event(0x4C, &[0xFF, 0xFF]),
+                    server.event(0x0D, &[0xFF, 0xFF]),
+                    server.event(0xCE, &[0x00, 0x01]),
+                ];
+                for datagram in hostile {
+                    world.deliver(datagram, WORLD_SERVER);
+                }
+                // A datagram that does not qualify at all.
+                world.deliver(vec![0, 0, 1, 2, 3], WORLD_SERVER);
+                d.step(t, true, &go);
+                t += 0.01;
+                let _ = world.take_sent();
+                let _ = d.take_events();
+                assert!(d.in_world());
+            }
+        })
+        .1
+    };
+    let short = run(200);
+    let long = run(1200);
+    let lines = lines_of_the_documented_filter(&long);
+    // Two connections' evidence and what a session writes once, no more.
+    let bound = 2 * MAX_EVIDENCE_LINES_PER_CONNECTION + 64;
+    assert!(lines.len() <= bound, "{} of at most {bound}", lines.len());
+    // The lines of one refused message are limited in time, not in number of messages.
+    let refused = |logs: &str| {
+        logs.lines()
+            .filter(|l| l.contains("official session: message refused"))
+            .count()
+    };
+    let (few, many) = (refused(&short), refused(&long));
+    assert!((1..=4).contains(&few), "{few}");
+    assert!(many <= few + 2, "{many} against {few}");
+    assert!(
+        long.lines()
+            .any(|l| l.contains("official session: message refused") && l.contains("skipped=")),
+        "{long}"
+    );
 }
 
 /// The user's close while a placement is pending: exactly one Disconnect, a local close at once,

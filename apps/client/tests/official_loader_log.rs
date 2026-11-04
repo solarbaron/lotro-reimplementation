@@ -185,8 +185,21 @@ fn run_plugin(plugins: &mut Plugins) {
     plugins.shutdown();
 }
 
+/// Whether this file system kept both of [`plugin_tree`]'s twins. On a case-insensitive one (the
+/// usual macOS and Windows volumes) the second write replaced the first, so one directory cannot
+/// hold two entries that one import cannot tell apart and that line cannot be reached.
+fn twins_exist(dir: &Path) -> bool {
+    let names: Vec<_> = std::fs::read_dir(dir.join("Test").join("Good"))
+        .expect("listed")
+        .map(|entry| entry.expect("an entry").file_name())
+        .collect();
+    ["Twin.lua", "TWIN.lua"]
+        .iter()
+        .all(|twin| names.iter().any(|name| name == twin))
+}
+
 /// The lines [`run_plugin`] reaches, with the file names an official run may show.
-fn assert_lines_reached(logs: &str) {
+fn assert_lines_reached(logs: &str, twins: bool) {
     for line in [
         "plugins discovered",
         "plugin available",
@@ -194,14 +207,21 @@ fn assert_lines_reached(logs: &str) {
         "Good.plugin",
         "Broken.plugin",
         "Same.plugin",
-        "several entries match",
-        "plugin data unreadable",
         "plugin data write failed",
+        // Under a plain file Windows answers "path not found", which is plain missing data there:
+        // `plugin_data_at_a_folder_is_unreadable_everywhere` reaches this line on every platform.
+        #[cfg(unix)]
+        "plugin data unreadable",
         #[cfg(unix)]
         "plugin path escapes",
     ] {
         assert!(logs.contains(line), "{line} not logged:\n{logs}");
     }
+    assert_eq!(
+        logs.contains("several entries match"),
+        twins,
+        "the twins' line:\n{logs}"
+    );
 }
 
 #[test]
@@ -214,12 +234,13 @@ fn the_official_plugin_host_logs_no_directory() {
     let data = dir.join("data-root-is-a-file");
     std::fs::write(&data, b"x").expect("written");
 
+    let twins = twins_exist(&dir);
     let mut plugins = Plugins::start_without_paths(&dir, data, &["Good".to_owned()]);
     assert!(!plugins.manager().names_paths());
     run_plugin(&mut plugins);
 
     let logs = logs();
-    assert_lines_reached(&logs);
+    assert_lines_reached(&logs, twins);
     assert!(!logs.contains(MARKER), "a directory:\n{logs}");
     assert!(!logs.contains("data-root-is-a-file"), "{logs}");
 }
@@ -262,16 +283,18 @@ fn any_other_plugin_host_names_its_directory() {
     let data = dir.join("data-root-is-a-file");
     std::fs::write(&data, b"x").expect("written");
 
+    let twins = twins_exist(&dir);
     let mut plugins = Plugins::start(&dir, data, &["Good".to_owned()]);
     assert!(plugins.manager().names_paths());
     run_plugin(&mut plugins);
 
     let logs = logs();
-    assert_lines_reached(&logs);
+    assert_lines_reached(&logs, twins);
     let shown = dir.to_string_lossy();
     for line in [
         "plugins discovered",
         "plugin available",
+        #[cfg(unix)]
         "plugin data unreadable",
     ] {
         assert!(
@@ -279,6 +302,49 @@ fn any_other_plugin_host_names_its_directory() {
                 .any(|l| l.contains(line) && l.contains(shown.as_ref())),
             "{line} without the directory:\n{logs}"
         );
+    }
+}
+
+/// A folder where the plugin's data file belongs fails its read and its write on all three
+/// platforms: an official run's lines name no directory, and any other run's still do.
+#[test]
+fn plugin_data_at_a_folder_is_unreadable_everywhere() {
+    let _serial = capture();
+    for hidden in [true, false] {
+        let parent = tempfile::tempdir().expect("a directory");
+        let dir = parent.path().join(MARKER);
+        plugin_tree(&dir);
+        let data = dir.join("plugin-data-root");
+        std::fs::create_dir_all(data.join("local").join("AllServers").join("k.plugindata"))
+            .expect("made");
+
+        let names = ["Good".to_owned()];
+        let mut plugins = if hidden {
+            Plugins::start_without_paths(&dir, data, &names)
+        } else {
+            Plugins::start(&dir, data, &names)
+        };
+        run_plugin(&mut plugins);
+
+        let found = logs();
+        for line in ["plugin data unreadable", "plugin data write failed"] {
+            let named = found
+                .lines()
+                .filter(|l| l.contains(line))
+                .any(|l| l.contains(MARKER));
+            assert!(found.contains(line), "{line} not logged:\n{found}");
+            assert_eq!(named, !hidden, "{line}:\n{found}");
+        }
+        assert_eq!(found.contains("plugin-data-root"), !hidden, "{found}");
+        assert!(found.contains("k.plugindata"), "{found}");
+        if hidden {
+            assert!(!found.contains(MARKER), "a directory:\n{found}");
+        }
+        sink()
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 }
 

@@ -546,7 +546,7 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   (`retiring=true` is the old login connection, which no longer decides the session's end).
 - `official world entry: stopped`: what an entry that stopped withheld (`withheld=`).
 - `official evidence: connection totals`: the counts, once, when a connection closes or when it is let
-  go, and the connection's last line: what reaches it after its close has no line and no count
+  go, and the last of the session layer's lines for that connection: what reaches it after its close has no line and no count
   (`sends`, `resends`, `controls`, `handshakes`, `handshake_resends`, `disconnects`,
   `queued_not_sent`, `datagrams`, `blobs`), with `lines_not_shown` for what passed both the line budget
   and the tail. Closing the window waits up to 2 s for the session's Disconnect and these lines; a

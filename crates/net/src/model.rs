@@ -212,15 +212,29 @@ pub enum DisconnectReason {
     ServerClosed(String),
     /// The connection timed out or the peer stopped responding.
     TimedOut,
-    /// A time limit of this client's own ended the session, with Tessera's text naming the stage
-    /// (`official-session.md` §9.3.8: `TimedOut` with a locally worded deadline), so that it does
-    /// not read as a service that stopped answering.
-    TimedOutLocally(String),
     /// The transport failed (I/O error or protocol violation), with detail.
     TransportFailed(String),
-    /// The session reached a step this client does not support, with Tessera's own text. The
-    /// other side did answer, so this is neither a time-out nor a transport failure.
-    Unsupported(String),
+    /// The session reached a step this client does not support (`official-entry.md` §8.6). A
+    /// Tessera limit, shown in Tessera's fixed words: it carries no text, so a local cause can
+    /// never pose as the service's words; the cause goes to the local log.
+    Unsupported,
+    /// A finite limit of this client's own ended a step (`official-entry.md` §8.6): a stage,
+    /// readiness or sequence-gap deadline. Not the service going silent, which is
+    /// [`Self::TimedOut`]. Carries no text, as [`Self::Unsupported`].
+    UnsupportedTimeout,
+}
+
+/// A real stage of a pending world entry (`official-entry.md` §8.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WorldEntryStage {
+    /// The world server was named: the login connection gave its referral.
+    Referral,
+    /// The handshake with the world server finished.
+    WorldHandshake,
+    /// The world server gave the character's session identity.
+    Identity,
+    /// The character's exact placement is known.
+    Placement,
 }
 
 /// Maximum length in bytes of a chat message accepted by [`Session`](crate::Session).

@@ -397,8 +397,10 @@ fn write_iteration(archive: &AdvertisedArchive, out: &mut Vec<u8>) -> Result<(),
     Ok(())
 }
 
-/// The complete reassembled data of `0xEC` (§9.3.2, §9.3.7): one flags byte `0`, the full language
-/// key, status `1`, the entries in the order of [`advertisement_order`], `M = 0` and the
+/// The complete reassembled data of `0xEC` (§9.3.2, §9.3.7): one flags byte `0`, the full key of the
+/// mounted language (§9.3.2's row and Vectors 10 and 11, not `0xDD`'s word: §9.3.9's sentence on an
+/// "opaque iteration" in the first scalar conflicts with them and is reported, not guessed), status
+/// `1`, the entries in the order of [`advertisement_order`], `M = 0` and the
 /// terminal `0`. The whole size is known before anything is allocated.
 ///
 /// # Errors
@@ -588,12 +590,15 @@ pub enum UnsupportedNegotiation {
     /// A dictionary the handshake names is not the install's (§9.3.8: before establishment).
     #[error("the connection's dictionary is not the install's")]
     Dictionary,
-    /// `0x6D` before the list (§9.3.8: no selection exists).
-    #[error("a selection refusal with no selection")]
-    RefusalWithoutSelection,
-    /// A `0x6D` or `0xB3` body that cannot be read (§9.3.8).
+    /// A `0xB3` before the list that is not structurally valid (§9.3.9).
     #[error("a refusal that cannot be read")]
     MalformedRefusal,
+    /// `0x12D` with a status §9.3 does not define, before the list (§9.3.9).
+    #[error("a version status with no meaning in the spec")]
+    UnknownVersionStatus,
+    /// `0x130` with a result §9.3 does not define, before the list (§9.3.9).
+    #[error("a queue status with no meaning in the spec")]
+    UnknownQueueStatus,
     /// No `0xDD` within [`DD_WAIT_SEC`] of the first State 5.
     #[error("no install request arrived in time")]
     RequestDeadline,
@@ -612,19 +617,16 @@ pub enum UnsupportedNegotiation {
     /// The login queue did not end within [`QUEUE_WAIT_SEC`].
     #[error("the login queue did not end in time")]
     QueueDeadline,
-    /// A sequence gap a checksum-valid packet opened stayed open for its deadline (§9.3.8).
-    #[error("a packet of the server could not be taken in time")]
-    GapDeadline,
     /// `0x6C` did not decode (§9.3.8: no scan and no partial list; no character is invented).
     #[error("the character list cannot be read")]
     ListDecode,
+    /// The first `0x6C` decoded, and a name is unusable, an ID or name repeats or it is over its cap
+    /// (§9.3.9: the whole list fails, with no partial rows).
+    #[error("the character list's names cannot be used")]
+    ListNames,
     /// `0x6C` is compressed or routed (§9.3.8: unsupported, never shifted by a guessed byte).
     #[error("a compressed or routed character list is not supported")]
     ListEnvelope,
-    /// A checksum-valid form the session cannot take: `blobFlags` `0x02` on queues 2–4, or a
-    /// conflicting body or count for one identity (§9.3.8).
-    #[error("a packet of the server has a form Tessera cannot take")]
-    TrafficRefused,
 }
 
 impl UnsupportedNegotiation {
@@ -645,24 +647,26 @@ impl UnsupportedNegotiation {
             Self::LateVersionRequest => "version request after the advertisement",
             Self::CompletionNotSent => "completion not sent",
             Self::Dictionary => "dictionary",
-            Self::RefusalWithoutSelection => "refusal without a selection",
             Self::MalformedRefusal => "malformed refusal",
+            Self::UnknownVersionStatus => "unknown version status",
+            Self::UnknownQueueStatus => "unknown queue status",
             Self::RequestDeadline => "install request deadline",
             Self::CompletionDeadline => "completion deadline",
             Self::ListDeadline => "character list deadline",
             Self::VersionPathDeadline => "version path deadline",
             Self::HistoricalListDeadline => "historical list deadline",
             Self::QueueDeadline => "queue deadline",
-            Self::GapDeadline => "sequence gap deadline",
             Self::ListDecode => "character list decode",
+            Self::ListNames => "character list names",
             Self::ListEnvelope => "character list envelope",
-            Self::TrafficRefused => "unsupported packet form",
         }
     }
 
-    /// Whether this is §9.3.8's deadline row: `LoginRefused { UnsupportedStep }`, then
-    /// `Disconnected { TimedOut }`. Every other result here is its local-unsupported row, with
-    /// `Disconnected { TransportFailed }`.
+    /// Whether this is §9.3.9's deadline row: `LoginRefused { UnsupportedStep }`, then
+    /// `Disconnected { UnsupportedTimeout }`. Every other result here is its required-progress row,
+    /// with `Disconnected { Unsupported }`. Both show Tessera's fixed words (`official-entry.md`
+    /// §8.6); the cause is the log's ([`Self::label`]), with no path, identifier, iteration value or
+    /// account data.
     #[must_use]
     pub const fn is_deadline(self) -> bool {
         matches!(
@@ -673,87 +677,7 @@ impl UnsupportedNegotiation {
                 | Self::VersionPathDeadline
                 | Self::HistoricalListDeadline
                 | Self::QueueDeadline
-                | Self::GapDeadline
         )
-    }
-
-    /// The line under the refusal on the client's error screen. Tessera's own text, never the
-    /// service's: it goes in `LoginRefused`'s `note`, not its `detail`. It says which step
-    /// Tessera could not go past and never reads as an account fault (decision 0046 item 6); the
-    /// diagnostic is the log's ([`Self::label`]), and no path, identifier, iteration value or
-    /// account data is in either.
-    #[must_use]
-    pub const fn detail(self) -> &'static str {
-        match self {
-            Self::LanguageKey(_) | Self::Inventory(_) | Self::Advertisement => {
-                "Tessera could not read what the official login needs from this install. This is \
-                 a Tessera limit or a problem with the local files, not a fault of your account."
-            }
-            Self::Dictionary => {
-                "This install's connection tables are not the ones the server uses, so Tessera \
-                 stopped. This is a Tessera limit or a problem with the local files, not a fault \
-                 of your account."
-            }
-            Self::MalformedRequest
-            | Self::RequestArray
-            | Self::UnexpectedCompletion
-            | Self::LateVersionRequest
-            | Self::RefusalWithoutSelection
-            | Self::MalformedRefusal
-            | Self::TrafficRefused => {
-                "The server sent a message of the official login that Tessera cannot handle yet. \
-                 This is a Tessera limit, not a fault of your account."
-            }
-            // The install's own table, not the server's answer.
-            Self::NameRule(InstallUnsupported::NameTable) => {
-                "Tessera could not read this install's name-rule table. This is a Tessera limit \
-                 or a problem with the local files, not a fault of your account."
-            }
-            Self::NameRule(InstallUnsupported::NameRuleMissing) => {
-                "Tessera could not find the name rule the server selected in this install. This \
-                 is a Tessera limit or a problem with the local files, not a fault of your account."
-            }
-            Self::NameRule(_) => {
-                "Tessera could not use this install's name rules. This is a Tessera limit or a \
-                 problem with the local files, not a fault of your account."
-            }
-            Self::NameRuleEmpty | Self::LanguageNotAllowed => {
-                "The name rule the server selected does not allow this install's language, so \
-                 Tessera stopped. This is a Tessera limit, not a fault of your account."
-            }
-            Self::AdvertisementNotSent | Self::CompletionNotSent => {
-                "Tessera could not send a message of the official login. This is a Tessera limit, \
-                 not a fault of your account."
-            }
-            Self::RequestDeadline => {
-                "Tessera stopped waiting for the server's request for this install's details: \
-                 Tessera's own time limit for this step passed."
-            }
-            Self::CompletionDeadline => {
-                "Tessera stopped waiting for the server to accept this install's details: \
-                 Tessera's own time limit for this step passed."
-            }
-            Self::ListDeadline | Self::HistoricalListDeadline => {
-                "Tessera stopped waiting for the character list: Tessera's own time limit for this \
-                 step passed."
-            }
-            Self::VersionPathDeadline => {
-                "Tessera stopped waiting for the answer to its version: Tessera's own time limit \
-                 for this step passed."
-            }
-            Self::QueueDeadline => {
-                "Tessera stopped waiting in the login queue: Tessera's own time limit for the queue \
-                 passed."
-            }
-            Self::GapDeadline => {
-                "A packet of the official login that Tessera could not take stayed missing past \
-                 Tessera's own time limit. This is a Tessera limit, not a fault of your account."
-            }
-            Self::ListDecode | Self::ListEnvelope => {
-                "Tessera cannot read this character list yet. This is a Tessera limit, not a fault \
-                 of your account."
-            }
-        }
     }
 }
 
@@ -1503,11 +1427,7 @@ mod tests {
     }
 
     #[test]
-    fn local_failures_of_the_name_table_are_not_the_servers_refusal() {
-        let table = UnsupportedNegotiation::NameRule(InstallUnsupported::NameTable).detail();
-        let refused = UnsupportedNegotiation::LanguageNotAllowed.detail();
-        assert_ne!(table, refused);
-        assert!(table.contains("install"));
+    fn the_log_form_names_the_kind() {
         // The log's form names the kind.
         let text =
             UnsupportedNegotiation::Inventory(InstallUnsupported::ArchiveMissing).to_string();

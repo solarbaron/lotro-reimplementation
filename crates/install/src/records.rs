@@ -73,6 +73,14 @@ pub enum RecordError {
     /// A run's start is negative or its last iteration does not fit an i32 (§9.3).
     #[error("iteration run out of range")]
     RunOutOfRange,
+    /// Two runs or singles list one iteration (Tessera's bounded input policy, "Reader re-check
+    /// required").
+    #[error("an iteration is listed twice")]
+    RepeatedIteration,
+    /// The trailing list is not the `K` highest listed iterations in increasing order (§9.6
+    /// invariant 7).
+    #[error("the trailing list is not the highest iterations")]
+    TrailingNotHighest,
 }
 
 struct Cursor<'a> {
@@ -214,6 +222,7 @@ impl IterationRecord {
         if c.remaining() != 0 {
             return Err(RecordError::LeftOver(c.remaining()));
         }
+        check_iteration_intervals(&ranges, &trailing)?;
         Ok(Self {
             count: n.unsigned_abs(),
             ranges,
@@ -230,6 +239,41 @@ impl IterationRecord {
     pub fn runs(&self) -> usize {
         self.ranges.len()
     }
+}
+
+/// §9.6 invariant 7 and the bounded input policy of `install-layout.md` ("Reader re-check
+/// required"): no iteration is listed twice, and the trailing list is the `K` highest listed
+/// iterations in strict increasing order. Judged on the run intervals, without expanding a run: a
+/// tiny record can describe billions of values, and at most `K` values are made here.
+fn check_iteration_intervals(
+    ranges: &[IterationRange],
+    trailing: &[TrailingEntry],
+) -> Result<(), RecordError> {
+    let mut sorted: Vec<(i64, i64)> = ranges.iter().map(|r| (r.start, r.last())).collect();
+    sorted.sort_unstable();
+    if sorted
+        .windows(2)
+        .any(|w| matches!(w, [(_, last), (next, _)] if last >= next))
+    {
+        return Err(RecordError::RepeatedIteration);
+    }
+    // From the top, one interval at a time.
+    let mut intervals = sorted.iter().rev().copied();
+    let mut current = intervals.next();
+    for entry in trailing.iter().rev() {
+        let Some((first, last)) = current else {
+            return Err(RecordError::TrailingNotHighest);
+        };
+        if i64::from(entry.iteration) != last {
+            return Err(RecordError::TrailingNotHighest);
+        }
+        current = if last > first {
+            Some((first, last - 1))
+        } else {
+            intervals.next()
+        };
+    }
+    Ok(())
 }
 
 /// Decoded 0xFFFF0003 install version stamp (§9.2.2).
@@ -335,6 +379,51 @@ mod tests {
         let empty = IterationRecord::parse(&le(&[0, 0]), 2).unwrap();
         assert_eq!(empty.highest(), None);
         assert_eq!(empty.count, 0);
+    }
+
+    #[test]
+    fn iteration_intervals_are_checked_without_expanding_a_run() {
+        // A tiny record describing about two billion values.
+        let big = le(&[2_000_000_000, -2_000_000_000, 1, 1, 2_000_000_000]);
+        let mut b = big;
+        b.extend([0u8; 8]);
+        assert!(IterationRecord::parse(&b, 2).is_ok());
+        // Two runs that overlap, however long: a repeated iteration.
+        assert_eq!(
+            IterationRecord::parse(
+                &le(&[2_000_000_000, -1_000_000_000, 1, -1_000_000_000, 500]),
+                1
+            ),
+            Err(RecordError::RepeatedIteration)
+        );
+        // A single that repeats a run's value, and two equal singles.
+        assert_eq!(
+            IterationRecord::parse(&le(&[4, -3, 1, 2, 0]), 2),
+            Err(RecordError::RepeatedIteration)
+        );
+        assert_eq!(
+            IterationRecord::parse(&le(&[2, 7, 7, 0]), 2),
+            Err(RecordError::RepeatedIteration)
+        );
+        // Trailing entries that are not the highest, or out of order, or more than listed.
+        let trailing = |values: &[i32]| {
+            let mut b = le(&[3, -3, 1]);
+            b.extend(le(&[i32::try_from(values.len()).unwrap()]));
+            for v in values {
+                b.extend(le(&[*v]));
+                b.extend([0u8; 8]);
+            }
+            b
+        };
+        assert!(IterationRecord::parse(&trailing(&[2, 3]), 2).is_ok());
+        for bad in [&[1, 3][..], &[3, 2], &[1, 2, 3, 4], &[2]] {
+            assert_eq!(
+                IterationRecord::parse(&trailing(bad), 2),
+                Err(RecordError::TrailingNotHighest),
+                "{bad:?}"
+            );
+        }
+        assert!(IterationRecord::parse(&trailing(&[1, 2, 3]), 2).is_ok());
     }
 
     #[test]

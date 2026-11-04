@@ -31,9 +31,12 @@ pub enum OwnText {
     /// The session refused `EnterWorld` while a character creation is still waiting for
     /// the server's answer (§7.3, §7.1.1 step 6).
     CreationStillOutstanding,
-    /// An official selection is under way (the character's name); Escape or closing the window
-    /// leaves it.
-    Entering(String),
+    /// An official selection is under way, at this real stage when one was reached
+    /// (`official-entry.md` §8.7); Escape or closing the window cancels it.
+    Entering(Option<tessera_net::WorldEntryStage>),
+    /// The explanation beside the disabled New and Delete buttons on an official session
+    /// (`official-session.md` §9.3.9, `official-entry.md` §8.7).
+    OfficialActionsDisabled,
     /// The session ended before world entry.
     Disconnected(String),
     /// The ghosted New button's tooltip (§7.1).
@@ -73,11 +76,21 @@ impl std::fmt::Display for OwnText {
                 "A character creation is still waiting for the server's answer; try again \
                  once it has arrived.",
             ),
-            Self::Entering(name) => write!(
-                f,
-                "Entering the world as {name}. Escape or closing the window leaves and ends the \
-                 session."
-            ),
+            Self::Entering(stage) => {
+                use tessera_net::WorldEntryStage as W;
+                f.write_str("Entering the world…")?;
+                match stage {
+                    None => {}
+                    Some(W::Referral) => f.write_str(" Connecting to the world server.")?,
+                    Some(W::WorldHandshake) => f.write_str(" Connected to the world server.")?,
+                    Some(W::Identity) => f.write_str(" The world server knows the character.")?,
+                    Some(W::Placement) => f.write_str(" Loading the scene.")?,
+                }
+                f.write_str(" Escape or closing the window cancels.")
+            }
+            Self::OfficialActionsDisabled => {
+                f.write_str("New, Delete: Not supported by this version of Tessera yet")
+            }
             Self::Disconnected(why) => write!(f, "The connection ended ({why})."),
             Self::CreationNotAllowed => {
                 f.write_str("This server does not allow creating characters.")

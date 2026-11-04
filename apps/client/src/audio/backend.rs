@@ -165,7 +165,13 @@ pub fn start_engine(choice: BackendChoice) -> AudioEngine {
 ///
 /// When the file cannot be read.
 pub fn import_preferences(path: &Path) -> Result<AudioSettings, String> {
-    let ini = tessera_install::Ini::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let ini = tessera_install::Ini::read(path).map_err(|e| {
+        format!(
+            "{}: {}",
+            crate::log_paths::shown(path),
+            crate::log_paths::shown_error(&e)
+        )
+    })?;
     let pairs: Vec<(&str, &str)> = ini
         .sections
         .iter()
@@ -177,7 +183,7 @@ pub fn import_preferences(path: &Path) -> Result<AudioSettings, String> {
         tracing::warn!("audio preferences import: {r}");
     }
     tracing::info!(
-        file = %path.display(),
+        file = %crate::log_paths::shown(path),
         used = report.used,
         ignored = report.ignored,
         "imported the original's [Sound] values (read-only)"
@@ -218,7 +224,11 @@ pub fn document_folder(game_dir: &Path) -> Option<String> {
     for (_, _, path) in names {
         match tessera_install::launcherconfig::read_launcher_config(&path) {
             Ok(cfg) => return cfg.document_folder().map(str::to_owned),
-            Err(e) => tracing::debug!("audio: launcher config {}: {e}", path.display()),
+            Err(e) => tracing::debug!(
+                "audio: launcher config {}: {}",
+                crate::log_paths::shown(&path),
+                crate::log_paths::shown_error(&e)
+            ),
         }
     }
     None

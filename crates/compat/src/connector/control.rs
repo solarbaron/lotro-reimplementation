@@ -29,6 +29,8 @@ pub struct Control {
     newest_move: Mutex<Option<Command>>,
     wake_queued: AtomicBool,
     pending: AtomicUsize,
+    /// A selection is refused locally from here on (`SessionDriver::re_entry_blocked`).
+    re_entry_blocked: AtomicBool,
 }
 
 impl Control {
@@ -49,6 +51,17 @@ impl Control {
         if let Ok(mut m) = self.newest_move.lock() {
             *m = None;
         }
+    }
+
+    /// A selection is refused locally from here on (`official-session.md` §9.3.9).
+    pub fn block_re_entry(&self) {
+        self.re_entry_blocked.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether a selection is refused locally.
+    #[must_use]
+    pub fn re_entry_blocked(&self) -> bool {
+        self.re_entry_blocked.load(Ordering::SeqCst)
     }
 
     /// Whether the backend let go.

@@ -830,7 +830,12 @@ impl World {
     /// previous world's. Not written to a scenario log: it is a loading signal, not a
     /// player's command; backends other than the official one ignore it.
     pub fn walker_frame(&mut self, now: Instant, consumed: Option<u64>, settled: bool) {
-        if !self.load.pending || self.state() != SessionState::InWorld {
+        if !self.load.pending
+            || !matches!(
+                self.state(),
+                SessionState::InWorld | SessionState::EnteringWorld
+            )
+        {
             return;
         }
         let Some(target) = self.load.target else {
@@ -1853,6 +1858,23 @@ impl World {
                 }
                 self.enter_from_list(now, characters);
             }
+            // `official-entry.md` §8.7: the scene starts loading behind the character screen. The
+            // walker places the location like any other; `walker_frame` sends the one signal.
+            Event::WorldPlacementPending { position, yaw, .. } => {
+                tracing::info!("net: world placement pending");
+                self.location_seq += 1;
+                self.location = Some(PlayerLocation {
+                    location: *position,
+                    heading: *yaw,
+                    cause: LocationCause::Entered,
+                    seq: self.location_seq,
+                });
+                self.load = LoadWait {
+                    pending: true,
+                    target: Some(self.location_seq),
+                    placed: false,
+                };
+            }
             Event::WorldEntered {
                 player,
                 name,
@@ -2003,7 +2025,13 @@ impl World {
                 // §6.2.11, Appendix A "Decision on `EnterWorldFailed`"). The character
                 // screens (manual entry) go back to the selection with the reason and the
                 // session kept, so the player can choose again. A walker that entered by
-                // itself (one fixed character) has nothing else to enter, so it leaves.
+                // itself (one fixed character) has nothing else to enter, so it leaves. A scene
+                // that a pending placement started is dropped.
+                if self.load.pending || self.location.is_some() {
+                    self.location = None;
+                    self.load = LoadWait::default();
+                    self.left_world = true;
+                }
                 if !self.manual_enter
                     && let Err(e) = self.send(now, Command::Disconnect)
                 {

@@ -441,20 +441,25 @@ pub fn load_keymap(path: Option<&Path>) -> Keymap {
         None => tessera_input::default_keymap_path().ok(),
     };
     let Some(path) = path else { return base };
+    let shown = crate::log_paths::shown(&path);
     match Keymap::load_file(&path) {
         Ok(Some(parsed)) => {
             for w in &parsed.warnings {
-                tracing::warn!(file = %path.display(), "keymap: {w}");
+                tracing::warn!(file = %shown, "keymap: {w}");
             }
-            tracing::info!(file = %path.display(), "keymap loaded");
+            tracing::info!(file = %shown, "keymap loaded");
             base.overlay(&parsed.keymap)
         }
         Ok(None) => {
-            tracing::debug!(file = %path.display(), "no keymap file; built-in bindings");
+            tracing::debug!(file = %shown, "no keymap file; built-in bindings");
             base
         }
         Err(e) => {
-            tracing::warn!(file = %path.display(), "keymap unreadable ({e}); built-in bindings");
+            tracing::warn!(
+                file = %shown,
+                "keymap unreadable ({}); built-in bindings",
+                crate::log_paths::shown_error(&e)
+            );
             base
         }
     }

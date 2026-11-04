@@ -549,7 +549,11 @@ pub fn read_user_preferences(root: &Path) -> Option<tessera_install::Ini> {
     match tessera_install::Ini::read(&path) {
         Ok(ini) => Some(ini),
         Err(e) => {
-            tracing::warn!("preferences {}: {e}", path.display());
+            tracing::warn!(
+                "preferences {}: {}",
+                crate::log_paths::shown(&path),
+                crate::log_paths::shown_error(&e)
+            );
             None
         }
     }

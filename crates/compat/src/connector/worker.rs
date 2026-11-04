@@ -25,8 +25,8 @@ use super::control::{Control, Msg};
 use super::data::{InstallDataLoader, LocalInputs, LocalPaths, SchemaView, discover_local};
 use super::diag::{LoginServerEntry, login_server_entry};
 use super::login_phase::{
-    Authenticated, LOCAL_INSTALL_NOTE, LoginStop, PlainSteps, WORLD_LIST_STATUS_TIMEOUT_SEC,
-    authenticate, get_datacenters, get_remote_config, join_status, leave_queue, local_refusal,
+    Authenticated, LoginStop, PlainSteps, WORLD_LIST_STATUS_TIMEOUT_SEC, authenticate,
+    get_datacenters, get_remote_config, join_status, leave_queue, local_refusal,
     queue_poll_interval, take_a_number, world_list, world_refusal, world_status,
 };
 use super::net::{ConnectorNet, NetHttp};
@@ -137,34 +137,21 @@ impl Out {
         self.one(Event::Account(AccountEvent::LoginProgress { stage }));
     }
 
-    /// `LoginRefused` and its `Disconnected` in one batch (§8.1: "in the same poll").
+    /// `LoginRefused` and its `Disconnected` in one batch (§8.1: "in the same poll"). A step Tessera
+    /// cannot take ends in `Disconnected { Unsupported }` (`official-session.md` §9.3.9).
     fn refuse(&mut self, reason: LoginRefusal, detail: Option<String>) {
+        let ended = if reason == LoginRefusal::UnsupportedStep {
+            DisconnectReason::Unsupported
+        } else {
+            DisconnectReason::TransportFailed(String::new())
+        };
         self.send(vec![
             Event::Account(AccountEvent::LoginRefused {
                 reason,
                 retry_after_seconds: None,
                 detail,
-                note: None,
             }),
-            Event::Disconnected {
-                reason: DisconnectReason::TransportFailed(String::new()),
-            },
-        ]);
-    }
-
-    /// [`Self::refuse`] for a refusal of Tessera's own: its `note`, no service words.
-    fn refuse_locally(&mut self, reason: LoginRefusal, note: &str) {
-        self.send(vec![
-            Event::Account(AccountEvent::LoginRefused {
-                reason,
-                retry_after_seconds: None,
-                detail: None,
-                note: Some(note.to_owned()),
-            }),
-            // §9.3.8's unsupported row: the same Tessera text.
-            Event::Disconnected {
-                reason: DisconnectReason::TransportFailed(note.to_owned()),
-            },
+            Event::Disconnected { reason: ended },
         ]);
     }
 
@@ -181,7 +168,6 @@ impl Out {
         }
         match stop {
             LoginStop::Refused(reason, detail) => self.refuse(reason, detail),
-            LoginStop::RefusedLocally(reason, note) => self.refuse_locally(reason, note),
             LoginStop::Cancelled => {}
         }
     }
@@ -258,7 +244,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
             Err(problem) => {
                 // A kind only, never a path (`official-entry.md` §7.3).
                 tracing::warn!(%problem, "official login: no install");
-                out.refuse_locally(local_refusal(), LOCAL_INSTALL_NOTE);
+                out.refuse(local_refusal(), None);
                 return;
             }
         }
@@ -273,7 +259,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         Ok(l) => l,
         Err(e) => {
             tracing::info!(class = %e.failure_class(), "official login: local discovery failed");
-            out.refuse_locally(local_refusal(), LOCAL_INSTALL_NOTE);
+            out.refuse(local_refusal(), None);
             return;
         }
     };
@@ -431,7 +417,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
             out.refuse(LoginRefusal::ServiceUnavailable, None);
             return;
         }
-        // §9.3.8: an I/O failure before `Connected`.
+        // §9.3.9: an I/O failure before `Connected`.
         Err(StartFailure::Bind) => {
             out.refuse(LoginRefusal::ServiceUnavailable, None);
             return;
@@ -441,11 +427,11 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
             return;
         }
         // Nothing was sent: the ticket is not spent on an install that cannot answer
-        // (`crate::initial`, the preflight of `official-session.md` §9.3.7–§9.3.8 and
+        // (`crate::initial`, the preflight of `official-session.md` §9.3.7 and §9.3.9 and
         // `official-login.md` §5.1's `F02_CONFIG_INVALID`).
         Err(StartFailure::Unsupported(why)) => {
             tracing::info!(reason = %why, "official session: not started");
-            out.refuse_locally(LoginRefusal::UnsupportedStep, why.detail());
+            out.refuse(LoginRefusal::UnsupportedStep, None);
             return;
         }
     };
@@ -834,6 +820,9 @@ fn session_loop<N: ConnectorNet>(
             }
             busy = true;
         }
+        if driver.re_entry_blocked() {
+            control.block_re_entry();
+        }
         let room = out.room();
         if room > 0 && driver.has_events() {
             out.push(driver.take_events_up_to(room));
@@ -926,7 +915,6 @@ mod tests {
             reason: LoginRefusal::Other,
             retry_after_seconds: None,
             detail: None,
-            note: None,
         }));
         events.push(revoked());
         out.push(events);

@@ -13,8 +13,9 @@
 //! cancel flag hold), bit 7 the end without sending (a revoked right, `abandon`) instead of
 //! the graceful shutdown. The second byte: bit 0 a network with a source for readiness, so the
 //! session reaches the world (no production path has one: with the bit clear the entry stops at
-//! its readiness wait, and the world's messages go through the pending-entry counts), bit 1 leaves
-//! the setup's `0x90` out, so the input decides what the wait for it sees. Then arbitrary
+//! its readiness wait, and the world's messages go through the pending-entry store), bit 1 leaves
+//! the setup's `0x90` out, so the input decides what the wait for it sees, bit 2 a stand-in for the
+//! server gate, so `0x7C` and a `WorldLoaded` finish the entry in §9.3.9's order. Then arbitrary
 //! datagrams from the login, world and chat servers, arbitrary messages wrapped in valid
 //! sequenced datagrams of the world connection once it exists, else of the login connection (the
 //! widened opcodes of the bytes 0xC0 and above fall in the world-teardown band; a selector byte
@@ -27,7 +28,7 @@
 //! `0xFF` asks for the unsupported answer instead. A message's selector byte chooses its queue with
 //! bits 6 and 7 (queues 1 to 4, `0xDD`, `0xF5` and the window's other opcodes among queue 1's), and
 //! with bit 5 a small fixed word and blob ID, so identities repeat across messages and the
-//! tombstones, the queue-3 gate and the conflict rule of §9.3.8 are driven; bits 2 and 3 are the
+//! tombstones, the queue-3 gate and the reused-identity rule of §9.3.9 are driven; bits 2 and 3 are the
 //! sequence group. No panic, bounded state: the entity feed stays within its limits after every
 //! step.
 #![no_main]
@@ -44,6 +45,7 @@ use tessera_compat::connector::entities::{
     MAX_ENTITIES, MAX_PENDING, PID_IS_INANIMATE_PROP, PID_IS_NPC_AGENT,
 };
 use tessera_compat::connector::net::{ConnectorNet, SendHttpClient};
+use tessera_compat::connector::pending_world::{MAX_PENDING_BYTES, MAX_PENDING_ENTITIES};
 use tessera_compat::connector::session_phase::{SessionDriver, SessionStart};
 use tessera_compat::initial::{AdvertisedArchive, InstallUnsupported, IterationSpan};
 use tessera_compat::login::{
@@ -211,6 +213,8 @@ struct Net {
     chat: Option<Arc<Mutex<Queues>>>,
     /// Off, like every production path: the entry stops at its readiness wait.
     readiness: bool,
+    /// Off, like every production path: a test's stand-in for the server gate of §9.3.9's order.
+    gate: Option<u32>,
 }
 
 impl ConnectorNet for Net {
@@ -220,6 +224,11 @@ impl ConnectorNet for Net {
     // one, `official-session.md` §9.3.8) and also the chat server's code.
     fn readiness_specified(&self) -> bool {
         self.readiness
+    }
+
+    // The order of §9.3.9 to its end: the one `0xF4`, `WorldEntered`, the pending state's release.
+    fn server_gate(&self) -> Option<u32> {
+        self.gate
     }
 
     fn chat_codec_specified(&self) -> bool {
@@ -293,6 +302,7 @@ fn challenge(rec_id: u16, seed: u32) -> Option<Vec<u8>> {
     };
     let hdr = DatagramHeader {
         rec_id,
+        peer_word: 0x3344,
         ..DatagramHeader::default()
     };
     encode_datagram(hdr, &opt, &[], None, None).ok()
@@ -503,6 +513,7 @@ fuzz_target!(|data: &[u8]| {
         session: Arc::clone(&session),
         chat: chat.clone(),
         readiness: extra & 0x01 != 0,
+        gate: (extra & 0x04 != 0).then_some(0x7C),
     };
     let Some(mut driver) = start(&mut net, flags) else {
         return;
@@ -532,6 +543,8 @@ fuzz_target!(|data: &[u8]| {
         let _ = driver.take_events();
         let (tracked, pending) = driver.feed_sizes();
         assert!(tracked <= MAX_ENTITIES && pending <= MAX_PENDING && pending <= tracked);
+        let (entities, bytes) = driver.pending_sizes();
+        assert!(entities <= MAX_PENDING_ENTITIES && bytes <= MAX_PENDING_BYTES);
     };
     if flags & 0x01 != 0 {
         deliver(&session, challenge(0x0111, LOGIN_SEED), LOGIN);

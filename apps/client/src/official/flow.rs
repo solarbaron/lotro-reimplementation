@@ -731,7 +731,17 @@ impl Flow {
         self.leave_characters();
         let message = match &end {
             HandOverEnd::Left => None,
-            HandOverEnd::SessionEnded(reason) => super::login::disconnect_message(reason),
+            HandOverEnd::SessionEnded(reason) => {
+                // §8.6: a Tessera limit goes to the start screen, and login stays available.
+                if super::login::ends_at_start_screen(reason) {
+                    self.go_start();
+                    if let Some(m) = super::login::disconnect_message(reason) {
+                        self.show(m);
+                    }
+                    return;
+                }
+                super::login::disconnect_message(reason)
+            }
             HandOverEnd::Failed(kind) => Some(Message {
                 text: kind.message_text().to_owned(),
                 detail: None,
@@ -936,7 +946,14 @@ impl Flow {
             if let Some(reason) = ended {
                 // Ended before the window took it: §8.6's message, as after the hand-over.
                 self.leave_characters();
-                self.after_failure(super::login::disconnect_message(&reason), now);
+                if super::login::ends_at_start_screen(&reason) {
+                    self.go_start();
+                    if let Some(m) = super::login::disconnect_message(&reason) {
+                        self.show(m);
+                    }
+                } else {
+                    self.after_failure(super::login::disconnect_message(&reason), now);
+                }
             } else {
                 self.keep_for_hand_over(kept);
             }

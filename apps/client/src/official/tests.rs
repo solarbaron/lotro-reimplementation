@@ -1191,7 +1191,6 @@ fn every_event() -> Vec<Event> {
             reason: LoginRefusal::Other,
             retry_after_seconds: Some(1),
             detail: None,
-            note: None,
         }),
         Event::Disconnected {
             reason: DisconnectReason::ServerClosed("bye".into()),
@@ -1826,7 +1825,7 @@ fn official_release_path_shows_the_warning_and_makes_no_network_operation() {
 
 #[test]
 fn placeholder_backend_refusal_maps_to_the_not_available_message() {
-    let end = super::login::refusal_end(LoginRefusal::NotAvailable, None, Some("ignored"), None);
+    let end = super::login::refusal_end(LoginRefusal::NotAvailable, None, Some("ignored"));
     assert_eq!(end.target, Target::StartScreen);
     let m = end.message.expect("message");
     assert_eq!(
@@ -1958,7 +1957,6 @@ fn oe_t10_credentials_never_persisted_or_logged() {
                 reason,
                 retry_after_seconds: None,
                 detail: Some("service text".into()),
-                note: None,
             }));
             f.push(Event::Disconnected {
                 reason: DisconnectReason::ServerClosed("closed".into()),
@@ -2704,7 +2702,6 @@ fn oe_t14_every_row_of_8_6_and_the_watchdog() {
                 reason,
                 retry_after_seconds: None,
                 detail: Some("why".into()),
-                note: None,
             }),
             t0,
         );
@@ -2721,7 +2718,7 @@ fn oe_t14_every_row_of_8_6_and_the_watchdog() {
         assert_eq!(m.detail.is_some(), detail, "{reason:?}");
         assert!(end.wait >= Duration::from_secs(2));
     }
-    let end = super::login::refusal_end(LoginRefusal::RateLimited, Some(120), None, None);
+    let end = super::login::refusal_end(LoginRefusal::RateLimited, Some(120), None);
     assert_eq!(end.wait, Duration::from_secs(120));
     assert!(end.rate_limited);
     // Without LoginRefused.
@@ -2810,7 +2807,6 @@ fn oe_t14_retry_waits_and_targets_in_the_flow() {
         reason: LoginRefusal::RateLimited,
         retry_after_seconds: Some(30),
         detail: None,
-        note: None,
     }));
     f.push(Event::Disconnected {
         reason: DisconnectReason::ServerClosed(String::new()),
@@ -2865,7 +2861,6 @@ fn oe_t14_retry_waits_and_targets_in_the_flow() {
         reason: LoginRefusal::UnsupportedStep,
         retry_after_seconds: None,
         detail: None,
-        note: None,
     }));
     f.push(Event::Disconnected {
         reason: DisconnectReason::ClientRequested,
@@ -3044,7 +3039,6 @@ fn oe_t19_account_name_copy() {
             reason,
             retry_after_seconds: None,
             detail: None,
-            note: None,
         }));
         f.push(Event::Disconnected {
             reason: DisconnectReason::TransportFailed("x".into()),
@@ -4114,29 +4108,10 @@ fn the_official_flow_hands_its_session_to_the_character_screens_and_back() {
         ScreenOptions::default(),
     );
     crate::pre_world::seed_from_world(&mut screens, &world, Instant::now());
-    // The list's details reach the rows (world §6's row of `0x6C`): from the batch of `Connected`
-    // or the next poll, whichever it came in.
-    let mut polled = Vec::new();
-    while screens
-        .model()
-        .rows()
-        .first()
-        .and_then(|r| r.level)
-        .is_none()
-    {
-        assert!(Instant::now() < until, "no details");
-        polled.clear();
-        let now = Instant::now();
-        screens.pump(world.session_mut(), now, &mut polled);
-        world.apply_polled(now, &polled);
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    // §9.3.9's first-screen contract: names only; level, race and class stay unknown.
     let first = &screens.model().rows()[0];
-    assert!(first.character_body().is_some() && first.class.is_some());
-    assert_eq!(
-        first.look, None,
-        "no spec maps the appearance to a look yet"
-    );
+    assert!(first.character_body().is_none() && first.class.is_none() && first.level.is_none());
+    assert_eq!(first.look, None);
     let rows: Vec<&str> = screens
         .model()
         .rows()
@@ -4478,91 +4453,256 @@ fn dismiss_not_stored(flow: &mut Flow, t: Instant) {
     assert!(flow.notice().is_none());
 }
 
-/// Tessera's own note on a refusal is not presented as the service's words, on the start screen
-/// the row asks for. A service detail keeps its line.
+/// §8.6: `UnsupportedStep` goes to the start screen in Tessera's words, with no service line. A
+/// service detail keeps its line.
 #[test]
 fn a_local_refusal_is_not_attributed_to_the_service() {
-    let note = tessera_compat::initial::UnsupportedNegotiation::ListDecode.detail();
-    let end = super::login::refusal_end(LoginRefusal::UnsupportedStep, None, None, Some(note));
+    let end = super::login::refusal_end(LoginRefusal::UnsupportedStep, None, None);
     assert_eq!(end.target, super::login::Target::StartScreen);
     let m = end.message.expect("a message");
-    assert_eq!(m.detail.as_deref(), Some(note));
-    // Decision 0046 item 6: a Tessera limit does not read as an account fault.
+    assert_eq!(m.detail, None);
     assert_eq!(
         m.text,
-        tessera_compat::consent::strings::text("official.error.tessera_limit")
+        "This version of Tessera does not support this step yet."
     );
-    for text in [m.text.as_str(), note] {
-        assert!(!text.contains("cannot log in"), "{text}");
-    }
-    assert!(
-        note.contains("cannot read this character list yet"),
-        "{note}"
-    );
-    assert!(note.contains("Tessera limit"), "{note}");
-    assert!(
-        !m.detail
-            .as_deref()
-            .unwrap_or_default()
-            .contains("service said")
-    );
-
-    let end = super::login::refusal_end(
-        LoginRefusal::UnsupportedStep,
-        None,
-        Some("maintenance"),
-        None,
-    );
+    let end = super::login::refusal_end(LoginRefusal::UnsupportedStep, None, Some("maintenance"));
     let m = end.message.expect("a message");
     assert_eq!(m.detail.as_deref(), Some("The service said: maintenance"));
-    // A step the service's login really asks for keeps §8.6's row.
-    assert_eq!(
-        m.text,
-        tessera_compat::consent::strings::text("official.error.unsupported_step")
-    );
 }
 
-/// A session that ends at a step the client does not support (an undecodable `0x90` after the
-/// referral) reads as that, not as no answer.
-#[test]
-fn an_unsupported_end_of_the_session_has_its_own_message() {
-    let why = tessera_net::DisconnectReason::Unsupported("The start could not be read.".into());
-    let m = super::login::disconnect_message(&why).expect("a message");
-    assert_eq!(
-        m.text,
-        tessera_compat::consent::strings::text("official.error.tessera_limit")
-    );
-    assert_eq!(m.detail.as_deref(), Some("The start could not be read."));
-    let timed_out =
-        super::login::disconnect_message(&tessera_net::DisconnectReason::TimedOut).expect("one");
-    assert_ne!(m.text, timed_out.text);
-}
-
-/// `official-session.md` §9.3.8: Tessera's own deadline names the stage in Tessera's words, and a
-/// Tessera limit carries its line; an ordinary I/O failure keeps the plain row.
+/// OE-T14, §8.6: `Unsupported` and `UnsupportedTimeout` carry Tessera's fixed words, with no service
+/// line and no local cause. Ordinary silence keeps "No answer", and an ordinary failure its row.
 #[test]
 fn the_session_ends_after_the_hand_over_say_whose_limit_it_is() {
     use tessera_net::DisconnectReason as R;
-    let stage = "Tessera reached the world server, but this version cannot finish entering.";
-    let m = super::login::disconnect_message(&R::TimedOutLocally(stage.to_owned())).expect("one");
-    assert_eq!(m.text, stage);
-    assert_ne!(
-        m.text,
-        tessera_compat::consent::strings::text("official.error.no_answer")
-    );
-    let m =
-        super::login::disconnect_message(&R::TransportFailed("A limit.".to_owned())).expect("one");
+    let m = super::login::disconnect_message(&R::Unsupported).expect("one");
     assert_eq!(
         m.text,
-        tessera_compat::consent::strings::text("official.error.tessera_limit")
+        "This version of Tessera does not support this step yet."
     );
-    assert_eq!(m.detail.as_deref(), Some("A limit."));
+    assert_eq!(m.detail, None);
+    let m = super::login::disconnect_message(&R::UnsupportedTimeout).expect("one");
+    assert_eq!(
+        m.text,
+        "Tessera could not finish this step within its supported limits."
+    );
+    assert_eq!(m.detail, None);
+    let m = super::login::disconnect_message(&R::TimedOut).expect("one");
+    assert_eq!(m.text, "No answer from the official service.");
     let m = super::login::disconnect_message(&R::TransportFailed(String::new())).expect("one");
     assert_eq!(
         m.text,
         tessera_compat::consent::strings::text("official.error.transport")
     );
     assert_eq!(m.detail, None);
+}
+
+/// OE-T14, §8.6: before `Connected`, one panel on the start screen: the refusal's words, or the
+/// timeout's when the end is `UnsupportedTimeout`; login stays available.
+#[test]
+fn a_tessera_limit_before_the_list_is_one_panel_on_the_start_screen() {
+    use tessera_net::DisconnectReason as R;
+    for (reason, want) in [
+        (
+            R::Unsupported,
+            "This version of Tessera does not support this step yet.",
+        ),
+        (
+            R::UnsupportedTimeout,
+            "Tessera could not finish this step within its supported limits.",
+        ),
+    ] {
+        let mut f = fixture(Availability::Available);
+        f.reach_login("a", "b");
+        f.push(Event::Account(AccountEvent::LoginRefused {
+            reason: LoginRefusal::UnsupportedStep,
+            retry_after_seconds: None,
+            detail: None,
+        }));
+        f.push(Event::Disconnected { reason });
+        f.flow.tick(f.t0);
+        assert_eq!(f.flow.screen(), Screen::Start);
+        let notice = f.flow.notice().expect("one panel");
+        assert_eq!(notice.message.text, want);
+        assert_eq!(notice.message.detail, None);
+        assert_eq!(f.flow.constructions(), 1);
+        // Login stays available.
+        assert!(f.flow.has_acceptance());
+    }
+}
+
+/// OE-T14, §8.6: after `Connected`, the same two reasons go to the start screen, in their words.
+#[test]
+fn a_tessera_limit_after_the_list_goes_to_the_start_screen() {
+    use tessera_net::DisconnectReason as R;
+    for (reason, want) in [
+        (
+            R::Unsupported,
+            "This version of Tessera does not support this step yet.",
+        ),
+        (
+            R::UnsupportedTimeout,
+            "Tessera could not finish this step within its supported limits.",
+        ),
+    ] {
+        let mut f = fixture(Availability::Available);
+        f.reach_login("a", "b");
+        f.push(Event::Connected {
+            characters: vec![CharacterSummary { name: "C".into() }],
+        });
+        f.flow.tick(f.t0);
+        assert_eq!(f.flow.take_request(), Some(FlowRequest::HandOver));
+        let handed = f.flow.take_hand_over().expect("the session");
+        drop(handed);
+        f.flow
+            .characters_ended(super::flow::HandOverEnd::SessionEnded(reason));
+        assert_eq!(f.flow.screen(), Screen::Start);
+        let notice = f.flow.notice().expect("one panel");
+        assert_eq!(notice.message.text, want);
+        assert_eq!(notice.message.detail, None);
+        assert!(f.flow.has_acceptance());
+    }
+}
+
+/// OE-T20, §8.7: names in server order, an empty list accepted, no attribute guessed; the screens
+/// explain the disabled actions in a visible line; plugins stay off before the hand-over.
+#[test]
+fn the_decoded_list_is_names_only_and_explains_the_disabled_actions() {
+    let mut f = fixture(Availability::Available);
+    f.reach_login("a", "b");
+    f.push(Event::Connected {
+        characters: vec![
+            CharacterSummary {
+                name: "Zeta".into(),
+            },
+            CharacterSummary {
+                name: "Alpha".into(),
+            },
+        ],
+    });
+    f.flow.tick(f.t0);
+    assert_eq!(f.flow.plugin_host().starts(), 0);
+    let names: Vec<&str> = f
+        .flow
+        .characters()
+        .expect("the list")
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, ["Zeta", "Alpha"]);
+    let data = Arc::new(crate::screens::ScreenData::default());
+    let mut model = crate::screens::model::ScreenModel::new(
+        Arc::clone(&data),
+        crate::screens::backend::BackendKind::Official,
+    );
+    model.handle_event(
+        &Event::Connected {
+            characters: vec![
+                CharacterSummary {
+                    name: "Zeta".into(),
+                },
+                CharacterSummary {
+                    name: "Alpha".into(),
+                },
+            ],
+        },
+        Instant::now(),
+    );
+    let rows: Vec<&str> = model.rows().iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(rows, ["Zeta", "Alpha"]);
+    assert!(model.rows().iter().all(|r| r.level.is_none()
+        && r.class.is_none()
+        && r.character_body().is_none()
+        && r.look.is_none()));
+    assert!(!model.new_button().is_enabled() && !model.delete_button().is_enabled());
+    assert!(model.disabled_actions_line().is_some_and(|l| {
+        l.to_string()
+            .contains("Not supported by this version of Tessera yet")
+    }));
+    // Selecting shows the entering line, with its real stages; Escape cancels.
+    model.apply(crate::screens::model::Action::Select(0), Instant::now());
+    model.apply(crate::screens::model::Action::Enter, Instant::now());
+    assert_eq!(
+        model.entering_line().map(|t| t.to_string()).as_deref(),
+        Some("Entering the world… Escape or closing the window cancels.")
+    );
+    model.handle_event(
+        &Event::WorldEntryProgress {
+            stage: tessera_net::WorldEntryStage::WorldHandshake,
+        },
+        Instant::now(),
+    );
+    assert!(
+        model
+            .entering_line()
+            .is_some_and(|t| t.to_string().contains("Connected to the world server"))
+    );
+    model.apply(crate::screens::model::Action::Quit, Instant::now());
+    assert_eq!(*model.status(), crate::screens::model::Status::Quit);
+}
+
+/// §8.7: `WorldPlacementPending` starts the scene behind the screens: the walker places it, and on a
+/// later settled frame one `WorldLoaded` goes out while the session is still entering. `EnterWorldFailed`
+/// drops the scene. No loading timeout makes readiness: a frame that is not settled sends nothing.
+#[test]
+fn a_pending_placement_loads_behind_the_screens_and_is_answered_once() {
+    let mut f = fixture(Availability::Available);
+    f.reach_login("a", "b");
+    f.push(Event::Connected {
+        characters: vec![CharacterSummary { name: "C".into() }],
+    });
+    f.flow.tick(f.t0);
+    assert_eq!(f.flow.take_request(), Some(FlowRequest::HandOver));
+    let handed = f.flow.take_hand_over().expect("the session");
+    let t = Instant::now();
+    let mut world = crate::net::World::handed_over(t, handed);
+    world
+        .session_mut()
+        .send(
+            t,
+            tessera_net::Command::EnterWorld {
+                character: "C".into(),
+            },
+        )
+        .expect("enter");
+    assert_eq!(world.state(), tessera_net::SessionState::EnteringWorld);
+    // A settled frame before any placement sends nothing.
+    world.walker_frame(t, None, true);
+    assert_eq!(world.loaded_signals(), 0);
+    f.push(Event::WorldPlacementPending {
+        character: "C".into(),
+        position: tessera_net::Location::new(tessera_net::RegionId(1), 10.0, 20.0, 30.0),
+        yaw: 0.5,
+    });
+    world.update(t);
+    let at = world.player_location().expect("the placement");
+    assert_eq!(at.location.x, 10.0);
+    assert_eq!(at.cause, tessera_net::LocationCause::Entered);
+    // Placed in this frame: judged from the next. Not settled: nothing, however long.
+    world.walker_frame(t, Some(at.seq), true);
+    assert_eq!(world.loaded_signals(), 0);
+    world.walker_frame(t + Duration::from_secs(600), Some(at.seq), false);
+    assert_eq!(world.loaded_signals(), 0);
+    world.walker_frame(t, Some(at.seq), true);
+    assert_eq!(world.loaded_signals(), 1);
+    assert_eq!(world.state(), tessera_net::SessionState::EnteringWorld);
+    assert_eq!(
+        f.commands()
+            .iter()
+            .filter(|c| matches!(c, tessera_net::Command::WorldLoaded))
+            .count(),
+        1
+    );
+    world.walker_frame(t, Some(at.seq), true);
+    assert_eq!(world.loaded_signals(), 1, "once per placement");
+    // Refused before the referral: back to the list, and the scene goes.
+    f.push(Event::EnterWorldFailed {
+        character: "C".into(),
+        reason: "refused".into(),
+    });
+    world.update(t);
+    assert!(world.player_location().is_none());
+    assert!(world.take_left_world());
 }
 
 /// `official-entry.md` §8.1: a notice is a line for the user: no state changes and no end.

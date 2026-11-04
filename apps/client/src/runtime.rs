@@ -303,6 +303,7 @@ impl Runtime {
     ) -> anyhow::Result<Self> {
         let handed_world = handed.map(|h| World::handed_over(now, h));
         let is_handed = handed_world.is_some();
+        crate::log_paths::set_official_run(is_handed);
         let remote = if is_handed {
             None
         } else {

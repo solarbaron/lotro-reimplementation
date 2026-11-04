@@ -232,6 +232,13 @@ impl PlayAdapter {
         self.move_cancel_sent = false;
     }
 
+    /// [`Self::enter_world`] for an entry whose `0xF4` already went (`official-session.md` §9.3.9):
+    /// no portal space is left to wait for.
+    pub fn enter_world_acknowledged(&mut self, player: u64, own_name: Option<String>) {
+        self.enter_world(player, own_name);
+        self.teleport = TeleportSync::default();
+    }
+
     /// The local player's entity, while in the world.
     #[must_use]
     pub fn player(&self) -> Option<u64> {

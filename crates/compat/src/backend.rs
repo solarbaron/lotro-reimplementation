@@ -62,16 +62,6 @@ use crate::net_access::NetworkAccess;
 /// The `TransportFailed` text of a session whose network right was revoked (Withdraw).
 pub const NETWORK_ACCESS_REVOKED: &str = "the network access was revoked";
 
-/// Whether a `TransportFailed` text of this backend is a Tessera limit in Tessera's words
-/// (`official-session.md` §9.3.8's unsupported row), as against an ordinary failure, whose text is
-/// empty or says something else: a revoked right, or a backend with no protocol.
-#[must_use]
-pub fn names_tessera_limit(reason: &str) -> bool {
-    !reason.trim().is_empty()
-        && reason != NETWORK_ACCESS_REVOKED
-        && reason != CompatError::ProtocolNotBuilt.to_string()
-}
-
 /// Whether a live official-server connector is built into this binary (§4.4). Answered
 /// without a network and without a consent proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -273,7 +263,6 @@ impl<C: Connector> CompatBackend<C> {
                         reason: LoginRefusal::NotAvailable,
                         retry_after_seconds: None,
                         detail: None,
-                        note: None,
                     }));
                 self.pending_events.push(Event::Disconnected {
                     reason: DisconnectReason::TransportFailed(

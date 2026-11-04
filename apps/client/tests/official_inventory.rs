@@ -1064,25 +1064,33 @@ fn a_pending_journal_on_an_active_member_is_refused() {
     }
 }
 
-/// `dat-container.md` §3.6: a journal file beside an archive whose 0x16C is zero is stale and a
-/// read-only reader ignores it. A member that is not active is not this login's either way.
+/// `official-session.md` §9.3.9: a `.jrnl` side file of an active member is refused, whatever its
+/// 0x16C says, and the file is never touched. A member that is not active is not this login's.
 #[test]
-fn a_journal_that_affects_no_active_member_refuses_nothing() {
-    let dir = fresh();
+fn a_journal_side_file_of_an_active_member_is_refused() {
     for name in [
         "client_general.dat.jrnl",
         "CLIENT_CELL_1.DAT.JRNL",
         "client_mesh_aux_1.datx.jrnl",
     ] {
+        let dir = fresh();
         std::fs::write(dir.path().join(name), b"x").expect("written");
+        assert_eq!(
+            inventory_of(dir.path()),
+            Err(InstallUnsupported::ArchivePendingJournal),
+            "{name}"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join(name)).expect("read"),
+            b"x",
+            "never touched"
+        );
     }
-    assert_eq!(inventory_of(dir.path()), Ok(10));
-    assert_eq!(
-        std::fs::read(dir.path().join("client_general.dat.jrnl")).expect("read"),
-        b"x",
-        "never touched"
-    );
+}
 
+/// A journal of a member that is not active refuses nothing.
+#[test]
+fn a_journal_that_affects_no_active_member_refuses_nothing() {
     // A stale part past its family's count, another language, a region outside the map's keys.
     let dir = fresh();
     write(
@@ -1099,6 +1107,13 @@ fn a_journal_that_affects_no_active_member_refuses_nothing() {
     with_pending_journal(dir.path(), "client_local_FR.dat");
     write(dir.path(), "client_cell_9.dat", &base(0x0203_0000, 9, 1));
     with_pending_journal(dir.path(), "client_cell_9.dat");
+    for name in [
+        "client_mesh_aux_2.datx.jrnl",
+        "client_local_FR.dat.jrnl",
+        "client_cell_9.dat.jrnl",
+    ] {
+        std::fs::write(dir.path().join(name), b"x").expect("written");
+    }
     assert_eq!(inventory_of(dir.path()), Ok(10));
 }
 

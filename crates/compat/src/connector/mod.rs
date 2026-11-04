@@ -59,6 +59,7 @@ pub mod dump;
 pub mod entities;
 pub mod login_phase;
 pub mod net;
+pub mod pending_world;
 pub mod session_phase;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -308,6 +309,13 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
                 "the official session is not running",
             ));
         };
+        // §9.3.9, OPEN-SESSION-16: after a return from the world a selection fails here, so the
+        // session stays at the list and no `0x6F` goes out.
+        if matches!(command, Command::EnterWorld { .. }) && r.control.re_entry_blocked() {
+            return Err(NetError::InvalidCommand(
+                session_phase::ENTRY_REENTRY_NOT_SUPPORTED,
+            ));
+        }
         let Some(tx) = r.commands.as_ref() else {
             return Ok(());
         };

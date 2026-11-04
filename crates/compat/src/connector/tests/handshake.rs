@@ -347,8 +347,8 @@ fn a_negative_logon_result_ends_the_session_and_zero_is_accepted() {
 
 #[test]
 fn a_version_status_of_0_refuses_and_another_value_is_ignored() {
-    // `official-session.md` §9.3: 1 accepts, 0 rejects and closes the connection locally;
-    // the spec defines no other value (ignored and counted).
+    // `official-session.md` §9.3.9: 1 accepts, 0 rejects and closes with no reply, and any other
+    // value before `Connected` is unsupported.
     let status = |status: u32| {
         let m = crate::session::VersionStatusMessage {
             status,
@@ -364,12 +364,16 @@ fn a_version_status_of_0_refuses_and_another_value_is_ignored() {
     d.step(0.0, true, &go);
     world.deliver(login.blob(0x12D, &status(7)), LOGIN_SERVER);
     d.step(0.1, true, &go);
-    assert_eq!(d.counters().unknown_version_status, 1);
-    assert!(
-        !d.take_events()
-            .iter()
-            .any(|e| matches!(e, Event::Disconnected { .. }))
-    );
+    assert!(d.take_events().iter().any(|e| matches!(
+        e,
+        Event::Disconnected {
+            reason: DisconnectReason::Unsupported
+        }
+    )));
+    let (world, mut d) = started(session_start(0, None, Arc::default()));
+    let mut login = Server::new(0x0111, 0xBEEF_0001);
+    world.deliver(login.challenge(0xBEEF_0001), LOGIN_SERVER);
+    d.step(0.0, true, &go);
     world.deliver(login.blob(0x12D, &status(0)), LOGIN_SERVER);
     d.step(0.2, true, &go);
     let events = d.take_events();

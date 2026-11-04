@@ -905,7 +905,10 @@ impl PlayerMusic {
     /// plays) until [`Self::attach_data`].
     #[must_use]
     pub fn new(config: MusicConfig) -> Self {
-        tracing::info!(folders = ?config.folders, "player music: music folders");
+        tracing::info!(
+            folders = %crate::log_paths::shown_list(&config.folders),
+            "player music: music folders"
+        );
         Self {
             config,
             pending_set: None,
@@ -1928,7 +1931,10 @@ impl PlayerMusic {
                 self.config.folders.insert(0, f.clone());
             }
             self.config.settings_lookup = None;
-            tracing::info!(folders = ?self.config.folders, "player music: music folders");
+            tracing::info!(
+                folders = %crate::log_paths::shown_list(&self.config.folders),
+                "player music: music folders"
+            );
         }
         self.data = Some(Arc::new(data));
     }

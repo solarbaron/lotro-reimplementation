@@ -1151,6 +1151,7 @@ impl ScreenUi {
                     .map(|n| super::texts::OwnText::ConfirmDelete(n.to_owned()).to_string()),
             )
             .chain(model.entering_line().map(|t| t.to_string()))
+            .chain(model.disabled_actions_line().map(|t| t.to_string()))
             .collect();
         if lines != self.errors
             && let (Some(list), Some(tpl)) = (

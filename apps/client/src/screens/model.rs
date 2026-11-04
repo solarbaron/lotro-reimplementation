@@ -249,6 +249,8 @@ pub struct ScreenModel {
     last_entered: Option<String>,
     creation: Creation,
     pending: Option<Pending>,
+    /// The real stage a pending official entry reached (`official-entry.md` §8.7).
+    entry_stage: Option<tessera_net::WorldEntryStage>,
     /// The last creation that timed out (§7.1): a late `CharacterInfo` for it still keeps
     /// its choices.
     timed_out: Option<Pending>,
@@ -289,6 +291,7 @@ impl ScreenModel {
             creation: Creation::default(),
             pending: None,
             timed_out: None,
+            entry_stage: None,
             confirm: None,
             delete_refused: false,
             errors: VecDeque::new(),
@@ -363,16 +366,24 @@ impl ScreenModel {
     }
 
     /// Tessera's status line while an official selection is under way: each stage of that road
-    /// can take its full wait (`official-session.md` §9.3.8), and nothing else on the screen
+    /// can take its full wait (`official-session.md` §9.3.9), and nothing else on the screen
     /// moves meanwhile. Other backends answer at once and have no line.
     #[must_use]
     pub fn entering_line(&self) -> Option<OwnText> {
         match (&self.status, &self.backend) {
-            (Status::Entering(name), BackendKind::Official) => {
-                Some(OwnText::Entering(name.clone()))
+            (Status::Entering(_), BackendKind::Official) => {
+                Some(OwnText::Entering(self.entry_stage))
             }
             _ => None,
         }
+    }
+
+    /// The explanation beside the disabled buttons of the selection screen on an official session
+    /// (`official-session.md` §9.3.9), which their tooltips alone would hide.
+    #[must_use]
+    pub fn disabled_actions_line(&self) -> Option<OwnText> {
+        (self.stage == Stage::Select && self.backend == BackendKind::Official)
+            .then_some(OwnText::OfficialActionsDisabled)
     }
 
     /// The name of the open delete confirmation.
@@ -705,6 +716,11 @@ impl ScreenModel {
             Event::WorldEntered { name, .. } => {
                 self.last_entered = Some(name.clone());
                 self.status = Status::Entered(name.clone());
+            }
+            Event::WorldEntryProgress { stage } => self.entry_stage = Some(*stage),
+            // `official-entry.md` §8.7: loading starts behind the screens, which stay.
+            Event::WorldPlacementPending { .. } => {
+                self.entry_stage = Some(tessera_net::WorldEntryStage::Placement);
             }
             Event::EnterWorldFailed { reason, .. } => {
                 // The session is back at character selection and kept
@@ -1146,6 +1162,7 @@ impl ScreenModel {
             return;
         };
         self.last_entered = Some(name.clone());
+        self.entry_stage = None;
         self.status = Status::Entering(name.clone());
         self.outbox.push(Command::EnterWorld { character: name });
     }

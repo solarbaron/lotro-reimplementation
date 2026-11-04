@@ -515,11 +515,13 @@ fn load_skins(
         }
     };
     let skins = Arc::new(SkinSet::discover(&root, tables.as_ref()));
-    for r in skins.rejected() {
-        tracing::warn!(?r, "skin definition rejected");
+    if crate::log_paths::names_directories() {
+        for r in skins.rejected() {
+            tracing::warn!(?r, "skin definition rejected");
+        }
     }
     tracing::info!(
-        root = %root.display(),
+        root = %crate::log_paths::shown(&root),
         skins = skins.skins().len(),
         rejected = skins.rejected().len(),
         "skins discovered"

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The synthetic test vectors of `docs/specs/official-session.md` §10.2 (Vectors 1–15), byte
+//! The synthetic test vectors of `docs/specs/official-session.md` §10.2 (Vectors 1–20), byte
 //! for byte, with the "must fail" variants the spec states (a whole-payload sum, swapped
 //! seeds, recipients read from the cookie, sequence 1, the former high-bit mask flag, an
 //! unreversed referral cookie, a borrowed recipient, sequence or mask, an address family
@@ -15,13 +15,14 @@ use tessera_compat::initial::{
     check_language_allowed, fold_language_code,
 };
 use tessera_compat::session::{
-    AuthConnection, BLOB_FLAG_DEFAULT_RECIPIENT, BlobFragmentHeader, CHAT_MAX_RECV_RATE,
-    CodecUuids, ConnectionState, DatagramHeader, FLAG_CUMULATIVE_ACK, FlowControlHeader,
-    IsaacCipher, MAX_VARIABLE_U32, OptionalHeaders, ReferralAuthHeader, SessionAuthHeader,
-    SessionConnection, SessionError, SessionEvent, WireCodecs, WorldReferralHeader,
-    combine_packet_checksum, compute_datagram_checksum, decode_datagram, decode_variable_u32,
+    AuthConnection, BLOB_FLAG_DEFAULT_RECIPIENT, BlobFragment, BlobFragmentHeader, BlobReassembler,
+    CHAT_MAX_RECV_RATE, CodecUuids, ConnectionState, DatagramHeader, FLAG_CUMULATIVE_ACK,
+    FLAG_HAS_FRAGMENTED_BLOBS, FlowControlHeader, IsaacCipher, MAX_VARIABLE_U32, OptionalHeaders,
+    ReferralAuthHeader, SessionAuthHeader, SessionConnection, SessionError, SessionEvent,
+    WireCodecs, WorldReferralHeader, check_fragment_slice, combine_packet_checksum,
+    compute_datagram_checksum, decode_datagram, decode_message, decode_variable_u32,
     encode_datagram, encode_variable_u32, guid_fields_swapped, max_recv_rate_for_speed,
-    verify_packet_checksum,
+    parse_packet_payload, split_blob, verify_packet_checksum,
 };
 
 /// Parses a spec vector's hex text.
@@ -1566,6 +1567,19 @@ fn vector_15_one_prefix_boundaries() {
         AccountEvictionNotice::reason_of_envelope_body(&[4, 3, 2]),
         None
     );
+    // §9.3.9's structural tests, on the complete data: `00` and at least four reason bytes.
+    let valid = hex("00 01 00 00 00");
+    let body = decode_message(0xB3, &valid, 64).expect("plain").body;
+    assert_eq!(
+        AccountEvictionNotice::reason_of_envelope_body(&body),
+        Some(1)
+    );
+    // Short, and a nonzero prefix.
+    let short = decode_message(0xB3, &hex("00 01 00 00"), 64)
+        .expect("plain")
+        .body;
+    assert_eq!(AccountEvictionNotice::reason_of_envelope_body(&short), None);
+    assert!(decode_message(0xB3, &hex("01 01 00 00 00"), 64).is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -1899,4 +1913,358 @@ fn a_nonempty_list_with_tables_reads_to_exact_exhaustion() {
     assert!(CharacterListResponse::from_envelope_body(&base_model, &dictionary).is_err());
     let empty: BTreeMap<u32, PropertyType> = BTreeMap::new();
     assert!(CharacterListResponse::from_envelope_body(&list[1..], &empty).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Vector 18: the current attachment and bit forms (§9.3.9)
+// ---------------------------------------------------------------------------
+
+const V18_F5: [u8; 15] = [
+    0x01, 0x00, 0x77, 0, 0, 0, 0, 0, 0, 0x01, 0x80, 0xF5, 0x01, 0x00, 0x00,
+];
+const V18_F4: [u8; 7] = [0x01, 0x40, 0x80, 0xF4, 0x01, 0x00, 0x00];
+const V18_ATTACHED: [u8; 43] = [
+    0x81, 0x00, 0x01, 0x00, 0x77, 0, 0, 0, 0, 0, 0, 0x01, 0x40, 0x01, 0x01, 0x02, 0x03, 0x04, 0x05,
+    0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
+    0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x00,
+];
+const V18_QUEUE4: [u8; 17] = [
+    0x04, 0x04, 0x01, 0x00, 0x01, 0x00, 0x77, 0, 0, 0, 0, 0, 0, 0x01, 0x40, 0x01, 0x00,
+];
+const V18_EMPTY: [u8; 2] = [0x01, 0xC0];
+
+/// §9.3.9's checksum boundaries, in the driver of [`parse_packet_payload`]: the padded header with
+/// its attachment as one buffer, the data as another.
+fn fragments_sum(bytes: &[u8]) -> u32 {
+    parse_packet_payload(FLAG_HAS_FRAGMENTED_BLOBS, bytes, true)
+        .expect("parses")
+        .2
+}
+
+#[test]
+fn vector_18_explicit_f5_and_default_f4_send_forms() {
+    // The explicit-recipient `0xF5` reply, as the client's own encoder writes it.
+    let f5 = split_blob(1, 0, 0, 0, Some(0x0100_0000_0000_0077), 0xF5, &[0x00]).unwrap();
+    let mut wire = Vec::new();
+    f5[0].encode(&mut wire).unwrap();
+    assert_eq!(wire, V18_F5);
+    // The generic default-recipient form of 0xF5 is not this send form.
+    let default_form = split_blob(1, 0, 0, 0, None, 0xF5, &[0x00]).unwrap();
+    let mut other = Vec::new();
+    default_form[0].encode(&mut other).unwrap();
+    assert_ne!(other, V18_F5);
+    assert_eq!(other[1] & 0x40, 0x40);
+    // `0xF4`: the header is four bytes, then the pad of an odd length is in the padded header, and
+    // the body is one zero byte, with no extension and no second prefix.
+    let f4 = split_blob(1, 0, 0, 0, None, 0xF4, &[0x00]).unwrap();
+    let mut wire = Vec::new();
+    f4[0].encode(&mut wire).unwrap();
+    assert_eq!(wire, V18_F4);
+    let (frag, used) = BlobFragment::decode(&V18_F4).unwrap();
+    assert_eq!(used, V18_F4.len());
+    assert_eq!(frag.header.ext_word, None);
+    assert_eq!(frag.header.blob_header_word, Some(0xF4));
+    assert_eq!(frag.header.recipient_id, 2);
+    assert_eq!(frag.payload, [0x00]);
+}
+
+#[test]
+fn vector_18_extension_attachment_is_one_checksum_buffer_with_the_header() {
+    let (frag, used) = BlobFragment::decode(&V18_ATTACHED).unwrap();
+    assert_eq!(used, V18_ATTACHED.len());
+    let h = &frag.header;
+    assert_eq!(h.ext_word, Some(0x0001));
+    assert_eq!(h.recipient_id, 0x0100_0000_0000_0077);
+    assert_eq!(h.blob_header_word, Some(0x40));
+    assert_eq!(frag.payload, [0x00]);
+    let a = h.attachment.expect("attachment");
+    assert_eq!(a.words64[0], 0x0807_0605_0403_0201);
+    assert_eq!(a.words64[2], 0x1817_1615_1413_1211);
+    assert_eq!(a.word32, 0x1C1B_1A19);
+    // Re-encoding gives the same bytes.
+    let mut wire = Vec::new();
+    frag.encode(&mut wire).unwrap();
+    assert_eq!(wire, V18_ATTACHED);
+
+    // Header and attachment are one buffer, the data another.
+    let (head, data) = V18_ATTACHED.split_at(V18_ATTACHED.len() - 1);
+    let right = compute_datagram_checksum(head).wrapping_add(compute_datagram_checksum(data));
+    assert_eq!(fragments_sum(&V18_ATTACHED), right);
+    // MUST fail: a separately padded attachment buffer on this unaligned combined length.
+    let (header, attachment) = head.split_at(14);
+    let wrong = compute_datagram_checksum(header)
+        .wrapping_add(compute_datagram_checksum(attachment))
+        .wrapping_add(compute_datagram_checksum(data));
+    assert_ne!(right, wrong);
+    // MUST fail: truncation within the 28 bytes.
+    for cut in 15..head.len() {
+        assert!(
+            BlobFragmentHeader::decode(&V18_ATTACHED[..cut]).is_err(),
+            "{cut}"
+        );
+    }
+    // MUST fail: an unknown extension bit.
+    let mut unknown = V18_ATTACHED;
+    unknown[2] = 0x03;
+    assert_eq!(
+        BlobFragmentHeader::decode(&unknown),
+        Err(SessionError::UnknownExtensionBits { ext_word: 0x0003 })
+    );
+    // MUST fail: treating the attachment's first bytes as the next fragment: without the extension
+    // word's bit they parse as queue 1, and nothing of this fixture does then.
+    let mut no_bit = V18_ATTACHED;
+    no_bit[2] = 0x00;
+    assert!(parse_packet_payload(FLAG_HAS_FRAGMENTED_BLOBS, &no_bit, true).is_err());
+    // MUST fail: the withdrawn grammar. `blobFlags` 0x01 with no extension word has no attachment,
+    // so the 28 bytes after the header are not skipped.
+    let mut flag_grammar = vec![0x01, 0x01];
+    flag_grammar.extend_from_slice(&V18_ATTACHED[4..12]);
+    flag_grammar.extend_from_slice(&V18_ATTACHED[12..]);
+    let (flagged, used) = BlobFragmentHeader::decode(&flag_grammar).unwrap();
+    assert_eq!(flagged.attachment, None);
+    assert_eq!(used, 12);
+}
+
+#[test]
+fn vector_18_bit_04_and_the_empty_control() {
+    let (frag, used) = BlobFragment::decode(&V18_QUEUE4).unwrap();
+    assert_eq!(used, V18_QUEUE4.len());
+    assert_eq!(frag.header.queue_id, 4);
+    assert_eq!(frag.header.blob_flags, 0x04, "kept as metadata");
+    assert_eq!(frag.header.order_num, 1);
+    assert_eq!(frag.header.blob_id, 1);
+    assert_eq!(frag.header.blob_header_word, Some(0x40));
+    assert_eq!(frag.payload, [0x00]);
+    let mut r = BlobReassembler::default();
+    assert_eq!(
+        r.ingest(1, frag, 0.0)
+            .unwrap()
+            .expect("dispatched")
+            .blob_header_word,
+        0x40
+    );
+
+    // No opcode, length or data, no application dispatch, and the next header right after it.
+    let (empty, used) = BlobFragment::decode(&V18_EMPTY).unwrap();
+    assert_eq!(used, 2);
+    assert_eq!(empty.header.blob_header_word, None);
+    assert_eq!(empty.header.frag_data_len, 0);
+    assert_eq!(empty.payload, Vec::<u8>::new());
+    let mut r = BlobReassembler::default();
+    assert_eq!(r.ingest(1, empty, 0.0).unwrap(), None);
+    assert_eq!(r.counts().empty_controls, 1);
+    let mut both = V18_EMPTY.to_vec();
+    both.extend_from_slice(&V18_F4);
+    let (_, frags, _) = parse_packet_payload(FLAG_HAS_FRAGMENTED_BLOBS, &both, true).unwrap();
+    assert_eq!(frags.len(), 2);
+    assert_eq!(frags[1].header.blob_header_word, Some(0xF4));
+}
+
+#[test]
+fn vector_18_fragment_lengths_are_checked_before_anything_is_copied() {
+    // A two-part blob, queue 1, blob ID 1: `numFrags` 2, default recipient, and `len` of the
+    // fragment at `index`.
+    let part = |index: u32, len: u32, data: usize| {
+        let mut wire = vec![0x01, 0x10 | 0x40, 0x01, 0x00];
+        encode_variable_u32(index, &mut wire).unwrap();
+        encode_variable_u32(2, &mut wire).unwrap();
+        if index == 0 {
+            encode_variable_u32(0x40, &mut wire).unwrap();
+        }
+        encode_variable_u32(len, &mut wire).unwrap();
+        if wire.len() % 2 != 0 {
+            wire.push(0);
+        }
+        wire.extend(std::iter::repeat_n(0x5Au8, data));
+        wire
+    };
+    // 436 then 1 passes.
+    let mut r = BlobReassembler::default();
+    let (a, _) = BlobFragment::decode(&part(0, 436, 436)).unwrap();
+    let (b, _) = BlobFragment::decode(&part(1, 1, 1)).unwrap();
+    assert_eq!(r.ingest(1, a, 0.0).unwrap(), None);
+    assert_eq!(
+        r.ingest(1, b, 0.0)
+            .unwrap()
+            .expect("complete")
+            .payload
+            .len(),
+        437
+    );
+    // A non-final of 100 and a final of 464 fail in the header, before the slice is copied; the
+    // data need not even be there.
+    for (index, len) in [(0, 100), (1, 464), (1, 0), (0, 437)] {
+        assert_eq!(
+            BlobFragment::decode(&part(index, len, 0)),
+            Err(SessionError::InvalidFragmentDataLen { len })
+        );
+    }
+    // A single fragment may have 0..=464 bytes.
+    assert!(check_fragment_slice(0, 1, 0).is_ok());
+    assert!(check_fragment_slice(0, 1, 464).is_ok());
+    assert!(check_fragment_slice(0, 1, 465).is_err());
+    // A nonzero pad, or an index equal to its count.
+    let mut pad = V18_F4;
+    pad[5] = 1;
+    assert_eq!(
+        BlobFragmentHeader::decode(&pad),
+        Err(SessionError::NonZeroAlignmentPad { pad: 1 })
+    );
+    assert!(matches!(
+        BlobFragment::decode(&part(2, 1, 1)),
+        Err(SessionError::InvalidFragmentBounds { .. })
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Vector 19: the first-world server control and fragment composition (§9.3.9)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn vector_19_first_world_datagram() {
+    const COMPLETE: [u8; 64] = [
+        0x12, 0x34, 0x00, 0x2C, 0x01, 0x00, 0x01, 0x06, 0x00, 0x00, 0x00, 0x02, 0xD6, 0x42, 0xFD,
+        0xB4, 0x00, 0x01, 0x56, 0x78, 0x78, 0x56, 0x34, 0x12, 0x40, 0x45, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x01, 0x02, 0x77, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x81, 0x49, 0x04,
+        0x00, 0x00, 0x00, 0x01, 0x07, 0x02, 0x40, 0x01, 0x00, 0x01, 0x00, 0x80, 0x88, 0x04, 0x00,
+        0x00, 0x00, 0x01, 0x09,
+    ];
+    let mut seed = IsaacCipher::from_seed(0x1357_2468);
+    let mask = seed.next_mask();
+    assert_eq!(mask, 0xCD17_9AD8);
+
+    let header = DatagramHeader::from_wire_bytes(&COMPLETE).unwrap();
+    assert_eq!(header.rec_id, 0x1234);
+    assert_eq!(header.flags, 0x0100_0106);
+    assert_eq!(header.seq_num, 2);
+    assert_eq!(header.checksum, 0xD642_FDB4);
+    assert_eq!(header.peer_word, 0x5678);
+
+    let (opt, frags, sum) = parse_packet_payload(header.flags, &COMPLETE[20..], true).unwrap();
+    assert_eq!(opt.clock_sync, Some(42.0));
+    assert!(opt.server_redirect.is_some());
+    assert_eq!(frags.len(), 2);
+    assert_eq!(
+        frags[0].header.blob_flags, 0x02,
+        "queue 1: kept as metadata"
+    );
+    assert_eq!(frags[0].header.blob_header_word, Some(0x149));
+    assert_eq!(frags[1].header.blob_header_word, Some(0x88));
+    verify_packet_checksum(header, sum, Some(mask)).unwrap();
+
+    // Each row is its own buffer.
+    let rows: [&[u8]; 6] = [
+        &[0x78, 0x56, 0x34, 0x12],
+        &[0x40, 0x45, 0, 0, 0, 0, 0, 0],
+        &[
+            0x01, 0x02, 0x77, 0, 0, 0, 0, 0, 0, 0x01, 0x81, 0x49, 0x04, 0x00,
+        ],
+        &[0x00, 0x00, 0x01, 0x07],
+        &[0x02, 0x40, 0x01, 0x00, 0x01, 0x00, 0x80, 0x88, 0x04, 0x00],
+        &[0x00, 0x00, 0x01, 0x09],
+    ];
+    let by_rows = rows.iter().fold(0u32, |sum, r| {
+        sum.wrapping_add(compute_datagram_checksum(r))
+    });
+    assert_eq!(by_rows, sum);
+
+    // MUST fail: a stale mask, the whole payload as one buffer.
+    let mut login_seed = IsaacCipher::from_seed(0x1357_2469);
+    assert!(verify_packet_checksum(header, sum, Some(login_seed.next_mask())).is_err());
+    let whole = compute_datagram_checksum(&COMPLETE[20..]);
+    assert!(verify_packet_checksum(header, whole, Some(mask)).is_err());
+    // MUST fail: an eight-byte redirect shifts every boundary.
+    let mut eight = COMPLETE[20..24].to_vec();
+    eight.extend_from_slice(&[0; 4]);
+    eight.extend_from_slice(&COMPLETE[24..]);
+    assert!(parse_packet_payload(header.flags, &eight, true).is_err());
+    // MUST fail: a second prefix byte makes the data one byte longer than its slice length says.
+    let mut second = COMPLETE[20..].to_vec();
+    second.insert(46 - 20, 0x00);
+    assert!(parse_packet_payload(header.flags, &second, true).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Vector 20: all exercised appearance branches, in order (§9.3.9, world §2.8)
+// ---------------------------------------------------------------------------
+
+const VECTOR_20: &str = "00 E2 07 00 00 78 56 34 12 00 00 80 3F 00 00 00 40 00 00 40 40 00 00 C0 3F 00 00 80 3E 01 00 00 00 03 00 00 00 05 00 00 00 10 20 40 80 07 00 00 00 09 00 00 00 02 00 00 00 44 33 22 11 01 01 DD CC BB AA 01 00 00 00 88 77 66 55";
+
+#[test]
+fn vector_20_all_exercised_appearance_branches() {
+    use tessera_compat::world::VisualDescriptionUpdate;
+    let data = hex(VECTOR_20);
+    assert_eq!(data.len(), 75);
+    let d = VisualDescriptionUpdate::from_bytes(&data)
+        .expect("exact exhaustion")
+        .visual_desc;
+    assert_eq!(d.flags(), 0x07E2);
+    assert_eq!(d.secondary_did, Some(0x1234_5678));
+    assert_eq!(d.scale, Some([1.0, 2.0, 3.0]));
+    assert_eq!((d.param_a, d.param_b), (Some(1.5), Some(0.25)));
+    let tints = d.tint_entries.as_ref().expect("tints");
+    assert_eq!(tints.len(), 1);
+    assert_eq!((tints[0].slot, tints[0].key), (3, 5));
+    // B=0x10, G=0x20, R=0x40, A=0x80.
+    assert_eq!(tints[0].color_bgra, 0x8040_2010);
+    assert_eq!(tints[0].color_bgra.to_le_bytes(), [0x10, 0x20, 0x40, 0x80]);
+    assert_eq!((tints[0].field_d, tints[0].field_e), (7, 9));
+    let primary = d.primary_part.as_ref().expect("primary");
+    assert_eq!(primary.part_ids, [None, Some(0x1122_3344), None, None]);
+    let (hint, map) = d.part_map.as_ref().expect("part map");
+    assert_eq!(*hint, 1);
+    assert_eq!(map.len(), 1);
+    assert_eq!(map[0].0, 0xAABB_CCDD);
+    assert_eq!(map[0].1.part_ids, [Some(0x5566_7788), None, None, None]);
+
+    // Re-encoding gives the same 75 bytes: the order is the table's.
+    assert_eq!(
+        VisualDescriptionUpdate { visual_desc: d }
+            .to_bytes()
+            .expect("encodes"),
+        data
+    );
+    // MUST fail: a trailing byte; a truncation anywhere.
+    let mut longer = data.clone();
+    longer.push(0);
+    assert!(VisualDescriptionUpdate::from_bytes(&longer).is_err());
+    for cut in 1..data.len() {
+        assert!(
+            VisualDescriptionUpdate::from_bytes(&data[..cut]).is_err(),
+            "{cut}"
+        );
+    }
+    // MUST fail: scalar B after the collections: moving its four bytes to the end shifts the tint
+    // count.
+    let mut moved = data[..25].to_vec();
+    moved.extend_from_slice(&data[29..]);
+    moved.extend_from_slice(&data[25..29]);
+    assert!(VisualDescriptionUpdate::from_bytes(&moved).is_err());
+    // MUST fail: tint before scalar B.
+    let mut tint_first = data[..25].to_vec();
+    tint_first.extend_from_slice(&data[29..53]);
+    tint_first.extend_from_slice(&data[25..29]);
+    tint_first.extend_from_slice(&data[53..]);
+    assert!(VisualDescriptionUpdate::from_bytes(&tint_first).is_err());
+    // MUST fail: an omitted part-map key.
+    let mut no_key = data[..63].to_vec();
+    no_key.extend_from_slice(&data[67..]);
+    assert!(VisualDescriptionUpdate::from_bytes(&no_key).is_err());
+    // MUST fail: an unknown part bit 0x10.
+    let mut bit = data.clone();
+    bit[67] = 0x11;
+    assert!(VisualDescriptionUpdate::from_bytes(&bit).is_err());
+    // MUST fail: the TSize `01 E0 00 00 00 00`, a three-tier count that does not fit what is left.
+    let mut tsize = data[..61].to_vec();
+    tsize.extend_from_slice(&[0x01, 0xE0, 0, 0, 0, 0]);
+    tsize.extend_from_slice(&data[63..]);
+    assert!(VisualDescriptionUpdate::from_bytes(&tsize).is_err());
+    // A hint past the table.
+    let mut hint23 = data.clone();
+    hint23[61] = 23;
+    assert!(VisualDescriptionUpdate::from_bytes(&hint23).is_err());
+    // The base-model bit is unsupported, not read as one guessed form.
+    let mut base = data.clone();
+    base[1] = 0xE3;
+    assert!(VisualDescriptionUpdate::from_bytes(&base).is_err());
 }

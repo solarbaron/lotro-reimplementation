@@ -71,6 +71,7 @@ fn challenge() -> Vec<u8> {
     encode_datagram(
         DatagramHeader {
             rec_id: ASSIGNED,
+            peer_word: 0x3344,
             ..DatagramHeader::default()
         },
         &OptionalHeaders {

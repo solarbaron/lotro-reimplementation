@@ -6,31 +6,31 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use tessera_compat::session::{
     AUTH_FLAG_HAS_EXTRA_BLOB, AUTH_FLAG_HAS_SECOND_STRING, AUTH_TYPE_CHAT, AUTH_TYPE_PRIMARY,
     AuthConnection, AuthServerAddressHeader, BIT_TREE_TABLE_FORMAT_UUID,
-    BLOB_FLAG_DEFAULT_RECIPIENT, BLOB_FLAG_ENCRYPTED, BLOB_FLAG_HAS_ATTACHMENT, BindPlan,
-    BindPorts, BitTreeCodec, BitTreeNode, BitTreeTable, BlobFragment, BlobFragmentHeader,
-    BlobReassembler, ClientVersionMessage, CodecUuids, ConnectAcceptHeader, ConnectChallengeHeader,
-    ConnectionState, ControlMessage, DEFAULT_MAX_CONTAINER_DEPTH,
-    DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, DatagramHeader, DisconnectReason,
-    ENVELOPE_FLAG_HAS_ROUTING_HEADER, ENVELOPE_FLAG_ZLIB_COMPRESSED, EnvelopeContext,
-    FLAG_AUTH_SERVER_ADDR, FLAG_CLIENT_CONTROL, FLAG_CLOCK_SYNC, FLAG_CONNECT_CHALLENGE,
-    FLAG_CUMULATIVE_ACK, FLAG_DISCONNECT, FLAG_FLOW_CONTROL, FLAG_HAS_FRAGMENTED_BLOBS,
-    FLAG_MASKED_CHECKSUM, FLAG_OUT_OF_ORDER_ACK, FLAG_SEQUENCE_NAK, FLAG_SERVER_REDIRECT,
-    FLAG_TRANSPORT_ERROR, FLAG_UNDEFINED_10, FLAG_UNDEFINED_23, FLAG_WORLD_REFERRAL,
-    FlowControlHeader, FragmentAttachment, INVALID_DATAGRAM_FLAGS_MASK, InMemoryUdpTransport,
-    IsaacCipher, LOGON_RESULT_QUEUED, LoginQueuePosition, LoginQueueStatusMessage, LogonOutcome,
-    MAX_BLOB_FRAG_PAYLOAD, MAX_FRAGS_PER_PACKET, MAX_NAK_ENTRIES, MAX_SEQ_LOOKAHEAD,
-    MAX_UNIQUE_PORT_ATTEMPTS, MessageRoutingHeader, OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION,
-    OPCODE_LOGIN_QUEUE_STATUS, OPCODE_SINGLE_WRAPPER, OPCODE_SYSTEM_NOTIFICATION,
-    OPCODE_VERSION_REQUEST, OPCODE_VERSION_STATUS, OptionalHeaders, RECEIVE_FORBIDDEN_FLAGS_MASK,
-    ReferralAuthHeader, ServerRedirectHeader, SessionAuthHeader, SessionConnection, SessionError,
-    SessionEvent, SessionMultiplexer, SystemNotificationMessage, TransportErrorHeader,
-    UdpDatagramTransport, VALID_DATAGRAM_FLAGS_MASK, VersionStatusMessage, WireCodecs,
-    WorldReferralHeader, check_ticket_text, combine_packet_checksum, compute_datagram_checksum,
-    decode_datagram, decode_message, des3_cbc_decrypt, des3_cbc_encrypt, dispatch_message,
-    encode_batch_container, encode_datagram, encode_message, encode_message_with_routing,
-    encode_single_wrapper, encode_single_wrapper_with_context, encode_variable_u32,
-    guid_fields_swapped, next_unique_port, payload_checksum, sndbuf_probe_midpoint, split_blob,
-    unique_port_candidates, unique_port_ip_value, unique_port_seed, verify_packet_checksum,
+    BLOB_FLAG_DEFAULT_RECIPIENT, BLOB_FLAG_ENCRYPTED, BindPlan, BindPorts, BitTreeCodec,
+    BitTreeNode, BitTreeTable, BlobFragment, BlobFragmentHeader, BlobReassembler,
+    ClientVersionMessage, CodecUuids, ConnectAcceptHeader, ConnectChallengeHeader, ConnectionState,
+    ControlMessage, DEFAULT_MAX_CONTAINER_DEPTH, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
+    DatagramHeader, DisconnectReason, ENVELOPE_FLAG_HAS_ROUTING_HEADER,
+    ENVELOPE_FLAG_ZLIB_COMPRESSED, EnvelopeContext, FLAG_AUTH_SERVER_ADDR, FLAG_CLIENT_CONTROL,
+    FLAG_CLOCK_SYNC, FLAG_CONNECT_CHALLENGE, FLAG_CUMULATIVE_ACK, FLAG_DISCONNECT,
+    FLAG_FLOW_CONTROL, FLAG_HAS_FRAGMENTED_BLOBS, FLAG_MASKED_CHECKSUM, FLAG_OUT_OF_ORDER_ACK,
+    FLAG_SEQUENCE_NAK, FLAG_SERVER_REDIRECT, FLAG_TRANSPORT_ERROR, FLAG_UNDEFINED_10,
+    FLAG_UNDEFINED_23, FLAG_WORLD_REFERRAL, FlowControlHeader, FragmentAttachment,
+    INVALID_DATAGRAM_FLAGS_MASK, InMemoryUdpTransport, IsaacCipher, LOGON_RESULT_QUEUED,
+    LoginQueuePosition, LoginQueueStatusMessage, LogonOutcome, MAX_BLOB_FRAG_PAYLOAD,
+    MAX_FRAGS_PER_PACKET, MAX_NAK_ENTRIES, MAX_SEQ_LOOKAHEAD, MAX_UNIQUE_PORT_ATTEMPTS,
+    MessageRoutingHeader, OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS,
+    OPCODE_SINGLE_WRAPPER, OPCODE_SYSTEM_NOTIFICATION, OPCODE_VERSION_REQUEST,
+    OPCODE_VERSION_STATUS, OptionalHeaders, RECEIVE_FORBIDDEN_FLAGS_MASK, ReferralAuthHeader,
+    ServerRedirectHeader, SessionAuthHeader, SessionConnection, SessionError, SessionEvent,
+    SessionMultiplexer, SystemNotificationMessage, TransportErrorHeader, UdpDatagramTransport,
+    VALID_DATAGRAM_FLAGS_MASK, VersionStatusMessage, WireCodecs, WorldReferralHeader,
+    check_ticket_text, combine_packet_checksum, compute_datagram_checksum, decode_datagram,
+    decode_message, des3_cbc_decrypt, des3_cbc_encrypt, dispatch_message, encode_batch_container,
+    encode_datagram, encode_message, encode_message_with_routing, encode_single_wrapper,
+    encode_single_wrapper_with_context, encode_variable_u32, guid_fields_swapped, next_unique_port,
+    payload_checksum, sndbuf_probe_midpoint, split_blob, unique_port_candidates,
+    unique_port_ip_value, unique_port_seed, verify_packet_checksum,
 };
 
 /// The synthetic version stamp of Vector 6 (`official-session.md` §10.2,
@@ -105,6 +105,7 @@ fn challenge_for(incoming_rec_id: u16, incoming_seed: u32) -> Vec<u8> {
     encode_datagram(
         DatagramHeader {
             rec_id: incoming_rec_id,
+            peer_word: 0x3344,
             ..DatagramHeader::default()
         },
         &OptionalHeaders {
@@ -548,6 +549,7 @@ fn zero_recipient_ids_in_a_challenge_are_refused() {
         let dgram = encode_datagram(
             DatagramHeader {
                 rec_id: header_rec_id,
+                peer_word: 0x3344,
                 ..DatagramHeader::default()
             },
             &OptionalHeaders {
@@ -563,9 +565,18 @@ fn zero_recipient_ids_in_a_challenge_are_refused() {
             conn.receive_datagram(&dgram, server, 0.1, WireCodecs::NONE),
             Err(SessionError::InvalidChallengeRecipient)
         );
-        assert_eq!(conn.state(), ConnectionState::SessionAuthSent);
+        // §9.3.9: unsupported at once, every auth retry cancelled, no reply.
+        assert_eq!(conn.state(), ConnectionState::Closing);
         assert_eq!((conn.local_rec_id(), conn.server_rec_id()), (0, 0));
         assert!(conn.pop_outbound_datagram().is_none(), "no accept");
+        assert!(matches!(
+            conn.pop_event(),
+            Some(SessionEvent::Disconnected {
+                reason: DisconnectReason::InvalidChallenge
+            })
+        ));
+        conn.tick(5.0).unwrap();
+        assert!(conn.pop_outbound_datagram().is_none(), "no ticket again");
     }
     // Any non-zero pair is adopted (the earlier 0x0100..=0xFEFF range is superseded).
     let mut conn = SessionConnection::new(server, 0.0);
@@ -590,6 +601,7 @@ fn unsupported_codec_uuid_closes_with_reason() {
         encode_datagram(
             DatagramHeader {
                 rec_id: 0x0102,
+                peer_word: 0x3344,
                 ..DatagramHeader::default()
             },
             &OptionalHeaders {
@@ -803,6 +815,7 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
     let cr_dgram = encode_datagram(
         DatagramHeader {
             rec_id: 0x0111,
+            peer_word: 0x3344,
             ..DatagramHeader::default()
         },
         &cr_opt,
@@ -1265,8 +1278,8 @@ fn hostile_input_rejection_rules_1_to_8() {
     let oversized_frag = BlobFragment {
         header: BlobFragmentHeader {
             queue_id: 2,
-            ext_word: Some(0x1234),
-            blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT | BLOB_FLAG_HAS_ATTACHMENT,
+            ext_word: Some(0x0001),
+            blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT,
             seq_group: 0,
             order_num: 1,
             blob_id: 9,
@@ -1274,13 +1287,13 @@ fn hostile_input_rejection_rules_1_to_8() {
             num_frags: 5, // 5 * 436 > 2 * 436 cap
             recipient_id: 2,
             blob_header_word: Some(1),
-            frag_data_len: 10,
+            frag_data_len: 436,
             attachment: Some(FragmentAttachment {
                 words64: [1, 2, 3],
                 word32: 4,
             }),
         },
-        payload: vec![0u8; 10],
+        payload: vec![0u8; 436],
     };
     assert!(matches!(
         reassembler.ingest(1, oversized_frag, 0.0),
@@ -1738,18 +1751,11 @@ fn unmasked_frag(frag_index: u32, num_frags: u32, len: usize) -> BlobFragment {
 #[test]
 fn reassembly_rejects_final_fragment_past_buffer_end() {
     let mut reassembler = BlobReassembler::default();
-    // numFrags = 2, fragIndex = 1, fragDataLen = 464: 436 + 464 > 2 * 436.
+    // numFrags = 2, fragIndex = 1, fragDataLen = 464: 464 is for a single fragment only (§9.3.9).
     let err = reassembler
         .ingest(1, multi_frag(1, 2, 464), 0.0)
-        .expect_err("final fragment overruns the reassembly buffer");
-    assert_eq!(
-        err,
-        SessionError::FragmentOverrunsReassembly {
-            frag_index: 1,
-            len: 464,
-            buffer_len: 2 * MAX_BLOB_FRAG_PAYLOAD,
-        }
-    );
+        .expect_err("final fragment over its length");
+    assert_eq!(err, SessionError::InvalidFragmentDataLen { len: 464 });
     assert_eq!(reassembler.incomplete_len(), 0);
 
     // The largest final slice that fits (436 bytes) still completes the blob.
@@ -1891,6 +1897,7 @@ fn control_packets_stay_uncompressed_and_errors_close_with_reason() {
     let dgram = encode_datagram(
         DatagramHeader {
             rec_id: 0x0102,
+            peer_word: 0x3344,
             ..DatagramHeader::default()
         },
         &OptionalHeaders {
@@ -2407,7 +2414,7 @@ fn reassembly_table_capacity_is_checked_before_commit() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 34), 9000);
     let mut conn = challenged_connection(peer, 0x0100, 3);
     let open = |blob_id: u16| {
-        let mut f = unmasked_frag(0, 2, 8);
+        let mut f = unmasked_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD);
         f.header.blob_id = blob_id;
         f
     };
@@ -2646,7 +2653,7 @@ fn fragments_beside_a_challenge_are_keyed_by_the_new_server_id() {
     let early = encode_datagram(
         DatagramHeader::default(),
         &OptionalHeaders::default(),
-        &[unmasked_frag(0, 3, 8)],
+        &[unmasked_frag(0, 3, MAX_BLOB_FRAG_PAYLOAD)],
         None,
         None,
     )
@@ -2658,6 +2665,7 @@ fn fragments_beside_a_challenge_are_keyed_by_the_new_server_id() {
     let opening = encode_datagram(
         DatagramHeader {
             rec_id: 0x0102,
+            peer_word: 0x3344,
             ..DatagramHeader::default()
         },
         &OptionalHeaders {
@@ -3294,10 +3302,10 @@ fn raw_fragment_datagram(rec_id: u16, header_bytes: &[u8], data: &[u8]) -> Vec<u
     dgram
 }
 
-/// §5.6.3 receive policy (P10-22-POLICY): `blobFlags` `0x04` and `0x20` reject the
-/// datagram; `0x02` is accepted on queue 1 and kept as metadata, unsupported on queues 2–4;
-/// attachment-bearing packets are dropped (OPEN-SESSION-10); a sender clears `0x02`, `0x04`
-/// and `0x20` and never sends an attachment.
+/// §9.3.9's closed table: `blobFlags` `0x20` drops the datagram; `0x01` and `0x04` parse unchanged,
+/// kept as metadata; `0x02` is accepted on queue 1, kept as metadata, and on queues 2–4 is the
+/// terminal class; an unknown extension bit drops the datagram; an attachment parses into its own
+/// checksum buffer with the header. A sender clears `0x01`, `0x02`, `0x04` and `0x20`.
 #[test]
 fn blob_flags_receive_policy_and_attachments() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 72), 9000);
@@ -3307,34 +3315,34 @@ fn blob_flags_receive_policy_and_attachments() {
         wire[1] = flags;
         wire
     };
-    // Undefined bits.
-    for bit in [0x04u8, 0x20] {
+    // Unverified bit.
+    let mut conn = challenged_connection(peer, 0x0150, 1);
+    let frag = flagged_fragment(1, 0);
+    let flags = frag.header.blob_flags | 0x20;
+    let dgram = raw_fragment_datagram(0x0150, &wire_of(&frag, flags), &frag.payload);
+    assert_eq!(
+        conn.receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE),
+        Err(SessionError::UndefinedBlobFlags { blob_flags: flags })
+    );
+    assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
+    assert!(conn.pop_event().is_none());
+    // Bits 0x01, 0x02 and 0x04 on queue 1: delivered, the bit kept.
+    for bit in [0x01u8, 0x02, 0x04] {
         let mut conn = challenged_connection(peer, 0x0150, 1);
         let frag = flagged_fragment(1, 0);
         let flags = frag.header.blob_flags | bit;
         let dgram = raw_fragment_datagram(0x0150, &wire_of(&frag, flags), &frag.payload);
-        assert_eq!(
-            conn.receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE),
-            Err(SessionError::UndefinedBlobFlags { blob_flags: flags })
+        let pkt = conn
+            .receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE)
+            .unwrap();
+        assert_eq!(pkt.fragments[0].header.blob_flags, flags);
+        assert_eq!(conn.state(), ConnectionState::Connected);
+        assert!(
+            std::iter::from_fn(|| conn.pop_event())
+                .any(|e| matches!(e, SessionEvent::BlobReceived(b) if b.payload == [1, 2, 3]))
         );
-        assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
-        assert!(conn.pop_event().is_none());
     }
-    // Bit 0x02 on queue 1: delivered, the bit kept.
-    let mut conn = challenged_connection(peer, 0x0150, 1);
-    let frag = flagged_fragment(1, 0);
-    let flags = frag.header.blob_flags | 0x02;
-    let dgram = raw_fragment_datagram(0x0150, &wire_of(&frag, flags), &frag.payload);
-    let pkt = conn
-        .receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE)
-        .unwrap();
-    assert_eq!(pkt.fragments[0].header.blob_flags, flags);
-    assert_eq!(conn.state(), ConnectionState::Connected);
-    assert!(
-        std::iter::from_fn(|| conn.pop_event())
-            .any(|e| matches!(e, SessionEvent::BlobReceived(b) if b.payload == [1, 2, 3]))
-    );
-    // Bit 0x02 on queues 2, 3 and 4: unsupported, dropped and counted.
+    // Bit 0x02 on queues 2, 3 and 4 in an unmasked packet: dropped and counted, nothing ends.
     for queue in [2u8, 3, 4] {
         let mut conn = challenged_connection(peer, 0x0150, 1);
         let frag = flagged_fragment(queue, 0);
@@ -3350,41 +3358,51 @@ fn blob_flags_receive_policy_and_attachments() {
         assert_eq!(conn.handshake_counts().unsupported_fragment_drops, 1);
         assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
     }
-    // An attachment: the header layout parses, the packet is dropped and counted.
+    // An attachment: selected by the extension word, opaque, and it adds no flag.
     let mut conn = challenged_connection(peer, 0x0150, 1);
-    let mut frag = flagged_fragment(2, BLOB_FLAG_HAS_ATTACHMENT);
+    let mut frag = flagged_fragment(1, 0);
     frag.header.attachment = Some(FragmentAttachment {
         words64: [1, 2, 3],
         word32: 4,
     });
     let mut wire = Vec::new();
     frag.header.encode(&mut wire).unwrap();
+    assert_eq!(wire[0] & 0x80, 0x80, "the extension word is there");
+    let decoded = BlobFragmentHeader::decode(&wire).unwrap().0;
+    assert_eq!(decoded.attachment, frag.header.attachment);
+    assert_eq!(decoded.ext_word, Some(0x0001));
+    let dgram = raw_fragment_datagram(0x0150, &wire, &frag.payload);
+    let pkt = conn
+        .receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE)
+        .unwrap();
+    assert_eq!(pkt.fragments[0].header.attachment, frag.header.attachment);
+    // An extension word without the bit, or with an unknown one.
+    let mut conn = challenged_connection(peer, 0x0150, 1);
+    let mut frag = flagged_fragment(1, 0);
+    frag.header.ext_word = Some(0x0000);
+    let mut wire = Vec::new();
+    frag.header.encode(&mut wire).unwrap();
     assert_eq!(
         BlobFragmentHeader::decode(&wire).unwrap().0.attachment,
-        frag.header.attachment
+        None
+    );
+    frag.header.ext_word = Some(0x0002);
+    let mut wire = Vec::new();
+    frag.header.encode(&mut wire).unwrap();
+    assert_eq!(
+        BlobFragmentHeader::decode(&wire),
+        Err(SessionError::UnknownExtensionBits { ext_word: 0x0002 })
     );
     let dgram = raw_fragment_datagram(0x0150, &wire, &frag.payload);
-    assert!(matches!(
+    assert_eq!(
         conn.receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE),
-        Err(SessionError::UnsupportedFragment { queue_id: 2, .. })
-    ));
-    assert_eq!(conn.handshake_counts().unsupported_fragment_drops, 1);
-    // Never sent: no checksum boundary is invented for it.
-    assert!(matches!(
-        encode_datagram(
-            DatagramHeader::default(),
-            &OptionalHeaders::default(),
-            &[frag],
-            None,
-            None
-        ),
-        Err(SessionError::UnsupportedFragment { .. })
-    ));
-    // A sender clears 0x02, 0x04 and 0x20.
-    let loud = flagged_fragment(1, 0x02 | 0x04 | 0x20);
+        Err(SessionError::UnknownExtensionBits { ext_word: 0x0002 })
+    );
+    // A sender clears them.
+    let loud = flagged_fragment(1, 0x01 | 0x02 | 0x04 | 0x20);
     let mut wire = Vec::new();
     loud.header.encode(&mut wire).unwrap();
-    assert_eq!(wire[1] & (0x02 | 0x04 | 0x20), 0);
+    assert_eq!(wire[1] & (0x01 | 0x02 | 0x04 | 0x20), 0);
 }
 
 /// §4.3, §6.5, §6.6: `ServerRedirectHeader` is four opaque bytes and its own checksum
@@ -3859,11 +3877,11 @@ fn a_newer_queue_3_blob_supersedes_an_older_incomplete_one() {
     assert_eq!(r.ingest(0x100, first(10, 6), 0.0).unwrap(), None);
     assert_eq!(r.ingest(0x100, first(11 + 32_768, 5), 0.0).unwrap(), None);
     assert_eq!(r.incomplete_len(), 4);
-    // 11 of group 5: 10 is older; 11 itself is equal and 32,768 away is ambiguous, so both stay;
-    // group 6 is another group.
-    assert!(r.ingest(0x100, whole(11, 5), 0.0).unwrap().is_some());
-    assert_eq!(r.incomplete_len(), 3);
-    assert_eq!(r.superseded(), 1);
+    // 12 of group 5: 10 and 11 are older; 32,768 from 11 is newer than neither; group 6 is another
+    // group.
+    assert!(r.ingest(0x100, whole(12, 5), 0.0).unwrap().is_some());
+    assert_eq!(r.incomplete_len(), 2);
+    assert_eq!(r.superseded(), 2);
 }
 
 /// A fragment on queue 5 (OPEN-SESSION-12) at `seq`: refused whole, whoever sent it.

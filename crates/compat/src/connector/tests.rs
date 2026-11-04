@@ -9,6 +9,7 @@ mod deadlines;
 mod diagnostics;
 mod handshake;
 mod initial_negotiation;
+mod pending_entry;
 mod world_entry;
 mod world_feed;
 
@@ -315,6 +316,8 @@ impl Gate {
 struct Service {
     /// Like every production path: no source for readiness (OPEN-WORLD-9).
     no_readiness: bool,
+    /// A stand-in for the server gate of the entry order (no production path has one, OPEN-WORLD-9).
+    server_gate: Option<u32>,
     /// Like every production path: no source for the chat codec (OPEN-SESSION-1).
     no_chat_codec: bool,
     auth: String,
@@ -363,6 +366,7 @@ impl Default for Service {
     fn default() -> Self {
         Self {
             no_readiness: false,
+            server_gate: None,
             no_chat_codec: false,
             auth: "https://auth.example.invalid/login".to_owned(),
             login: login_ok(1),
@@ -715,6 +719,10 @@ impl ConnectorNet for FakeNet {
         !self.0.service.no_readiness
     }
 
+    fn server_gate(&self) -> Option<u32> {
+        self.0.service.server_gate
+    }
+
     fn chat_codec_specified(&self) -> bool {
         !self.0.service.no_chat_codec
     }
@@ -989,13 +997,6 @@ impl Run {
                 _ => None,
             })
             .collect()
-    }
-
-    fn refused_note(&self) -> Option<String> {
-        self.seen.iter().find_map(|e| match e {
-            Event::Account(AccountEvent::LoginRefused { note, .. }) => note.clone(),
-            _ => None,
-        })
     }
 
     fn refused(&self) -> Option<(LoginRefusal, Option<String>)> {
@@ -1366,12 +1367,12 @@ fn i1_local_discovery_failure_reaches_no_network() {
     // Not a refusal of the credentials and not the service's answer: the start screen's category
     // (§8.6), with Tessera's own line (decision 0046 item 6; `official-login.md` §5.1).
     assert_eq!(run.refused(), Some((LoginRefusal::UnsupportedStep, None)));
-    assert_eq!(
-        run.refused_note().as_deref(),
-        Some(super::login_phase::LOCAL_INSTALL_NOTE)
-    );
-    assert!(super::login_phase::LOCAL_INSTALL_NOTE.contains("Tessera limit"));
-    assert!(super::login_phase::LOCAL_INSTALL_NOTE.contains("not a fault of your account"));
+    assert!(run.seen.iter().any(|e| matches!(
+        e,
+        Event::Disconnected {
+            reason: DisconnectReason::Unsupported
+        }
+    )));
     assert!(run.world.requests().is_empty());
     assert_eq!(run.world.binds(), 0);
 }
@@ -1482,12 +1483,13 @@ fn several_subscriptions_are_an_unsupported_step() {
     );
     run.wait_event(is_disconnected);
     assert_eq!(run.refused(), Some((LoginRefusal::UnsupportedStep, None)));
-    // A limit of Tessera's: the note selects the Tessera text, not "cannot log in to this account"
-    // (decision 0046 item 6).
-    assert_eq!(
-        run.refused_note().as_deref(),
-        Some(super::login_phase::SEVERAL_SUBSCRIPTIONS_NOTE)
-    );
+    // A limit of Tessera's, with its fixed words (decision 0046 item 6).
+    assert!(run.seen.iter().any(|e| matches!(
+        e,
+        Event::Disconnected {
+            reason: DisconnectReason::Unsupported
+        }
+    )));
 }
 
 // ---------------------------------------------------------------------------
@@ -2278,9 +2280,9 @@ fn the_session_reaches_the_character_list_and_the_world() {
     assert_eq!(ra.reversed_cookie, 0x1122_3344_5566_7788u64.to_le_bytes());
     let mut world = Server::new(0x0111, 0xBEEF_0002);
     world.connect(&run, 0xBEEF_0002, WORLD_SERVER);
-    // The world name arrives before `0x90` and is not lost.
+    // §9.3.9: a world name before `WorldEntered` is counted and skipped, not kept.
     let name = WorldNameAnnouncement {
-        world_name: LocalizedTokenText::literal("Alpha world"),
+        world_name: LocalizedTokenText::literal("Early name"),
     }
     .to_bytes()
     .expect("name");
@@ -2297,12 +2299,28 @@ fn the_session_reaches_the_character_list_and_the_world() {
     };
     assert_eq!(player.0, 0x0100_0000_0000_0007);
     assert_eq!(name, "Aldo");
+    // After `WorldEntered` it is the world's name.
+    let name = WorldNameAnnouncement {
+        world_name: LocalizedTokenText::literal("Alpha world"),
+    }
+    .to_bytes()
+    .expect("name");
+    let d = world.event(0x43, &name);
+    run.world.deliver(d, WORLD_SERVER);
     run.wait_event(|e| {
         matches!(
             e,
             Event::ChatMessage { channel: ChatChannel::System, text, .. } if text == "Alpha world"
         )
     });
+    assert!(
+        !run.seen.iter().any(|e| matches!(
+            e,
+            Event::ChatMessage { text, .. } if text == "Early name"
+        )),
+        "{:?}",
+        run.seen
+    );
     ack_portal_exit(&mut run, &world);
     // Disconnect: the session ends at once; the connection says Disconnect.
     run.session
@@ -2399,38 +2417,22 @@ fn a_referral_outside_world_entry_is_ignored() {
     let _ = run.session.send(Instant::now(), Command::Disconnect);
 }
 
+/// §9.3.9: a duplicate referral is counted and skipped: no second world connection.
 #[test]
-fn a_second_referral_disconnects_the_replaced_world_connection() {
+fn a_second_referral_is_counted_and_skipped() {
     let mut run = start(Service::default(), true);
     let login = to_character_list(&mut run);
     let world = into_world(&mut run, &login);
     ack_portal_exit(&mut run, &world);
     run.world
         .deliver(world.referral(0x55, WORLD_SERVER_2), WORLD_SERVER);
-    let (mut to_new, mut old_disconnect) = (false, false);
-    let until = Instant::now() + Duration::from_secs(10);
-    while !(to_new && old_disconnect) {
-        match run.world.pop_sent() {
-            Some((d, dst)) => {
-                let pkt = decode_client_datagram(&d, false);
-                if dst == WORLD_SERVER_2 {
-                    to_new |= pkt
-                        .as_ref()
-                        .is_ok_and(|p| p.opt_headers.referral_auth.is_some());
-                }
-                if dst == WORLD_SERVER {
-                    old_disconnect |= pkt.is_ok_and(|p| p.opt_headers.disconnect);
-                }
-            }
-            None => {
-                run.drain();
-                assert!(
-                    Instant::now() < until,
-                    "new {to_new}, old disconnect {old_disconnect}"
-                );
-                std::thread::sleep(Duration::from_millis(2));
-            }
+    let until = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < until {
+        if let Some((_, dst)) = run.world.pop_sent() {
+            assert_ne!(dst, WORLD_SERVER_2, "a duplicate referral was followed");
         }
+        run.drain();
+        std::thread::sleep(Duration::from_millis(5));
     }
     let _ = run.session.send(Instant::now(), Command::Disconnect);
 }
@@ -2685,8 +2687,9 @@ fn a_world_that_never_answers_the_entry_ends_with_a_named_deadline() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            Event::Disconnected { reason: DisconnectReason::TimedOutLocally(text) }
-                if text == super::session_phase::EntryWait::Referral.deadline_text()
+            Event::Disconnected {
+                reason: DisconnectReason::UnsupportedTimeout
+            }
         )),
         "{events:?}"
     );
@@ -2768,7 +2771,7 @@ fn the_referral_disconnects_the_login_connection_gracefully() {
         events.iter().any(|e| matches!(
             e,
             Event::Disconnected {
-                reason: DisconnectReason::TimedOutLocally(_)
+                reason: DisconnectReason::UnsupportedTimeout
             }
         )),
         "{events:?}"
@@ -2907,7 +2910,6 @@ fn a_refusal_and_its_disconnect_are_never_parted() {
         reason: LoginRefusal::Other,
         retry_after_seconds: None,
         detail: None,
-        note: None,
     });
     let gone = Event::Disconnected {
         reason: DisconnectReason::TimedOut,
@@ -3350,16 +3352,9 @@ fn driver_with_chat_handshake() -> (World, SessionDriver<FakeNet>, Server) {
 fn a_cancel_during_the_chat_handshake_sends_no_chat_datagram() {
     let (world, mut d, _login) = driver_with_chat_handshake();
     d.begin_shutdown(2.5);
-    // The world connection (here the login connection) has the unacknowledged `0x6F` to
-    // flush before its `Disconnect`.
-    assert!(
-        matches!(
-            d.connection_states().0,
-            Some(ConnectionState::DisconnectingFlush | ConnectionState::DisconnectSent)
-        ),
-        "{:?}",
-        d.connection_states()
-    );
+    // §9.3.9: one Disconnect on the established connection and a local close, with no drain of the
+    // unacknowledged `0x6F`.
+    assert_eq!(d.connection_states().0, None, "{:?}", d.connection_states());
     let mut said_disconnect = false;
     let mut t = 2.5;
     while t < 30.0 {
@@ -4197,12 +4192,11 @@ fn login_failures_map_to_the_entry_categories() {
         reason: String::new(),
     };
     assert_eq!(login_refusal(&local), LoginRefusal::UnsupportedStep);
-    // With Tessera's own line, not the service's words.
-    assert!(matches!(
+    // No words of the service's, and no local cause in them.
+    assert_eq!(
         super::login_phase::LoginStop::from(&local),
-        super::login_phase::LoginStop::RefusedLocally(LoginRefusal::UnsupportedStep, n)
-            if n == super::login_phase::LOCAL_INSTALL_NOTE
-    ));
+        super::login_phase::LoginStop::Refused(LoginRefusal::UnsupportedStep, None)
+    );
     assert_eq!(
         world_refusal(&LoginError::WorldRoleDenied),
         WorldRefusal::NotAllowed
@@ -4332,18 +4326,14 @@ fn leaving_the_world_returns_to_the_character_list_on_the_same_session() {
         },
         4.0,
     )
-    .expect("reported");
+    .expect_err("refused locally");
     assert!(!sent_blobs(&world).iter().any(|(op, _)| *op == 0x6F));
-    assert!(d.take_events().iter().any(|e| matches!(
-        e,
-        Event::Disconnected { reason: DisconnectReason::TransportFailed(text) }
-            if text == super::session_phase::ENTRY_NOT_SUPPORTED
-    )));
-    assert!(d.ended());
+    assert!(d.re_entry_blocked());
+    assert!(!d.ended(), "§9.3.9: the session goes on");
 }
 
 #[test]
-fn a_list_received_in_the_world_is_the_one_the_return_offers() {
+fn a_list_received_in_the_world_is_counted_and_the_return_offers_the_last_valid_one() {
     let (world, mut d, mut login) = driver_in_world();
     let two = [
         (0x0200_0000_0000_0042, "Aldo"),
@@ -4364,7 +4354,7 @@ fn a_list_received_in_the_world_is_the_one_the_return_offers() {
         events.iter().any(|e| matches!(
             e,
             Event::ReturnedToCharacterSelect { characters }
-                if characters.iter().map(|c| c.name.as_str()).eq(["Aldo", "Bera"])
+                if characters.iter().map(|c| c.name.as_str()).eq(["Aldo"])
         )),
         "{events:?}"
     );
@@ -4545,21 +4535,18 @@ fn the_live_connector_returns_to_character_selection() {
         .deliver(world.event(0x3000_001C, &[0]), WORLD_SERVER);
     run.wait_event(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }));
     assert_eq!(run.session.state(), tessera_net::SessionState::Connected);
-    run.session
-        .send(
-            Instant::now(),
-            Command::EnterWorld {
-                character: "Aldo".to_owned(),
-            },
-        )
-        .expect("reported");
-    run.wait_event(|e| {
-        matches!(
-            e,
-            Event::Disconnected { reason: DisconnectReason::TransportFailed(text) }
-                if text == super::session_phase::ENTRY_NOT_SUPPORTED
-        )
-    });
+    // §9.3.9: a local `InvalidCommand`, the session stays at the list and nothing goes out.
+    let refused = run.session.send(
+        Instant::now(),
+        Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+    );
+    assert!(
+        matches!(refused, Err(NetError::InvalidCommand(_))),
+        "{refused:?}"
+    );
+    assert_eq!(run.session.state(), tessera_net::SessionState::Connected);
     let mut sent = Vec::new();
     while let Some(d) = run.world.pop_sent() {
         sent.push(d);

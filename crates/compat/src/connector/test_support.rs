@@ -268,6 +268,14 @@ impl State {
         self.inbound.push_back((datagram, LOGIN_SERVER));
     }
 
+    /// [`Self::deliver`] from the observed-order script's world server.
+    fn deliver_world(&mut self, datagram: Vec<u8>) {
+        if self.inbound.len() >= MAX_KEPT {
+            self.inbound.pop_front();
+        }
+        self.inbound.push_back((datagram, OBSERVED_WORLD_SERVER));
+    }
+
     /// Notes a blob opcode the client sent (the oldest is dropped beyond [`MAX_KEPT`]).
     fn saw_blob(&mut self, op: u32) {
         if self.seen.blobs.len() >= MAX_KEPT {
@@ -713,7 +721,7 @@ fn observed_world_answer(st: &mut State, datagram: &[u8]) {
     if pkt.opt_headers.referral_auth.is_some() {
         st.seen.referral_auths += 1;
         let server = Server::new();
-        st.deliver(server.challenge());
+        st.deliver_world(server.challenge());
         st.world_server = Some(server);
         return;
     }
@@ -725,9 +733,9 @@ fn observed_world_answer(st: &mut State, datagram: &[u8]) {
     };
     if pkt.opt_headers.connect_accept.is_some() && !server.greeted {
         server.greeted = true;
-        for (queue, opcode, data) in observed_world_stream() {
-            if let Some(d) = server.observed_on(queue, opcode, &data) {
-                st.deliver(d);
+        for messages in observed_world_stream() {
+            if let Some(d) = server.observed_datagram(&messages) {
+                st.deliver_world(d);
             }
         }
     }
@@ -739,26 +747,153 @@ fn observed_world_answer(st: &mut State, datagram: &[u8]) {
     st.world_server = Some(server);
 }
 
-/// The world server's complete messages in the observed-order script, as `(queue, opcode, data)`:
-/// the observed messages up to `0x90` and the checked ones after it (§9.3.8), with no readiness
-/// the client could act on.
+/// How one message of the observed world stream is framed (§9.3.9, Vector 18).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservedForm {
+    /// The default recipient.
+    Plain,
+    /// An explicit recipient.
+    To(u64),
+    /// An extension word with bit `0x0001`, and the 28-byte attachment after the padded header.
+    Attached,
+    /// `blobFlags` `0x04`: unchanged framing.
+    Bit04,
+    /// `OmitChunkInfo`: no opcode, no length and no data.
+    EmptyControl,
+}
+
+/// One complete message of the observed world stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedMessage {
+    /// Its delivery queue.
+    pub queue: u8,
+    /// Its opcode.
+    pub opcode: u32,
+    /// Its complete data, the one shared byte included.
+    pub data: Vec<u8>,
+    /// Its framing.
+    pub form: ObservedForm,
+}
+
+fn observed(queue: u8, opcode: u32, data: Vec<u8>, form: ObservedForm) -> ObservedMessage {
+    ObservedMessage {
+        queue,
+        opcode,
+        data,
+        form,
+    }
+}
+
+/// The compact header of `m`, with its pad and attachment, and its data: the two checksum buffers
+/// of §9.3.9. `word` is its ordering word and blob ID.
 #[must_use]
-pub fn observed_world_stream() -> Vec<(u8, u32, Vec<u8>)> {
+pub fn observed_buffers(m: &ObservedMessage, word: u16) -> (Vec<u8>, Vec<u8>) {
+    if m.form == ObservedForm::EmptyControl {
+        return (vec![m.queue, 0xC0], Vec::new());
+    }
+    let recipient = match m.form {
+        ObservedForm::To(id) => Some(id),
+        _ => None,
+    };
+    let frags =
+        split_blob(m.queue, word, word, 0, recipient, m.opcode, &m.data).unwrap_or_default();
+    let mut header = Vec::new();
+    if let Some(mut f) = frags.into_iter().next() {
+        if m.form == ObservedForm::Attached {
+            f.header.attachment = Some(crate::session::FragmentAttachment {
+                words64: [0x0102_0304, 0x0506_0708, 0x090A_0B0C],
+                word32: 0x0D0E_0F10,
+            });
+        }
+        let _ = f.header.encode(&mut header);
+        if m.form == ObservedForm::Bit04
+            && let Some(flags) = header.get_mut(1)
+        {
+            *flags |= 0x04;
+        }
+    }
+    (header, m.data.clone())
+}
+
+/// The complete datagram of `buffers` (§4.4.2: each buffer checksummed by itself), without the wire
+/// compression when `codec` is `None`.
+#[must_use]
+pub fn observed_raw_datagram(
+    rec_id: u16,
+    seq: u32,
+    mask: u32,
+    buffers: &[(Vec<u8>, Vec<u8>)],
+    codec: Option<&dyn BitTreeCodec>,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    let mut sum = 0u32;
+    for (header, data) in buffers {
+        sum = sum
+            .wrapping_add(crate::session::compute_datagram_checksum(header))
+            .wrapping_add(crate::session::compute_datagram_checksum(data));
+        payload.extend_from_slice(header);
+        payload.extend_from_slice(data);
+    }
+    let mut hdr = DatagramHeader {
+        rec_id,
+        seq_num: seq,
+        pak_size: u16::try_from(payload.len()).unwrap_or(u16::MAX),
+        flags: crate::session::FLAG_MASKED_CHECKSUM | crate::session::FLAG_HAS_FRAGMENTED_BLOBS,
+        ..DatagramHeader::default()
+    };
+    hdr.checksum = crate::session::combine_packet_checksum(hdr, sum, Some(mask)).unwrap_or(0);
+    let wire = hdr.to_wire_bytes();
+    let mut out = Vec::new();
+    match codec {
+        Some(codec) => {
+            let mut plain = wire.get(2..).unwrap_or_default().to_vec();
+            plain.extend_from_slice(&payload);
+            out.extend_from_slice(&rec_id.to_be_bytes());
+            let _ = codec.encode(&plain, &mut out, crate::session::MAX_DATAGRAM_BUF - 2);
+        }
+        None => {
+            out.extend_from_slice(&[0, 0]);
+            out.extend_from_slice(&wire);
+            out.extend_from_slice(&payload);
+        }
+    }
+    out
+}
+
+/// The world server's datagrams in the observed-order script, each its messages, in the order of
+/// `official-session.md` §9.3.9: the observed messages up to `0x90`; the first `0x4C`; the first
+/// bit-`0x04` datagram on queue 4, then the attached queue-1 `0x19A` with its siblings on queues 1,
+/// 3 and 4; the first `0xCC` in its default-recipient form; and at the end a queue-3 `0xCE`. No
+/// readiness the client could act on: `0x7C` and `0x0D` are only counted. The local player's exact
+/// placement is its own `0xCE`.
+#[must_use]
+pub fn observed_world_stream() -> Vec<Vec<ObservedMessage>> {
+    use ObservedForm::{Attached, Bit04, EmptyControl, Plain, To};
+    let one = |queue, opcode, data, form| vec![observed(queue, opcode, data, form)];
     vec![
-        (1, 0x149, opaque_body(0x149)),
-        (2, 0x88, opaque_body(0x88)),
-        (4, 0x92, opaque_body(0x92)),
-        (4, 0xA8, opaque_body(0xA8)),
-        (4, 0x89, OBSERVED_APPEARANCE.to_vec()),
-        (4, 0x92, opaque_body(0x92)),
-        (2, 0x88, opaque_body(0x88)),
-        (1, 0x90, session_ready()),
-        (2, 0x4C, observed_batch()),
-        (1, PositionUpdate::EVENT_ID, placement()),
-        (1, EnterPortalSpace::EVENT_ID, entry_portal_space()),
-        (1, 0x149, opaque_body(0x149)),
-        (1, 0x7C, vec![0x00]),
-        (1, 0x0D, vec![0x00]),
+        one(1, 0x149, opaque_body(0x149), Plain),
+        one(2, 0x88, opaque_body(0x88), Plain),
+        one(4, 0x92, opaque_body(0x92), Plain),
+        one(4, 0xA8, opaque_body(0xA8), Plain),
+        one(4, 0x89, OBSERVED_APPEARANCE.to_vec(), Plain),
+        one(1, 0x90, session_ready(), Plain),
+        one(2, 0x4C, observed_batch(), To(NPC)),
+        one(4, 0x89, OBSERVED_APPEARANCE.to_vec(), To(NPC)),
+        one(4, 0x40, vec![0x00], Bit04),
+        vec![
+            observed(1, 0x19A, opaque_body(0x19A), Attached),
+            observed(1, 0x30, opaque_body(0x30), Plain),
+            observed(3, PositionUpdate::EVENT_ID, npc_position(), Plain),
+            observed(4, 0x60, opaque_body(0x60), Plain),
+            observed(4, 0x92, opaque_body(0x92), Plain),
+        ],
+        one(1, 0x40, Vec::new(), EmptyControl),
+        one(1, PositionUpdate::EVENT_ID, placement(), Plain),
+        one(1, EnterPortalSpace::EVENT_ID, entry_portal_space(), Plain),
+        one(1, 0x149, opaque_body(0x149), Plain),
+        one(1, 0x7C, vec![0x00], Plain),
+        one(1, 0x0D, vec![0x00], Plain),
+        one(3, PositionUpdate::EVENT_ID, placement(), Plain),
     ]
 }
 
@@ -867,25 +1002,22 @@ impl Server {
         .ok()
     }
 
-    /// One complete message of the world connection in the observed-order script, on `queue`.
-    fn observed_on(&mut self, queue: u8, opcode: u32, data: &[u8]) -> Option<Vec<u8>> {
+    /// One datagram of the world connection in the observed-order script (§9.3.9): each message in
+    /// its own form, verified by the client with the same dictionaries and masks as any other.
+    fn observed_datagram(&mut self, messages: &[ObservedMessage]) -> Option<Vec<u8>> {
         self.seq += 1;
         let word = u16::try_from(self.seq & 0xFFFF).unwrap_or(0);
-        let frags = split_blob(queue, word, word, 0, None, opcode, data).ok()?;
+        let buffers: Vec<(Vec<u8>, Vec<u8>)> =
+            messages.iter().map(|m| observed_buffers(m, word)).collect();
         let mask = self.isaac.next_mask();
         let codec: &dyn BitTreeCodec = server_to_client_codec();
-        encode_datagram(
-            DatagramHeader {
-                rec_id: REC_ID,
-                seq_num: self.seq,
-                ..DatagramHeader::default()
-            },
-            &OptionalHeaders::default(),
-            &frags,
-            Some(mask),
+        Some(observed_raw_datagram(
+            REC_ID,
+            self.seq,
+            mask,
+            &buffers,
             Some(codec),
-        )
-        .ok()
+        ))
     }
 
     fn challenge(&self) -> Vec<u8> {
@@ -1246,6 +1378,49 @@ fn placement() -> Vec<u8> {
     .unwrap_or_default()
 }
 
+/// The local player's `0xCE` of the observed stream: its exact placement.
+#[must_use]
+pub fn player_position() -> Vec<u8> {
+    placement()
+}
+
+/// The observed stream's other entity.
+#[must_use]
+pub const fn observed_npc() -> u64 {
+    NPC
+}
+
+/// That entity's template.
+#[must_use]
+pub const fn observed_npc_template() -> u32 {
+    NPC_TEMPLATE
+}
+
+/// That entity's `0xCE`.
+#[must_use]
+pub fn observed_npc_position() -> Vec<u8> {
+    npc_position()
+}
+
+/// Where the observed stream's other entity is, in its `0xCE`.
+fn npc_position() -> Vec<u8> {
+    PositionUpdate {
+        entity_id: NPC,
+        seq_byte: None,
+        velocity: [None, None, None],
+        anim_state: None,
+        placement: EntityPlacement::WorldWithHeading {
+            position: WirePosition::from_components(1, 1, 2, 0, 0, PLAYER_AT, [1.0, 0.0, 0.0, 0.0]),
+            heading_raw: 0,
+        },
+        interp_param_a: None,
+        interp_param_b: None,
+    }
+    .to_bytes()
+    .unwrap_or_default()
+}
+
+/// The local player's `0x90`.
 fn session_ready() -> Vec<u8> {
     PlayerSessionReady {
         player_id: PLAYER,

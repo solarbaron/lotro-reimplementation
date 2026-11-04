@@ -354,6 +354,84 @@ fn a_handed_over_runtime_logs_no_plugin_directory() {
     assert!(!found.contains(MARKER), "a directory:\n{found}");
 }
 
+/// The other lines of a handed-over run that could name a directory: the music folders, the
+/// original's preferences, the user's keymap and the settings writer.
+#[test]
+fn a_handed_over_run_logs_no_other_directory() {
+    let _serial = capture();
+    let parent = tempfile::tempdir().expect("a directory");
+    let dir = parent.path().join(MARKER);
+    plugin_tree(&dir);
+    // The music folder is under the data folder.
+    let data = parent.path().join(MARKER).join("data");
+    std::fs::create_dir_all(&data).expect("made");
+    let now = Instant::now();
+    let args = runtime_args(&dir, &data);
+    let mut runtime = Runtime::start_with(&args, now, Some(hand_over(now))).expect("runtime");
+    assert!(!tessera_client::log_paths::names_directories());
+    runtime.plugins.shutdown();
+    drop(runtime);
+
+    // The original's preferences, read and unreadable.
+    let prefs = parent.path().join(MARKER).join("UserPreferences.ini");
+    std::fs::write(&prefs, "[Sound]\n").expect("written");
+    tessera_client::audio::backend::import_preferences(&prefs).expect("read");
+    let gone = parent.path().join(MARKER).join("no-such.ini");
+    let err = tessera_client::audio::backend::import_preferences(&gone).expect_err("no file");
+    assert!(!err.contains(MARKER), "{err}");
+    assert!(err.contains("no-such.ini"), "{err}");
+
+    // The user's keymap: good, absent, and unreadable (a folder at its path).
+    let keymap = parent.path().join(MARKER).join("keymap.toml");
+    std::fs::write(&keymap, "version = 1\n").expect("written");
+    let _ = tessera_client::walker::keymap_for_log_test(&keymap);
+    std::fs::remove_file(&keymap).expect("removed");
+    let _ = tessera_client::walker::keymap_for_log_test(&keymap);
+    std::fs::create_dir(&keymap).expect("made");
+    let _ = tessera_client::walker::keymap_for_log_test(&keymap);
+
+    // The settings writer, whose file sits in a folder that can name the user.
+    let settings = parent.path().join(MARKER).join("settings.toml");
+    let store = tessera_settings::SettingsStore::new(&settings);
+    store
+        .save(&tessera_settings::Settings::default())
+        .expect("saved");
+
+    let found = logs();
+    for line in [
+        "player music: music folders",
+        "imported the original's [Sound] values",
+        "keymap loaded",
+        "keymap unreadable",
+        "no keymap file",
+        "saved settings",
+    ] {
+        assert!(found.contains(line), "{line}: {found}");
+    }
+    assert!(!found.contains(MARKER), "a directory:\n{found}");
+}
+
+/// A run that was not handed over names its keymap, as it always has.
+#[test]
+fn any_other_run_names_its_keymap() {
+    let _serial = capture();
+    let parent = tempfile::tempdir().expect("a directory");
+    let data = tempfile::tempdir().expect("a directory");
+    let dir = parent.path().join(MARKER);
+    plugin_tree(&dir);
+    let now = Instant::now();
+    let mut runtime =
+        Runtime::start_with(&runtime_args(&dir, data.path()), now, None).expect("runtime");
+    assert!(tessera_client::log_paths::names_directories());
+    runtime.plugins.shutdown();
+    drop(runtime);
+    let keymap = parent.path().join(MARKER).join("keymap.toml");
+    std::fs::write(&keymap, "version = 1\n").expect("written");
+    let _ = tessera_client::walker::keymap_for_log_test(&keymap);
+    let found = logs();
+    assert!(found.contains(MARKER), "{found}");
+}
+
 /// The same runtime without a hand-over names its plugins folder, as it always has.
 #[test]
 fn any_other_runtime_names_its_plugin_directory() {

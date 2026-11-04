@@ -45,8 +45,8 @@ use crate::domain::{
 use crate::model::{
     Anchor, Appearance, CharacterSummary, ChatChannel, ChatRejection, DataId, Destination,
     DisconnectReason, EntityId, EntityKind, EntityState, Location, LocationCause, MAX_CHAT_LEN,
-    MAX_NAME_LEN, NoticeLevel, Placement, Stance, TeleportRefusal, Transform, Vec3, is_valid_name,
-    sanitize_text,
+    MAX_NAME_LEN, NoticeLevel, Placement, Stance, TeleportRefusal, Transform, Vec3,
+    WorldEntryStage, is_valid_name, sanitize_text,
 };
 
 /// Something that happened in the world, reported by a backend.
@@ -201,6 +201,26 @@ pub enum Event {
         /// one).
         reason: String,
     },
+    /// A real stage of a pending world entry was reached (`official-entry.md` §8.7): plain
+    /// progress for the entering panel, never timer-only. Accepted in
+    /// [`SessionState::EnteringWorld`].
+    WorldEntryProgress {
+        /// The stage reached.
+        stage: WorldEntryStage,
+    },
+    /// The backend holds an exact placement of the local player while the world is being
+    /// entered (`official-entry.md` §8.7): the client starts loading the scene behind its
+    /// character screen and sends [`Command::WorldLoaded`] when it is loaded. No gameplay: the
+    /// player has not entered yet, and [`Event::WorldEntered`] still needs the backend's sourced
+    /// readiness. Accepted in [`SessionState::EnteringWorld`]; a later one is a new placement.
+    WorldPlacementPending {
+        /// The character being entered.
+        character: String,
+        /// Where the scene is loaded.
+        position: Location,
+        /// The character's heading there, in radians.
+        yaw: f32,
+    },
     /// The replicated state of an entity or the player changed (`docs/ARCHITECTURE.md`
     /// §19.1 "property changed"): its whole [`EntityState`] after the change.
     EntityStateChanged {
@@ -308,6 +328,8 @@ impl Event {
             Self::ChatMessage { .. } => "ChatMessage",
             Self::Disconnected { .. } => "Disconnected",
             Self::EnterWorldFailed { .. } => "EnterWorldFailed",
+            Self::WorldEntryProgress { .. } => "WorldEntryProgress",
+            Self::WorldPlacementPending { .. } => "WorldPlacementPending",
             Self::EntityStateChanged { .. } => "EntityStateChanged",
             Self::WorldClock { .. } => "WorldClock",
             Self::TimeSynced { .. } => "TimeSynced",
@@ -439,8 +461,10 @@ pub enum Command {
     /// Only the player's own action sends it (a typed command or a menu choice, device
     /// input): never start-up lines, scripts, plugins or automation (decision 0034).
     LeaveWorld,
-    /// The client finished loading the world around the player's latest placement (in the
-    /// world; `official-messages-play.md` §4.5 item 4): after [`Event::WorldEntered`] and
+    /// The client finished loading the world around the player's latest placement. While
+    /// entering, once per [`Event::WorldPlacementPending`] (`official-entry.md` §8.7): it sets the
+    /// local gate and fabricates no server readiness. In the world
+    /// (`official-messages-play.md` §4.5 item 4): after [`Event::WorldEntered`] and
     /// after each later [`Event::LocationReport`] with [`LocationCause::Teleported`] for the
     /// player, once the client has placed the player at that location and its area is
     /// loaded. One signal per placement; a backend that waits for it (portal space) takes
@@ -562,6 +586,9 @@ pub struct Session {
     /// When a dropped Account event of each variant was last logged (one line per variant
     /// per [`ACCOUNT_LOG_INTERVAL`], §8.2).
     account_logged: [Option<Instant>; 6],
+    /// A surfaced [`Event::WorldPlacementPending`] has had no [`Command::WorldLoaded`] yet
+    /// (`official-entry.md` §8.7: once per placement while entering).
+    placement_unanswered: bool,
 }
 
 /// One log line per Account variant at most this often for dropped events
@@ -599,6 +626,7 @@ impl Session {
             world_ids: Vec::new(),
             login_refused: false,
             account_logged: [None; 6],
+            placement_unanswered: false,
         }
     }
 
@@ -681,8 +709,11 @@ impl Session {
             | Command::Social(_)
             | Command::World(_)
             | Command::Progression(_)
-            | Command::LeaveWorld
-            | Command::WorldLoaded => self.state == S::InWorld,
+            | Command::LeaveWorld => self.state == S::InWorld,
+            Command::WorldLoaded => {
+                self.state == S::InWorld
+                    || (self.state == S::EnteringWorld && self.placement_unanswered)
+            }
             Command::Account(_) => self.state == S::Connecting && !self.login_refused,
             Command::Disconnect => !matches!(self.state, S::Idle | S::Closing | S::Closed),
         };
@@ -721,7 +752,11 @@ impl Session {
             } => Some((*location, *heading)),
             _ => None,
         };
+        let answers_placement = matches!(command, Command::WorldLoaded);
         self.backend.submit(now, command)?;
+        if answers_placement {
+            self.placement_unanswered = false;
+        }
         if let Some((location, heading)) = moved_to {
             self.track_player(location, heading);
         }
@@ -869,6 +904,7 @@ impl Session {
                 } else if self.state == S::EnteringWorld {
                     self.state = S::InWorld;
                     self.player = Some(*player);
+                    self.placement_unanswered = false;
                     Verdict::Surface
                 } else if closing {
                     Verdict::Stale
@@ -937,9 +973,31 @@ impl Session {
             | Event::StaticSpawned { .. }
             | Event::StaticsCleared
             | Event::EntityDespawned { .. } => self.world_verdict(),
+            Event::WorldEntryProgress { .. } => match self.state {
+                S::EnteringWorld => Verdict::Surface,
+                _ if closing => Verdict::Stale,
+                _ => Verdict::Invalid("world entry progress outside an entry"),
+            },
+            Event::WorldPlacementPending {
+                character,
+                position,
+                yaw,
+            } => {
+                if !position.is_valid() || !yaw.is_finite() || !is_valid_name(character) {
+                    Verdict::Invalid("invalid pending placement")
+                } else if self.state == S::EnteringWorld {
+                    self.placement_unanswered = true;
+                    Verdict::Surface
+                } else if closing {
+                    Verdict::Stale
+                } else {
+                    Verdict::Invalid("pending placement outside an entry")
+                }
+            }
             Event::EnterWorldFailed { .. } => match self.state {
                 S::EnteringWorld => {
                     self.state = S::Connected;
+                    self.placement_unanswered = false;
                     Verdict::Surface
                 }
                 _ if closing => Verdict::Stale,
@@ -1014,6 +1072,7 @@ impl Session {
                 self.player_anchor = None;
                 self.world_ids.clear();
                 self.login_refused = false;
+                self.placement_unanswered = false;
                 if ok {
                     Verdict::Surface
                 } else {
@@ -1064,8 +1123,9 @@ impl Session {
                     return true;
                 }
                 S::Closing if self.closing_from == S::Connecting => "overtaken by Disconnect",
-                // §8.2: the notice is also surfaced at the character list and while entering.
-                S::Connected | S::EnteringWorld
+                // §8.2: the notice is also surfaced at the character list, while entering and in
+                // the world.
+                S::Connected | S::EnteringWorld | S::InWorld
                     if matches!(event, AccountEvent::LoginNotice { .. }) =>
                 {
                     return true;
@@ -1230,11 +1290,9 @@ fn clean_text(event: &mut Event) -> bool {
             changed
         }
         Event::Disconnected {
-            reason:
-                DisconnectReason::ServerClosed(why)
-                | DisconnectReason::TransportFailed(why)
-                | DisconnectReason::Unsupported(why),
+            reason: DisconnectReason::ServerClosed(why) | DisconnectReason::TransportFailed(why),
         } => clean(why, MAX_CHAT_LEN),
+        Event::WorldPlacementPending { character, .. } => clean(character, MAX_NAME_LEN),
         Event::EnterWorldFailed { character, reason } => {
             clean(character, MAX_NAME_LEN) | clean(reason, MAX_CHAT_LEN)
         }

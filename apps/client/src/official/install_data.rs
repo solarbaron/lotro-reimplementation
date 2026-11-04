@@ -878,16 +878,16 @@ const REQUIRED_PORTAL_KINDS: [ArchiveKind; 5] = [
 /// §9.3.8 also makes these unsupported:
 ///
 /// - any other problem [`ArchiveSet`] recorded for a named file of these sets, whatever its
-///   severity: a present set whose metadata fails is never tolerated as absent, except for a
-///   non-region-1 pair whose two files both failed to be read by the OS before their metadata
-///   could be validated, which counts as absent, with a warning;
+///   severity: a present set whose metadata fails is never tolerated as absent, and §9.3.9's closed
+///   preflight makes any OS open or read failure on a present candidate unsupported, both region
+///   partners and `anim` and `highres` included; absence alone outside region 1 is tolerated;
 /// - half of a region pair (`install-layout.md` §3.3), and region 1 absent;
 /// - an overlay next to a listed base (`dat-container.md` §2.5: the set's records may be out of
 ///   date);
 /// - a pending journal on an active member, a base or one of its active parts: its header's 0x16C is
-///   not zero, so an update was interrupted and the archive may be half-applied (§3.6). A
-///   `.jrnl` file beside a member whose 0x16C is zero affects nothing: §3.6 calls it stale and a
-///   read-only reader ignores it, so it gets a warning and is never touched.
+///   not zero, so an update was interrupted and the archive may be half-applied (§3.6);
+/// - §9.3.9: a matching `.jrnl` side file of an active member, whatever its 0x16C says: a zero
+///   marker does not hide it. It is never touched.
 ///
 /// A region archive outside the map's nonzero keys is not a candidate: it is ignored with its
 /// auxiliary files, as is an unrelated file.
@@ -969,10 +969,10 @@ fn check_pending_journals(
 ///   `install-layout.md` §3.5's fallback is for a label with no file.
 /// - A part at or past its verified family's count is stale and left out with a warning, also
 ///   when it does not open.
-/// - Another language's file is not this login's.
-/// - A non-region-1 pair whose two files the OS could not read counts as absent (§9.3.8), and a
-///   region file outside the map's keys is not a candidate.
-/// - Any other named file of the listed sets makes it unsupported.
+/// - Another language's file is not this login's, and a region file outside the map's keys is not a
+///   candidate.
+/// - Any other named file of the listed sets makes it unsupported, an OS failure on it too
+///   (§9.3.9).
 ///
 /// A problem naming no file says nothing here: the requested language being absent, where §9.3.7
 /// goes on with the label actually mounted, or a family's missing part or implausible count, which
@@ -984,19 +984,6 @@ fn check_set_problems(
     other_language: &dyn Fn(&ArchiveKind) -> bool,
     region_keys: &[u32],
 ) -> Result<(), InstallUnsupported> {
-    // §9.3.8's "fails to open" of a region set: an OS read failure before its metadata could be
-    // validated. `tessera_dat`'s invariant 24 on a base file is that; a header failure has its own.
-    let os_failed = |want: &ArchiveKind| {
-        set.problems().iter().any(|p| {
-            p.invariant == 24
-                && p.path
-                    .as_deref()
-                    .and_then(|path| path.file_name())
-                    .and_then(|n| n.to_str())
-                    .and_then(tessera_dat::ArchiveId::from_file_name)
-                    .is_some_and(|id| id.part == 0 && id.kind == *want)
-        })
-    };
     let requested = |kind: &ArchiveKind| {
         matches!((kind, set.requested_language()),
             (ArchiveKind::Local(l), Some(r)) if l.eq_ignore_ascii_case(r))
@@ -1017,14 +1004,8 @@ fn check_set_problems(
             }
             continue;
         }
-        if let Some(r) = id.kind.region() {
-            if !region_keys.contains(&r) {
-                continue;
-            }
-            if r != 1 && os_failed(&ArchiveKind::Cell(r)) && os_failed(&ArchiveKind::Map(r)) {
-                tracing::warn!("official login: a region pair cannot be read and is left out");
-                continue;
-            }
+        if id.kind.region().is_some_and(|r| !region_keys.contains(&r)) {
+            continue;
         }
         if requested(&id.kind) || !other_language(&id.kind) {
             return Err(InstallUnsupported::ArchiveFailed);
@@ -1148,9 +1129,9 @@ fn check_set_parts(
 /// every listed base by now), unsupported when it has none, and of no concern when its family is
 /// no candidate (another language, or a region outside the map's keys). An overlay next to a listed
 /// base (§2.5, matched ASCII case-insensitively as the names of the set are) is unsupported
-/// (§9.3.8). A `.jrnl` file next to a listed base or active part gets a warning here: one that
-/// matters shows in that member's own header ([`check_pending_journals`]). A listing that fails
-/// answers the same way: nothing is known about those files.
+/// (§9.3.9). So is a `.jrnl` file next to a listed base or active part, whatever that member's own
+/// header says ([`check_pending_journals`] has the marker). A listing that fails answers the same
+/// way: nothing is known about those files.
 fn check_stray_parts(
     set: &ArchiveSet,
     bases: &[&SetMember],
@@ -1163,7 +1144,7 @@ fn check_stray_parts(
     let journals: HashSet<String> = set
         .members()
         .iter()
-        .filter(|m| bases.iter().any(|b| b.id.kind == m.id.kind))
+        .filter(|m| bases.iter().any(|b| b.id.kind == m.id.kind) && !is_stale_part(&m.id, bases))
         .map(|m| format!("{}.jrnl", m.id.file_name()).to_ascii_lowercase())
         .collect();
     let listing = std::fs::read_dir(set.dir()).map_err(|_| InstallUnsupported::ArchiveFailed)?;
@@ -1177,10 +1158,7 @@ fn check_stray_parts(
             return Err(InstallUnsupported::ArchiveOverlay);
         }
         if journals.contains(&name.to_ascii_lowercase()) {
-            tracing::warn!(
-                "official login: a journal file next to an archive is checked, not used"
-            );
-            continue;
+            return Err(InstallUnsupported::ArchivePendingJournal);
         }
         if tessera_dat::ArchiveId::from_file_name(&name).is_some() {
             continue;

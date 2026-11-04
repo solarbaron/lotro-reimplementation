@@ -182,10 +182,6 @@ pub enum AccountEvent {
         retry_after_seconds: Option<u32>,
         /// The service's words, at most [`MAX_ACCOUNT_DETAIL_LEN`] bytes.
         detail: Option<String>,
-        /// Tessera's own words on a refusal the service did not make (a local check of the
-        /// official login failed), at most [`MAX_ACCOUNT_DETAIL_LEN`] bytes. Never shown as the
-        /// service's.
-        note: Option<String>,
     },
 }
 
@@ -259,12 +255,10 @@ impl AccountEvent {
             Self::LoginRefused {
                 retry_after_seconds,
                 detail,
-                note,
                 ..
             } => {
                 retry_after_seconds.is_none_or(|s| s <= MAX_RETRY_AFTER_SECONDS)
                     && detail_ok(detail.as_ref())
-                    && detail_ok(note.as_ref())
             }
         }
     }
@@ -296,13 +290,9 @@ impl AccountEvent {
             Self::WorldRefused {
                 detail: Some(d), ..
             } => fix(d, MAX_ACCOUNT_DETAIL_LEN),
-            Self::LoginRefused { detail, note, .. } => {
-                let mut changed = false;
-                for text in [detail, note].into_iter().flatten() {
-                    changed |= fix(text, MAX_ACCOUNT_DETAIL_LEN);
-                }
-                changed
-            }
+            Self::LoginRefused {
+                detail: Some(d), ..
+            } => fix(d, MAX_ACCOUNT_DETAIL_LEN),
             _ => false,
         }
     }
@@ -388,7 +378,6 @@ mod tests {
                 reason: LoginRefusal::RateLimited,
                 retry_after_seconds: Some(3_601),
                 detail: None,
-                note: None
             }
             .is_valid()
         );

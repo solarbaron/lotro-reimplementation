@@ -41,6 +41,14 @@ pub mod characters;
 pub mod chat;
 pub mod combat;
 pub(crate) mod controls;
+
+/// [`controls::load_keymap`] on `path`, for the log test of a handed-over run.
+#[doc(hidden)]
+#[must_use]
+pub fn keymap_for_log_test(path: &std::path::Path) -> tessera_input::Keymap {
+    controls::load_keymap(Some(path))
+}
+
 pub mod effects;
 pub mod env;
 pub mod fallback;

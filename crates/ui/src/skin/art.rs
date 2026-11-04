@@ -362,8 +362,10 @@ fn list_folder(dir: &Path) -> std::io::Result<Listing> {
     let mut map: HashMap<String, std::ffi::OsString> = HashMap::new();
     for (count, entry) in std::fs::read_dir(dir)?.flatten().enumerate() {
         if count >= MAX_INDEXED_ENTRIES {
-            tracing::warn!(folder = %dir.display(), limit = MAX_INDEXED_ENTRIES,
-                "skin image folder has too many entries; its files are not resolved");
+            tracing::warn!(
+                limit = MAX_INDEXED_ENTRIES,
+                "skin image folder has too many entries; its files are not resolved"
+            );
             return Ok(None);
         }
         let n = entry.file_name();
@@ -657,14 +659,14 @@ impl SkinFileLedger {
                 .get(file.cache_key())
                 .is_some_and(|s| s.state == FileState::Pending && s.ticket == Some(ticket.seq));
         if !current {
-            tracing::debug!(path = %file.path().display(),
+            tracing::debug!(file = %file.path().file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
                 "stale skin image load result ignored");
             return false;
         }
         let state = match outcome {
             Ok(()) => FileState::Loaded,
             Err(e) => {
-                tracing::warn!(path = %file.path().display(), reason = %e,
+                tracing::warn!(file = %file.path().file_name().map(|n| n.to_string_lossy()).unwrap_or_default(), reason = %e,
                     "skin image failed to load; showing the placeholder");
                 FileState::Failed(e.to_string().into())
             }

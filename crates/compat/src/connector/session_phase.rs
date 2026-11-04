@@ -9,49 +9,64 @@
 //!
 //! # The initial exchange
 //!
-//! `official-session.md` §9.3.1–§9.3.8 and decision 0046 ([`crate::initial`]): after State 5
+//! `official-session.md` §9.3.1–§9.3.9 and decision 0046 ([`crate::initial`]): after State 5
 //! the login connection waits for the server's `0xDD`, sends the install advertisement
 //! `0xEC` built before the first datagram from the user's own archives, with the recipient of the
 //! valid `0xDD` in an explicit field, answers the server's `0xF5` once, likewise, and waits for
 //! the character list. Before `WorldEntered` every other message of the login connection is
 //! skipped and counted per opcode: no dispatch, no reply and no decode error. An actual `0x12F`
-//! switches to the historical path (§9.3.8). `0x12E` is shown and never ends anything.
+//! switches to the historical path (§9.3.9). `0x12E` and `0xFA` are notices: shown, and they end
+//! and restart nothing.
 //!
 //! # How a session ends
 //!
-//! One table decides (§9.3.8's phase table, `TableRow`). Before `Connected`: `LoginRefused`, then
+//! One table decides (§9.3.9's outcome table, `TableRow`). Before `Connected`: `LoginRefused`, then
 //! `Disconnected` in the same poll. After it no Account refusal goes out: the same row ends in a
-//! `Disconnected` of its own, with Tessera's words for a Tessera limit. The one exception is a
-//! valid `0x6D` while selecting: `EnterWorldFailed` and back to the list. A local end sends one
-//! standalone Disconnect when the connection is established, closes with no flush wait and sends
-//! the ticket no more; a server's closing header gets no reply. The user's "Leave queue" ends the
-//! attempt the same way, with `Disconnected { ClientRequested }` (`official-entry.md` §8.1).
+//! `Disconnected` of its own. A Tessera limit ends in `Disconnected { Unsupported }` or `{
+//! UnsupportedTimeout }`, which carry no text: the client has fixed words for them
+//! (`official-entry.md` §8.6) and the local cause goes to the log. The one exception is a valid
+//! `0x6D` while selecting, before the referral: `EnterWorldFailed` and back to the list. A local end
+//! sends one standalone Disconnect when the connection is established, closes with no flush wait
+//! and sends the ticket no more; a server's closing header gets no reply. The user's Cancel, Back,
+//! Escape, window close and "Leave queue" do the same, with `Disconnected { ClientRequested }`.
+//! Required progress is only the preflight, the session's codec, the bodies of `0x12C` and `0x6F`,
+//! the first `0x6C` and the first `0x90`; any other complete message that fails is counted and
+//! skipped.
 //!
 //! # The road into the world
 //!
-//! `0x6F` goes on queue 2 to the fixed reserved destination [`SELECTION_DESTINATION`], with an empty
-//! client table. Separate 30-second waits follow, none reset by other traffic ([`EntryWait`]): to
-//! the referral, to the world connection's State 5, to a complete valid `0x90`, and from `0x90` to
-//! readiness. Only a `0x90` of the world connection during its own wait starts the last one: any
-//! other is counted and skipped. Pre-referral server `0x30` are counted and discarded. On the world
-//! connection each checked message, top-level or embedded in a `0x4C`, is decoded under its named
-//! layout with its one shared byte and counted only when that holds to exact exhaustion
-//! ([`EntryProgress`]), the rest as unread; nothing is published. `0x7C` and `0x0D` are counted as
-//! unsupported (OPEN-WORLD-9).
+//! `0x6F` goes on queue 2 to the fixed destination [`SELECTION_DESTINATION`], with an empty client
+//! table. Separate 30-second waits follow, none reset by other traffic ([`EntryWait`]): to the
+//! referral, to the world connection's State 5, to a complete valid `0x90`, and from `0x90` to the
+//! sourced readiness. Each real step is an `Event::WorldEntryProgress`. Only a `0x90` of the world
+//! connection during its own wait starts the last one; any other is counted and skipped.
 //!
-//! `WorldEntered` needs valid server readiness, local scene readiness and a sourced `0xF4`.
-//! OPEN-WORLD-9 and OPEN-SESSION-18 leave the server's readiness and the `0xF4` target without a
-//! source, so on every production path the entry stops at the readiness wait and ends with a
-//! `Disconnected` that names that stage. No readiness indication is made up and no `0xF4` is sent.
-//! [`ConnectorNet::readiness_specified`] is `false` on [`super::net::LiveNet`]: only a test's
-//! synthetic network reaches the in-world code below, which waits for those answers.
+//! On the world connection each checked message, top-level or embedded in a `0x4C`, is decoded under
+//! its named layout with its one shared byte and kept in [`PendingWorld`] only when that holds to
+//! exact exhaustion ([`EntryProgress`] counts it); nothing is published. A child that does not read
+//! is counted without losing its siblings. `0x7C`, `0x0D`, `0x5E`, `0xC7`, `0x153` and `0xA8` are
+//! counted and skipped (OPEN-WORLD-9), never read as readiness.
 //!
-//! Omitted under decision 0046 item 5, each a known difference from the observed client: `0x13D`
-//! and `0x19E` (OPEN-SESSION-20) and the first world `0x30` (OPEN-SESSION-16). `0x154`, `0xDC`,
-//! `0x7A` and `0xD1` are withheld (§9.3.8): those commands fail locally. A re-entry after a teardown
-//! has no settled queue or body (OPEN-SESSION-16), and the chat server is not opened while
-//! OPEN-SESSION-1 leaves its codec without a source: the primary session does not depend on it, and
-//! a user's chat-server request fails locally without disconnecting it.
+//! Once the `0x90` is known and an exact placement of that same ID arrives (a `0xCE` naming it in
+//! its body, or a `0xCC` whose explicit recipient it is; never the default recipient 2, whose entity
+//! is OPEN-WORLD-9), `Event::WorldPlacementPending` starts the client's loading behind its character
+//! screen, and the client's `Command::WorldLoaded` sets the local gate. Nothing but that command sets
+//! it: no loading time-out does.
+//!
+//! `WorldEntered` needs the server gate as well, then the one `0xF4`, and then the pending state is
+//! released and normal input starts. OPEN-WORLD-9 leaves the server gate and the `0xF4` target
+//! without a source, so on every production path the entry stops at the readiness wait and ends with
+//! `Disconnected { UnsupportedTimeout }`, whose log line names that stage and what was withheld
+//! ([`super::pending_world::WITHHELD_BEFORE_F4`]). No readiness indication is made up and no `0xF4`
+//! is sent. [`ConnectorNet::server_gate`] and [`ConnectorNet::readiness_specified`] are the two ways
+//! a test's synthetic network reaches the code beyond that stage; [`super::net::LiveNet`] has
+//! neither.
+//!
+//! `0x154`, `0xDC`, `0x7A` and `0xD1` are withheld (§9.3.8): those commands fail locally. A re-entry
+//! after a teardown has no settled recipient, queue or body (OPEN-SESSION-16), so it is a local
+//! `InvalidCommand`, and the chat server is not opened while OPEN-SESSION-1 leaves its codec without
+//! a source: the primary session does not depend on it, and a user's chat-server request fails
+//! locally without disconnecting it.
 //!
 //! # One multiplexer per connection
 //!
@@ -64,7 +79,7 @@
 //! where the two passages differ; question in `docs/m8-remediation.md` §15; tested). A datagram
 //! goes to the connection whose recipient ID it names and whose server address it comes
 //! from (§3.4 step 2), else to the newest connection with that server address (step 3): the
-//! world connection, then the replaced ones (newest first), then the login connection.
+//! world connection, then the login connection.
 //!
 //! A datagram that names the recipient ID of a connection but comes from another address is
 //! discarded and counted ([`DriverCounters::address_mismatches`]): this is how Tessera reads
@@ -82,7 +97,7 @@
 //! messages of a received blob in its inbox (at most one blob's messages, which the session
 //! layer bounds by bytes) until events are taken. It goes over the cap only by what one
 //! unit of work adds after the last check: the events of one message (on world entry, of
-//! the at most [`MAX_ENTRY_MESSAGES`] messages held for it), the events of one chat-server
+//! the at most [`super::pending_world::MAX_PENDING_ENTITIES`] snapshots released), the events of one chat-server
 //! datagram (the chat client is let read one datagram at a time, [`CHAT_DATAGRAMS_PER_STEP`]
 //! at most per pass, and is not read at the cap), and the events a pass makes without a
 //! datagram: a command's `EnterWorldFailed`, the entry deadline's, and the session's end
@@ -93,14 +108,10 @@
 //! `Command::LeaveWorld` sends the logout request (`official-messages-play.md` §7.2 item 1).
 //! A world teardown (§7.2 item 3) keeps the session: the client unloads the world on the
 //! notice, so the driver goes back to character selection at once with
-//! `Event::ReturnedToCharacterSelect` and the latest list it has (a `0x6C` that came while
-//! in the world counts). The `0x6C` that follows the teardown is then a later list: its
-//! changes surface as `CharacterInfo` (new names) and `CharacterRemoved` (names gone), as
-//! every later list at character selection does. That row mapping is an engineering choice
-//! pending a spec answer (`docs/m8-remediation.md` §15, P §8): §8 maps a later list only to
-//! `Connected` or `CharacterInfo`, and says neither whether a later list replaces the whole
-//! list nor how a name that is gone is surfaced. Entering the world again after a teardown is
-//! not supported (OPEN-SESSION-16): nothing is sent and the session ends with Tessera's own text.
+//! `Event::ReturnedToCharacterSelect` and the latest list it has. A valid `0x6C` at the idle list
+//! replaces the list whole; its changes surface as `CharacterInfo` (new names, attributes unknown)
+//! and `CharacterRemoved` (names gone). Entering the world again after a teardown is not supported
+//! (OPEN-SESSION-16): a local `InvalidCommand`, nothing is sent, and the session goes on.
 //! Moves and chat lines that reach the driver
 //! after the teardown (sent before the client saw the return) are refused and counted
 //! ([`DriverCounters::outside_world`]), never sent; a refused move stays silent, a refused
@@ -147,26 +158,24 @@
 //! ([`super::entities::MAX_TEMPLATE_LOADS_PER_PASS`],
 //! [`super::entities::MAX_TEXT_LOADS_PER_PASS`]), retried once at the start of each pass.
 //!
-//! Portal space ends on the client's `Command::WorldLoaded` or after
-//! [`PORTAL_LOADING_TIMEOUT_SEC`] (§4.5 item 4). The client sends one `WorldLoaded` per
-//! placement; the driver keeps the latest with the entity stamp of the placement it
-//! answers, and it counts for a portal space whose expected stamp that placement reached.
-//! So a `WorldLoaded` of an earlier placement never ends a portal space, and one sent for a
-//! placement that came before its `0x5E` (item 2 allows that order) still does
-//! (engineering choice, `docs/m8-remediation.md` §15). A signal outside the world is
-//! ignored.
+//! In the world (a test's synthetic path, module docs "The road into the world") portal space ends
+//! on the client's `Command::WorldLoaded` or after [`PORTAL_LOADING_TIMEOUT_SEC`] (play §4.5 item
+//! 4). The client sends one `WorldLoaded` per placement; the driver keeps the latest with the
+//! entity stamp of the placement it answers, and it counts for a portal space whose expected stamp
+//! that placement reached. So a `WorldLoaded` of an earlier placement never ends a portal space, and
+//! one sent for a placement that came before its `0x5E` (item 2 allows that order) still does
+//! (engineering choice, `docs/m8-remediation.md` §15). A signal outside the world and outside a
+//! pending placement is ignored.
 //!
 //! # Ending the session
 //!
-//! [`SessionDriver::begin_shutdown`] sends the transport disconnect only on connected
-//! connections (and lets those already disconnecting finish). A connection still in its
-//! handshake (`SessionAuthSent`, `ChallengeAcceptSent`), the chat server's included, is
-//! closed locally: nothing more is sent on it (no retransmitted `SessionAuthHeader` or
-//! `ReferralAuthHeader`, so no ticket), and a challenge that arrives for it afterwards finds
-//! no connection and is not answered. Engineering choice, spec silent (question with the
-//! spec writers): `official-session.md` §8.2 describes the disconnect of a connected
-//! session only. [`SessionDriver::abandon`] ends everything without sending, for a revoked
-//! network right.
+//! [`SessionDriver::begin_shutdown`] is the user's close (§9.3.9): exactly one standalone Disconnect
+//! on an established connection, no application flush, no 20-second drain, and each connection
+//! closes locally at once. A connection still in its handshake (`SessionAuthSent`,
+//! `ChallengeAcceptSent`) sends nothing more (no retransmitted `SessionAuthHeader` or
+//! `ReferralAuthHeader`, so no ticket), and a challenge that arrives for it afterwards finds no
+//! connection and is not answered. [`SessionDriver::abandon`] ends everything without sending, for
+//! a revoked network right.
 //!
 //! # Handshake diagnostics
 //!
@@ -190,11 +199,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 
-use tessera_net::account::{AccountCommand, AccountEvent, LoginRefusal, LoginStage};
-use tessera_net::model::{MAX_NAME_LEN, is_valid_name};
+use tessera_net::account::{
+    AccountCommand, AccountEvent, LoginRefusal, LoginStage, MAX_ACCOUNT_DETAIL_LEN,
+};
+use tessera_net::model::MAX_NAME_LEN;
 use tessera_net::{
-    Body, CharacterEvent, CharacterSummary, ChatChannel, Command, DisconnectReason, EntityId,
-    Event, NoticeLevel, Transform,
+    CharacterEvent, CharacterSummary, ChatChannel, Command, DisconnectReason, EntityId, Event,
+    Location, NoticeLevel, Transform, WorldEntryStage,
 };
 
 use crate::chat_session::state::INITIAL_CONNECT_POLICY;
@@ -213,7 +224,7 @@ use crate::play::adapter::{
 };
 use crate::play::chat::TextResolver;
 use crate::play::inbound::{PlayMessage, decode_play_message};
-use crate::play::movement::{MoveStep, PredictedState};
+use crate::play::movement::{MoveStep, PredictedState, wire_heading};
 use crate::play::{OutgoingEvent, clean_display_name};
 use crate::session::{
     BindPlan, BindPorts, ClientVersionMessage, CodecUuids, ConnectionState, ControlMessage,
@@ -225,12 +236,11 @@ use crate::session::{
 };
 use crate::world::{
     AccountEvictionNotice, CharacterEnterWorldRequest, CharacterListResponse,
-    CharacterOperationError, CharacterSummaryEntry, EncodedPropertyValue, EnterPortalSpace,
-    EntityCreate, EntityDespawn, PID_ADVANCEMENT_LEVEL, PID_AGENT_CLASS, PID_AGENT_SPECIES,
-    PID_CHARGEN_CHARACTER_LEVEL, PID_SEX, PlayerSessionReady, PortalPositionSync, PositionUpdate,
-    PropertyRemoval, PropertyScope, PropertyTableUpdate, SinglePropertyUpdate, SubEventBatch,
-    SubEventFrame, VisualDescriptionUpdate, WireReader, WorldError, active_target,
-    encode_event_envelope, one_shared_prefix, rebuild_shared_prefix,
+    CharacterOperationError, EntityCreate, EntityDespawn, PlayerSessionReady, PortalPositionSync,
+    PortalReadyAck, PositionUpdate, PropertyRemoval, PropertyScope, PropertyTableUpdate,
+    ServerShutdownText, SinglePropertyUpdate, SubEventBatch, SubEventFrame,
+    VisualDescriptionUpdate, WireReader, WorldError, active_target, encode_event_envelope,
+    one_shared_prefix, rebuild_shared_prefix,
 };
 
 use super::data::{SchemaView, chat_categories, prepare_advertisement};
@@ -247,6 +257,7 @@ use super::entities::{
 };
 use super::login_phase::PlainSteps;
 use super::net::{ConnectorNet, SendHttpClient};
+use super::pending_world::{DEFAULT_RECIPIENT, PendingWorld, Stored, withheld_summary};
 
 /// `0x0000019E` (`ClientPlatformIdMessage`, `official-session.md` §5.6.2).
 pub const OPCODE_CLIENT_PLATFORM_ID: u32 = 0x0000_019E;
@@ -282,7 +293,7 @@ pub const QUEUE_RELIABLE_UNORDERED: u8 = 4;
 /// | `0x19E` | 1 | — (§9.3.8; omitted under decision 0046) |
 /// | `0x6F` | 2 | — (§9.3.8; to [`SELECTION_DESTINATION`]) |
 /// | `0x24` | 1, or 3 when discrete ([`movement_is_discrete`]) | `0x05` on queue 3 |
-/// | `0xF4` | 1 | — (§9.3.8: observed queue; its trigger is OPEN-WORLD-9) |
+/// | `0xF4` | 1 | — (§9.3.9: observed queue; its trigger is OPEN-WORLD-9) |
 /// | `0x30` | 3 | `0x0A` |
 /// | `0x28` | 3 | `0x04` |
 /// | `0x5F` | 3 | `0x08` |
@@ -341,43 +352,18 @@ pub const DRIVER_EVENT_CAP: usize = super::READ_PAUSE;
 /// engineering choice (spec silent).
 pub const NOT_SENT_OUTSIDE_WORLD: &str = "Your line was not sent: you are no longer in the world.";
 
-/// The end of a session whose `0x90` cannot be read (§9.3.8's unsupported row, world §4.2: never
-/// shifted by a guessed second byte). Tessera's text.
-pub const UNSUPPORTED_SESSION_START: &str = "Tessera cannot read the world's session start yet. \
-     This is a Tessera limit, not a fault of your account.";
-
-/// The end of a session whose `0x6D` or `0xB3` cannot be read (§9.3.8). Tessera's text.
-pub const UNSUPPORTED_ENTRY_ANSWER: &str = "Tessera cannot read the server's answer yet. \
-     This is a Tessera limit, not a fault of your account.";
-
-/// The end of a character list that cannot be read after `Connected` (§9.3.8). Tessera's text.
-pub const UNSUPPORTED_LATER_LIST: &str = "Tessera cannot read this character list yet. \
-     This is a Tessera limit, not a fault of your account.";
-
-/// The end of a session whose `0x6F` cannot be built or queued, or of a re-entry after a teardown,
-/// which has no settled queue or body (§9.3.8, OPEN-SESSION-16). Tessera's text.
-pub const ENTRY_NOT_SUPPORTED: &str = "Tessera cannot enter the world again on the official \
-     service yet. This is a Tessera limit, not a fault of your account.";
-
-/// The locally worded service refusal of a selection (§9.3.8: no number, no service text).
+/// The locally worded service refusal of a selection (§9.3.9: no number, no service text).
 pub const ENTRY_REFUSED: &str = "The official service refused this character's entry to the world.";
 
-/// The end of a session whose selection was refused after the referral: the login connection is
-/// gone, so no other character can be chosen on it (§9.3.8 names no list to go back to here).
-/// Tessera's text.
-pub const ENTRY_REFUSED_AFTER_REFERRAL: &str = "The official service refused this character's \
-     entry to the world after sending Tessera to a world server, and the connection for choosing \
-     another character is gone. Log in again to choose one.";
+/// The local answer to a selection after a return from the world (§9.3.9, OPEN-SESSION-16).
+pub const ENTRY_REENTRY_NOT_SUPPORTED: &str =
+    "entering the world again is not supported by this version of Tessera yet";
 
 /// The local failure of a chat-server request while OPEN-SESSION-1 leaves its codec without a
 /// source (§9.3.8): the primary session is not touched.
 pub const CHAT_UNAVAILABLE: &str = "the chat server is not available in this version of Tessera";
 
-/// Most old world connections kept (a later referral replaces the world connection).
-pub const MAX_OLD_LINKS: usize = 4;
-
-/// Most characters kept from one character list (the list's own bound is the bytes of the
-/// message; this bounds the names the session offers).
+/// Most characters in one character list (§9.3.9): a longer list fails whole, never cut.
 pub const MAX_CHARACTERS: usize = 256;
 
 /// The two wire values of `TransportErrorHeader` that mean "connection refused /
@@ -401,14 +387,6 @@ pub const MAX_BATCH_DEPTH: usize = 4;
 /// Most play-layer events one top-level world message makes (a batch can hold many chat
 /// lines); the rest are dropped and counted. Engineering choice, spec silent.
 pub const MAX_MESSAGE_PLAY_EVENTS: usize = DRIVER_EVENT_CAP;
-
-/// Most play messages kept while the world is being entered (those before `0x90`, such as
-/// `0x43`), handed to the play layer once the world is entered. Engineering choice, spec
-/// silent.
-pub const MAX_ENTRY_MESSAGES: usize = 64;
-
-/// Most bytes of the play messages kept while the world is being entered.
-pub const MAX_ENTRY_BYTES: usize = 256 * 1024;
 
 /// Shortest time between two log lines of one kind of refused datagram; the lines between
 /// are counted (engineering choice).
@@ -739,7 +717,7 @@ struct Inbound {
 /// Where a received datagram goes (module docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Route {
-    /// To the connection with this index (`0` login, `1` world, `2 + i` replaced one `i`).
+    /// To the connection with this index (`0` login, `1` world).
     Link(usize),
     /// It names a connection's ID from another address: discarded.
     AddressMismatch,
@@ -758,7 +736,7 @@ pub enum EntryWait {
     /// From that State 5 to a complete valid `0x90`.
     SessionStart,
     /// From `0x90` to `WorldEntered`: valid server readiness, local scene readiness and a sourced
-    /// `0xF4` (OPEN-WORLD-9, OPEN-SESSION-18).
+    /// `0xF4` (OPEN-WORLD-9).
     Readiness,
 }
 
@@ -773,30 +751,6 @@ impl EntryWait {
             Self::Readiness => "waiting for world readiness",
         }
     }
-
-    /// Tessera's own text for this wait's end (§9.3.8: a locally worded entry deadline). The
-    /// readiness wait is a Tessera limit on every production path, and says so.
-    #[must_use]
-    pub const fn deadline_text(self) -> &'static str {
-        match self {
-            Self::Referral => {
-                "The official service did not send Tessera to a world server within Tessera's own \
-                 time limit for this step."
-            }
-            Self::WorldConnection => {
-                "Tessera could not finish connecting to the world server within Tessera's own time \
-                 limit for this step."
-            }
-            Self::SessionStart => {
-                "The world server did not start the session within Tessera's own time limit for \
-                 this step."
-            }
-            Self::Readiness => {
-                "Tessera reached the world server, but this version cannot finish entering the \
-                 world yet. This is a Tessera limit, not a fault of your account."
-            }
-        }
-    }
 }
 
 /// How far a world entry got, for the log lines: flags and counts, no value.
@@ -808,45 +762,55 @@ pub struct EntryProgress {
     pub world_connected: bool,
     /// A complete valid `0x90` arrived.
     pub session_started: bool,
-    /// `0x4C` batches whose framing held, and the sub-events in them.
+    /// An exact placement of the local player arrived.
+    pub placed: bool,
+    /// The client said its loading of that placement is done.
+    pub loaded: bool,
+    /// `0x4C` batches whose framing held.
     pub batches: u64,
     /// Sub-events in those batches.
     pub sub_events: u64,
-    /// `0x98` and `0x52` that decoded to exact exhaustion, top-level or in a batch.
+    /// `0x98` and `0x52` kept.
     pub creations: u64,
-    /// `0xCE` that decoded to exact exhaustion, top-level or in a batch.
+    /// `0x88` and `0x92` kept.
+    pub properties: u64,
+    /// `0xCE` kept.
     pub positions: u64,
-    /// `0xCC` that decoded to exact exhaustion, top-level or in a batch.
+    /// `0xCC` kept.
     pub placements: u64,
-    /// `0x5E` that decoded to exact exhaustion, top-level or in a batch.
-    pub portal_spaces: u64,
-    /// `0x89` that decoded to exact exhaustion, top-level or in a batch.
+    /// `0x89` kept.
     pub appearances: u64,
-    /// `0x7C` or `0xC7`: seen, not acted on (OPEN-WORLD-9).
+    /// `0x7C`, `0xC7`, `0x5E` or `0x153`: seen, not acted on (OPEN-WORLD-9).
     pub readiness_seen: u64,
     /// `0x0D`: counted, no current path (OPEN-WORLD-9).
     pub unsupported_batches: u64,
+    /// `0xA8`: counted until its action variant is rechecked (§9.3.9).
+    pub actions: u64,
+    /// Checked messages whose target was the logical default 2: whose entity is OPEN-WORLD-9.
+    pub default_target: u64,
+    /// Checked messages for an ID nothing announced.
+    pub no_target: u64,
     /// Other messages of the world connection before `WorldEntered`.
     pub other: u64,
     /// Checked messages, top-level or embedded, that did not decode to exact exhaustion: not
-    /// counted above, not populated and not dispatched.
+    /// counted above, not kept and not dispatched.
     pub unread: u64,
 }
 
-/// A row of `official-session.md` §9.3.8's phase table. What it means before and after `Connected`
+/// A row of `official-session.md` §9.3.9's outcome table. What it means before and after `Connected`
 /// is [`SessionDriver::end_by_table`]'s.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TableRow {
-    /// A local limit: preflight, codec, unbuildable body or destination, schema or variant, with
-    /// Tessera's text.
-    Unsupported(String),
-    /// A stage deadline or a verified gap's deadline, with Tessera's text.
-    Deadline(String),
+    /// A required step Tessera cannot take: preflight, codec, unbuildable body or destination, the
+    /// first list or the first `0x90`.
+    Unsupported,
+    /// A stage, readiness or verified gap's deadline.
+    Deadline,
     /// A valid `0xB3`, a server Disconnect, a listed refusal code, a fatal error, `0x12D` status 0.
     ServerRefused,
     /// `TransportError` code 0 or an unlisted code, or a negative `0x130`.
     ServerOther,
-    /// Ordinary silence.
+    /// Ordinary handshake expiry or silence.
     Silence,
     /// An I/O failure.
     Io,
@@ -859,7 +823,7 @@ enum Stage {
     Login,
     /// The character list was delivered (`Connected` sent).
     Characters,
-    /// `0x6F` sent for the character; waiting for the world.
+    /// `0x6F` sent for the character; on the way to `WorldEntered`.
     Entering {
         /// The character's ID.
         id: u64,
@@ -968,8 +932,13 @@ pub struct DriverCounters {
     pub send_failures: u64,
     /// Referrals outside world entry and the world, ignored.
     pub stray_referrals: u64,
-    /// Play messages dropped while the world was being entered (over the bounds).
-    pub entry_overflow: u64,
+    /// Messages of the login connection after a valid referral (§9.3.9: retired, skipped).
+    pub retired_messages: u64,
+    /// Character lists that failed or came while selecting or in the world (§9.3.9: counted and
+    /// skipped; the last valid list stays).
+    pub later_lists_skipped: u64,
+    /// `0x12E` and `0xFA` that could not be read, or past 256 bytes (§9.3.9: not truncated).
+    pub notices_dropped: u64,
     /// Failed chat-server attachments.
     pub chat_failures: u64,
     /// Socket reads that failed (diagnostics, [`super::diag`]).
@@ -981,10 +950,8 @@ pub struct DriverCounters {
     /// Moves and chat lines that arrived outside the world (after a teardown, before the
     /// client saw the return), refused and not sent.
     pub outside_world: u64,
-    /// `WorldLoaded` signals outside the world, ignored.
+    /// `WorldLoaded` signals outside the world and without a pending placement, ignored.
     pub stray_loaded: u64,
-    /// `VersionStatus` values other than 0 and 1 (`official-session.md` §9.3), ignored.
-    pub unknown_version_status: u64,
     /// Envelopes whose routing header named a `routingField0` other than the fragment's
     /// `recipientId`; they keep `recipientId` (module docs "Entities").
     pub routed_envelopes: u64,
@@ -1002,16 +969,17 @@ pub struct DriverCounters {
     pub unsupported_results: u64,
     /// Selections not sent: a re-entry after a teardown, or a `0x6F` that could not be built.
     pub entries_not_sent: u64,
-    /// Queue-2 blobs whose ordering word repeated or went back (§9.3.8: counted, not waited for).
+    /// Queue-2 blobs whose ordering word repeated or went back (§9.3.9: counted, not waited for).
     pub queue2_repeats: u64,
     /// Queue-2 blobs whose ordering word skipped ahead (as [`Self::queue2_repeats`]).
     pub queue2_gaps: u64,
-    /// What the connections' reassemblers ignored, discarded or found odd (§9.3.8), as of
+    /// What the connections' reassemblers ignored, discarded or found odd (§9.3.9), as of
     /// [`SessionDriver::counters`].
     pub reassembly: ReassemblyCounts,
-    /// Valid `0x6D` at the idle list (§9.3.8: counted, no event).
-    pub idle_refusals: u64,
-    /// Malformed `0x12E`, `0x12D` or `0x130` (§9.3.8: counted and discarded).
+    /// `0x6D` with no selection pending before a referral, valid or not, and an unreadable `0xB3`
+    /// after `Connected` (§9.3.9: counted, no event).
+    pub refusals_skipped: u64,
+    /// Malformed `0x12E`, `0x12D` or `0x130` (§9.3.9: counted and discarded).
     pub malformed_control: u64,
 }
 
@@ -1036,7 +1004,6 @@ pub struct SessionDriver<N: ConnectorNet> {
     codec_uuids: CodecUuids,
     login: Link,
     world: Option<Link>,
-    old: Vec<Link>,
     version: VersionInfo,
     /// How far the initial exchange got (`official-session.md` §9.3, [`crate::initial`]).
     initial: Negotiation,
@@ -1052,11 +1019,21 @@ pub struct SessionDriver<N: ConnectorNet> {
     chat_codec_specified: bool,
     /// [`ConnectorNet::re_entry_allowed`]: `false` on every production path.
     re_entry_allowed: bool,
+    /// [`ConnectorNet::server_gate`]: `None` on every production path.
+    server_gate: Option<u32>,
     /// The session has been in the world and left it: a re-entry is not supported
     /// (OPEN-SESSION-16).
     returned_from_world: bool,
-    /// How far the world entry got (§9.3.8), for its log lines.
+    /// How far the world entry got (§9.3.9), for its log lines.
     entry_progress: EntryProgress,
+    /// What the world connection sent before `WorldEntered` (§9.3.9).
+    pending: PendingWorld,
+    /// The exact placement of the local player last given to the client.
+    placement: Option<(Location, f32)>,
+    /// The client's `WorldLoaded` answered [`Self::placement`].
+    local_ready: bool,
+    /// The server gate of the entry (never set on a production path).
+    server_ready: bool,
     /// A referral arrived, so the login connection was disconnected gracefully
     /// (`official-session.md` §6.5 step 2): its close no longer ends the session.
     login_referred: bool,
@@ -1092,8 +1069,6 @@ pub struct SessionDriver<N: ConnectorNet> {
     buf: Vec<u8>,
     pending_out: VecDeque<OutgoingEvent>,
     inbox: VecDeque<Inbound>,
-    entry_messages: Vec<(u32, u64, Vec<u8>)>,
-    entry_bytes: usize,
     refused_log: LogLimit,
     unknown_log: LogLimit,
     send_log: LogLimit,
@@ -1137,40 +1112,28 @@ fn unix_seconds() -> u32 {
         .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX))
 }
 
-/// What the screens get of one list entry (`official-messages-world.md` §6's row of `0x6C`, §3.1.3):
-/// the body from `agent_species` and `sex`, the class from `agent_class`, the level from the
-/// character-screen summary or else `advancement_level`, each only where its table entry has the
-/// documented type. `0x10000A50`'s keys are the race table's gender keys and `0x100000FC`'s its
-/// species keys (`appearance.md` §2).
-///
-/// OPEN: no spec maps `visual_desc` (§2.8) to the screens' [`tessera_net::Look`], so the look stays
-/// unknown and the screens fall back as for any row without one. Question for the next spec pass.
-fn character_details(name: String, entry: &CharacterSummaryEntry) -> Event {
-    let enumerated = |pid| match entry.property(pid) {
-        Some(EncodedPropertyValue::Enum(v)) => Some(*v),
-        _ => None,
-    };
-    let level = |pid| match entry.property(pid) {
-        Some(EncodedPropertyValue::Int(v)) => u32::try_from(*v).ok(),
-        _ => None,
-    };
-    let body = enumerated(PID_AGENT_SPECIES)
-        .zip(enumerated(PID_SEX))
-        .map(|(species, sex)| Body::Character { species, sex });
-    Event::Character(CharacterEvent::CharacterInfo {
-        name,
-        body,
-        class: enumerated(PID_AGENT_CLASS),
-        level: level(PID_CHARGEN_CHARACTER_LEVEL).or_else(|| level(PID_ADVANCEMENT_LEVEL)),
-        look: None,
-    })
-}
-
-/// A character name as the session offers it: cleaned and cut to 64 bytes; `None` when it
-/// is not a valid name then.
-fn character_name(name: &str) -> Option<String> {
-    let n = clean_display_name(name, MAX_NAME_LEN);
-    is_valid_name(&n).then_some(n)
+/// A list's names as the session offers them, in server order (§9.3.9's first-screen contract):
+/// each name cleaned of control characters, with its ID kept for the selection. `None` when the
+/// whole list fails: more than [`MAX_CHARACTERS`] entries, a name that is empty, longer than 64
+/// UTF-8 bytes or blank once cleaned, or a repeated ID or name. No entry is dropped or cut.
+fn listed_names<'a>(
+    entries: impl ExactSizeIterator<Item = (u64, &'a str)>,
+) -> Option<Vec<(u64, String)>> {
+    if entries.len() > MAX_CHARACTERS {
+        return None;
+    }
+    let mut names: Vec<(u64, String)> = Vec::with_capacity(entries.len());
+    for (id, raw) in entries {
+        if raw.is_empty() || raw.len() > MAX_NAME_LEN {
+            return None;
+        }
+        let name = clean_display_name(raw, MAX_NAME_LEN);
+        if name.is_empty() || names.iter().any(|(i, n)| *i == id || *n == name) {
+            return None;
+        }
+        names.push((id, name));
+    }
+    Some(names)
 }
 
 /// The chat server's address (`official-messages-play.md` §6.1.1: `--chatserver`, which the
@@ -1320,7 +1283,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
             codec_uuids: start.codec_uuids,
             login,
             world: None,
-            old: Vec::new(),
             version: start.version,
             initial: Negotiation::new(),
             advertisement: Some(advertisement),
@@ -1330,8 +1292,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
             readiness_specified: net.readiness_specified(),
             chat_codec_specified: net.chat_codec_specified(),
             re_entry_allowed: net.re_entry_allowed(),
+            server_gate: net.server_gate(),
             returned_from_world: false,
             entry_progress: EntryProgress::default(),
+            pending: PendingWorld::default(),
+            placement: None,
+            local_ready: false,
+            server_ready: false,
             login_referred: false,
             loaded: None,
             portal_since: None,
@@ -1357,8 +1324,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
             buf: vec![0u8; MAX_DATAGRAM_BUF],
             pending_out: VecDeque::new(),
             inbox: VecDeque::new(),
-            entry_messages: Vec::new(),
-            entry_bytes: 0,
             refused_log: LogLimit::default(),
             unknown_log: LogLimit::default(),
             send_log: LogLimit::default(),
@@ -1427,14 +1392,17 @@ impl<N: ConnectorNet> SessionDriver<N> {
     #[must_use]
     pub fn counters(&self) -> DriverCounters {
         let mut counters = self.counters;
-        let links = std::iter::once(&self.login)
-            .chain(self.world.iter())
-            .chain(self.old.iter());
+        let links = std::iter::once(&self.login).chain(self.world.iter());
         for l in links {
             if let Some(c) = l.mux.connection(l.conn) {
                 let r = c.reassembly_counts();
                 let sum = &mut counters.reassembly;
                 sum.duplicates = sum.duplicates.saturating_add(r.duplicates);
+                sum.reused_identities = sum.reused_identities.saturating_add(r.reused_identities);
+                sum.conflicts_dropped = sum.conflicts_dropped.saturating_add(r.conflicts_dropped);
+                sum.tombstones_evicted =
+                    sum.tombstones_evicted.saturating_add(r.tombstones_evicted);
+                sum.empty_controls = sum.empty_controls.saturating_add(r.empty_controls);
                 sum.queue3_older = sum.queue3_older.saturating_add(r.queue3_older);
                 sum.queue3_equal = sum.queue3_equal.saturating_add(r.queue3_equal);
                 sum.queue3_ambiguous = sum.queue3_ambiguous.saturating_add(r.queue3_ambiguous);
@@ -1445,10 +1413,25 @@ impl<N: ConnectorNet> SessionDriver<N> {
         counters
     }
 
-    /// How far the world entry got (§9.3.8).
+    /// How far the world entry got (§9.3.9).
     #[must_use]
     pub const fn entry_progress(&self) -> EntryProgress {
         self.entry_progress
+    }
+
+    /// The entities and bytes the pending world state keeps (§9.3.9; fuzzing and tests: its
+    /// bounds).
+    #[must_use]
+    pub fn pending_sizes(&self) -> (usize, usize) {
+        (self.pending.entities(), self.pending.bytes())
+    }
+
+    /// Whether a selection is refused locally: the session has been in the world and left it, and
+    /// a re-entry has no settled recipient, queue or body (§9.3.9, OPEN-SESSION-16). The connector
+    /// answers `InvalidCommand` for it from here on.
+    #[must_use]
+    pub const fn re_entry_blocked(&self) -> bool {
+        self.returned_from_world && !self.re_entry_allowed
     }
 
     /// The entity feed's counters (module docs "Entities").
@@ -1521,12 +1504,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
         )
     }
 
-    /// The states of the replaced world connections, oldest first (tests).
-    #[must_use]
-    pub fn old_connection_states(&self) -> Vec<Option<ConnectionState>> {
-        self.old.iter().map(Link::state).collect()
-    }
-
     fn end(&mut self, reason: DisconnectReason) {
         if self.ended {
             return;
@@ -1549,11 +1526,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
         );
     }
 
-    /// Ends the session by one row of §9.3.8's phase table: `LoginRefused` and `Disconnected`
+    /// Ends the session by one row of §9.3.9's outcome table: `LoginRefused` and `Disconnected`
     /// before `Connected`, the row's `Disconnected` after it. `goodbye` sends one standalone
     /// Disconnect on each established connection (a local end); either way every connection
-    /// closes at once, with no flush wait, and the ticket is not sent again. A second call does
-    /// nothing.
+    /// closes at once, with no flush wait, and the ticket is not sent again. `why` is the local
+    /// cause, for the log only (`official-entry.md` §8.6). A second call does nothing.
     fn end_by_table(&mut self, row: TableRow, goodbye: bool, why: &str, now: f64) {
         if self.ended {
             return;
@@ -1565,6 +1542,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.report(&self.login, false, now).log_login_ended(why);
         }
         self.log_entry_end(why);
+        self.pending.discard();
         if goodbye {
             self.say_goodbye(why, now);
         } else {
@@ -1575,61 +1553,34 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
             }
         }
+        let ended = match row {
+            TableRow::Unsupported => DisconnectReason::Unsupported,
+            TableRow::Deadline => DisconnectReason::UnsupportedTimeout,
+            TableRow::ServerRefused | TableRow::ServerOther => {
+                DisconnectReason::ServerClosed(String::new())
+            }
+            TableRow::Silence => DisconnectReason::TimedOut,
+            TableRow::Io => DisconnectReason::TransportFailed(String::new()),
+        };
         if self.stage == Stage::Login {
-            let (reason, note, ended) = match row {
-                TableRow::Unsupported(text) => (
-                    LoginRefusal::UnsupportedStep,
-                    Some(text.clone()),
-                    DisconnectReason::TransportFailed(text),
-                ),
-                TableRow::Deadline(text) => (
-                    LoginRefusal::UnsupportedStep,
-                    Some(text),
-                    DisconnectReason::TimedOut,
-                ),
-                TableRow::ServerRefused => (
-                    LoginRefusal::ClientNotAccepted,
-                    None,
-                    DisconnectReason::ServerClosed(String::new()),
-                ),
-                TableRow::ServerOther => (
-                    LoginRefusal::Other,
-                    None,
-                    DisconnectReason::ServerClosed(String::new()),
-                ),
-                TableRow::Silence => (
-                    LoginRefusal::ServiceUnavailable,
-                    None,
-                    DisconnectReason::TimedOut,
-                ),
-                TableRow::Io => (
-                    LoginRefusal::ServiceUnavailable,
-                    None,
-                    DisconnectReason::TransportFailed(String::new()),
-                ),
+            let reason = match row {
+                TableRow::Unsupported | TableRow::Deadline => LoginRefusal::UnsupportedStep,
+                TableRow::ServerRefused => LoginRefusal::ClientNotAccepted,
+                TableRow::ServerOther => LoginRefusal::Other,
+                TableRow::Silence | TableRow::Io => LoginRefusal::ServiceUnavailable,
             };
             self.events
                 .push_back(Event::Account(AccountEvent::LoginRefused {
                     reason,
                     retry_after_seconds: None,
                     detail: None,
-                    note,
                 }));
-            self.end(ended);
-        } else {
-            self.end(match row {
-                TableRow::Unsupported(text) => DisconnectReason::TransportFailed(text),
-                TableRow::Deadline(text) => DisconnectReason::TimedOutLocally(text),
-                TableRow::ServerRefused | TableRow::ServerOther => {
-                    DisconnectReason::ServerClosed(String::new())
-                }
-                TableRow::Silence => DisconnectReason::TimedOut,
-                TableRow::Io => DisconnectReason::TransportFailed(String::new()),
-            });
         }
+        self.end(ended);
     }
 
-    /// The line of a world entry that ends: how far it got, in counts (§9.3.8).
+    /// The stage line of a world entry that ends: how far it got, in counts, and what was withheld
+    /// on the way (§9.3.9).
     fn log_entry_end(&self, why: &str) {
         if let Stage::Entering { wait, .. } = &self.stage {
             let world = self
@@ -1643,6 +1594,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 reason = why,
                 progress = ?self.entry_progress,
                 refused_world_datagrams = world,
+                pending_entities = self.pending.entities(),
+                pending_bytes = self.pending.bytes(),
+                withheld = %withheld_summary(),
                 "official world entry: stopped"
             );
         }
@@ -1677,6 +1631,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             // and flushes its own connection, so it runs only before the cancel.
             self.run_chat(now);
         }
+        self.try_finish_entry(now);
         self.enter_deadline(now);
         self.initial_deadline(now);
         self.advance_paths();
@@ -1693,8 +1648,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
         read_any || self.events.len() != before
     }
 
-    /// A wait of the pending selection ended (§9.3.8): the row's `Disconnected`, with a local text
-    /// naming the stage and no Account event.
+    /// A wait of the pending selection ended (§9.3.9): `Disconnected { UnsupportedTimeout }`, with
+    /// no Account event and the stage named in the log, not a claim of service silence.
     fn enter_deadline(&mut self, now: f64) {
         let Stage::Entering { since, wait, .. } = &self.stage else {
             return;
@@ -1703,38 +1658,89 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return;
         }
         let wait = *wait;
-        self.end_by_table(
-            TableRow::Deadline(wait.deadline_text().to_owned()),
-            true,
-            wait.label(),
-            now,
-        );
+        self.end_by_table(TableRow::Deadline, true, wait.label(), now);
     }
 
-    /// A valid `0x6D` while selecting: `EnterWorldFailed` and back to the list (§9.3.8). After a
-    /// referral no connection is left for a later `0x6F`, so the session ends too, with Tessera's
-    /// text naming that (engineering choice, spec silent: `docs/m8-remediation.md` §15). Tessera
-    /// itself closes the world connection here, so this is no server close.
-    fn fail_entry(&mut self, now: f64) {
+    /// A valid `0x6D` for the pending selection, before a valid referral: `EnterWorldFailed` and back
+    /// to the existing list, with no Disconnect (§9.3.9).
+    fn fail_entry(&mut self) {
         let Stage::Entering { name, .. } = &self.stage else {
             return;
         };
         let character = name.clone();
-        if let Some(mut w) = self.world.take() {
-            w.end_session(now);
-            self.keep_old(w);
-        }
-        self.entry_messages.clear();
-        self.entry_bytes = 0;
+        self.pending.discard();
         self.stage = Stage::Characters;
         self.events.push_back(Event::EnterWorldFailed {
             character,
             reason: ENTRY_REFUSED.to_owned(),
         });
-        if self.login_referred {
-            self.end(DisconnectReason::TransportFailed(
-                ENTRY_REFUSED_AFTER_REFERRAL.to_owned(),
-            ));
+    }
+
+    /// The end of the entry (§9.3.9): once both gates hold, one `0xF4`, which ends the readiness
+    /// clock, then `WorldEntered`, and then the pending state is released, one latest snapshot per
+    /// entity, spawn before property and motion. The server gate has no source on a production path
+    /// (OPEN-WORLD-9), so nothing here runs there (module docs).
+    fn try_finish_entry(&mut self, now: f64) {
+        if self.ended || !self.server_ready || !self.local_ready {
+            return;
+        }
+        let Stage::Entering {
+            name,
+            wait: EntryWait::Readiness,
+            ..
+        } = &self.stage
+        else {
+            return;
+        };
+        let (Some(player), Some((location, yaw))) = (self.pending.player(), self.placement) else {
+            return;
+        };
+        let name = name.clone();
+        let sent = PortalReadyAck.to_bytes().is_ok_and(|env| {
+            self.world.as_mut().is_some_and(|w| {
+                Self::send_on(w, &self.codecs, OPCODE_PORTAL_READY_ACK, &env, &env, now)
+            })
+        });
+        if !sent {
+            self.counters.send_failures += 1;
+            self.end_by_table(
+                TableRow::Unsupported,
+                true,
+                "the ready message was not sent",
+                now,
+            );
+            return;
+        }
+        tracing::info!("official world entry: ready message sent");
+        self.adapter
+            .enter_world_acknowledged(player, Some(name.clone()));
+        self.feed.reset(Some(player));
+        self.fresh_portal_loading();
+        self.stage = Stage::InWorld {
+            player,
+            name: name.clone(),
+        };
+        self.events.push_back(Event::WorldEntered {
+            player: EntityId(player),
+            name,
+            transform: Transform {
+                position: location.position(),
+                heading: yaw,
+            },
+        });
+        self.release_pending();
+    }
+
+    /// The pending state goes to the play layer and the store is empty (§9.3.9).
+    fn release_pending(&mut self) {
+        let (spawns, states) = self.pending.take_snapshots();
+        for snapshot in spawns.iter().chain(states.iter()) {
+            for (opcode, body) in &snapshot.messages {
+                self.play_in_world(*opcode, snapshot.entity, body);
+                if !self.in_world_still() {
+                    return;
+                }
+            }
         }
     }
 
@@ -1750,13 +1756,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// One [`UnsupportedNegotiation`] ends the attempt (§9.3.8): its deadline or unsupported row.
+    /// One [`UnsupportedNegotiation`] ends the attempt (§9.3.9): its deadline or unsupported row.
+    /// The cause goes to the log; the row has Tessera's fixed words.
     fn refuse_unsupported(&mut self, why: UnsupportedNegotiation, now: f64) {
-        let text = why.detail().to_owned();
         let row = if why.is_deadline() {
-            TableRow::Deadline(text)
+            TableRow::Deadline
         } else {
-            TableRow::Unsupported(text)
+            TableRow::Unsupported
         };
         // The Display form names the kind (never a value), so the log tells the checks apart.
         let reason = why.to_string();
@@ -1853,15 +1859,16 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     /// The world was torn down (`official-messages-play.md` §7.2 item 3): the session stays
     /// open, and the client is back at character selection at once with the latest list
-    /// (module docs "Leaving the world"). The list that follows the teardown comes on the
-    /// world connection (§7.2 item 3 keeps it open), so a later `0x6F` goes there too.
+    /// (module docs "Leaving the world").
     fn left_world(&mut self) {
         tracing::info!("official session: the world was left for character selection");
         self.log_world_end();
         self.stage = Stage::Characters;
         self.returned_from_world = true;
-        self.entry_messages.clear();
-        self.entry_bytes = 0;
+        self.pending.discard();
+        self.placement = None;
+        self.local_ready = false;
+        self.server_ready = false;
         self.fresh_portal_loading();
         // The client drops every entity with the world (`ReturnedToCharacterSelect`).
         self.feed.reset(None);
@@ -1880,7 +1887,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.world
                 .iter()
                 .map(|w| (1usize, w))
-                .chain(self.old.iter().enumerate().rev().map(|(i, l)| (2 + i, l)))
                 .chain(std::iter::once((0usize, &self.login)))
         };
         // Any adopted non-zero ID (`official-session.md` §6.3: the earlier range check is
@@ -2006,8 +2012,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     fn link_mut(&mut self, index: usize) -> Option<&mut Link> {
         match index {
             0 => Some(&mut self.login),
-            1 => self.world.as_mut(),
-            i => self.old.get_mut(i.checked_sub(2)?),
+            _ => self.world.as_mut(),
         }
     }
 
@@ -2108,10 +2113,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// until none is left, the session ended or [`DRIVER_EVENT_CAP`] events wait; what is
     /// left waits for the next pass.
     fn run_links(&mut self, now: f64, stop: &dyn Fn() -> bool) {
-        for old in &mut self.old {
-            // A replaced connection only finishes its disconnect.
-            old.drain_events();
-        }
         loop {
             if self.ended || self.full() {
                 return;
@@ -2152,6 +2153,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     *since = now;
                     self.entry_progress.world_connected = true;
                     tracing::info!(stage = wait.label(), "official world entry: next stage");
+                    self.events.push_back(Event::WorldEntryProgress {
+                        stage: WorldEntryStage::WorldHandshake,
+                    });
                 }
                 if self.stage == Stage::Login {
                     if !world {
@@ -2164,6 +2168,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
                             stage: LoginStage::JoiningWorld,
                         }));
                 }
+            }
+            // §9.3.9: nothing the retiring login connection says concerns the session any more.
+            SessionEvent::BlobReceived(_) if !world && self.login_referred => {
+                self.counters.retired_messages = self.counters.retired_messages.saturating_add(1);
             }
             SessionEvent::BlobReceived(blob) => {
                 if blob.queue_id == QUEUE_RELIABLE_ORDERED {
@@ -2221,7 +2229,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     self.counters.cancelled_referrals += 1;
                     tracing::debug!("official session: referral after the cancel ignored");
                 } else {
-                    self.referral(cookie, world_addr, now);
+                    self.referral(cookie, world_addr, world, now);
                 }
             }
             SessionEvent::AuthServerAddress(_) => {
@@ -2232,7 +2240,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// §9.3.8: a fresh queue-2 identity is delivered when it completes, and an ordering word that
+    /// §9.3.9: a fresh queue-2 identity is delivered when it completes, and an ordering word that
     /// repeats, goes back or skips ahead is an anomaly count only. The first completed one of each
     /// connection is the comparison baseline.
     fn note_queue2(&mut self, world: bool, order: u16) {
@@ -2299,42 +2307,31 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
             }
             // Handshake-stage unsupported: nothing more is sent, and no ticket.
-            LinkEnd::UnsupportedCodec => (
-                TableRow::Unsupported(UnsupportedNegotiation::Dictionary.detail().to_owned()),
-                false,
-            ),
+            LinkEnd::UnsupportedCodec | LinkEnd::InvalidChallenge => (TableRow::Unsupported, false),
             // The session layer sent the one Disconnect already.
-            LinkEnd::UnsupportedTraffic => (
-                TableRow::Unsupported(UnsupportedNegotiation::TrafficRefused.detail().to_owned()),
-                true,
-            ),
-            LinkEnd::GapDeadline => (
-                TableRow::Deadline(UnsupportedNegotiation::GapDeadline.detail().to_owned()),
-                true,
-            ),
+            LinkEnd::UnsupportedTraffic => (TableRow::Unsupported, true),
+            LinkEnd::GapDeadline => (TableRow::Deadline, true),
             LinkEnd::OutboundWindowOverflow => (TableRow::Io, true),
         };
         self.end_by_table(row, goodbye, reason.label(), now);
     }
 
-    fn keep_old(&mut self, link: Link) {
-        self.old.push(link);
-        if self.old.len() > MAX_OLD_LINKS {
-            self.old.remove(0);
-        }
-    }
-
-    /// A `WorldReferralHeader` (`official-session.md` §6.5): a new world connection on the
-    /// same socket, in a multiplexer of its own (module docs). Accepted only while the world
-    /// is being entered or in it (`official-messages-world.md` §3.6 shows the referral only
-    /// there); a replaced world connection is disconnected gracefully and kept until its
-    /// disconnect is out. Both: engineering choice, spec silent (question with the spec
-    /// writers). The first referral also starts the graceful disconnect of the login
-    /// connection (§6.5 step 2).
-    fn referral(&mut self, cookie: [u8; 8], addr: SocketAddrV4, now: f64) {
-        if !matches!(self.stage, Stage::Entering { .. } | Stage::InWorld { .. }) {
+    /// A `WorldReferralHeader` (`official-session.md` §6.5): a new world connection on the same
+    /// socket, in a multiplexer of its own (module docs). §9.3.9: only the login connection's first,
+    /// for a pending selection; any other is counted and skipped, with no connection made and no
+    /// clock replaced. The referral also starts the graceful disconnect of the login connection
+    /// (§6.5 step 2), whose later events no longer concern the session.
+    fn referral(&mut self, cookie: [u8; 8], addr: SocketAddrV4, world: bool, now: f64) {
+        let awaited = matches!(
+            self.stage,
+            Stage::Entering {
+                wait: EntryWait::Referral,
+                ..
+            }
+        );
+        if world || !awaited {
             self.counters.stray_referrals += 1;
-            tracing::debug!("official session: referral outside world entry ignored");
+            tracing::debug!("official session: referral with no pending selection ignored");
             return;
         }
         let form = if addr.ip() == self.login.peer.ip() {
@@ -2366,30 +2363,23 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     tracing::warn!(error = %e, "official session: referral not started");
                     return;
                 }
-                if let Some(mut old) = self.world.replace(link) {
-                    // Still in its handshake: closed without a word (module docs "Ending
-                    // the session"), so it sends no more `ReferralAuthHeader`.
-                    old.end_session(now);
-                    self.keep_old(old);
-                }
+                self.world = Some(link);
                 // §6.5 step 2: the old login connection starts its graceful disconnect
                 // (State 6, then 7) while both connections stay on the socket.
-                if !self.login_referred {
-                    self.login_referred = true;
-                    if self.login.live() && !self.login.flushing() {
-                        self.login.end_session(now);
-                    }
+                self.login_referred = true;
+                if self.login.live() && !self.login.flushing() {
+                    self.login.end_session(now);
                 }
                 tracing::info!("official session: referred to the world server");
                 self.entry_progress.referred = true;
-                // §9.3.8: the referral ends its wait and starts the next. A later referral of
-                // the same entry starts nothing again, so the entry stays bounded.
-                if let Stage::Entering { wait, since, .. } = &mut self.stage
-                    && *wait == EntryWait::Referral
-                {
+                // §9.3.9: the referral ends its wait and starts the next.
+                if let Stage::Entering { wait, since, .. } = &mut self.stage {
                     *wait = EntryWait::WorldConnection;
                     *since = now;
                 }
+                self.events.push_back(Event::WorldEntryProgress {
+                    stage: WorldEntryStage::Referral,
+                });
                 if let Some(w) = self.world.as_ref() {
                     self.report(w, true, now).log_start(None);
                 }
@@ -2404,7 +2394,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             match ControlMessage::decode(opcode, body) {
                 Ok(m) => self.control(m, now),
                 Err(e) => {
-                    // §9.3.8: malformed notice data is counted and discarded, not dispatched.
+                    // §9.3.9: malformed notice data is counted and discarded, not dispatched.
                     self.counters.decode_errors += 1;
                     self.counters.malformed_control =
                         self.counters.malformed_control.saturating_add(1);
@@ -2417,7 +2407,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }
             return;
         }
-        // These have their own handling, in the current one-byte form (§9.1, §9.3.8): none goes
+        // These have their own handling, in the current one-byte form (§9.1, §9.3.9): none goes
         // through the historical base-flags test below.
         match opcode {
             OPCODE_INSTALL_REQUEST => return self.install_request(m, now),
@@ -2426,14 +2416,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
             PlayerSessionReady::EVENT_ID if self.session_start_due(m.world) => {
                 return self.session_ready(m, now);
             }
-            CharacterOperationError::EVENT_ID => return self.character_error(m, now),
+            CharacterOperationError::EVENT_ID => return self.character_error(m),
             AccountEvictionNotice::EVENT_ID => return self.eviction(m, now),
+            ServerShutdownText::EVENT_ID => return self.shutdown_notice(m),
             _ => {}
         }
         if self.login_window_skips(m) {
             return;
         }
-        // §9.3.8: the checked family has one shared byte, consumed once. It is put back so the
+        // §9.3.9: the checked family has one shared byte, consumed once. It is put back so the
         // decoders read it as they read a batch's sub-event; a compressed or routed form is an
         // unsupported variant, not dispatched. Every other opcode has no checked boundary and is
         // only reached on the synthetic in-world path (module docs).
@@ -2449,9 +2440,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
         } else {
             body
         };
-        // On every production path the entry stops here (module docs): counted, nothing published.
-        if world && matches!(self.stage, Stage::Entering { .. }) && !self.readiness_specified {
-            self.note_pending(opcode, data);
+        // On the way to `WorldEntered` the world connection's messages are kept or counted, never
+        // published (module docs).
+        if world && matches!(self.stage, Stage::Entering { .. }) {
+            self.pending_message(opcode, recipient, data, 0, now);
             return;
         }
         if data.first() != Some(&0) {
@@ -2461,12 +2453,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.play(opcode, recipient, data, world);
     }
 
-    /// Whether a `0x90` of this connection is the session start the entry waits for (§9.3.8): only
+    /// Whether a `0x90` of this connection is the session start the entry waits for (§9.3.9): only
     /// the world connection's, during its own wait, which that connection's State 5 starts. Another
     /// `0x90` stops no wait and starts none: on the login connection it goes to the bounded skips,
-    /// and on the world connection it is counted like other pending traffic. A network with a
-    /// source for readiness is a test's synthetic script, which may carry the world on the login
-    /// connection (module docs).
+    /// and on the world connection it is counted like other pending traffic. A network with
+    /// [`ConnectorNet::readiness_specified`] is a test's synthetic script, which may carry the world
+    /// on the login connection (module docs).
     fn session_start_due(&self, world: bool) -> bool {
         match &self.stage {
             Stage::Entering { wait, .. } if !self.readiness_specified => {
@@ -2477,7 +2469,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// Whether `m` is passed over on the login connection (§9.3.8's application dispatch scope):
+    /// Whether `m` is passed over on the login connection (§9.3.9's application dispatch scope):
     /// before `WorldEntered` everything without its own handling is bounded (reassembled already),
     /// counted per opcode, not dispatched, not answered and no decode error. That includes the
     /// server `0x30`s before a referral, never buffered for later replay.
@@ -2505,7 +2497,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// A blob whose envelope did not decode (§9.1): when something waits on it, the session goes
-    /// on as it would for an unreadable body of that message (§9.3.8).
+    /// on as it would for an unreadable body of that message (§9.3.9). Anything else is counted.
     fn envelope_refused(&mut self, blob: &ReassembledBlob, world: bool, now: f64) {
         match blob.blob_header_word {
             PlayerSessionReady::EVENT_ID
@@ -2513,25 +2505,34 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     && self.session_start_due(world) =>
             {
                 return self.end_by_table(
-                    TableRow::Unsupported(UNSUPPORTED_SESSION_START.to_owned()),
+                    TableRow::Unsupported,
                     true,
                     "session start unreadable",
                     now,
                 );
             }
-            CharacterOperationError::EVENT_ID | AccountEvictionNotice::EVENT_ID => {
-                return self.refusal_unread(now);
+            AccountEvictionNotice::EVENT_ID => return self.refusal_unread(now),
+            CharacterOperationError::EVENT_ID => {
+                self.counters.refusals_skipped = self.counters.refusals_skipped.saturating_add(1);
+                return;
             }
             _ => {}
         }
         if world || self.stage != Stage::Login {
-            if blob.blob_header_word == CharacterListResponse::EVENT_ID && !world {
-                self.refuse_list(UNSUPPORTED_LATER_LIST, now);
+            if blob.blob_header_word == CharacterListResponse::EVENT_ID {
+                self.counters.later_lists_skipped =
+                    self.counters.later_lists_skipped.saturating_add(1);
             }
             return;
         }
         let why = match blob.blob_header_word {
-            OPCODE_INSTALL_REQUEST if blob.queue_id == QUEUE_UNRELIABLE => {
+            // §9.3.9: an active-stage `0xDD` with flags `02..FF` always fails; an initial one that
+            // does not read fails; a later one with a readable flags byte is counted.
+            OPCODE_INSTALL_REQUEST
+                if blob.queue_id == QUEUE_UNRELIABLE
+                    && (self.initial.wants_request()
+                        || blob.payload.first().is_none_or(|f| *f >= 2)) =>
+            {
                 UnsupportedNegotiation::MalformedRequest
             }
             OPCODE_INSTALL_REQUEST => return self.initial.ignored(),
@@ -2549,22 +2550,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.refuse_unsupported(why, now);
     }
 
-    /// A character list that cannot be read after `Connected`: §9.3.8's unsupported row.
-    fn refuse_list(&mut self, text: &str, now: f64) {
-        self.end_by_table(
-            TableRow::Unsupported(text.to_owned()),
-            true,
-            "character list unreadable",
-            now,
-        );
-    }
-
-    /// The server's `0xDD` (§9.3.8). Only flags `00` or valid zlib-only `01` on queue 1 of the
+    /// The server's `0xDD` (§9.3.9). Only flags `00` or valid zlib-only `01` on queue 1 of the
     /// primary login connection, during the initial stage, can trigger `0xEC`, and only the first,
     /// which must have an empty array. A later well-formed one, its array empty or not, only updates
     /// the opaque word and is counted: nothing is sent, no wait starts again and the install is not
     /// looked at again. One on another queue or connection, or after `Connected`, is counted and
-    /// skipped. A malformed one before the initial stage ends fails.
+    /// skipped. An initial malformed one fails, and so does flags `02..FF` during the stage; a later
+    /// one that does not read is counted.
     fn install_request(&mut self, m: &Inbound, now: f64) {
         let on_primary =
             !m.world && m.queue == QUEUE_UNRELIABLE && m.top_level && self.stage == Stage::Login;
@@ -2580,7 +2572,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
             Ok(r) => r,
             Err(e) => {
                 tracing::debug!(kind = %error_kind(&e), "official session: install request refused");
-                self.refuse_unsupported(UnsupportedNegotiation::MalformedRequest, now);
+                if self.initial.wants_request() {
+                    self.refuse_unsupported(UnsupportedNegotiation::MalformedRequest, now);
+                } else {
+                    self.initial.ignored();
+                }
                 return;
             }
         };
@@ -2637,7 +2633,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         Ok(())
     }
 
-    /// The server's `0xF5` (§9.3.8). One on another queue or connection is counted and skipped
+    /// The server's `0xF5` (§9.3.9). One on another queue or connection is counted and skipped
     /// with no state or timer change, and after `Connected` or the one reply any body is counted
     /// and ignored. Before `0xEC` it is unsupported. In the window from `0xEC`'s last fragment,
     /// exactly `00` gets one constructed `00`, with the recipient it named in the explicit field,
@@ -2672,16 +2668,21 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.initial_step("completion sent", now);
     }
 
-    /// The historical messages and the notice (§9.3, §9.3.8): not observed in either initial
-    /// conversation, so these reasons are policy. A notice is shown in every stage and never ends
-    /// or resets anything.
+    /// The historical messages and the notice (§9.3, §9.3.9): not observed in either initial
+    /// conversation, so these reasons are policy. After `Connected` every historical version and
+    /// queue message is counted and skipped; a notice is shown in every stage and never ends or
+    /// resets anything.
     fn control(&mut self, m: ControlMessage, now: f64) {
+        if let ControlMessage::SystemNotification(n) = &m {
+            self.notice(&n.text);
+            return;
+        }
+        if self.stage != Stage::Login {
+            self.counters.unhandled += 1;
+            return;
+        }
         match m {
             ControlMessage::VersionRequest => {
-                if self.stage != Stage::Login {
-                    self.counters.unhandled += 1;
-                    return;
-                }
                 if self.initial.version_request_too_late() {
                     self.refuse_unsupported(UnsupportedNegotiation::LateVersionRequest, now);
                     return;
@@ -2704,31 +2705,23 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
             }
             ControlMessage::VersionStatus(s) => match s.status {
-                1 if self.stage == Stage::Login => {
-                    // §9.3.8: a real stage change only; a repeat is counted and changes no clock.
+                1 => {
+                    // §9.3.9: a real stage change only; a repeat is counted and changes no clock.
                     if self.initial.version_accepted(now) {
                         self.initial_step("version accepted", now);
                     } else {
                         self.sync_initial();
                     }
                 }
-                1 => {}
+                // §9.3.9: refused, closed with no reply.
                 0 => {
-                    self.end_by_table(TableRow::ServerRefused, true, "version not accepted", now);
+                    self.end_by_table(TableRow::ServerRefused, false, "version not accepted", now);
                 }
-                status => {
-                    // §9.3 defines 0 and 1 only: another value is logged and ignored
-                    // (engineering choice, `docs/m8-remediation.md` §15).
-                    self.counters.unknown_version_status += 1;
-                    tracing::debug!(
-                        status,
-                        "official session: version status not defined; ignored"
-                    );
-                }
+                _ => self.refuse_unsupported(UnsupportedNegotiation::UnknownVersionStatus, now),
             },
             ControlMessage::LoginQueueStatus(q) => match q.outcome() {
-                // §9.3.8: only the fields actually there; one absolute limit, never extended.
-                LogonOutcome::Queued(at) if self.stage == Stage::Login => {
+                // §9.3.9: only the fields actually there; one absolute limit, never extended.
+                LogonOutcome::Queued(at) => {
                     if self.initial.queued(now) {
                         self.sync_initial();
                     }
@@ -2739,185 +2732,200 @@ impl<N: ConnectorNet> SessionDriver<N> {
                             wait_seconds: None,
                         }));
                 }
-                // §9.3.8: ready; the 30-second list wait starts and the progress screen comes back.
-                LogonOutcome::Accepted if self.stage == Stage::Login => {
+                // §9.3.9: ready; the 30-second list wait starts and the progress screen comes back.
+                LogonOutcome::Accepted => {
                     if self.initial.queue_ready(now) {
                         self.initial_step("queue ready", now);
                     } else {
                         self.sync_initial();
                     }
                 }
-                // §9.3.8: `LoginRefused { Other }` and closes. The number is for the debug log.
+                // §9.3.9: `LoginRefused { Other }`, closed with no reply. The number is for the
+                // debug log.
                 LogonOutcome::Refused(code) => {
                     tracing::debug!(
                         logon_result = format_args!("{code:#010x}"),
                         "official session: the service refused the logon"
                     );
-                    self.end_by_table(TableRow::ServerOther, true, "logon refused", now);
+                    self.end_by_table(TableRow::ServerOther, false, "logon refused", now);
                 }
                 LogonOutcome::Unknown(code) => {
-                    self.counters.unhandled += 1;
                     tracing::debug!(
                         logon_result = format_args!("{code:#010x}"),
-                        "official session: logon result with no meaning in the spec ignored"
+                        "official session: logon result with no meaning in the spec"
                     );
+                    self.refuse_unsupported(UnsupportedNegotiation::UnknownQueueStatus, now);
                 }
-                LogonOutcome::Queued(_) | LogonOutcome::Accepted => {}
             },
-            ControlMessage::SystemNotification(n) => {
-                if matches!(self.stage, Stage::InWorld { .. }) {
-                    self.events.push_back(Event::ServerNotice {
-                        level: NoticeLevel::Info,
-                        seconds: 0,
-                        text: n.text,
-                    });
-                } else {
-                    // `official-entry.md` §8.1: at most 256 bytes.
-                    let text =
-                        clean_display_name(&n.text, tessera_net::account::MAX_ACCOUNT_DETAIL_LEN);
-                    self.events
-                        .push_back(Event::Account(AccountEvent::LoginNotice { text }));
-                }
-            }
-            ControlMessage::ClientVersion(_) => {
+            ControlMessage::SystemNotification(_) | ControlMessage::ClientVersion(_) => {
                 self.counters.unhandled += 1;
             }
         }
     }
 
-    /// The character list (§9.3.8): the count straight after the one flags byte, every entry and
-    /// the account table to exact exhaustion. One that cannot be read ends the attempt, with no
-    /// forward scan, no partial list and no character invented; so does a compressed or routed
-    /// one. An unknown appearance form (OPEN-WORLD-9) is such a result. `0x13D` and `0x19E` are not
-    /// emitted (decision 0046 item 5); the client goes to selection after the list. The account
-    /// table belongs to this list's character-screen state and triggers nothing.
-    fn character_list(&mut self, m: &Inbound, now: f64) {
-        if m.envelope_flags != 0 {
-            self.counters.decode_errors += 1;
-            tracing::debug!("official session: compressed or routed character list refused");
-            if self.stage == Stage::Login {
-                self.refuse_unsupported(UnsupportedNegotiation::ListEnvelope, now);
-            } else {
-                self.refuse_list(UNSUPPORTED_LATER_LIST, now);
-            }
+    /// `0x12E` or a resolved `0xFA` (§9.3.9): plain informational text in every phase, past 256 UTF-8
+    /// bytes dropped and counted, never cut into another notice. It advances no stage, resets no
+    /// clock and has no reply. The client cleans it (`official-entry.md` §8.2).
+    fn notice(&mut self, text: &str) {
+        if text.len() > MAX_ACCOUNT_DETAIL_LEN {
+            self.counters.notices_dropped = self.counters.notices_dropped.saturating_add(1);
             return;
         }
-        let list = match CharacterListResponse::from_envelope_body(&m.body, &self.schema) {
-            Ok(l) => l,
-            Err(e) => {
+        self.events
+            .push_back(Event::Account(AccountEvent::LoginNotice {
+                text: text.to_owned(),
+            }));
+    }
+
+    /// `0xFA` (§9.3.9): decoded by its historical bounded text schema and resolved, or counted.
+    fn shutdown_notice(&mut self, m: &Inbound) {
+        let text = (m.envelope_flags == 0)
+            .then(|| ServerShutdownText::from_bytes(&m.body).ok())
+            .flatten()
+            .and_then(|t| TextResolver::resolve(&self.schema, &t.last_words));
+        match text {
+            Some(text) => self.notice(&text),
+            None => {
+                self.counters.notices_dropped = self.counters.notices_dropped.saturating_add(1);
+            }
+        }
+    }
+
+    /// The character list (§9.3.9): the count straight after the one flags byte, every entry and
+    /// the account table to exact exhaustion, and then the first-screen contract ([`listed_names`]).
+    /// The first one that fails ends the attempt, with no forward scan, no partial list and no
+    /// character invented, and so does a compressed or routed one; an unknown appearance form
+    /// (OPEN-WORLD-9) is such a failure. Any other list that fails is counted and skipped, and the
+    /// last valid one stays. A valid later one replaces it at the idle list and is counted while
+    /// selecting and in the world. `Connected` carries names only: no attribute is guessed.
+    /// `0x13D` and `0x19E` are not emitted (decision 0046 item 5). The account table belongs to this
+    /// list's character-screen state and triggers nothing.
+    fn character_list(&mut self, m: &Inbound, now: f64) {
+        let first = self.stage == Stage::Login;
+        let list = if m.envelope_flags == 0 {
+            CharacterListResponse::from_envelope_body(&m.body, &self.schema)
+                .map_err(|e| {
+                    tracing::debug!(kind = %error_kind(&e), "official session: character list refused");
+                    UnsupportedNegotiation::ListDecode
+                })
+                .and_then(|list| {
+                    listed_names(
+                        list.characters
+                            .iter()
+                            .map(|c| (c.character_id, c.name.as_str())),
+                    )
+                    .ok_or(UnsupportedNegotiation::ListNames)
+                })
+        } else {
+            tracing::debug!("official session: compressed or routed character list refused");
+            Err(UnsupportedNegotiation::ListEnvelope)
+        };
+        let names = match list {
+            Ok(names) => names,
+            Err(why) => {
                 self.counters.decode_errors += 1;
-                tracing::debug!(kind = %error_kind(&e), "official session: character list refused");
-                if self.stage == Stage::Login {
-                    self.refuse_unsupported(UnsupportedNegotiation::ListDecode, now);
+                if first {
+                    self.refuse_unsupported(why, now);
                 } else {
-                    self.refuse_list(UNSUPPORTED_LATER_LIST, now);
+                    self.counters.later_lists_skipped =
+                        self.counters.later_lists_skipped.saturating_add(1);
                 }
                 return;
             }
         };
-        let fresh: Vec<(u64, String)> = list
-            .characters
-            .iter()
-            .filter_map(|c| character_name(&c.name).map(|n| (c.character_id, n)))
-            .take(MAX_CHARACTERS)
-            .collect();
-        // World §6's row of `0x6C`: each entry's `public_props` for the screens. The names of
-        // `details` are the ones `fresh` kept, in its order.
-        let details: Vec<Event> = list
-            .characters
-            .iter()
-            .filter_map(|c| character_name(&c.name).map(|n| character_details(n, c)))
-            .take(MAX_CHARACTERS)
-            .collect();
-        let old = std::mem::replace(&mut self.characters, fresh);
-        if matches!(self.stage, Stage::Characters | Stage::Entering { .. }) {
-            // A later list at character selection (the one after a teardown among them,
-            // `official-messages-play.md` §8): its changes, names gone first.
-            for (_, name) in &old {
-                if !self.characters.iter().any(|(_, n)| n == name) {
-                    self.events
-                        .push_back(Event::Character(CharacterEvent::CharacterRemoved {
-                            name: name.clone(),
-                        }));
-                }
+        match self.stage {
+            Stage::Login => {
+                self.characters = names;
+                self.initial.list_received();
+                self.initial_step("character list", now);
+                self.stage = Stage::Characters;
+                let characters = self
+                    .characters
+                    .iter()
+                    .map(|(_, name)| CharacterSummary { name: name.clone() })
+                    .collect();
+                tracing::info!(
+                    count = self.characters.len(),
+                    "official session: characters listed"
+                );
+                self.events.push_back(Event::Connected { characters });
             }
-            for ((_, name), info) in self.characters.iter().zip(details) {
-                if !old.iter().any(|(_, n)| n == name) {
-                    self.events.push_back(info);
+            Stage::Characters => {
+                let old = std::mem::replace(&mut self.characters, names);
+                for (_, name) in &old {
+                    if !self.characters.iter().any(|(_, n)| n == name) {
+                        self.events
+                            .push_back(Event::Character(CharacterEvent::CharacterRemoved {
+                                name: name.clone(),
+                            }));
+                    }
                 }
+                for (_, name) in &self.characters {
+                    if !old.iter().any(|(_, n)| n == name) {
+                        self.events
+                            .push_back(Event::Character(CharacterEvent::CharacterInfo {
+                                name: name.clone(),
+                                body: None,
+                                class: None,
+                                level: None,
+                                look: None,
+                            }));
+                    }
+                }
+                tracing::debug!(
+                    count = self.characters.len(),
+                    "official session: characters listed again"
+                );
             }
-            tracing::debug!(
-                count = self.characters.len(),
-                "official session: characters listed again"
-            );
-            return;
-        }
-        // In the world the list is kept for the return (it counts as the latest).
-        if self.stage == Stage::Login {
-            self.initial.list_received();
-            self.initial_step("character list", now);
-            self.stage = Stage::Characters;
-            let characters = self
-                .characters
-                .iter()
-                .map(|(_, name)| CharacterSummary { name: name.clone() })
-                .collect();
-            tracing::info!(
-                count = self.characters.len(),
-                "official session: characters listed"
-            );
-            self.events.push_back(Event::Connected { characters });
-            self.events.extend(details);
+            Stage::Entering { .. } | Stage::InWorld { .. } => {
+                self.counters.later_lists_skipped =
+                    self.counters.later_lists_skipped.saturating_add(1);
+            }
         }
     }
 
-    /// `0x6D` (§9.3.8, Vector 15): the shared byte and the `u32` reason, to exact exhaustion. While
-    /// selecting it fails the pending entry without an automatic retry, with a locally worded
-    /// refusal; at the idle list it is counted with no event; before the list no selection exists,
-    /// which is unsupported. One that cannot be read ends the session. The number is for the debug
-    /// log only.
-    fn character_error(&mut self, m: &Inbound, now: f64) {
+    /// `0x6D` (§9.3.9, Vector 15): exactly the shared byte and the `u32` reason. For a pending
+    /// selection before a valid referral it fails the entry without an automatic retry, with a
+    /// locally worded refusal; anything else, unreadable or not, is counted with no event. The
+    /// number is for the debug log only.
+    fn character_error(&mut self, m: &Inbound) {
         let code = (m.envelope_flags == 0)
             .then(|| CharacterOperationError::from_envelope_body(&m.body).ok())
             .flatten()
             .map(|e| e.error_code);
-        let Some(code) = code else {
-            self.counters.decode_errors += 1;
-            return self.refusal_unread(now);
-        };
-        tracing::debug!(code, "official session: character operation refused");
-        match &self.stage {
-            Stage::Login => {
-                self.refuse_unsupported(UnsupportedNegotiation::RefusalWithoutSelection, now);
+        let waiting = matches!(
+            self.stage,
+            Stage::Entering {
+                wait: EntryWait::Referral,
+                ..
             }
-            Stage::Entering { .. } => {
-                self.fail_entry(now);
+        );
+        match code {
+            Some(code) if waiting && !m.world => {
+                tracing::debug!(code, "official session: character operation refused");
+                self.fail_entry();
             }
-            Stage::Characters | Stage::InWorld { .. } => {
-                self.counters.idle_refusals = self.counters.idle_refusals.saturating_add(1);
+            _ => {
+                self.counters.refusals_skipped = self.counters.refusals_skipped.saturating_add(1);
             }
         }
     }
 
-    /// A `0x6D` or `0xB3` that cannot be read: §9.3.8's malformed row.
+    /// A `0xB3` that is not structurally valid (§9.3.9): unsupported before `Connected`, else
+    /// counted and skipped.
     fn refusal_unread(&mut self, now: f64) {
+        self.counters.decode_errors += 1;
         if self.stage == Stage::Login {
             self.refuse_unsupported(UnsupportedNegotiation::MalformedRefusal, now);
         } else {
-            self.end_by_table(
-                TableRow::Unsupported(UNSUPPORTED_ENTRY_ANSWER.to_owned()),
-                true,
-                "refusal unreadable",
-                now,
-            );
+            self.counters.refusals_skipped = self.counters.refusals_skipped.saturating_add(1);
         }
     }
 
-    /// `0x90` (§9.3.8, Vector 15): the ID straight after the one shared flags byte, then the
+    /// `0x90` (§9.3.9, Vector 15): the ID straight after the one shared flags byte, then the
     /// property table to exact exhaustion. A compressed or routed one or one that fails is the
-    /// unsupported row with [`UNSUPPORTED_SESSION_START`]; the ID is never shifted by a guessed
-    /// second byte. It starts the readiness wait and is not `WorldEntered` by itself. On every
-    /// production path the entry then waits for what no spec gives yet (module docs).
+    /// unsupported row; the ID is never shifted by a guessed second byte. It starts the readiness
+    /// wait and is not `WorldEntered` by itself: its identity is kept pending (module docs).
     fn session_ready(&mut self, m: &Inbound, now: f64) {
         let decoded = if m.envelope_flags == 0 {
             PlayerSessionReady::from_envelope_body(&m.body, &self.schema).ok()
@@ -2928,12 +2936,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.counters.decode_errors += 1;
             tracing::debug!("official session: session start refused");
             if matches!(self.stage, Stage::Entering { .. }) {
-                self.end_by_table(
-                    TableRow::Unsupported(UNSUPPORTED_SESSION_START.to_owned()),
-                    true,
-                    "session start unreadable",
-                    now,
-                );
+                self.end_by_table(TableRow::Unsupported, true, "session start unreadable", now);
             }
             return;
         };
@@ -2945,119 +2948,251 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return;
         };
         let name = name.clone();
-        if !matches!(*wait, EntryWait::Readiness) {
+        let first = !matches!(*wait, EntryWait::Readiness);
+        if first {
             *wait = EntryWait::Readiness;
             *since = now;
             self.entry_progress.session_started = true;
             tracing::info!(stage = wait.label(), "official world entry: next stage");
         }
-        if !self.readiness_specified {
+        if self.readiness_specified {
+            return self.enter_at_session_start(ready.player_id, name);
+        }
+        if !first {
             return;
         }
-        self.adapter
-            .enter_world(ready.player_id, Some(name.clone()));
-        self.feed.reset(Some(ready.player_id));
-        // World entry is a portal space (the adapter's `enter_world`).
-        self.fresh_portal_loading();
-        self.stage = Stage::InWorld {
-            player: ready.player_id,
-            name: name.clone(),
-        };
-        self.events.push_back(Event::WorldEntered {
-            player: EntityId(ready.player_id),
-            name,
-            transform: Transform::default(),
+        self.events.push_back(Event::WorldEntryProgress {
+            stage: WorldEntryStage::Identity,
         });
-        // What arrived before `0x90` (the world name `0x43` among it) now reaches the play
-        // layer, in order.
-        let held = std::mem::take(&mut self.entry_messages);
-        self.entry_bytes = 0;
-        for (opcode, recipient, body) in held {
-            self.play_in_world(opcode, recipient, &body);
-            if self.ended || !matches!(self.stage, Stage::InWorld { .. }) {
-                return;
-            }
+        match self.pending.set_player(ready.player_id) {
+            Ok(Some((at, yaw))) => self.local_placement(at, yaw),
+            Ok(None) => {}
+            Err(_) => self.end_by_table(TableRow::Unsupported, true, "pending world state", now),
         }
     }
 
-    /// What a message of the world connection tells about the entry (§9.3.8): counts only. A
-    /// checked message counts only when it decodes to exact exhaustion under its named layout, top
-    /// level or embedded; the rest go to [`EntryProgress::unread`]. `data` has its one shared byte,
-    /// and each embedded slice its own.
-    fn note_pending(&mut self, opcode: u32, data: &[u8]) {
-        match opcode {
+    /// [`ConnectorNet::readiness_specified`]: a test's fixture for the in-world code, which enters
+    /// at `0x90` with no gate and no `0xF4` of its own (module docs).
+    fn enter_at_session_start(&mut self, player: u64, name: String) {
+        self.adapter.enter_world(player, Some(name.clone()));
+        self.feed.reset(Some(player));
+        // World entry is a portal space (the adapter's `enter_world`).
+        self.fresh_portal_loading();
+        self.stage = Stage::InWorld {
+            player,
+            name: name.clone(),
+        };
+        self.events.push_back(Event::WorldEntered {
+            player: EntityId(player),
+            name,
+            transform: Transform::default(),
+        });
+        self.release_pending();
+    }
+
+    /// An exact placement of the local player while entering (§9.3.9): the client starts loading.
+    /// The same placement again changes nothing; another is a new generation, which clears the local
+    /// gate.
+    fn local_placement(&mut self, at: Location, yaw: f32) {
+        if self.placement == Some((at, yaw)) {
+            return;
+        }
+        let Stage::Entering { name, .. } = &self.stage else {
+            return;
+        };
+        let character = name.clone();
+        if self.placement.is_none() {
+            self.entry_progress.placed = true;
+            self.events.push_back(Event::WorldEntryProgress {
+                stage: WorldEntryStage::Placement,
+            });
+        }
+        self.placement = Some((at, yaw));
+        self.local_ready = false;
+        tracing::info!("official world entry: placement pending");
+        self.events.push_back(Event::WorldPlacementPending {
+            character,
+            position: at,
+            yaw,
+        });
+    }
+
+    /// What a message of the world connection is on the way to `WorldEntered` (§9.3.9). `data` has
+    /// its one shared byte, and each embedded slice its own. A checked message is kept only when it
+    /// decodes to exact exhaustion; a child of a batch that does not is counted without touching its
+    /// siblings. The rest is counted and skipped: no unknown RPC runs and nothing is read as
+    /// readiness, except that a test's [`ConnectorNet::server_gate`] stands in for its source.
+    fn pending_message(&mut self, opcode: u32, target: u64, data: &[u8], depth: usize, now: f64) {
+        let stored = match opcode {
             SubEventBatch::EVENT_ID_SUB_EVENT => {
-                let Ok(batch) = SubEventBatch::from_bytes(data, opcode) else {
-                    self.entry_progress.unread = self.entry_progress.unread.saturating_add(1);
-                    return;
-                };
-                self.entry_progress.batches = self.entry_progress.batches.saturating_add(1);
-                for frame in &batch.frames {
-                    self.entry_progress.sub_events =
-                        self.entry_progress.sub_events.saturating_add(1);
-                    if let SubEventFrame::Event {
-                        sub_event_id,
-                        payload,
-                    } = frame
-                    {
-                        // An embedded form without a checked boundary is only counted above.
-                        self.note_checked(*sub_event_id, payload);
+                self.pending_batch(opcode, target, data, depth, now);
+                return;
+            }
+            EntityCreate::EVENT_ID => match EntityCreate::from_bytes(data) {
+                Ok(c) => {
+                    let stored = self.pending.create(c.entity_id, data);
+                    self.entry_progress.creations += u64::from(stored == Stored::Kept);
+                    stored
+                }
+                Err(_) => Stored::NoTarget,
+            },
+            PropertyTableUpdate::EVENT_ID_ENTITY => {
+                let mut r = WireReader::new(data);
+                match PropertyTableUpdate::decode(&mut r, opcode, &self.schema)
+                    .and_then(|_| r.finish())
+                {
+                    Ok(()) => {
+                        let stored = self.pending.table(target, data);
+                        self.entry_progress.creations += u64::from(stored == Stored::Kept);
+                        stored
                     }
+                    Err(_) => return self.pending_unread(),
+                }
+            }
+            op if SinglePropertyUpdate::scope_of(op) == Some(PropertyScope::Entity) => {
+                let mut r = WireReader::new(data);
+                match SinglePropertyUpdate::decode(&mut r, op, &self.schema)
+                    .and_then(|u| r.finish().map(|()| u))
+                {
+                    Ok(u) => {
+                        let stored = self.pending.single(target, op, u.entry.pid, data);
+                        self.entry_progress.properties += u64::from(stored == Stored::Kept);
+                        stored
+                    }
+                    Err(_) => return self.pending_unread(),
+                }
+            }
+            VisualDescriptionUpdate::EVENT_ID => match VisualDescriptionUpdate::from_bytes(data) {
+                Ok(_) => {
+                    let stored = self.pending.appearance(target, data);
+                    self.entry_progress.appearances += u64::from(stored == Stored::Kept);
+                    stored
+                }
+                Err(_) => return self.pending_unread(),
+            },
+            PositionUpdate::EVENT_ID => match PositionUpdate::from_bytes(data) {
+                Ok(u) => {
+                    let at = placement_location(&u.placement).map(|(l, _, h)| (l, h));
+                    let stored = self.pending.position(u.entity_id, data, at);
+                    self.entry_progress.positions += u64::from(stored == Stored::Kept);
+                    if stored == Stored::Kept
+                        && self.pending.player() == Some(u.entity_id)
+                        && let Some((l, h)) = at
+                    {
+                        self.local_placement(l, h);
+                    }
+                    stored
+                }
+                Err(_) => return self.pending_unread(),
+            },
+            PortalPositionSync::EVENT_ID => {
+                match PortalPositionSync::from_bytes(data, &self.schema) {
+                    Ok(p) => {
+                        let at = position_location(&p.position, Some(wire_heading(p.heading_raw)))
+                            .map(|(l, _, h)| (l, h));
+                        let stored = self.pending.sync(target, data, at);
+                        self.entry_progress.placements += u64::from(stored == Stored::Kept);
+                        if stored == Stored::Kept
+                            && self.pending.player() == Some(target)
+                            && let Some((l, h)) = at
+                        {
+                            self.local_placement(l, h);
+                        }
+                        stored
+                    }
+                    Err(_) => return self.pending_unread(),
                 }
             }
             SubEventBatch::EVENT_ID_AOI_ENTER => {
                 self.entry_progress.unsupported_batches =
                     self.entry_progress.unsupported_batches.saturating_add(1);
+                return;
             }
-            0x7C | 0xC7 => {
+            0xA8 => {
+                self.entry_progress.actions = self.entry_progress.actions.saturating_add(1);
+                return;
+            }
+            0x7C | 0xC7 | 0x5E | 0x153 => {
                 self.entry_progress.readiness_seen =
                     self.entry_progress.readiness_seen.saturating_add(1);
+                if self.server_gate == Some(opcode) {
+                    self.server_ready = true;
+                }
+                return;
             }
             _ => {
-                if !self.note_checked(opcode, data) {
-                    self.entry_progress.other = self.entry_progress.other.saturating_add(1);
-                }
+                self.entry_progress.other = self.entry_progress.other.saturating_add(1);
+                return;
+            }
+        };
+        match stored {
+            Stored::Kept => {}
+            Stored::NoTarget if target == DEFAULT_RECIPIENT => {
+                self.entry_progress.default_target =
+                    self.entry_progress.default_target.saturating_add(1);
+            }
+            Stored::NoTarget => {
+                self.entry_progress.no_target = self.entry_progress.no_target.saturating_add(1);
+            }
+            Stored::Overflow => {
+                self.end_by_table(TableRow::Unsupported, true, "pending world state", now);
             }
         }
     }
 
-    /// One checked message (§9.3.8's family, Vectors 15 and 16) by its named decoder. Answers whether
-    /// `opcode` is one of them.
-    fn note_checked(&mut self, opcode: u32, data: &[u8]) -> bool {
-        let decoded = match opcode {
-            EntityCreate::EVENT_ID => EntityCreate::from_bytes(data).is_ok(),
-            PropertyTableUpdate::EVENT_ID_ENTITY => {
-                let mut r = WireReader::new(data);
-                PropertyTableUpdate::decode(&mut r, opcode, &self.schema)
-                    .and_then(|_| r.finish())
-                    .is_ok()
-            }
-            PositionUpdate::EVENT_ID => PositionUpdate::from_bytes(data).is_ok(),
-            PortalPositionSync::EVENT_ID => {
-                PortalPositionSync::from_bytes(data, &self.schema).is_ok()
-            }
-            EnterPortalSpace::EVENT_ID => EnterPortalSpace::from_bytes(data).is_ok(),
-            VisualDescriptionUpdate::EVENT_ID => VisualDescriptionUpdate::from_bytes(data).is_ok(),
-            _ => return false,
-        };
-        let p = &mut self.entry_progress;
-        let count = match (decoded, opcode) {
-            (false, _) => &mut p.unread,
-            (true, EntityCreate::EVENT_ID | PropertyTableUpdate::EVENT_ID_ENTITY) => {
-                &mut p.creations
-            }
-            (true, PositionUpdate::EVENT_ID) => &mut p.positions,
-            (true, PortalPositionSync::EVENT_ID) => &mut p.placements,
-            (true, EnterPortalSpace::EVENT_ID) => &mut p.portal_spaces,
-            (true, _) => &mut p.appearances,
-        };
-        *count = count.saturating_add(1);
-        true
+    /// A checked message that did not read: counted, nothing kept (§9.3.9).
+    fn pending_unread(&mut self) {
+        self.entry_progress.unread = self.entry_progress.unread.saturating_add(1);
     }
 
-    /// A play message. While the world is being entered they are kept for
-    /// [`Self::session_ready`]; in the world they go to the play layer when they come from the
-    /// world connection, or from the login connection when there was no referral.
+    /// A `0x4C` on the way to `WorldEntered`: its known children one by one, each with its own one
+    /// shared byte. The `0x52` a `0x98` takes as its initial set goes to the created entity
+    /// (`official-messages-world.md` §5.1). A batch that does not frame is counted.
+    fn pending_batch(&mut self, opcode: u32, target: u64, data: &[u8], depth: usize, now: f64) {
+        if depth >= MAX_BATCH_DEPTH {
+            return self.pending_unread();
+        }
+        let Ok(batch) = SubEventBatch::from_bytes(data, opcode) else {
+            return self.pending_unread();
+        };
+        self.entry_progress.batches = self.entry_progress.batches.saturating_add(1);
+        let pairs = pair_initial_properties(&batch.frames);
+        for (i, frame) in batch.frames.iter().enumerate() {
+            let SubEventFrame::Event {
+                sub_event_id,
+                payload,
+            } = frame
+            else {
+                continue;
+            };
+            self.entry_progress.sub_events = self.entry_progress.sub_events.saturating_add(1);
+            // The `0x98` this `0x52` belongs to, when one took it.
+            let created = pairs
+                .get(i)
+                .copied()
+                .flatten()
+                .and_then(|c| batch.frames.get(c))
+                .and_then(|f| match f {
+                    SubEventFrame::Event { payload, .. } => {
+                        EntityCreate::from_bytes(payload).ok().map(|c| c.entity_id)
+                    }
+                    SubEventFrame::Null { .. } => None,
+                });
+            self.pending_message(
+                *sub_event_id,
+                created.unwrap_or(target),
+                payload,
+                depth + 1,
+                now,
+            );
+            if self.ended {
+                return;
+            }
+        }
+    }
+
+    /// A play message: in the world it goes to the play layer when it comes from the world
+    /// connection, or from the login connection when there was no referral.
     fn play(&mut self, opcode: u32, recipient: u64, body: &[u8], world: bool) {
         if !world && self.world.is_some() {
             self.counters.unhandled += 1;
@@ -3067,47 +3202,32 @@ impl<N: ConnectorNet> SessionDriver<N> {
             );
             return;
         }
-        match self.stage {
-            Stage::InWorld { .. } => self.play_in_world(opcode, recipient, body),
-            Stage::Entering { .. } => {
-                // §9.3.8: not published before `WorldEntered`, and bounded. Only the synthetic
-                // in-world path gets here (`Self::message`).
-                self.note_pending(opcode, body);
-                if self.entry_messages.len() >= MAX_ENTRY_MESSAGES
-                    || self.entry_bytes.saturating_add(body.len()) > MAX_ENTRY_BYTES
-                {
-                    self.counters.entry_overflow += 1;
-                    return;
-                }
-                self.entry_bytes += body.len();
-                self.entry_messages.push((opcode, recipient, body.to_vec()));
-            }
-            Stage::Login | Stage::Characters => {
-                self.counters.unhandled += 1;
-                tracing::trace!(
-                    opcode,
-                    "official session: message outside the world ignored"
-                );
-            }
+        if matches!(self.stage, Stage::InWorld { .. }) {
+            self.play_in_world(opcode, recipient, body);
+        } else {
+            self.counters.unhandled += 1;
+            tracing::trace!(
+                opcode,
+                "official session: message outside the world ignored"
+            );
         }
     }
 
-    /// `0xB3` (§9.3.8, Vector 15): the shared byte and the `u32` reason are read; the text after
-    /// them has no checked codec, so it is neither decoded nor dispatched. It ends the session in
-    /// every stage: the row's refusal before `Connected`, `Disconnected { ServerClosed }` after it.
-    /// One without its checked prefix is the malformed row.
+    /// `0xB3` (§9.3.9, Vector 15): valid means the first byte `00` and at least five bytes. The
+    /// shared byte and the `u32` reason are read; what follows them is neither parsed nor shown. It
+    /// ends the session in every stage with no closing reply: the row's refusal before `Connected`,
+    /// `Disconnected { ServerClosed }` after it.
     fn eviction(&mut self, m: &Inbound, now: f64) {
         let reason = (m.envelope_flags == 0)
             .then(|| AccountEvictionNotice::reason_of_envelope_body(&m.body))
             .flatten();
         let Some(reason) = reason else {
-            self.counters.decode_errors += 1;
             return self.refusal_unread(now);
         };
         tracing::debug!(reason, "official session: the server ended the session");
         self.end_by_table(
             TableRow::ServerRefused,
-            true,
+            false,
             "the server ended the session",
             now,
         );
@@ -3462,7 +3582,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     /// Sends `0x6F` on queue 2 of the login connection to [`SELECTION_DESTINATION`], in the
     /// explicit recipient form, with no extension word (§9.3.8, Vector 12). Its body is
-    /// [`CharacterEnterWorldRequest`]'s with the empty client table of §9.3.7–§9.3.8.
+    /// [`CharacterEnterWorldRequest`]'s with the one-byte empty client table of §9.3.9.
     fn send_entry(&mut self, env: &[u8], now: f64) -> bool {
         let opcode = CharacterEnterWorldRequest::EVENT_ID;
         let (queue, group) = outbound_queue(opcode, &[]);
@@ -3541,7 +3661,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     fn send_pending(&mut self, now: f64) {
         while let Some(ev) = self.pending_out.pop_front() {
             let (opcode, payload) = ev.into_parts();
-            // §9.3.8: `0xF4` is one shared zero byte, serialized once. Everything else here has
+            // §9.3.9: `0xF4` is one shared zero byte, serialized once. Everything else here has
             // no checked boundary and is only reached on the synthetic in-world path.
             let env = if opcode == OPCODE_PORTAL_READY_ACK {
                 payload.clone()
@@ -3559,12 +3679,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     fn links_mut(&mut self) -> Vec<&mut Link> {
-        let mut links: Vec<&mut Link> = Vec::with_capacity(2 + self.old.len());
+        let mut links: Vec<&mut Link> = Vec::with_capacity(2);
         links.push(&mut self.login);
         if let Some(w) = self.world.as_mut() {
             links.push(w);
         }
-        links.extend(self.old.iter_mut());
         links
     }
 
@@ -3583,18 +3702,16 @@ impl<N: ConnectorNet> SessionDriver<N> {
         {
             tracing::debug!(error = %e, skipped, "official session: tick failed");
         }
-        self.old.retain(Link::live);
     }
 
     /// Sends what the connections have queued; a failure is logged at most once per
     /// [`LOG_INTERVAL_SEC`] (a revoked right fails every send).
     fn flush(&mut self, now: f64) {
-        let mut links: Vec<&mut Link> = Vec::with_capacity(2 + self.old.len());
+        let mut links: Vec<&mut Link> = Vec::with_capacity(2);
         links.push(&mut self.login);
         if let Some(w) = self.world.as_mut() {
             links.push(w);
         }
-        links.extend(self.old.iter_mut());
         let mut failed = None;
         for l in links {
             // The dump's tap is armed only around the flush of a connection whose first
@@ -3811,17 +3928,18 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     });
                     return Ok(());
                 };
-                // §9.3.8, OPEN-SESSION-16: a re-entry after a teardown has no settled queue or body.
-                if self.returned_from_world && !self.re_entry_allowed {
+                // §9.3.9, OPEN-SESSION-16: a re-entry after a teardown has no settled recipient,
+                // queue or body: no `0x6F`. The connector refuses it before it gets here
+                // ([`Self::re_entry_blocked`]); one already on its way gets the session back to the
+                // list, and the session goes on.
+                if self.re_entry_blocked() {
                     self.counters.entries_not_sent =
                         self.counters.entries_not_sent.saturating_add(1);
-                    self.end_by_table(
-                        TableRow::Unsupported(ENTRY_NOT_SUPPORTED.to_owned()),
-                        true,
-                        "re-entry not supported",
-                        now,
-                    );
-                    return Ok(());
+                    self.events.push_back(Event::EnterWorldFailed {
+                        character: name,
+                        reason: ENTRY_REENTRY_NOT_SUPPORTED.to_owned(),
+                    });
+                    return Err(NetError::InvalidCommand(ENTRY_REENTRY_NOT_SUPPORTED));
                 }
                 let sent = CharacterEnterWorldRequest::new(id)
                     .to_envelope_bytes()
@@ -3829,14 +3947,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 if !sent {
                     self.counters.entries_not_sent =
                         self.counters.entries_not_sent.saturating_add(1);
-                    self.end_by_table(
-                        TableRow::Unsupported(ENTRY_NOT_SUPPORTED.to_owned()),
-                        true,
-                        "selection not sent",
-                        now,
-                    );
+                    self.end_by_table(TableRow::Unsupported, true, "selection not sent", now);
                     return Ok(());
                 }
+                self.pending.discard();
+                self.placement = None;
+                self.local_ready = false;
+                self.server_ready = false;
                 self.entry_progress = EntryProgress::default();
                 tracing::info!("official session: character selected; waiting for the referral");
                 self.stage = Stage::Entering {
@@ -3863,15 +3980,24 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 Ok(())
             }
             Command::WorldLoaded => {
-                // §4.5 item 4: the client's loading for its latest placement is done. It is
-                // kept with that placement's stamp, also outside portal space: a `0x5E`
-                // may follow its placement (item 2; module docs).
-                if matches!(self.stage, Stage::InWorld { .. }) {
-                    let t = self.adapter.teleport();
-                    self.loaded = Some(t.stamp_known().then(|| t.stamp()));
-                } else {
-                    self.counters.stray_loaded += 1;
-                    tracing::debug!("official session: loading signal outside the world");
+                match &self.stage {
+                    // §4.5 item 4: the client's loading for its latest placement is done. It is
+                    // kept with that placement's stamp, also outside portal space: a `0x5E`
+                    // may follow its placement (item 2; module docs).
+                    Stage::InWorld { .. } => {
+                        let t = self.adapter.teleport();
+                        self.loaded = Some(t.stamp_known().then(|| t.stamp()));
+                    }
+                    // §9.3.9: the local gate of the pending placement; no server readiness.
+                    Stage::Entering { .. } if self.placement.is_some() && !self.local_ready => {
+                        self.local_ready = true;
+                        self.entry_progress.loaded = true;
+                        tracing::info!("official world entry: the client loaded the placement");
+                    }
+                    _ => {
+                        self.counters.stray_loaded += 1;
+                        tracing::debug!("official session: loading signal with no placement");
+                    }
                 }
                 Ok(())
             }
@@ -3999,39 +4125,26 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// Ends the session gracefully (`official-session.md` §8.2, `official-messages-play.md`
-    /// §7.2 item 4: the transport disconnect on every connected connection; module docs
-    /// "Ending the session": a connection still in its handshake is closed without sending).
-    /// Play messages not yet queued on a connection are dropped. No ticket refresh starts
-    /// after this, and a running one is stopped.
+    /// The user's close (§9.3.9; module docs "Ending the session"): exactly one standalone
+    /// Disconnect on an established connection, no application flush, no drain and a local close at
+    /// once; nothing on a connection still in its handshake. No ticket refresh starts after this,
+    /// and a running one is stopped.
     pub fn begin_shutdown(&mut self, now: f64) {
         self.log_login_end("cancelled", now);
-        // What the login queued in its last pass (`0xEC` among it) stays unsent: nothing more
-        // goes out after a cancel but the goodbye.
-        if self.stage == Stage::Login
-            && let Some(connection) = self.login.mux.connection_mut(self.login.conn)
-        {
-            connection.discard_unsent_datagrams();
-        }
+        self.log_entry_end("cancelled");
         self.ended = true;
         self.shutting_down = true;
-        // Nobody takes them any more; reading must go on for the disconnect's answers.
+        // Nobody takes them any more; reading must go on for the chat client's answers.
         self.events.clear();
         self.inbox.clear();
         self.pending_out.clear();
-        self.entry_messages.clear();
-        self.entry_bytes = 0;
+        self.pending.discard();
         self.stop_refresh();
         self.log_abandoned_handshakes("cancelled", now);
-        for l in self.links_mut() {
-            l.end_session(now);
-        }
-        self.old.retain(Link::live);
+        self.say_goodbye("the user closed the session", now);
         if let Some(chat) = self.chat.as_mut() {
             chat.close(now);
         }
-        self.tick(now);
-        self.flush(now);
     }
 
     /// Ends the session without sending anything (the network right was revoked: nothing
@@ -4044,14 +4157,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.events.clear();
         self.inbox.clear();
         self.pending_out.clear();
-        self.entry_messages.clear();
-        self.entry_bytes = 0;
+        self.pending.discard();
         self.stop_refresh();
         self.log_abandoned_handshakes("network right revoked", now);
         for l in self.links_mut() {
             l.close_quietly();
         }
-        self.old.clear();
         self.chat = None;
         self.bind_user_rooms();
     }
@@ -4073,9 +4184,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         self.tick(now);
         self.flush(now);
-        self.login.flushing()
-            || self.world.as_ref().is_some_and(Link::flushing)
-            || self.old.iter().any(Link::flushing)
+        self.login.flushing() || self.world.as_ref().is_some_and(Link::flushing)
     }
 
     /// Synthetic tests only: [`ConnectorNet::re_entry_allowed`], as if re-entry were specified.
@@ -4191,8 +4300,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     /// When the next pass has timed work, on the clock of `now` (the connector waits until
     /// then, `worker` "Waiting"): the earliest timer of the connections
-    /// ([`SessionMultiplexer::next_deadline`], replaced connections finishing their
-    /// disconnect included), the entry deadline ([`ENTER_WORLD_TIMEOUT_SEC`]), the next
+    /// ([`SessionMultiplexer::next_deadline`]), the entry deadline ([`ENTER_WORLD_TIMEOUT_SEC`]), the next
     /// chat-server attachment ([`Self::wants_chat`]) and the next ticket refresh
     /// (`official-login.md` §4.3); `now` when messages wait in the inbox below the event
     /// cap. A time already past is `now`; `None` once the session ended without a shutdown,
@@ -4207,9 +4315,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         let mut next: Option<f64> = None;
         let mut at = |t: f64| next = Some(next.map_or(t, |n| n.min(t)));
-        let links = std::iter::once(&self.login)
-            .chain(self.world.iter())
-            .chain(self.old.iter());
+        let links = std::iter::once(&self.login).chain(self.world.iter());
         for l in links {
             if let Some(t) = l.mux.next_deadline(now) {
                 at(t);

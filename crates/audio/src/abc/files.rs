@@ -146,7 +146,12 @@ pub fn read_song(
 ) -> Result<Performance, AbcError> {
     let path = find_song(music_dir, name)?;
     let bytes = read_bounded(&path, MAX_FILE_BYTES)?;
-    tracing::debug!(path = %path.display(), bytes = bytes.len(), ?request, "reading song");
+    tracing::debug!(
+        file = %path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
+        bytes = bytes.len(),
+        ?request,
+        "reading song"
+    );
     parse(&bytes, request).map_err(|mut e| {
         if matches!(
             e.kind,

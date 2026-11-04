@@ -52,7 +52,6 @@ struct Refused {
     reason: LoginRefusal,
     retry: Option<u32>,
     detail: Option<String>,
-    note: Option<String>,
 }
 
 /// One row of the world list (§8.3).
@@ -181,32 +180,18 @@ pub fn disconnect_message(reason: &DisconnectReason) -> Option<Message> {
             text: text("official.error.no_answer").to_owned(),
             detail: None,
         },
-        // Tessera's own time limit, in Tessera's words naming the stage (`official-session.md`
-        // §9.3.8): no service text and no "no answer".
-        DisconnectReason::TimedOutLocally(why) => Message {
-            text: plain(why, MAX_ACCOUNT_DETAIL_LEN),
+        // §8.6: Tessera's fixed words, no service-detail line, no local cause.
+        DisconnectReason::Unsupported => Message {
+            text: text("official.error.unsupported_step").to_owned(),
             detail: None,
         },
-        // A Tessera limit (§9.3.8's unsupported row): the fixed text, and Tessera's line under it.
-        DisconnectReason::TransportFailed(why)
-            if tessera_compat::backend::names_tessera_limit(why) =>
-        {
-            Message {
-                text: text("official.error.tessera_limit").to_owned(),
-                detail: Some(plain(why, MAX_ACCOUNT_DETAIL_LEN)),
-            }
-        }
+        DisconnectReason::UnsupportedTimeout => Message {
+            text: text("official.error.unsupported_timeout").to_owned(),
+            detail: None,
+        },
         DisconnectReason::ServerClosed(why) => Message {
             text: text("official.error.server_closed").to_owned(),
             detail: (!why.trim().is_empty()).then(|| detail_line(why)),
-        },
-        // The server answered, and this client cannot go on: Tessera's own line, not the
-        // service's words and not the "no answer" text, and not read as an account fault
-        // (decision 0046 item 6). Engineering choice, §8.6 has no row for a session that ends
-        // this way after the hand-over.
-        DisconnectReason::Unsupported(why) => Message {
-            text: text("official.error.tessera_limit").to_owned(),
-            detail: (!why.trim().is_empty()).then(|| plain(why, MAX_ACCOUNT_DETAIL_LEN)),
         },
         // `TransportFailed` and any later reason.
         _ => Message {
@@ -462,13 +447,11 @@ impl LoginPresenter {
                 reason,
                 retry_after_seconds,
                 detail,
-                note,
             } => {
                 self.refused = Some(Refused {
                     reason: *reason,
                     retry: *retry_after_seconds,
                     detail: detail.clone(),
-                    note: note.clone(),
                 });
             }
             _ => {}
@@ -477,12 +460,25 @@ impl LoginPresenter {
 
     fn on_disconnected(&mut self, reason: &DisconnectReason) {
         if let Some(r) = self.refused.take() {
-            self.finish(refusal_end(
-                r.reason,
-                r.retry,
-                r.detail.as_deref(),
-                r.note.as_deref(),
-            ));
+            let mut end = refusal_end(r.reason, r.retry, r.detail.as_deref());
+            // §8.6: one panel; a Tessera deadline has its own words.
+            if r.reason == LoginRefusal::UnsupportedStep
+                && *reason == DisconnectReason::UnsupportedTimeout
+            {
+                end.message = disconnect_message(reason);
+            }
+            self.finish(end);
+            return;
+        }
+        // §8.6: a Tessera limit goes to the start screen, and login stays available.
+        if ends_at_start_screen(reason) {
+            self.finish(LoginEnd {
+                target: Target::StartScreen,
+                message: disconnect_message(reason),
+                wait: FAILURE_WAIT,
+                rate_limited: false,
+                drop_session: false,
+            });
             return;
         }
         let form = |message: Option<Message>| LoginEnd {
@@ -621,17 +617,19 @@ impl LoginPresenter {
     }
 }
 
-/// The end of a login after `LoginRefused` (§8.6). `detail` is the service's words and `note`
-/// Tessera's own: a note is shown as it is, never as "The service said: ⟨text⟩" (nothing came
-/// from the service), and takes the place of a detail. Engineering choice: §8.6's detail row
-/// only knows the service's words.
+/// Whether §8.6 sends a session that ended this way to the start screen.
 #[must_use]
-pub fn refusal_end(
-    reason: LoginRefusal,
-    retry: Option<u32>,
-    detail: Option<&str>,
-    note: Option<&str>,
-) -> LoginEnd {
+pub const fn ends_at_start_screen(reason: &DisconnectReason) -> bool {
+    matches!(
+        reason,
+        DisconnectReason::Unsupported | DisconnectReason::UnsupportedTimeout
+    )
+}
+
+/// The end of a login after `LoginRefused` (§8.6). `detail` is the service's words, shown as "The
+/// service said: ⟨text⟩".
+#[must_use]
+pub fn refusal_end(reason: LoginRefusal, retry: Option<u32>, detail: Option<&str>) -> LoginEnd {
     let (id, target) = match reason {
         LoginRefusal::BadCredentials => (
             "official.error.bad_credentials",
@@ -688,14 +686,9 @@ pub fn refusal_end(
         target,
         message: Some(Message {
             text: msg_text,
-            detail: note
-                .filter(|n| !n.trim().is_empty())
-                .map(|n| plain(n, MAX_ACCOUNT_DETAIL_LEN))
-                .or_else(|| {
-                    detail
-                        .filter(|d| shows_detail && !d.trim().is_empty())
-                        .map(detail_line)
-                }),
+            detail: detail
+                .filter(|d| shows_detail && !d.trim().is_empty())
+                .map(detail_line),
         }),
         wait: wait.max(FAILURE_WAIT),
         rate_limited,

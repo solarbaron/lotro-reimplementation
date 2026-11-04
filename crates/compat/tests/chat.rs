@@ -732,6 +732,7 @@ impl FakeServer {
         encode_datagram(
             DatagramHeader {
                 rec_id: 0x0111,
+                peer_word: 0x3344,
                 ..DatagramHeader::default()
             },
             &opt,

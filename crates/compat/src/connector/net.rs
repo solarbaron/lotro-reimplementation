@@ -68,13 +68,21 @@ pub trait ConnectorNet: Send + std::fmt::Debug + 'static {
         first_local: Option<Ipv4Addr>,
     ) -> Option<Box<dyn FnMut() -> Result<Self::Udp, crate::play::PlayError> + Send>>;
 
-    /// Whether a source for the server's readiness and the `0xF4` target exists. They are
-    /// OPEN-WORLD-9 and OPEN-SESSION-18 (`official-session.md` §9.3.8), so there is none on any
-    /// production path: [`LiveNet`] keeps this default, and an entry stops at the readiness wait
-    /// after `0x90`. Only the synthetic networks of the tests answer `true`, so that the in-world
-    /// code keeps being tested; nothing in a release graph can (`tools/check-release-features.sh`).
+    /// A fixture of the tests' synthetic networks for the in-world code: `true` enters the world at
+    /// `0x90`, with no gate of §9.3.9's order and no `0xF4` of its own, and may carry the world on
+    /// the login connection. It is no statement about the official service: nothing specifies such
+    /// an entry. [`LiveNet`] keeps this default, and nothing in a release graph can answer otherwise
+    /// (`tools/check-release-features.sh`).
     fn readiness_specified(&self) -> bool {
         false
+    }
+
+    /// The opcode a test's synthetic network treats as the server gate of §9.3.9's entry order, to
+    /// test that order to its end (one `0xF4`, then `WorldEntered` and the pending state's release).
+    /// The gate's source is OPEN-WORLD-9 (`official-session.md` §9.3.9), so there is none on any
+    /// production path: [`LiveNet`] keeps this default, and an entry stops at the readiness wait.
+    fn server_gate(&self) -> Option<u32> {
+        None
     }
 
     /// Whether the chat server's codec has a source. It is OPEN-SESSION-1, so no chat connection,

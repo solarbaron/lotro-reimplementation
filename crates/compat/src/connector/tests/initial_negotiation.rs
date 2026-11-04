@@ -7,9 +7,7 @@ use std::time::{Duration, Instant};
 
 use tessera_net::SessionState;
 
-use super::super::session_phase::{
-    ENTRY_NOT_SUPPORTED, StartFailure, UNSUPPORTED_ENTRY_ANSWER, UNSUPPORTED_SESSION_START,
-};
+use super::super::session_phase::StartFailure;
 use super::diagnostics::{assert_no_endpoint, logs_of};
 use super::*;
 use crate::initial::{
@@ -93,38 +91,39 @@ fn opcodes(packets: &[crate::session::DecodedPacket]) -> Vec<u32> {
         .collect()
 }
 
-/// The refusal of the attempt under §9.3.8's phase table: one `LoginRefused { UnsupportedStep }`
-/// with Tessera's note, then `Disconnected`: `TimedOut` at a wait's end, `TransportFailed` with the
-/// same text otherwise; and the driver has ended.
+/// The refusal of the attempt under §9.3.9's outcome table: one `LoginRefused { UnsupportedStep }`
+/// with no service words, then `Disconnected`: `UnsupportedTimeout` at a wait's end, `Unsupported`
+/// otherwise; and the driver has ended.
 fn assert_refused(d: &mut SessionDriver<FakeNet>, why: UnsupportedNegotiation) {
+    assert_refused_with(d, why.is_deadline());
+}
+
+/// [`assert_refused`] by the row: the deadline's, or the required-progress one.
+fn assert_refused_with(d: &mut SessionDriver<FakeNet>, deadline: bool) {
     let events = d.take_events();
     let want = LoginRefusal::UnsupportedStep;
-    let refused: Vec<(&Option<String>, &Option<String>)> = events
+    let refused: Vec<&Option<String>> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Account(AccountEvent::LoginRefused {
-                reason,
-                detail,
-                note,
-                ..
-            }) if *reason == want => Some((detail, note)),
+            Event::Account(AccountEvent::LoginRefused { reason, detail, .. })
+                if *reason == want =>
+            {
+                Some(detail)
+            }
             _ => None,
         })
         .collect();
     assert_eq!(refused.len(), 1, "{events:?}");
-    assert_eq!(refused[0].0, &None, "nothing here is the service's words");
-    assert_eq!(refused[0].1.as_deref(), Some(why.detail()));
-    let ended = DisconnectReason::TransportFailed(why.detail().to_owned());
+    assert_eq!(refused[0], &None, "nothing here is the service's words");
+    let ended = if deadline {
+        DisconnectReason::UnsupportedTimeout
+    } else {
+        DisconnectReason::Unsupported
+    };
     assert!(
-        events.iter().any(|e| matches!(
-            e,
-            Event::Disconnected { reason }
-                if if why.is_deadline() {
-                    *reason == DisconnectReason::TimedOut
-                } else {
-                    *reason == ended
-                }
-        )),
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Disconnected { reason } if *reason == ended)),
         "{events:?}"
     );
     assert!(d.ended());
@@ -238,13 +237,12 @@ fn a_full_run_in_the_observed_order_reaches_the_list_and_sends_the_selection() {
         Command::Account(AccountCommand::ChooseWorld { world }),
     )
     .expect("choose");
-    // A nonempty list decodes to exact exhaustion, and its screens get the entry's details
-    // (world §6) right after `Connected`.
+    // A nonempty list decodes to exact exhaustion; `Connected` has its names (§9.3.9).
     let until = Instant::now() + Duration::from_secs(10);
     let mut polled = Vec::new();
     while !polled
         .iter()
-        .any(|e| matches!(e, Event::Character(_) | Event::Disconnected { .. }))
+        .any(|e| matches!(e, Event::Connected { .. } | Event::Disconnected { .. }))
     {
         polled.extend(s.poll(Instant::now()));
         assert!(Instant::now() < until, "no list: {polled:?}");
@@ -261,17 +259,8 @@ fn a_full_run_in_the_observed_order_reaches_the_list_and_sends_the_selection() {
     assert_eq!(characters[0].name, CHARACTER);
     assert_eq!(s.state(), SessionState::Connected);
     assert!(
-        matches!(
-            &polled[at + 1],
-            Event::Character(tessera_net::CharacterEvent::CharacterInfo {
-                name,
-                body: Some(tessera_net::Body::Character { .. }),
-                class: Some(_),
-                level: Some(_),
-                look: None,
-            }) if name == CHARACTER
-        ),
-        "{polled:?}"
+        !polled.iter().any(|e| matches!(e, Event::Character(_))),
+        "no attribute is guessed: {polled:?}"
     );
 
     let seen = service.seen();
@@ -382,6 +371,104 @@ fn a_full_run_in_the_observed_order_reaches_the_list_and_sends_the_selection() {
             .iter()
             .any(|op| matches!(op, 0x19E | 0x13D | 0x154 | 0xDC | 0x7A | 0xD1))
     );
+}
+
+/// §9.3.9 over the whole connector, on the observed world stream with its once-unresolved forms:
+/// the entry's real stages, the pending placement, the client's one `WorldLoaded`, no `0xF4`, and
+/// the user's close: one Disconnect and no drain.
+#[test]
+fn the_observed_world_stream_reaches_the_pending_placement_over_the_connector() {
+    use tessera_net::WorldEntryStage as W;
+    let _guard = crate::net_access::TEST_REVOKE_LOCK
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (dir, acc) = proof_dir();
+    let service = SyntheticService::observed_order();
+    let live = service
+        .live_config(&dir.path().join("install"))
+        .expect("install");
+    let connector = LiveConnector::with_factory(live, service.factory());
+    let creds = Credentials::new(b"a", b"b").expect("creds");
+    let backend = CompatBackend::with_connector(CompatConfig::new(acc.proof(), creds), connector)
+        .expect("backend");
+    let mut s = Session::new(backend);
+    s.send(Instant::now(), Command::Connect).expect("connect");
+    let list = wait_for(&mut s, "world list", is_world_list);
+    let world: WorldId = worlds_of(&list).first().expect("a world").0;
+    s.send(
+        Instant::now(),
+        Command::Account(AccountCommand::ChooseWorld { world }),
+    )
+    .expect("choose");
+    wait_for(&mut s, "Connected", |e| {
+        matches!(e, Event::Connected { .. })
+    });
+    s.send(
+        Instant::now(),
+        Command::EnterWorld {
+            character: CHARACTER.to_owned(),
+        },
+    )
+    .expect("enter");
+    let until = Instant::now() + Duration::from_secs(10);
+    let mut stages = Vec::new();
+    let mut placed = false;
+    while !placed {
+        for e in s.poll(Instant::now()) {
+            match e {
+                Event::WorldEntryProgress { stage } => stages.push(stage),
+                Event::WorldPlacementPending { character, .. } => {
+                    assert_eq!(character, CHARACTER);
+                    placed = true;
+                }
+                Event::Disconnected { .. } | Event::WorldEntered { .. } => panic!("{e:?}"),
+                _ => {}
+            }
+        }
+        assert!(Instant::now() < until, "no placement: {stages:?}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        stages,
+        [W::Referral, W::WorldHandshake, W::Identity, W::Placement]
+    );
+    s.send(Instant::now(), Command::WorldLoaded)
+        .expect("loaded");
+    assert!(
+        s.send(Instant::now(), Command::WorldLoaded).is_err(),
+        "once per placement"
+    );
+    let settle = Instant::now() + Duration::from_millis(200);
+    while Instant::now() < settle {
+        for e in s.poll(Instant::now()) {
+            assert!(
+                !matches!(e, Event::WorldEntered { .. } | Event::Disconnected { .. }),
+                "{e:?}"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(s.state(), SessionState::EnteringWorld);
+    let seen = service.seen();
+    assert!(
+        !seen
+            .world_blobs
+            .iter()
+            .any(|op| matches!(op, 0xF4 | 0x30 | 0x19A | 0x24 | 0x3000_0035)),
+        "{:x?}",
+        seen.world_blobs
+    );
+    let before = seen.disconnects;
+    s.send(Instant::now(), Command::Disconnect)
+        .expect("disconnect");
+    let until = Instant::now() + Duration::from_secs(10);
+    while service.seen().disconnects == before {
+        let _ = s.poll(Instant::now());
+        assert!(Instant::now() < until, "no Disconnect");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(service.seen().disconnects, before + 1, "exactly one");
 }
 
 /// One whole exchange at driver level: the stages advance, the first client packet is
@@ -652,12 +739,10 @@ fn the_connector_refuses_an_install_that_cannot_answer_with_its_own_note() {
     run.choose(0);
     run.wait_event(is_disconnected);
     let refusal = run.seen.iter().find_map(|e| match e {
-        Event::Account(AccountEvent::LoginRefused { detail, note, .. }) => {
-            Some((detail.clone(), note.clone()))
-        }
+        Event::Account(AccountEvent::LoginRefused { detail, .. }) => Some(detail.clone()),
         _ => None,
     });
-    assert_eq!(refusal, Some((None, Some(why.detail().to_owned()))));
+    assert_eq!(refusal, Some(None), "{why}");
     assert_eq!(run.world.binds(), 0);
 }
 
@@ -1093,7 +1178,7 @@ fn a_gap_that_stays_open_ends_the_attempt() {
         1,
         "{sent:?}"
     );
-    assert_refused(&mut d, UnsupportedNegotiation::GapDeadline);
+    assert_refused_with(&mut d, true);
     assert_no_ticket_after(&world, &mut d, 1.0 + MAX_GAP_AGE_SEC + 1.0);
 }
 
@@ -1310,17 +1395,9 @@ fn an_unreadable_session_start_has_its_own_result_and_ends_the_session() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            Event::Disconnected { reason: DisconnectReason::TransportFailed(reason) }
-                if reason == UNSUPPORTED_SESSION_START
-        )),
-        "{events:?}"
-    );
-    assert!(
-        events.iter().any(|e| matches!(
-            e,
             Event::Disconnected {
-                reason: DisconnectReason::TransportFailed(text)
-            } if text == UNSUPPORTED_SESSION_START
+                reason: DisconnectReason::Unsupported
+            }
         )),
         "{events:?}"
     );
@@ -1406,17 +1483,16 @@ fn the_refusal_of_an_entry_has_one_shared_byte() {
         "{events:?}"
     );
     assert!(!ended, "back to the character list");
-    // A second leading byte: trailing bytes, so unreadable.
+    // A second leading byte: trailing bytes, so unreadable: counted, and nothing ends.
     let (events, ended) = answer(&[0x00, 0x00, 0x04, 0x03, 0x02, 0x01]);
     assert!(
-        events.iter().any(|e| matches!(
+        !events.iter().any(|e| matches!(
             e,
-            Event::Disconnected { reason: DisconnectReason::TransportFailed(reason) }
-                if reason == UNSUPPORTED_ENTRY_ANSWER
+            Event::EnterWorldFailed { .. } | Event::Disconnected { .. }
         )),
         "{events:?}"
     );
-    assert!(ended);
+    assert!(!ended);
 }
 
 /// §9.3.7, Vector 15: `0xB3`'s reason is read whatever follows it, and no text is dispatched.
@@ -1547,17 +1623,9 @@ fn an_unreadable_session_start_after_the_referral_ends_with_its_own_reason() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            Event::Disconnected { reason: DisconnectReason::TransportFailed(reason) }
-                if reason == UNSUPPORTED_SESSION_START
-        )),
-        "{events:?}"
-    );
-    assert!(
-        events.iter().any(|e| matches!(
-            e,
             Event::Disconnected {
-                reason: DisconnectReason::TransportFailed(text)
-            } if text == UNSUPPORTED_SESSION_START
+                reason: DisconnectReason::Unsupported
+            }
         )),
         "{events:?}"
     );
@@ -1598,7 +1666,7 @@ fn the_entry_deadline_after_the_referral_is_a_time_out() {
     assert!(d.take_events().iter().any(|e| matches!(
         e,
         Event::Disconnected {
-            reason: DisconnectReason::TimedOutLocally(_)
+            reason: DisconnectReason::UnsupportedTimeout
         }
     )));
 }
@@ -1711,7 +1779,11 @@ fn a_later_request_updates_the_word_or_ends_the_attempt() {
     assert_eq!(d.initial_stages().ignored, 1);
     assert!(!d.ended());
 
+    // §9.3.9: a later malformed one is counted; only flags `02..FF` still fail.
     world.deliver(queue1(&mut login, 0xDD, &[0x00, 0x01]), LOGIN_SERVER);
+    d.step(0.25, true, &go);
+    assert!(!d.ended());
+    world.deliver(queue1(&mut login, 0xDD, &[0x07, 0x01]), LOGIN_SERVER);
     d.step(0.3, true, &go);
     assert_refused(&mut d, UnsupportedNegotiation::MalformedRequest);
     assert_no_ticket_after(&world, &mut d, 0.4);
@@ -1841,52 +1913,6 @@ fn queue_3_words_are_compared_by_distance() {
         "10, 11 and the ambiguous one, once each"
     );
 }
-
-/// The failure texts: a local install fault or a Tessera limit does not read as an account fault
-/// and says it is a Tessera limit; a list that cannot be read says so (decision 0046 item 6).
-#[test]
-fn the_failure_texts_blame_no_account() {
-    use crate::initial::UnsupportedNegotiation as U;
-    for why in [
-        U::LanguageKey(InstallUnsupported::LanguageAbsent),
-        U::Inventory(InstallUnsupported::ArchiveMissing),
-        U::Advertisement,
-        U::MalformedRequest,
-        U::RequestArray,
-        U::NameRule(InstallUnsupported::NameTable),
-        U::NameRule(InstallUnsupported::NameRuleMissing),
-        U::NameRule(InstallUnsupported::NameRuleDuplicate),
-        U::NameRuleEmpty,
-        U::LanguageNotAllowed,
-        U::AdvertisementNotSent,
-        U::UnexpectedCompletion,
-        U::CompletionNotSent,
-        U::ListDecode,
-        U::ListEnvelope,
-        U::TrafficRefused,
-    ] {
-        let text = why.detail();
-        assert!(!text.contains("cannot log in"), "{text}");
-        assert!(text.contains("Tessera limit"), "{text}");
-        assert!(text.contains("not a fault of your account"), "{text}");
-    }
-    assert!(
-        U::ListDecode
-            .detail()
-            .contains("cannot read this character list yet")
-    );
-    for text in [
-        UNSUPPORTED_SESSION_START,
-        UNSUPPORTED_ENTRY_ANSWER,
-        ENTRY_NOT_SUPPORTED,
-    ] {
-        assert!(text.contains("Tessera limit"), "{text}");
-    }
-}
-
-// ---------------------------------------------------------------------------
-// A cancel
-// ---------------------------------------------------------------------------
 
 /// Once the attempt is cancelled nothing is answered, whichever check of the pass the cancel
 /// falls between: `0xEC` and `0xF5` never go out, only the goodbye. Run with the cancel landing
@@ -2161,6 +2187,7 @@ fn a_refused_message_logs_its_kind_and_no_value() {
         "2BAD",
         "byte(s)",
         "17 trailing",
+        "TrailingBytes(",
         "0x84",
         "132",
     ] {
@@ -2247,17 +2274,14 @@ fn a_container_outside_the_guard_is_counted_also_when_empty() {
     assert_eq!(d.skip_counters().count(0x149), 1);
 }
 
-/// §9.3.7: an unreadable answer ends an entry rather than leaving it stuck, also when the envelope
-/// itself is what cannot be read; not the entry deadline's "no answer".
+/// §9.3.9: an unreadable first `0x90` ends an entry rather than leaving it stuck, also when the
+/// envelope itself is what cannot be read; not the entry deadline's "no answer". Any other answer
+/// that cannot be read is counted and skipped: `0x6D` and `0xB3` after `Connected`.
 #[test]
-fn an_unreadable_envelope_of_an_entry_answer_ends_the_entry() {
-    for (opcode, reason) in [
-        (0x90, UNSUPPORTED_SESSION_START),
-        (0x6D, UNSUPPORTED_ENTRY_ANSWER),
-        (0xB3, UNSUPPORTED_ENTRY_ANSWER),
-    ] {
-        for flags in [0x04u8, 0x80] {
-            let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
+fn an_unreadable_envelope_ends_an_entry_only_for_required_progress() {
+    for flags in [0x04u8, 0x80] {
+        let enter = || {
+            let (world, mut d, login) = driver_at_characters(Service::default(), 0);
             d.command(
                 &Command::EnterWorld {
                     character: "Aldo".to_owned(),
@@ -2266,39 +2290,64 @@ fn an_unreadable_envelope_of_an_entry_answer_ends_the_entry() {
             )
             .expect("enter");
             d.step(1.1, true, &go);
+            (world, d, login)
+        };
+        let (world, mut d, mut login) = enter();
+        world.deliver(login.blob(0x90, &[flags, 1, 0, 0, 0]), LOGIN_SERVER);
+        d.step(1.2, true, &go);
+        let events = d.take_events();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Disconnected {
+                    reason: DisconnectReason::Unsupported
+                }
+            )),
+            "{events:?}"
+        );
+        assert!(d.ended());
+        for opcode in [0x6D, 0xB3] {
+            let (world, mut d, mut login) = enter();
             world.deliver(login.blob(opcode, &[flags, 1, 0, 0, 0]), LOGIN_SERVER);
             d.step(1.2, true, &go);
             let events = d.take_events();
-            assert!(
-                events.iter().any(|e| matches!(
-                    e,
-                    Event::Disconnected { reason: DisconnectReason::TransportFailed(r) }
-                        if r == reason
-                )),
-                "{opcode:#x} {events:?}"
-            );
-            assert!(d.ended(), "{opcode:#x}");
+            assert!(!d.ended(), "{opcode:#x} {events:?}");
+            assert_eq!(d.counters().refusals_skipped, 1, "{opcode:#x}");
         }
     }
 }
 
-/// A `0xB3` that cannot be read still says the server closes: at the character list too.
+/// Vector 15: a `0xB3` that cannot be read is counted after `Connected`, and the session goes on.
 #[test]
-fn an_unreadable_envelope_of_an_eviction_ends_the_session_at_the_list() {
-    let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
-    world.deliver(login.blob(0xB3, &[0x04, 1, 0, 0, 0]), LOGIN_SERVER);
-    d.step(1.0, true, &go);
-    let events = d.take_events();
-    assert!(
-        events.iter().any(|e| matches!(
-            e,
-            Event::Disconnected {
-                reason: DisconnectReason::TransportFailed(text)
-            } if text == UNSUPPORTED_ENTRY_ANSWER
-        )),
-        "{events:?}"
-    );
-    assert!(d.ended());
+fn an_unreadable_eviction_is_counted_at_the_list() {
+    for data in [
+        &[0x04u8, 1, 0, 0, 0][..],
+        &[0x00, 1, 0, 0],
+        &[0x01, 1, 0, 0, 0],
+    ] {
+        let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
+        world.deliver(login.blob(0xB3, data), LOGIN_SERVER);
+        d.step(1.0, true, &go);
+        assert!(!d.ended(), "{data:x?}");
+        assert_eq!(d.counters().refusals_skipped, 1, "{data:x?}");
+    }
+    // Valid, whatever follows the reason: the server's end, with no closing reply.
+    for data in [&[0x00u8, 1, 0, 0, 0][..], &[0x00, 1, 0, 0, 0, 0xFF, 0xFF]] {
+        let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
+        world.deliver(login.blob(0xB3, data), LOGIN_SERVER);
+        d.step(1.0, true, &go);
+        world.take_sent();
+        let events = d.take_events();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Disconnected { reason: DisconnectReason::ServerClosed(t) } if t.is_empty()
+            )),
+            "{events:?}"
+        );
+        d.step(1.1, false, &go);
+        assert!(world.take_sent().is_empty());
+    }
 }
 
 /// `super::super::diag`: every login that ends before its list logs the stage line, also when the

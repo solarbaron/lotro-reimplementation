@@ -129,11 +129,11 @@ fuzz_target!(|data: &[u8]| {
 
     if let Ok((frag, _)) = BlobFragment::decode(data) {
         let mut reassembler = BlobReassembler::new(8, 65_536);
-        // §9.3.8: the identity check holds whatever the fragment, and asks nothing to change.
-        let _ = reassembler.conflicts(0x0100, std::slice::from_ref(&frag), 1.0);
+        // §9.3.9: the packet check holds whatever the fragment, and asks nothing to change.
+        let _ = reassembler.check_packet(0x0100, std::slice::from_ref(&frag), 1.0);
         let _ = reassembler.ingest(0x0100, frag.clone(), 1.0);
         // An exact repeat, and the same identity past its tombstone.
-        let _ = reassembler.conflicts(0x0100, std::slice::from_ref(&frag), 1.5);
+        let _ = reassembler.check_packet(0x0100, std::slice::from_ref(&frag), 1.5);
         let _ = reassembler.ingest(0x0100, frag.clone(), 1.5);
         let _ = reassembler.ingest(0x0100, frag, 40.0);
     }
@@ -244,12 +244,16 @@ fuzz_target!(|data: &[u8]| {
     let mut clock = 0.0f64;
     for frag in &fragments {
         let one = std::slice::from_ref(frag);
-        if table.check_packet(1, one, clock).is_ok()
-            && !table.conflicts(1, one, clock)
-            && let Ok(Some(blob)) = table.ingest(1, frag.clone(), clock)
-        {
-            assert_eq!(blob.queue_id, frag.header.queue_id);
-            assert_eq!(blob.recipient_id, frag.header.recipient_id);
+        if table.check_packet(1, one, clock).is_ok() {
+            // What passed the packet check is not refused for its fragment alone (§9.3.9).
+            let taken = table.ingest(1, frag.clone(), clock);
+            assert!(taken.is_ok(), "{taken:?}");
+            if let Ok(Some(blob)) = taken {
+                assert_eq!(blob.queue_id, frag.header.queue_id);
+                assert_eq!(blob.recipient_id, frag.header.recipient_id);
+                // §5.6.3: never an empty control, and never past its slice rule.
+                assert!(frag.header.blob_flags & 0x80 == 0 || frag.header.num_frags > 1);
+            }
         }
         assert!(table.incomplete_len() <= 8);
         clock += f64::from(frag.header.frag_data_len & 0x0F);

@@ -2712,12 +2712,17 @@ impl WireBitfield {
 }
 
 /// Whether the current top-level form of `opcode` has one shared flags byte, consumed once
-/// (`official-session.md` §9.3.8, Vectors 15 and 16): `0x4C`, `0x98`, `0x52`, `0xCE`, `0xCC`,
-/// `0x5E` and `0x89`. `0x7C` and `0x0D` are not in it (OPEN-WORLD-9), and neither is any other
-/// opcode whose boundary nobody checked.
+/// (`official-session.md` §9.3.9, the single authoritative list, Vectors 15, 16 and 19): `0x4C`,
+/// `0x98`, `0x52`, `0x89`, `0x88`, `0x92`, `0xA8`, `0xCE` and `0xCC`, and `0x5E`, whose prefix alone
+/// is checked. The family's other members have their own handling. `0x7C` and `0x0D` are not in it
+/// (OPEN-WORLD-9), and neither is any other opcode whose boundary nobody checked. A shared byte
+/// does not prove the codec after it.
 #[must_use]
 pub const fn one_shared_prefix(opcode: u32) -> bool {
-    matches!(opcode, 0x4C | 0x98 | 0x52 | 0xCE | 0xCC | 0x5E | 0x89)
+    matches!(
+        opcode,
+        0x4C | 0x98 | 0x52 | 0x89 | 0x88 | 0x92 | 0xA8 | 0xCE | 0xCC | 0x5E
+    )
 }
 
 /// The complete data of a [`one_shared_prefix`] message from what

@@ -103,6 +103,12 @@ pub struct SettingsStore {
     path: PathBuf,
 }
 
+/// The file's name for a log line: its folder can name the user.
+fn file_name_of(path: &Path) -> std::borrow::Cow<'_, str> {
+    path.file_name()
+        .map_or(std::borrow::Cow::Borrowed(""), |n| n.to_string_lossy())
+}
+
 /// The default settings file path: `$TESSERA_SETTINGS_FILE` when set and
 /// non-empty, otherwise `<config dir>/tessera/settings.toml` (on Linux
 /// `$XDG_CONFIG_HOME` or `~/.config`).
@@ -373,7 +379,7 @@ impl SettingsStore {
         write_atomic(&target, text.as_bytes(), |real| {
             guard(real, &dirs, &self.path)
         })?;
-        tracing::debug!(path = %target.display(), bytes = size, "saved settings");
+        tracing::debug!(file = %file_name_of(&target), bytes = size, "saved settings");
         Ok(())
     }
 
@@ -427,7 +433,7 @@ impl SettingsStore {
         // Dropping the handle releases the lock; unlock explicitly anyway so
         // a failure to do so is at least logged.
         if let Err(e) = lock.unlock() {
-            tracing::debug!(path = %lock_path.display(), error = %e, "cannot unlock settings");
+            tracing::debug!(file = %file_name_of(&lock_path), error = %e, "cannot unlock settings");
         }
         result.map(|()| loaded.settings)
     }
@@ -683,7 +689,7 @@ fn read_bounded(path: &Path) -> std::result::Result<Option<Vec<u8>>, ReadError> 
 
 fn log_warnings(path: &Path, warnings: &[LoadWarning]) {
     for w in warnings {
-        tracing::warn!(path = %path.display(), "{w}");
+        tracing::warn!(file = %file_name_of(path), "{w}");
     }
 }
 
@@ -816,7 +822,7 @@ fn backup_file(target: &Path, reason: &str, bytes: &[u8]) -> io::Result<PathBuf>
         let _ = fs::remove_file(&path);
         return Err(e);
     }
-    tracing::warn!(backup = %path.display(), "backed up settings file");
+    tracing::warn!(backup = %file_name_of(&path), "backed up settings file");
     prune_backups(&dir, &name, &path);
     Ok(path)
 }

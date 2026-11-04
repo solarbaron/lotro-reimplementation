@@ -790,12 +790,9 @@ fn an_official_selection_shows_a_line_and_can_be_left() {
     assert_eq!(m.entering_line(), None);
     m.apply(Action::Enter, now);
     assert!(matches!(m.status(), Status::Entering(_)));
-    assert_eq!(
-        m.entering_line(),
-        Some(OwnText::Entering("Wanderer".into()))
-    );
+    assert_eq!(m.entering_line(), Some(OwnText::Entering(None)));
     // Names what exists on the selection screen: it has no Quit control.
-    let line = OwnText::Entering("Wanderer".into()).to_string();
+    let line = OwnText::Entering(None).to_string();
     assert!(
         line.contains("Escape") && line.contains("closing the window"),
         "{line}"

@@ -705,7 +705,7 @@ fn the_chat_challenge_is_an_unsupported_negotiation() {
 
 /// A `ConnectChallengeHeader` naming the dictionary whose on-disk UUID is `codec_uuid`.
 fn challenge_with_codec(codec_uuid: [u8; 16]) -> Vec<u8> {
-    challenge_datagram(0x0111, 0x0222, 0, 1, 0xCAFE_1234, codec_uuid)
+    challenge_datagram(0x0111, 0x0222, 0x3344, 1, 0xCAFE_1234, codec_uuid)
 }
 
 #[test]

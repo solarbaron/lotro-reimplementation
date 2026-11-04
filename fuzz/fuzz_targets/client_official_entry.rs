@@ -141,7 +141,6 @@ fn event(b: &mut Bytes<'_>) -> Event {
             },
             retry_after_seconds: b.opt_u32(),
             detail: b.opt_text(270),
-            note: b.opt_text(270),
         }),
         5 => Event::Connected {
             characters: (0..b.u8() % 4)
@@ -149,10 +148,12 @@ fn event(b: &mut Bytes<'_>) -> Event {
                 .collect(),
         },
         6 => Event::Disconnected {
-            reason: match b.u8() % 4 {
+            reason: match b.u8() % 6 {
                 0 => DisconnectReason::ClientRequested,
                 1 => DisconnectReason::TimedOut,
                 2 => DisconnectReason::ServerClosed(b.text(100)),
+                3 => DisconnectReason::Unsupported,
+                4 => DisconnectReason::UnsupportedTimeout,
                 _ => DisconnectReason::TransportFailed(b.text(100)),
             },
         },

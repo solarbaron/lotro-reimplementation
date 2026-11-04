@@ -234,38 +234,12 @@ fn out_of_bound_events_are_dropped() {
 }
 
 #[test]
-fn a_refusals_note_is_bounded_and_cleaned_like_its_detail() {
-    let (mut s, b, now) = connecting();
-    b.push(Event::Account(AccountEvent::LoginRefused {
-        reason: LoginRefusal::UnsupportedStep,
-        retry_after_seconds: None,
-        detail: None,
-        note: Some("n".repeat(257)),
-    }));
-    assert!(s.poll(now).is_empty(), "an oversized note is dropped");
-    b.push(Event::Account(AccountEvent::LoginRefused {
-        reason: LoginRefusal::UnsupportedStep,
-        retry_after_seconds: None,
-        detail: Some("d\u{7}".into()),
-        note: Some("n\u{7}".into()),
-    }));
-    let events = s.poll(now);
-    let Some(Event::Account(AccountEvent::LoginRefused { detail, note, .. })) = events.first()
-    else {
-        panic!("{events:?}");
-    };
-    assert_eq!(detail.as_deref(), Some("d "));
-    assert_eq!(note.as_deref(), Some("n "));
-}
-
-#[test]
 fn after_login_refused_only_disconnected_follows() {
     let (mut s, b, now) = connecting();
     b.push(Event::Account(AccountEvent::LoginRefused {
         reason: LoginRefusal::BadCredentials,
         retry_after_seconds: None,
         detail: None,
-        note: None,
     }));
     b.push(list(&[1]));
     b.push(Event::Connected { characters: vec![] });
@@ -286,7 +260,6 @@ fn commands_after_login_refused_are_refused_but_disconnect() {
         reason: LoginRefusal::Other,
         retry_after_seconds: Some(5),
         detail: Some("x".into()),
-        note: None,
     }));
     assert_eq!(s.poll(now).len(), 2);
     assert!(matches!(
@@ -334,4 +307,117 @@ fn test_server_backend_refuses_account_commands() {
         ),
         Err(NetError::InvalidCommand(_))
     ));
+}
+
+// ----- `official-entry.md` §8.7: the pending world entry -----
+
+fn entering() -> (Session, Scripted, Instant) {
+    let (mut s, b, now) = connecting();
+    b.push(Event::Connected {
+        characters: vec![tessera_net::CharacterSummary {
+            name: "Aldo".to_owned(),
+        }],
+    });
+    let _ = s.poll(now);
+    s.send(
+        now,
+        Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+    )
+    .expect("enter");
+    (s, b, now)
+}
+
+fn placement() -> Event {
+    Event::WorldPlacementPending {
+        character: "Aldo".to_owned(),
+        position: tessera_net::Location::new(tessera_net::RegionId(1), 1.0, 2.0, 3.0),
+        yaw: 0.5,
+    }
+}
+
+/// `WorldLoaded` is valid while entering only after a placement, once per placement.
+#[test]
+fn a_pending_placement_allows_one_world_loaded() {
+    let (mut s, b, now) = entering();
+    assert!(matches!(
+        s.send(now, Command::WorldLoaded),
+        Err(NetError::InvalidState { .. })
+    ));
+    b.push(placement());
+    assert_eq!(s.poll(now).len(), 1);
+    assert_eq!(s.state(), SessionState::EnteringWorld);
+    s.send(now, Command::WorldLoaded).expect("the first");
+    assert!(matches!(
+        s.send(now, Command::WorldLoaded),
+        Err(NetError::InvalidState { .. })
+    ));
+    // A new placement is a new generation.
+    b.push(placement());
+    assert_eq!(s.poll(now).len(), 1);
+    s.send(now, Command::WorldLoaded).expect("the second");
+}
+
+/// The entry's two events are accepted only while entering; a bad placement is dropped.
+#[test]
+fn entry_progress_and_placement_are_only_for_an_entry() {
+    use tessera_net::WorldEntryStage as W;
+    let (mut s, b, now) = connecting();
+    b.push(Event::WorldEntryProgress { stage: W::Referral });
+    b.push(placement());
+    assert!(s.poll(now).is_empty(), "before any entry");
+
+    let (mut s, b, now) = entering();
+    b.push(Event::WorldEntryProgress { stage: W::Referral });
+    assert_eq!(s.poll(now).len(), 1);
+    b.push(Event::WorldPlacementPending {
+        character: "Aldo".to_owned(),
+        position: tessera_net::Location::new(tessera_net::RegionId(1), f64::NAN, 2.0, 3.0),
+        yaw: 0.5,
+    });
+    b.push(Event::WorldPlacementPending {
+        character: "Aldo".to_owned(),
+        position: tessera_net::Location::new(tessera_net::RegionId(1), 1.0, 2.0, 3.0),
+        yaw: f32::INFINITY,
+    });
+    assert!(s.poll(now).is_empty(), "invalid placements are dropped");
+    assert!(matches!(
+        s.send(now, Command::WorldLoaded),
+        Err(NetError::InvalidState { .. })
+    ));
+    // `WorldEntered` and a refusal end the placement's allowance.
+    b.push(placement());
+    let _ = s.poll(now);
+    b.push(Event::EnterWorldFailed {
+        character: "Aldo".to_owned(),
+        reason: "no".to_owned(),
+    });
+    let _ = s.poll(now);
+    assert_eq!(s.state(), SessionState::Connected);
+    assert!(matches!(
+        s.send(now, Command::WorldLoaded),
+        Err(NetError::InvalidState { .. })
+    ));
+}
+
+/// `official-entry.md` §8.2: a notice is surfaced in the world too; over 256 bytes it is dropped,
+/// never cut.
+#[test]
+fn a_login_notice_is_surfaced_in_every_active_phase() {
+    let notice = |text: String| Event::Account(AccountEvent::LoginNotice { text });
+    let (mut s, b, now) = entering();
+    b.push(notice("while entering".to_owned()));
+    assert_eq!(s.poll(now).len(), 1);
+    b.push(Event::WorldEntered {
+        player: tessera_net::EntityId(7),
+        name: "Aldo".to_owned(),
+        transform: tessera_net::Transform::default(),
+    });
+    let _ = s.poll(now);
+    assert_eq!(s.state(), SessionState::InWorld);
+    b.push(notice("in the world".to_owned()));
+    assert_eq!(s.poll(now).len(), 1);
+    b.push(notice("x".repeat(257)));
+    assert!(s.poll(now).is_empty());
 }

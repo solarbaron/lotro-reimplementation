@@ -14,6 +14,12 @@ use std::sync::Arc;
 use super::definition::{Definition, DefinitionError, MAX_DEFINITION_BYTES, parse_definition};
 use super::tables::NameResolver;
 
+/// The file's name for a log line: the skins root can name the user.
+fn file_name_of(path: &Path) -> std::borrow::Cow<'_, str> {
+    path.file_name()
+        .map_or(std::borrow::Cow::Borrowed(""), |n| n.to_string_lossy())
+}
+
 /// File name of a definition file, matched ignoring ASCII case (§3.2).
 pub const DEFINITION_FILE: &str = "SkinDefinition.xml";
 /// Folder levels walked below the skins root (D4).
@@ -149,7 +155,7 @@ impl SkinSet {
             ..Self::default()
         };
         let Ok(canonical_root) = std::fs::canonicalize(root) else {
-            tracing::debug!(root = %root.display(), "no skins root");
+            tracing::debug!("no skins root");
             return set;
         };
         if !canonical_root.is_dir() {
@@ -173,7 +179,7 @@ impl SkinSet {
             match load_definition(&path, resolver) {
                 Ok(definition) => {
                     for d in &definition.diagnostics {
-                        tracing::warn!(file = %path.display(), line = d.line, reason = %d.kind,
+                        tracing::warn!(file = %file_name_of(&path), line = d.line, reason = %d.kind,
                             "skin definition entry rejected");
                     }
                     let folder = path.parent().map(Path::to_path_buf).unwrap_or_default();
@@ -184,7 +190,7 @@ impl SkinSet {
                     }));
                 }
                 Err(error) => {
-                    tracing::warn!(file = %path.display(), line = error.line(), reason = %error,
+                    tracing::warn!(file = %file_name_of(&path), line = error.line(), reason = %error,
                         "skin definition rejected");
                     set.rejected.push(RejectedDefinition { path, error });
                 }
@@ -326,7 +332,7 @@ impl Walk<'_> {
                 continue;
             };
             if !canonical.starts_with(self.root) {
-                tracing::debug!(path = %path.display(), "link out of the skins root not followed");
+                tracing::debug!(file = %file_name_of(&path), "link out of the skins root not followed");
                 continue;
             }
             let Ok(meta) = std::fs::metadata(&canonical) else {

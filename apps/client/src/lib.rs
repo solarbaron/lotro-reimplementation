@@ -56,6 +56,7 @@ pub mod commands;
 pub mod data;
 pub mod headless;
 pub mod input;
+pub mod log_paths;
 pub mod map;
 pub mod net;
 pub mod npc;

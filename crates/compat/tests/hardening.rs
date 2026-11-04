@@ -163,6 +163,7 @@ fn challenge(incoming: u16) -> Vec<u8> {
     encode_datagram(
         DatagramHeader {
             rec_id: incoming,
+            peer_word: 0x3344,
             ..DatagramHeader::default()
         },
         &OptionalHeaders {
@@ -237,6 +238,10 @@ fn any_non_zero_incoming_recipient_id_is_adopted() {
             .map(|_| ()),
         Err(SessionError::InvalidChallengeRecipient)
     );
+    // §9.3.9: that ended the connection at once; another adopts any non-zero ID.
+    let mut mux = SessionMultiplexer::new();
+    let a = mux.create_connection(peer(1), 0.0).unwrap();
+    start(&mut mux, a);
     let (id, _) = mux
         .receive_from_peer(&challenge(0xFFF0), peer(1), 0.1, WireCodecs::NONE)
         .expect("challenge accepted");

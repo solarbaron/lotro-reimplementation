@@ -165,11 +165,10 @@ pub const TABLE: &[(&str, &str)] = &[
         "official.error.unsupported_step",
         "This version of Tessera does not support this step yet.",
     ),
-    // Decision 0046 item 6: a local install fault or a Tessera limit is not an account fault;
-    // the line under it says what Tessera could not do.
+    // Decision 0046 items 6 and 8: a Tessera limit, not an account fault or a service outage.
     (
-        "official.error.tessera_limit",
-        "This version of Tessera does not support this step yet.",
+        "official.error.unsupported_timeout",
+        "Tessera could not finish this step within its supported limits.",
     ),
     (
         "official.error.client_not_accepted",

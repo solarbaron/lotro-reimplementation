@@ -359,12 +359,20 @@ pub const ENTRY_REFUSED: &str = "The official service refused this character's e
 pub const ENTRY_REENTRY_NOT_SUPPORTED: &str =
     "entering the world again is not supported by this version of Tessera yet";
 
-/// The local failure of a chat-server request while OPEN-SESSION-1 leaves its codec without a
-/// source (§9.3.8): the primary session is not touched.
-pub const CHAT_UNAVAILABLE: &str = "the chat server is not available in this version of Tessera";
+/// The local failure of a chat-server request (`official-messages-play.md`, P10-10H: the exact
+/// words of its `InvalidCommand`): the primary session is not touched.
+pub const CHAT_UNAVAILABLE: &str =
+    "Chat server connection is not supported by this version of Tessera yet.";
 
 /// Most characters in one character list (§9.3.9): a longer list fails whole, never cut.
 pub const MAX_CHARACTERS: usize = 256;
+
+/// Whether a decoded placement can be a location at all (`tessera_net`'s bound): the client's
+/// `Session` drops the rest, so such a placement is no exact placement (§9.3.9) and it replaces
+/// nothing that is kept.
+fn usable_placement(at: &Location, yaw: f32) -> bool {
+    at.is_valid() && yaw.is_finite()
+}
 
 /// The two wire values of `TransportErrorHeader` that mean "connection refused /
 /// authentication rejected during login" (`official-session.md` §6.7).
@@ -792,9 +800,12 @@ pub struct EntryProgress {
     pub no_target: u64,
     /// Other messages of the world connection before `WorldEntered`.
     pub other: u64,
-    /// Checked messages, top-level or embedded, that did not decode to exact exhaustion: not
-    /// counted above, not kept and not dispatched.
+    /// Checked messages, top-level or embedded, that did not decode to exact exhaustion or whose
+    /// placement is no valid location: not counted above, not kept and not dispatched.
     pub unread: u64,
+    /// `0x52` children paired with a `0x98` that did not decode: they belong to an entity that was
+    /// never announced, not to the batch's target.
+    pub orphaned_initial: u64,
 }
 
 /// A row of `official-session.md` §9.3.9's outcome table. What it means before and after `Connected`
@@ -1582,6 +1593,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// The stage line of a world entry that ends: how far it got, in counts, and what was withheld
     /// on the way (§9.3.9).
     fn log_entry_end(&self, why: &str) {
+        if self.ended {
+            return;
+        }
         if let Stage::Entering { wait, .. } = &self.stage {
             let world = self
                 .world
@@ -1662,8 +1676,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// A valid `0x6D` for the pending selection, before a valid referral: `EnterWorldFailed` and back
-    /// to the existing list, with no Disconnect (§9.3.9).
+    /// to the existing list, with no Disconnect (§9.3.9). The stage line says where it stopped and
+    /// what was withheld before the refusal (decision 0046 item 9).
     fn fail_entry(&mut self) {
+        self.log_entry_end("selection refused");
         let Stage::Entering { name, .. } = &self.stage else {
             return;
         };
@@ -3034,7 +3050,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     self.entry_progress.creations += u64::from(stored == Stored::Kept);
                     stored
                 }
-                Err(_) => Stored::NoTarget,
+                Err(_) => return self.pending_unread(),
             },
             PropertyTableUpdate::EVENT_ID_ENTITY => {
                 let mut r = WireReader::new(data);
@@ -3073,6 +3089,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             PositionUpdate::EVENT_ID => match PositionUpdate::from_bytes(data) {
                 Ok(u) => {
                     let at = placement_location(&u.placement).map(|(l, _, h)| (l, h));
+                    if at.is_some_and(|(l, h)| !usable_placement(&l, h)) {
+                        return self.pending_unread();
+                    }
                     let stored = self.pending.position(u.entity_id, data, at);
                     self.entry_progress.positions += u64::from(stored == Stored::Kept);
                     if stored == Stored::Kept
@@ -3090,6 +3109,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     Ok(p) => {
                         let at = position_location(&p.position, Some(wire_heading(p.heading_raw)))
                             .map(|(l, _, h)| (l, h));
+                        if at.is_some_and(|(l, h)| !usable_placement(&l, h)) {
+                            return self.pending_unread();
+                        }
                         let stored = self.pending.sync(target, data, at);
                         self.entry_progress.placements += u64::from(stored == Stored::Kept);
                         if stored == Stored::Kept
@@ -3166,25 +3188,25 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 continue;
             };
             self.entry_progress.sub_events = self.entry_progress.sub_events.saturating_add(1);
-            // The `0x98` this `0x52` belongs to, when one took it.
-            let created = pairs
+            // The `0x98` this `0x52` belongs to, when one took it. One that did not decode made no
+            // entity: its initial properties are nobody's, and never the batch's target.
+            let paired = pairs
                 .get(i)
                 .copied()
                 .flatten()
-                .and_then(|c| batch.frames.get(c))
-                .and_then(|f| match f {
-                    SubEventFrame::Event { payload, .. } => {
-                        EntityCreate::from_bytes(payload).ok().map(|c| c.entity_id)
-                    }
-                    SubEventFrame::Null { .. } => None,
-                });
-            self.pending_message(
-                *sub_event_id,
-                created.unwrap_or(target),
-                payload,
-                depth + 1,
-                now,
-            );
+                .and_then(|c| batch.frames.get(c));
+            let child_target = match paired {
+                Some(SubEventFrame::Event { payload, .. }) => {
+                    let Ok(create) = EntityCreate::from_bytes(payload) else {
+                        self.entry_progress.orphaned_initial =
+                            self.entry_progress.orphaned_initial.saturating_add(1);
+                        continue;
+                    };
+                    create.entity_id
+                }
+                Some(SubEventFrame::Null { .. }) | None => target,
+            };
+            self.pending_message(*sub_event_id, child_target, payload, depth + 1, now);
             if self.ended {
                 return;
             }
@@ -4152,6 +4174,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// connection still in its handshake logs its counts once, at `now`.
     pub fn abandon(&mut self, now: f64) {
         self.log_login_end("network right revoked", now);
+        self.log_entry_end("network right revoked");
         self.ended = true;
         self.shutting_down = true;
         self.events.clear();

@@ -138,6 +138,12 @@ use crate::net::PlayerLocation;
 pub trait WalkerSession {
     /// The latest location report of the player.
     fn player_location(&self) -> Option<PlayerLocation>;
+    /// Whether the session holds the player's movement, look, mode and mount input
+    /// (`official-session.md` §9.3.9: normal input starts after `WorldEntered`). The default holds
+    /// nothing.
+    fn holds_input(&self) -> bool {
+        false
+    }
     /// Reports the player's movement (`heading` in radians, 0 = east, counter-clockwise;
     /// `on_ground` false while jumping or falling, `tessera-protocol.md` §8.1).
     fn send_move(
@@ -946,6 +952,8 @@ pub struct Walker {
     mount: mount::session::WalkerMount,
     /// [`Walker::set_mount_server`] was called with true.
     mount_server: bool,
+    /// [`Self::set_screens_hold_input`].
+    screens_hold_input: bool,
 }
 
 /// How often the indoor record's interior overrides are re-read while the camera stays in
@@ -1294,12 +1302,20 @@ impl Walker {
             show_minimap: true,
             mount,
             mount_server: false,
+            screens_hold_input: false,
         })
     }
 
     /// The input mapper and its clock (the game UI's step 1, `crate::ui_host`).
     pub fn mapper_mut(&mut self) -> (&mut tessera_input::InputMapper, std::time::Duration) {
         self.controls.mapper_mut()
+    }
+
+    /// The character screens are open: the player's movement, look, mode and mount input does not
+    /// reach the walker, whatever the session's state (`official-session.md` §9.3.9). The menu
+    /// action stays, so Escape still acts on the screens.
+    pub fn set_screens_hold_input(&mut self, on: bool) {
+        self.screens_hold_input = on;
     }
 
     /// Attaches or detaches a game UI: Escape then gives `menu` to the UI and game code
@@ -2031,6 +2047,9 @@ impl Walker {
             pins: &self.pins,
             owners: Some(&self.cell_owners),
         };
+        let session_holds = world.as_deref().is_some_and(|w| w.holds_input());
+        self.controls
+            .set_input_held(self.screens_hold_input || session_holds);
         let ce = self.controls.frame(dt, &ground, Some(&collision));
         events.quit = ce.quit;
         events.menu = ce.menu;

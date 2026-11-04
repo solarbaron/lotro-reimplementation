@@ -115,8 +115,10 @@ pub enum Stored {
     Overflow,
 }
 
-/// The kept state of one entity.
-#[derive(Debug, Clone, Default)]
+/// The kept state of one entity. Deliberately not `Clone`: a store update touches one field, and
+/// one batch can hold many thousands of them on the connector's thread, so an update never copies
+/// what it does not change.
+#[derive(Debug, Default)]
 struct PendingEntity {
     create: Option<Vec<u8>>,
     table: Option<Vec<u8>>,
@@ -131,20 +133,8 @@ struct PendingEntity {
     placed: Option<(Location, f32)>,
 }
 
-impl PendingEntity {
-    fn bytes(&self) -> usize {
-        let opt = |b: &Option<Vec<u8>>| b.as_ref().map_or(0, Vec::len);
-        opt(&self.create)
-            + opt(&self.table)
-            + opt(&self.appearance)
-            + opt(&self.position)
-            + opt(&self.sync)
-            + self.single.values().map(|(_, b)| b.len()).sum::<usize>()
-    }
-}
-
 /// The pending world state of one world connection (module docs).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct PendingWorld {
     entities: BTreeMap<u64, PendingEntity>,
     /// The entities in the order they were first announced.
@@ -218,23 +208,31 @@ impl PendingWorld {
         id != 0 && id != DEFAULT_RECIPIENT && self.entities.get(&id).is_some_and(|e| e.announced)
     }
 
-    /// Runs `edit` on the announced entity `id`, keeping the byte count and its bound.
-    fn edit(&mut self, id: u64, edit: impl FnOnce(&mut PendingEntity)) -> Stored {
+    /// Puts `new` in one slot of the announced entity `id` (`slot` says what it holds, `put` fills
+    /// it), keeping the byte count and
+    /// its bound: the old value's bytes come back first, a body that does not fit changes nothing,
+    /// and the cost is that of the one slot.
+    fn store(
+        &mut self,
+        id: u64,
+        new: &[u8],
+        slot: impl FnOnce(&PendingEntity) -> usize,
+        put: impl FnOnce(&mut PendingEntity, Vec<u8>),
+    ) -> Stored {
         if !self.announced(id) {
             return Stored::NoTarget;
         }
         let Some(entity) = self.entities.get_mut(&id) else {
             return Stored::NoTarget;
         };
-        let before = entity.bytes();
-        let mut next = entity.clone();
-        edit(&mut next);
-        let after = next.bytes();
-        let total = self.bytes.saturating_sub(before).saturating_add(after);
+        let total = self
+            .bytes
+            .saturating_sub(slot(entity))
+            .saturating_add(new.len());
         if total > MAX_PENDING_BYTES {
             return Stored::Overflow;
         }
-        *entity = next;
+        put(entity, new.to_vec());
         self.bytes = total;
         Stored::Kept
     }
@@ -247,44 +245,64 @@ impl PendingWorld {
         if self.announce(entity).is_err() {
             return Stored::Overflow;
         }
-        self.edit(entity, |e| e.create = Some(body.to_vec()))
+        self.store(entity, body, |e| held(&e.create), |e, b| e.create = Some(b))
     }
 
     /// A validated `0x52` for `target`.
     pub fn table(&mut self, target: u64, body: &[u8]) -> Stored {
-        self.edit(target, |e| e.table = Some(body.to_vec()))
+        self.store(target, body, |e| held(&e.table), |e, b| e.table = Some(b))
     }
 
     /// A validated `0x88` or `0x92` of `property` for `target`.
     pub fn single(&mut self, target: u64, opcode: u32, property: u32, body: &[u8]) -> Stored {
-        self.edit(target, |e| {
-            e.single.insert(property, (opcode, body.to_vec()));
-        })
+        self.store(
+            target,
+            body,
+            |e| e.single.get(&property).map_or(0, |(_, b)| b.len()),
+            |e, b| {
+                e.single.insert(property, (opcode, b));
+            },
+        )
     }
 
     /// A validated `0x89` for `target`.
     pub fn appearance(&mut self, target: u64, body: &[u8]) -> Stored {
-        self.edit(target, |e| e.appearance = Some(body.to_vec()))
+        self.store(
+            target,
+            body,
+            |e| held(&e.appearance),
+            |e, b| e.appearance = Some(b),
+        )
     }
 
     /// A validated `0xCE` for `entity`, with its exact placement when it has one.
     pub fn position(&mut self, entity: u64, body: &[u8], at: Option<(Location, f32)>) -> Stored {
-        self.edit(entity, |e| {
-            e.position = Some(body.to_vec());
-            if at.is_some() {
-                e.placed = at;
-            }
-        })
+        self.store(
+            entity,
+            body,
+            |e| held(&e.position),
+            |e, b| {
+                e.position = Some(b);
+                if at.is_some() {
+                    e.placed = at;
+                }
+            },
+        )
     }
 
     /// A validated `0xCC` for `target`, with its exact placement when it has one.
     pub fn sync(&mut self, target: u64, body: &[u8], at: Option<(Location, f32)>) -> Stored {
-        self.edit(target, |e| {
-            e.sync = Some(body.to_vec());
-            if at.is_some() {
-                e.placed = at;
-            }
-        })
+        self.store(
+            target,
+            body,
+            |e| held(&e.sync),
+            |e, b| {
+                e.sync = Some(b);
+                if at.is_some() {
+                    e.placed = at;
+                }
+            },
+        )
     }
 
     /// One latest snapshot per entity, in the order they were announced, every entity's spawn
@@ -335,6 +353,11 @@ impl PendingWorld {
     pub fn discard(&mut self) {
         *self = Self::default();
     }
+}
+
+/// The bytes one kept body holds.
+fn held(body: &Option<Vec<u8>>) -> usize {
+    body.as_ref().map_or(0, Vec::len)
 }
 
 const OPCODE_CREATE: u32 = 0x98;
@@ -430,6 +453,31 @@ mod tests {
         );
         assert_eq!(q.appearance(7, &[0; 1]), Stored::Kept);
         assert_eq!(q.bytes(), 1025);
+    }
+
+    /// One entity near the bound and a batch's worth of small updates: each costs its own slot,
+    /// and the count stays exact. (`PendingEntity` is not `Clone`, so no update can copy the rest.)
+    #[test]
+    fn a_heavy_entity_keeps_its_count_exact_through_many_small_updates() {
+        let mut p = PendingWorld::default();
+        let heavy = MAX_PENDING_BYTES - 200_000;
+        assert_eq!(p.create(7, &vec![0; heavy]), Stored::Kept);
+        for i in 0..200_000u32 {
+            assert_eq!(p.single(7, 0x88, i % 50_000, &[1, 2]), Stored::Kept);
+        }
+        assert_eq!(p.bytes(), heavy + 100_000);
+        // Replacing a property with a longer value gives the old bytes back first.
+        assert_eq!(p.single(7, 0x88, 0, &[1, 2, 3]), Stored::Kept);
+        assert_eq!(p.bytes(), heavy + 100_001);
+        let room = MAX_PENDING_BYTES - p.bytes();
+        assert_eq!(p.single(7, 0x88, 0, &vec![0; room + 4]), Stored::Overflow);
+        assert_eq!(p.bytes(), heavy + 100_001, "a refused body changes nothing");
+        assert_eq!(p.single(7, 0x88, 0, &vec![0; room + 3]), Stored::Kept);
+        assert_eq!(p.bytes(), MAX_PENDING_BYTES);
+        // The kept placement stays with a refused body.
+        assert_eq!(p.position(7, &[], Some(at(1.0))), Stored::Kept);
+        assert_eq!(p.position(7, &[0; 16], Some(at(2.0))), Stored::Overflow);
+        assert_eq!(p.set_player(7), Ok(Some(at(1.0))));
     }
 
     #[test]

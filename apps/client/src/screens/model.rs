@@ -451,13 +451,25 @@ impl ScreenModel {
         }
     }
 
-    /// The Back button (§2.3): hidden on the selection screen.
+    /// The Back button (§2.3): hidden on the selection screen, except that the same place holds the
+    /// Cancel of an official selection under way (§7.3, [`Self::cancels_entry`]).
     #[must_use]
     pub fn back_button(&self) -> ButtonRule {
         match self.stage {
+            Stage::Select if self.cancels_entry() => ButtonRule::Enabled,
             Stage::Select => ButtonRule::Hidden,
             _ => ButtonRule::Enabled,
         }
+    }
+
+    /// Whether an official selection is under way, which the player may leave at any time: each
+    /// stage of that road can take its full wait (`official-session.md` §9.3.9), and the Back
+    /// element is its Cancel (`official-entry.md` §8.7, `character-screens.md` §7.3).
+    #[must_use]
+    pub fn cancels_entry(&self) -> bool {
+        self.stage == Stage::Select
+            && self.backend == BackendKind::Official
+            && matches!(self.status, Status::Entering(_))
     }
 
     /// The Continue button (§2.3): shown on race and class only, ghosted while the choice
@@ -930,11 +942,7 @@ impl ScreenModel {
     pub fn apply(&mut self, action: Action, now: Instant) {
         // An official selection can wait for up to four stages (`official-session.md` §9.3.8): the
         // player may leave meanwhile, which ends the session (`official-entry.md` §8.7).
-        if action == Action::Quit
-            && self.stage == Stage::Select
-            && self.backend == BackendKind::Official
-            && matches!(self.status, Status::Entering(_))
-        {
+        if matches!(action, Action::Quit | Action::Back) && self.cancels_entry() {
             self.status = Status::Quit;
             return;
         }

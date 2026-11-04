@@ -397,7 +397,64 @@ fn a_handed_over_run_logs_no_other_directory() {
         .save(&tessera_settings::Settings::default())
         .expect("saved");
 
+    // A failed save: a folder at the settings path. The error's text reaches several log lines.
+    let blocked = parent.path().join(MARKER).join("blocked.toml");
+    std::fs::create_dir(&blocked).expect("made");
+    std::fs::write(blocked.join("x"), b"x").expect("written");
+    let err = tessera_settings::SettingsStore::new(&blocked)
+        .update(|_| {})
+        .expect_err("a folder at the path");
+    let text = err.to_string();
+    assert!(!text.contains(MARKER), "{text}");
+    assert!(text.contains("blocked.toml"), "{text}");
+    tracing::warn!("UI settings not saved: {err}");
+
+    // Backups that cannot be pruned: too many, in a folder that takes no change.
+    let pruned = prune_failure(&parent.path().join(MARKER).join("backups"));
+
+    // The screenshot, written and not.
+    let image = tessera_render::RgbaImage {
+        width: 1,
+        height: 1,
+        data: vec![0; 4],
+    };
+    let shot = parent
+        .path()
+        .join(MARKER)
+        .join("shots")
+        .join("walker-1.png");
+    tessera_client::walker_host::save_screenshot(&shot, &image);
+    let in_a_file = parent
+        .path()
+        .join(MARKER)
+        .join("keep.ini")
+        .join("walker-2.png");
+    std::fs::write(parent.path().join(MARKER).join("keep.ini"), b"x").expect("written");
+    tessera_client::walker_host::save_screenshot(&in_a_file, &image);
+
+    // A song that is not there, and the song folders: the player's own lines, which the log does
+    // not repeat.
+    let music = parent.path().join(MARKER).join("music");
+    std::fs::create_dir_all(&music).expect("made");
+    let mut player = tessera_client::audio::player_music::PlayerMusic::new(
+        tessera_client::audio::player_music::MusicConfig {
+            folders: vec![music.clone()],
+            ..tessera_client::audio::player_music::MusicConfig::default()
+        },
+    );
+    assert!(player.command("/playlist"));
+    assert!(player.command("/play absent"));
+    assert!(player.wait_idle(Duration::from_secs(10)));
+    let lines = player.take_lines();
+    assert!(
+        lines.iter().any(|l| l.contains(MARKER)),
+        "the player's own lines keep the folder: {lines:?}"
+    );
+
     let found = logs();
+    if pruned {
+        assert!(found.contains("cannot prune settings backup"), "{found}");
+    }
     for line in [
         "player music: music folders",
         "imported the original's [Sound] values",
@@ -405,10 +462,44 @@ fn a_handed_over_run_logs_no_other_directory() {
         "keymap unreadable",
         "no keymap file",
         "saved settings",
+        "UI settings not saved",
+        "blocked.toml",
+        "screenshot saved",
+        "walker-1.png",
+        "screenshot failed",
+        "player music: (not shown)",
     ] {
         assert!(found.contains(line), "{line}: {found}");
     }
     assert!(!found.contains(MARKER), "a directory:\n{found}");
+}
+
+/// Makes the settings store fail to prune its backups in `dir`, by taking away the right to remove
+/// them. Answers whether it could (a superuser removes them all the same).
+fn prune_failure(dir: &Path) -> bool {
+    std::fs::create_dir_all(dir).expect("made");
+    for stamp in 1..40u32 {
+        let name = format!("settings.toml.corrupt-{stamp:012}.bak");
+        std::fs::write(dir.join(name), b"x").expect("written");
+    }
+    let keep = dir.join("settings.toml.corrupt-000000000039.bak");
+    #[cfg(unix)]
+    {
+        let set = |mode| {
+            std::fs::set_permissions(dir, std::os::unix::fs::PermissionsExt::from_mode(mode))
+                .expect("the mode");
+        };
+        set(0o555);
+        let enforced = std::fs::write(dir.join("probe"), b"x").is_err();
+        tessera_settings::prune_backups_for_log_test(dir, "settings.toml", &keep);
+        set(0o755);
+        enforced
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = keep;
+        false
+    }
 }
 
 /// A run that was not handed over names its keymap, as it always has.

@@ -547,6 +547,9 @@ pub struct Controls {
     placed: bool,
     /// A game UI is attached: `menu` opens the game menu instead of quitting.
     ui_attached: bool,
+    /// The session is not in the world yet: the viewer stays at its placement (module docs of
+    /// [`Self::set_input_held`]).
+    input_held: bool,
     /// The mover of the collision walk mode, once loaded.
     mover: Option<MoverSetup>,
     /// The collision walk mode's controller (walk mode on `tessera-physics`).
@@ -604,6 +607,7 @@ impl Controls {
             physics: None,
             camera_offset: [0.0; 2],
             ui_attached: false,
+            input_held: false,
         }
     }
 
@@ -617,6 +621,18 @@ impl Controls {
     /// Whether a game UI is attached (`walker.md` §5: Escape then gives the game menu).
     pub fn set_ui_attached(&mut self, on: bool) {
         self.ui_attached = on;
+    }
+
+    /// Holds or frees the player's movement, look, mode and mount input. `official-session.md`
+    /// §9.3.9 starts normal input after `WorldEntered`: until then a placement loads behind the
+    /// character screens, and the viewer must not walk away from it. The menu action stays, so
+    /// Escape still cancels; the controller still runs, with nothing asked of it, so a placement
+    /// lands on the ground.
+    pub fn set_input_held(&mut self, held: bool) {
+        if held {
+            self.autorun = false;
+        }
+        self.input_held = held;
     }
 
     /// Whether a game UI is attached.
@@ -933,20 +949,21 @@ impl Controls {
         let now: Duration = self.start.elapsed();
         self.mapper.update(now);
         let a = self.actions;
+        let free = !self.input_held;
         let mut ev = ControlEvents {
             quit: !self.ui_attached && self.mapper.just_pressed(a.menu),
             menu: self.ui_attached && self.mapper.just_pressed(a.menu),
             screenshot: self.mapper.just_pressed(a.screenshot),
             toggle_debug: self.mapper.just_pressed(a.toggle_debug),
-            reset_camera: self.mapper.just_pressed(a.reset_camera),
+            reset_camera: free && self.mapper.just_pressed(a.reset_camera),
             mode_changed: false,
-            toggle_mount: self.mapper.just_pressed(a.toggle_mount),
+            toggle_mount: free && self.mapper.just_pressed(a.toggle_mount),
         };
-        if self.mapper.just_pressed(a.toggle_fly) {
+        if free && self.mapper.just_pressed(a.toggle_fly) {
             self.toggle_mode();
             ev.mode_changed = true;
         }
-        if self.mapper.just_pressed(a.autorun) {
+        if free && self.mapper.just_pressed(a.autorun) {
             self.autorun = !self.autorun;
         }
         if ev.reset_camera {
@@ -955,13 +972,21 @@ impl Controls {
         if !self.placed {
             return ev;
         }
-        let (dyaw, dpitch) = a.look(&self.mapper, &self.look, dt, false);
-        let zoom = self.mapper.delta(a.zoom) + self.mapper.value(a.zoom) * dt * 4.0;
+        let (dyaw, dpitch) = if free {
+            a.look(&self.mapper, &self.look, dt, false)
+        } else {
+            (0.0, 0.0)
+        };
+        let zoom = if free {
+            self.mapper.delta(a.zoom) + self.mapper.value(a.zoom) * dt * 4.0
+        } else {
+            0.0
+        };
         match self.mode {
             MoveMode::Fly => {
                 self.fly.look(dyaw, dpitch);
                 let notches = self.mapper.delta(a.fly_speed);
-                if notches != 0.0 {
+                if free && notches != 0.0 {
                     self.fly.scale_speed(notches);
                 }
             }
@@ -990,7 +1015,11 @@ impl Controls {
                 ));
             }
         }
-        let mut intent = a.intent(&self.mapper, self.autorun);
+        let mut intent = if free {
+            a.intent(&self.mapper, self.autorun)
+        } else {
+            MoveIntent::default()
+        };
         if self.autorun && self.autowalk {
             intent.walk = true;
         }
@@ -1001,7 +1030,11 @@ impl Controls {
             // The player's input follows `collision.md` §11.8: the command values without
             // autorun, which is run lock there (forward held until forward or backward is
             // pressed); walk mode halves them, and the style follows the halved values.
-            let raw = a.intent(&self.mapper, false);
+            let raw = if free {
+                a.intent(&self.mapper, false)
+            } else {
+                MoveIntent::default()
+            };
             if w.run_lock() != self.autorun {
                 w.set_run_lock(self.autorun);
             }

@@ -20,7 +20,7 @@ use crate::input::{CameraAction, CameraInput};
 use crate::runtime::{DataStatus, Runtime};
 use crate::scene::{CLEAR_COLOR, Scene, default_camera};
 use crate::walker::hud::TextPanel;
-use crate::walker_host::{WalkerHost, save_png};
+use crate::walker_host::WalkerHost;
 
 /// Pixels of trackpad scrolling that count as one wheel notch.
 const PIXELS_PER_NOTCH: f64 = 40.0;
@@ -759,7 +759,10 @@ impl App {
             // The read-back waits for the GPU; encoding and writing go to a thread.
             if let Err(e) = crate::runtime::refuse_install_path(&self.args, Some(&rt.status), &path)
             {
-                tracing::warn!("screenshot not saved: {e:#}");
+                tracing::warn!(
+                    "screenshot not saved: {}",
+                    crate::log_paths::shown_error(&format!("{e:#}"))
+                );
                 walker.notice("screenshot not saved: the data folder is inside the install");
             } else {
                 // With a game UI the image holds the UI pass too, but never the software
@@ -774,12 +777,7 @@ impl App {
                         walker.notice(format!("saving screenshot {}", path.display()));
                         let spawned = std::thread::Builder::new()
                             .name("tessera-screenshot".into())
-                            .spawn(move || match save_png(&path, &img) {
-                                Ok(()) => {
-                                    tracing::info!(path = %path.display(), "screenshot saved")
-                                }
-                                Err(e) => tracing::warn!("screenshot failed: {e:#}"),
-                            });
+                            .spawn(move || crate::walker_host::save_screenshot(&path, &img));
                         if let Err(e) = spawned {
                             tracing::warn!("screenshot thread: {e}");
                         }

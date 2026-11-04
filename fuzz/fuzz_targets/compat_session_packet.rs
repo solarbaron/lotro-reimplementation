@@ -11,13 +11,14 @@ use libfuzzer_sys::fuzz_target;
 use tessera_compat::session::{
     AuthConnection, BindPorts, BitTreeTable, BlobFragment, BlobFragmentHeader, BlobReassembler,
     CodecUuids, ConnectAcceptHeader, ConnectChallengeHeader, ControlMessage, DatagramHeader,
-    MAX_BLOB_FRAG_PAYLOAD, OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION,
-    OPCODE_LOGIN_QUEUE_STATUS, OPCODE_SINGLE_WRAPPER, OPCODE_SYSTEM_NOTIFICATION,
-    OPCODE_VERSION_REQUEST, OPCODE_VERSION_STATUS, OptionalHeaders, SessionAuthHeader,
-    SessionConnection, SessionMultiplexer, WireCodecs, WorldReferralHeader, check_ticket_text,
-    compute_datagram_checksum, decode_datagram, decode_message, decode_variable_u32,
-    des3_cbc_decrypt, dispatch_message, encode_datagram, encode_variable_u32, guid_fields_swapped,
-    is_valid_net_version, max_recv_rate_for_speed, parse_packet_payload, unique_port_candidates,
+    MAX_BLOB_FRAG_PAYLOAD, MAX_BLOB_TOMBSTONES, MAX_TOMBSTONE_BYTES, OPCODE_BATCH_CONTAINER,
+    OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS, OPCODE_SINGLE_WRAPPER,
+    OPCODE_SYSTEM_NOTIFICATION, OPCODE_VERSION_REQUEST, OPCODE_VERSION_STATUS, OptionalHeaders,
+    SessionAuthHeader, SessionConnection, SessionMultiplexer, WireCodecs, WorldReferralHeader,
+    check_ticket_text, compute_datagram_checksum, decode_datagram, decode_message,
+    decode_variable_u32, des3_cbc_decrypt, dispatch_message, encode_datagram, encode_variable_u32,
+    guid_fields_swapped, is_valid_net_version, max_recv_rate_for_speed, parse_packet_payload,
+    unique_port_candidates,
 };
 
 /// The synthetic version stamp (`official-session.md` §10.2 Vector 6).
@@ -248,6 +249,10 @@ fuzz_target!(|data: &[u8]| {
             // What passed the packet check is not refused for its fragment alone (§9.3.9).
             let taken = table.ingest(1, frag.clone(), clock);
             assert!(taken.is_ok(), "{taken:?}");
+            // §9.3.9's caps on what stays of completed identities, past any repeat or reuse.
+            let (tombstones, bytes) = table.tombstone_sizes();
+            assert!(tombstones <= MAX_BLOB_TOMBSTONES);
+            assert!(bytes <= MAX_TOMBSTONE_BYTES);
             if let Ok(Some(blob)) = taken {
                 assert_eq!(blob.queue_id, frag.header.queue_id);
                 assert_eq!(blob.recipient_id, frag.header.recipient_id);

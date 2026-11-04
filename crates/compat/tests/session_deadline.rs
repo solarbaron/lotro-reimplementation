@@ -10,8 +10,8 @@ use tessera_compat::connector::worker::{LOOP_WAIT_MAX, LOOP_WAIT_MIN, loop_wait}
 use tessera_compat::session::{
     AuthConnection, BLOB_REASSEMBLY_EXPIRY_SEC, BlobFragment, CLOSING_CLEANUP_SEC, CodecUuids,
     ConnectChallengeHeader, ConnectionState, DISCONNECT_FLUSH_LIMIT_SEC, DISCONNECT_SENT_LIMIT_SEC,
-    DatagramHeader, EXTENDED_SILENCE_TIMEOUT_SEC, IsaacCipher, OptionalHeaders, SessionAuthHeader,
-    SessionError, SessionEvent, SessionMultiplexer, WireCodecs, encode_datagram,
+    DatagramHeader, DisconnectReason, EXTENDED_SILENCE_TIMEOUT_SEC, IsaacCipher, OptionalHeaders,
+    SessionAuthHeader, SessionError, SessionEvent, SessionMultiplexer, WireCodecs, encode_datagram,
     guid_fields_swapped, split_blob,
 };
 
@@ -405,6 +405,126 @@ fn on_time(pass: f64, due: f64) -> bool {
 /// Fewer passes than `secs` at the longest wait plus `extra`.
 fn few(passes: &[f64], secs: f64, extra: usize) -> bool {
     passes.len() <= (secs / LOOP_WAIT_MAX.as_secs_f64()) as usize + extra
+}
+
+/// The server's mask of sequence `seq` (`Server` hands them out from 2 on, §7.2).
+fn mask_of(seq: u32) -> u32 {
+    let mut isaac = IsaacCipher::from_seed(SEED);
+    let mut mask = 0;
+    for _ in 2..=seq {
+        mask = isaac.next_mask();
+    }
+    mask
+}
+
+/// A resend of sequence `seq`, with its own mask and a blob of its own.
+fn resend(seq: u32) -> Vec<u8> {
+    let frags = split_blob(2, (seq & 0xFFFF) as u16, 1, 0, None, 0x10, b"x").expect("split");
+    encode_datagram(
+        DatagramHeader {
+            rec_id: ASSIGNED,
+            seq_num: seq,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders::default(),
+        &frags,
+        Some(mask_of(seq)),
+        None,
+    )
+    .expect("resend")
+}
+
+fn closed_by_gap(mux: &mut SessionMultiplexer, id: u16) -> bool {
+    let conn = mux.connection_mut(id).expect("conn");
+    let mut closed = false;
+    while let Some(event) = conn.pop_event() {
+        if let SessionEvent::Disconnected { reason } = event {
+            assert_eq!(reason, DisconnectReason::GapDeadline);
+            closed = true;
+        }
+    }
+    closed
+}
+
+/// §9.3.9: the timer of the gaps belongs to the oldest unresolved sequence, from its own first
+/// sight. A newer gap neither holds it back nor moves it, and when the oldest resolves the next
+/// oldest owns it, at that sequence's original time.
+#[test]
+fn the_oldest_gap_owns_the_timer_and_a_fill_hands_it_on() {
+    let (mut mux, _) = at_login(0.0);
+    let id = receive(&mut mux, &challenge(), 0.0);
+    let mut server = Server::new();
+    receive(&mut mux, &server.packet(0), 0.1);
+    // Sequence 3 goes missing at t = 1, sequence 5 at t = 20.
+    receive(&mut mux, &server.packet(1), 1.0);
+    let first_gap = 3;
+    receive(&mut mux, &server.packet(1), 20.0);
+    assert_eq!(mux.connection_mut(id).expect("conn").missing_gap_count(), 2);
+    drain(&mut mux, id);
+    // Sequence 3 is filled at 25: sequence 5 owns the timer, from 20, so 50 s.
+    receive(&mut mux, &resend(first_gap), 25.0);
+    assert_eq!(mux.connection_mut(id).expect("conn").missing_gap_count(), 1);
+    // Traffic keeps the silence clock quiet: it does not touch the gap's.
+    for t in [30.0, 40.0, 49.0] {
+        receive(&mut mux, &server.packet(0), t);
+    }
+    mux.tick(49.9).expect("tick");
+    assert_eq!(
+        mux.connection_mut(id).expect("conn").state(),
+        ConnectionState::Connected,
+        "before the next oldest's own 30 s"
+    );
+    assert!(!closed_by_gap(&mut mux, id));
+    mux.tick(50.1).expect("tick");
+    assert!(closed_by_gap(&mut mux, id), "at the next oldest's own 30 s");
+}
+
+/// A steady newer gap does not hold back the oldest's deadline.
+#[test]
+fn a_newer_gap_does_not_hold_back_the_oldest_gaps_deadline() {
+    let (mut mux, _) = at_login(0.0);
+    let id = receive(&mut mux, &challenge(), 0.0);
+    let mut server = Server::new();
+    receive(&mut mux, &server.packet(0), 0.1);
+    receive(&mut mux, &server.packet(1), 1.0);
+    for t in [10.0, 20.0, 30.0] {
+        receive(&mut mux, &server.packet(1), t);
+    }
+    mux.tick(30.9).expect("tick");
+    assert!(!closed_by_gap(&mut mux, id), "before its own 30 s");
+    mux.tick(31.1).expect("tick");
+    assert!(closed_by_gap(&mut mux, id), "at its own 30 s");
+}
+
+/// An `OutOfOrderAck` of the oldest gap hands the timer on like a fill, and delivers nothing.
+#[test]
+fn an_out_of_order_ack_of_the_oldest_gap_hands_the_timer_on() {
+    let (mut mux, _) = at_login(0.0);
+    let id = receive(&mut mux, &challenge(), 0.0);
+    let mut server = Server::new();
+    receive(&mut mux, &server.packet(0), 0.1);
+    receive(&mut mux, &server.packet(1), 1.0);
+    receive(&mut mux, &server.packet(1), 20.0);
+    drain(&mut mux, id);
+    receive(
+        &mut mux,
+        &control(OptionalHeaders {
+            out_of_order_ack: Some(vec![3]),
+            ..OptionalHeaders::default()
+        }),
+        25.0,
+    );
+    assert_eq!(mux.connection_mut(id).expect("conn").missing_gap_count(), 1);
+    for t in [30.0, 40.0, 49.0] {
+        receive(&mut mux, &server.packet(0), t);
+    }
+    mux.tick(49.9).expect("tick");
+    assert!(
+        !closed_by_gap(&mut mux, id),
+        "past the first gap's own 31 s"
+    );
+    mux.tick(50.1).expect("tick");
+    assert!(closed_by_gap(&mut mux, id));
 }
 
 #[test]

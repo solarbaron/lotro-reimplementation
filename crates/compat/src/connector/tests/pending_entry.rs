@@ -192,6 +192,222 @@ fn a_production_entry_stops_at_the_readiness_wait_and_withholds_every_unsourced_
     assert!(line.contains(&withheld_summary()), "{line}");
 }
 
+/// The stage line of a stopped entry carries what was withheld, on every road out. A selection
+/// refused before the referral is where the omissions matter most (decision 0046 items 5 and 9).
+#[test]
+fn a_refused_selection_writes_the_stage_line_with_what_was_withheld() {
+    let logs = super::diagnostics::logs_of(|| {
+        let (world, mut d, mut login) = driver_at_characters(production(), 0);
+        d.command(
+            &Command::EnterWorld {
+                character: "Aldo".to_owned(),
+            },
+            1.0,
+        )
+        .expect("enter");
+        d.step(1.1, true, &go);
+        world.deliver(login.event(0x6D, &[0x00, 4, 3, 2, 1]), LOGIN_SERVER);
+        d.step(1.2, true, &go);
+        let events = d.take_events();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::EnterWorldFailed { .. })),
+            "{events:?}"
+        );
+    })
+    .1;
+    let line = logs
+        .lines()
+        .find(|l| l.contains("official world entry: stopped"))
+        .unwrap_or_else(|| panic!("{logs}"));
+    assert!(line.contains("selection refused"), "{line}");
+    assert!(line.contains(&withheld_summary()), "{line}");
+}
+
+/// The network right revoked during an entry: nothing is sent, and the log still has the line.
+#[test]
+fn a_revoked_entry_writes_the_stage_line_and_sends_nothing() {
+    let logs = super::diagnostics::logs_of(|| {
+        let (world, mut d, mut server) = at_session_start(production());
+        world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+        d.step(2.0, true, &go);
+        world.take_sent();
+        d.abandon(2.1);
+        assert!(world.take_sent().is_empty());
+    })
+    .1;
+    let lines: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("official world entry: stopped"))
+        .collect();
+    assert_eq!(lines.len(), 1, "{logs}");
+    assert!(lines[0].contains("network right revoked"), "{logs}");
+    assert!(lines[0].contains(&withheld_summary()), "{logs}");
+}
+
+/// A placement outside what a location can be is no exact placement: no progress, no scene to load,
+/// and a kept placement and its answer stay. Nothing reaches the `Session`'s invalid-event path.
+#[test]
+fn an_out_of_range_placement_is_no_placement() {
+    let (world, mut d, mut server) = at_session_start(gated());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    d.step(2.0, true, &go);
+    let _ = d.take_events();
+    let far = service_support::position(PLAYER, [1e30, 0.0, 0.0], 0, [0.0; 3]);
+    world.deliver(server.event(0xCE, &far), WORLD_SERVER);
+    d.step(2.1, true, &go);
+    assert!(!d.entry_progress().placed);
+    assert_eq!(d.entry_progress().unread, 1);
+    assert_eq!(d.entry_progress().positions, 0);
+    assert!(!d.take_events().iter().any(|e| matches!(
+        e,
+        Event::WorldPlacementPending { .. } | Event::WorldEntryProgress { .. }
+    )));
+    // A valid one, answered: the same message after it changes nothing.
+    world.deliver(
+        server.event(0xCE, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.2, true, &go);
+    assert!(d.entry_progress().placed);
+    let _ = d.take_events();
+    d.command(&Command::WorldLoaded, 2.3).expect("loaded");
+    world.deliver(server.event(0xCE, &far), WORLD_SERVER);
+    d.step(2.4, true, &go);
+    assert_eq!(d.entry_progress().unread, 2);
+    assert!(
+        !d.take_events()
+            .iter()
+            .any(|e| matches!(e, Event::WorldPlacementPending { .. }))
+    );
+    // The local gate stands, so the stand-in for the server gate finishes the entry.
+    world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+    d.step(2.5, true, &go);
+    assert!(d.in_world());
+}
+
+/// The same for the `0xCC` form, which has its own decoder.
+#[test]
+fn an_out_of_range_portal_placement_is_no_placement() {
+    let (world, mut d, mut server) = at_session_start_with_schema();
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    d.step(2.0, true, &go);
+    let _ = d.take_events();
+    // The `WirePosition`'s offset in the message: its bytes follow the valid form's, so the
+    // message is rebuilt with the first offset's bytes replaced.
+    let good = checked_message(0xCC);
+    let needle = 1.0f32.to_le_bytes();
+    let offset_at = good
+        .windows(4)
+        .position(|w| w == needle)
+        .expect("the offset's first coordinate");
+    let mut far = good.clone();
+    far[offset_at..offset_at + 4].copy_from_slice(&1e30f32.to_le_bytes());
+    world.deliver(
+        server.on_queue(3, 1, 0, Some(PLAYER), 0xCC, &far),
+        WORLD_SERVER,
+    );
+    d.step(2.1, true, &go);
+    assert!(!d.entry_progress().placed);
+    assert_eq!(d.entry_progress().unread, 1);
+    assert!(
+        !d.take_events()
+            .iter()
+            .any(|e| matches!(e, Event::WorldPlacementPending { .. }))
+    );
+}
+
+/// A batch's `0x52` paired with a `0x98` that did not decode made no entity. It is counted and does
+/// not reach the batch's target, here the local player, whose own table stays.
+#[test]
+fn the_initial_properties_of_an_undecodable_creation_are_nobodys() {
+    let (world, mut d, mut server) = at_session_start_with_schema();
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    d.step(2.0, true, &go);
+    let own = checked_message(0x52);
+    world.deliver(
+        server.on_queue(2, 1, 1, Some(PLAYER), 0x52, &own),
+        WORLD_SERVER,
+    );
+    d.step(2.1, true, &go);
+    let before = d.entry_progress();
+    assert_eq!(before.creations, 1);
+    let kept = d.pending_sizes();
+    let batch = crate::world::SubEventBatch {
+        event_id: crate::world::SubEventBatch::EVENT_ID_SUB_EVENT,
+        frames: vec![
+            crate::world::SubEventFrame::Event {
+                sub_event_id: 0x98,
+                payload: vec![0x00],
+            },
+            crate::world::SubEventFrame::Event {
+                sub_event_id: 0x52,
+                payload: own.clone(),
+            },
+        ],
+        entry_batch_tail_flag: None,
+    }
+    .to_bytes()
+    .expect("batch");
+    world.deliver(
+        server.on_queue(2, 2, 2, Some(PLAYER), 0x4C, &batch),
+        WORLD_SERVER,
+    );
+    d.step(2.2, true, &go);
+    let p = d.entry_progress();
+    assert_eq!(p.orphaned_initial, 1);
+    assert_eq!(p.unread, before.unread + 1, "the 0x98 itself");
+    assert_eq!(p.creations, before.creations);
+    assert_eq!(d.pending_sizes(), kept);
+    assert!(!d.ended());
+}
+
+/// `official-messages-play.md` (P10-10H): a chat-server route on a session with no chat connection is
+/// a local `InvalidCommand` in these words, and the session goes on.
+#[test]
+fn a_chat_server_route_fails_locally_in_the_specified_words() {
+    let (world, mut d, mut server) = at_session_start(Service {
+        no_chat_codec: true,
+        ..gated()
+    });
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(
+        server.event(0xCE, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    d.command(&Command::WorldLoaded, 2.1).expect("loaded");
+    world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+    d.step(2.2, true, &go);
+    assert!(d.in_world());
+    world.take_sent();
+    let refused = d.command(
+        &Command::Social(tessera_net::SocialCommand::JoinChannel { name: "x".into() }),
+        2.3,
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(tessera_net::NetError::InvalidCommand(
+                "Chat server connection is not supported by this version of Tessera yet."
+            ))
+        ),
+        "{refused:?}"
+    );
+    assert!(d.in_world() && !d.ended());
+}
+
+/// A malformed `0x98` is a checked message that did not read, not a routing problem.
+#[test]
+fn a_malformed_creation_is_unread() {
+    let (world, mut d, mut server) = at_session_start(production());
+    world.deliver(server.event(0x98, &[0x00]), WORLD_SERVER);
+    d.step(1.5, true, &go);
+    let p = d.entry_progress();
+    assert_eq!((p.unread, p.no_target, p.default_target), (1, 0, 0));
+}
+
 /// A placement in the default-recipient form names no entity (OPEN-WORLD-9): it is counted, and no
 /// placement is guessed. An explicit recipient that is the session's ID is exact.
 #[test]

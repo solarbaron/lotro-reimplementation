@@ -4531,6 +4531,62 @@ fn a_tessera_limit_before_the_list_is_one_panel_on_the_start_screen() {
     }
 }
 
+/// OE-T14, §8.6: an ordinary handshake expiry or silence before the list keeps the "No answer" route
+/// though a `ServiceUnavailable` came first: one panel, on the account form. An I/O failure keeps the
+/// refusal's words.
+#[test]
+fn a_silence_before_the_list_says_no_answer_on_the_account_form() {
+    let mut p = super::login::LoginPresenter::new(Instant::now(), None);
+    let now = Instant::now();
+    p.on_event(
+        &Event::Account(AccountEvent::LoginRefused {
+            reason: LoginRefusal::ServiceUnavailable,
+            retry_after_seconds: None,
+            detail: None,
+        }),
+        now,
+    );
+    p.on_event(
+        &Event::Disconnected {
+            reason: tessera_net::DisconnectReason::TimedOut,
+        },
+        now,
+    );
+    let end = p.end().expect("the end");
+    assert_eq!(
+        end.message.as_ref().map(|m| m.text.as_str()),
+        Some("No answer from the official service.")
+    );
+    assert_eq!(
+        end.target,
+        Target::AccountForm {
+            keep_account: false
+        }
+    );
+
+    let mut p = super::login::LoginPresenter::new(Instant::now(), None);
+    p.on_event(
+        &Event::Account(AccountEvent::LoginRefused {
+            reason: LoginRefusal::ServiceUnavailable,
+            retry_after_seconds: None,
+            detail: None,
+        }),
+        now,
+    );
+    p.on_event(
+        &Event::Disconnected {
+            reason: tessera_net::DisconnectReason::TransportFailed(String::new()),
+        },
+        now,
+    );
+    assert_eq!(
+        p.end()
+            .and_then(|e| e.message.as_ref())
+            .map(|m| m.text.as_str()),
+        Some("The official login service is not available right now.")
+    );
+}
+
 /// OE-T14, §8.6: after `Connected`, the same two reasons go to the start screen, in their words.
 #[test]
 fn a_tessera_limit_after_the_list_goes_to_the_start_screen() {
@@ -4624,8 +4680,9 @@ fn the_decoded_list_is_names_only_and_explains_the_disabled_actions() {
     model.apply(crate::screens::model::Action::Enter, Instant::now());
     assert_eq!(
         model.entering_line().map(|t| t.to_string()).as_deref(),
-        Some("Entering the world… Escape or closing the window cancels.")
+        Some("Entering the world… Cancel, Escape or closing the window cancels.")
     );
+    assert!(model.back_button().is_enabled(), "the Cancel control");
     model.handle_event(
         &Event::WorldEntryProgress {
             stage: tessera_net::WorldEntryStage::WorldHandshake,
@@ -4637,7 +4694,7 @@ fn the_decoded_list_is_names_only_and_explains_the_disabled_actions() {
             .entering_line()
             .is_some_and(|t| t.to_string().contains("Connected to the world server"))
     );
-    model.apply(crate::screens::model::Action::Quit, Instant::now());
+    model.apply(crate::screens::model::Action::Back, Instant::now());
     assert_eq!(*model.status(), crate::screens::model::Status::Quit);
 }
 
@@ -4666,6 +4723,8 @@ fn a_pending_placement_loads_behind_the_screens_and_is_answered_once() {
         )
         .expect("enter");
     assert_eq!(world.state(), tessera_net::SessionState::EnteringWorld);
+    // §9.3.9: normal input starts after `WorldEntered`.
+    assert!(crate::walker::WalkerSession::holds_input(&world));
     // A settled frame before any placement sends nothing.
     world.walker_frame(t, None, true);
     assert_eq!(world.loaded_signals(), 0);

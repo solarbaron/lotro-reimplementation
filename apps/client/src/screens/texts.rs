@@ -32,8 +32,10 @@ pub enum OwnText {
     /// the server's answer (§7.3, §7.1.1 step 6).
     CreationStillOutstanding,
     /// An official selection is under way, at this real stage when one was reached
-    /// (`official-entry.md` §8.7); Escape or closing the window cancels it.
+    /// (`official-entry.md` §8.7); [`Self::CancelEntry`], Escape or closing the window cancels it.
     Entering(Option<tessera_net::WorldEntryStage>),
+    /// The label of the control that cancels an official selection (`official-entry.md` §8.7).
+    CancelEntry,
     /// The explanation beside the disabled New and Delete buttons on an official session
     /// (`official-session.md` §9.3.9, `official-entry.md` §8.7).
     OfficialActionsDisabled,
@@ -86,8 +88,9 @@ impl std::fmt::Display for OwnText {
                     Some(W::Identity) => f.write_str(" The world server knows the character.")?,
                     Some(W::Placement) => f.write_str(" Loading the scene.")?,
                 }
-                f.write_str(" Escape or closing the window cancels.")
+                f.write_str(" Cancel, Escape or closing the window cancels.")
             }
+            Self::CancelEntry => f.write_str("Cancel"),
             Self::OfficialActionsDisabled => {
                 f.write_str("New, Delete: Not supported by this version of Tessera yet")
             }

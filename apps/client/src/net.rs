@@ -300,6 +300,12 @@ impl crate::walker::WalkerSession for World {
         World::player_location(self)
     }
 
+    /// `official-session.md` §9.3.9: normal input starts after `WorldEntered`, so a session on its
+    /// way into the world has no player to move.
+    fn holds_input(&self) -> bool {
+        self.state() == SessionState::EnteringWorld
+    }
+
     fn send_move(
         &mut self,
         now: Instant,

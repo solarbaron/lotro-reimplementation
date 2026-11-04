@@ -467,6 +467,13 @@ impl LoginPresenter {
             {
                 end.message = disconnect_message(reason);
             }
+            // §8.6: an ordinary 20-second handshake expiry or 60-second silence keeps the
+            // "No answer" words, on the refusal's target. A service's own detail stays with them.
+            if r.reason == LoginRefusal::ServiceUnavailable && *reason == DisconnectReason::TimedOut
+            {
+                let detail = end.message.take().and_then(|m| m.detail);
+                end.message = disconnect_message(reason).map(|m| Message { detail, ..m });
+            }
             self.finish(end);
             return;
         }

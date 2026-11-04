@@ -1245,11 +1245,15 @@ pub fn discover_installed_languages(install_root: &Path) -> Result<Vec<String>, 
         ),
     })?;
     let mut langs = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries {
+        // An entry the OS cannot give may be the preferred language: no silent fallback (§9.3.9).
+        let entry = entry.map_err(|e| LoginError::ConfigInvalid {
+            reason: format!("cannot read an entry of the install directory: {e}"),
+        })?;
+        // Every entry of the name counts, whatever it is: a directory or a dangling link of that
+        // name is a present and unusable language, which fails when it is the one selected and
+        // never falls back to another (§9.3.9, `official-login.md` §2.2).
         let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
         if let Some(name) = path.file_name().and_then(|n| n.to_str())
             && let Some(middle) = name
                 .strip_prefix("client_local_")

@@ -120,6 +120,8 @@ pub use model::{
     parse_did,
 };
 pub use nesting::MAX_NESTING_DEPTH;
+#[doc(hidden)]
+pub use store::prune_backups_for_log_test;
 pub use store::{
     APP_DIR_NAME, FILE_NAME, LoadStatus, Loaded, MAX_BACKUPS, MAX_FILE_SIZE, SETTINGS_FILE_ENV,
     SettingsStore, check_not_inside_game_dirs, default_path,

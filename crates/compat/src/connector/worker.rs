@@ -795,6 +795,7 @@ fn session_loop<N: ConnectorNet>(
         }
         if !net.is_live() {
             // Revoked without a cancel: nothing can be sent, not even the disconnect.
+            driver.abandon(now());
             out.push(vec![revoked()]);
             tracing::info!("official session ended: the network access was revoked");
             return;

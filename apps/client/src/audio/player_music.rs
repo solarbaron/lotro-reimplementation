@@ -1112,7 +1112,9 @@ impl PlayerMusic {
     }
 
     fn say(&mut self, line: String) {
-        tracing::debug!("player music: {line}");
+        // A line can name a song's or a folder's path: it is the player's own chat text, and on an
+        // official run the log does not repeat it.
+        tracing::debug!("player music: {}", crate::log_paths::shown_error(&line));
         if self.lines.len() >= MAX_PENDING_LINES {
             self.lines.pop_front();
         }

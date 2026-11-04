@@ -4072,7 +4072,12 @@ impl BlobFragmentHeader {
         } else {
             (0, 1)
         };
-        if num_frags == 0 || num_frags <= frag_index {
+        // §5.6.3 field 5b: a flagged fragment has `numFrags >= 2`; `IsFragmented` with a count of 1 is
+        // a bad count, which §9.3.9 drops with its whole datagram.
+        if num_frags == 0
+            || num_frags <= frag_index
+            || ((blob_flags & BLOB_FLAG_IS_FRAGMENTED) != 0 && num_frags < 2)
+        {
             return Err(SessionError::InvalidFragmentBounds {
                 frag_index,
                 num_frags,
@@ -4381,6 +4386,28 @@ struct BlobTombstone {
     opcode: u32,
     num_frags: u32,
     body: Vec<u8>,
+    /// The parts repeated exactly since it completed, which opened nothing: a reused identity that
+    /// shares them is rebuilt from the body ([`BlobReassembler::seed_from_repeats`]). A bit per
+    /// part of a body already kept, allocated by the first such repeat.
+    repeated: Vec<u32>,
+}
+
+impl BlobTombstone {
+    /// Whether one part of a multi-part blob is an exact repeat of this completed identity (§9.3.9):
+    /// the same count, the same opcode on part 0, and the same bytes where the part lies, the final
+    /// part's length included.
+    fn holds_part(&self, hdr: &BlobFragmentHeader, data: &[u8]) -> bool {
+        if self.num_frags != hdr.num_frags
+            || (hdr.frag_index == 0 && hdr.blob_header_word != Some(self.opcode))
+        {
+            return false;
+        }
+        let offset = (hdr.frag_index as usize).saturating_mul(MAX_BLOB_FRAG_PAYLOAD);
+        let end = offset.saturating_add(data.len());
+        let right_length =
+            hdr.frag_index.saturating_add(1) < hdr.num_frags || end == self.body.len();
+        right_length && self.body.get(offset..end).is_some_and(|b| b == data)
+    }
 }
 
 /// What the reassembler did with what it did not deliver, and its anomalies (§9.3.9).
@@ -4438,8 +4465,16 @@ const fn is_empty_control(hdr: &BlobFragmentHeader) -> bool {
     hdr.blob_flags & BLOB_FLAG_OMIT_CHUNK_INFO != 0 && hdr.num_frags == 1
 }
 
+/// Whether a fragment is one of a blob with an identity (§9.3.9: an unfragmented queue-1 message has
+/// none). Its decoded blob ID 0 is no blob ID, so it can neither repeat nor conflict with a
+/// fragmented queue-1 blob whose ID is 0.
+const fn has_identity(hdr: &BlobFragmentHeader) -> bool {
+    hdr.queue_id != 1 || hdr.num_frags > 1
+}
+
 /// Whether a fragment can join the identity in progress `entry` (§9.3.9: conflicting in-progress
-/// fragments are never merged): the same count and, for an index already taken, the same bytes.
+/// fragments are never merged): the same count and, for an index already taken, the same bytes,
+/// the final slice's length included.
 fn agrees_with(entry: &IncompleteBlob, hdr: &BlobFragmentHeader, data: &[u8]) -> bool {
     if entry.num_frags != hdr.num_frags {
         return false;
@@ -4458,7 +4493,9 @@ fn agrees_with(entry: &IncompleteBlob, hdr: &BlobFragmentHeader, data: &[u8]) ->
         .get(offset..offset.saturating_add(data.len()))
         .is_some_and(|b| b == data);
     let same_word = hdr.frag_index != 0 || entry.blob_header_word == hdr.blob_header_word;
-    same_data && same_word
+    let same_length = hdr.frag_index.saturating_add(1) != hdr.num_frags
+        || entry.trimmed_len == Some(offset.saturating_add(data.len()));
+    same_data && same_word && same_length
 }
 
 /// Bounded `FragmentedBlob` reassembler with a `30.0`-second expiration timer (§5.6.4).
@@ -4639,6 +4676,7 @@ impl BlobReassembler {
                 opcode,
                 num_frags,
                 body: payload.clone(),
+                repeated: Vec::new(),
             });
         }
         Some(ReassembledBlob {
@@ -4650,6 +4688,63 @@ impl BlobReassembler {
             blob_header_word: opcode,
             payload,
         })
+    }
+
+    /// Whether a part of a multi-part blob exactly repeats the live completed identity of `key`
+    /// (§9.3.9). The repeat is counted, remembered for [`Self::seed_from_repeats`], and nothing
+    /// opens. Queue 1 has no completed identities.
+    fn note_repeated_part(&mut self, key: &BlobKey, hdr: &BlobFragmentHeader, data: &[u8]) -> bool {
+        let Some(t) = self.tombstones.iter_mut().find(|t| t.key == *key) else {
+            return false;
+        };
+        if !t.holds_part(hdr, data) {
+            return false;
+        }
+        t.repeated
+            .resize((hdr.num_frags as usize).div_ceil(32), 0u32);
+        if let Some(word) = t.repeated.get_mut((hdr.frag_index as usize) >> 5) {
+            *word |= 1u32 << (hdr.frag_index & 0x1F);
+        }
+        self.counts.duplicates = self.counts.duplicates.saturating_add(1);
+        true
+    }
+
+    /// A differing part of a reused identity opens `entry`. The parts already repeated from the
+    /// completed body were acknowledged and will not come again, so they are taken from it, or the
+    /// complete differing body §9.3.9 delivers once could never complete. The part that opens it
+    /// (`arriving`) is the new one, so it is not taken from the old body.
+    fn seed_from_repeats(entry: &mut IncompleteBlob, t: &BlobTombstone, arriving: u32) {
+        if t.repeated.is_empty() || t.num_frags != entry.num_frags {
+            return;
+        }
+        for index in (0..entry.num_frags).filter(|i| *i != arriving) {
+            let i = index as usize;
+            let word = (i >> 5, 1u32 << (index & 0x1F));
+            if t.repeated.get(word.0).is_none_or(|w| w & word.1 == 0) {
+                continue;
+            }
+            let offset = i.saturating_mul(MAX_BLOB_FRAG_PAYLOAD);
+            let end = offset
+                .saturating_add(MAX_BLOB_FRAG_PAYLOAD)
+                .min(t.body.len());
+            let (Some(from), Some(slot)) =
+                (t.body.get(offset..end), entry.received_mask.get_mut(word.0))
+            else {
+                continue;
+            };
+            let Some(to) = entry.buffer.get_mut(offset..end) else {
+                continue;
+            };
+            to.copy_from_slice(from);
+            *slot |= word.1;
+            entry.received_count += 1;
+            if index == 0 {
+                entry.blob_header_word = Some(t.opcode);
+            }
+            if index.saturating_add(1) == entry.num_frags {
+                entry.trimmed_len = Some(end);
+            }
+        }
     }
 
     /// How many incomplete queue-3 blobs a newer completed one superseded.
@@ -4672,6 +4767,12 @@ impl BlobReassembler {
         });
         let gone = u64::try_from(before - self.incomplete.len()).unwrap_or(u64::MAX);
         self.superseded = self.superseded.saturating_add(gone);
+    }
+
+    /// Returns how many completed identities are remembered, and the bytes of their bodies.
+    #[must_use]
+    pub fn tombstone_sizes(&self) -> (usize, usize) {
+        (self.tombstones.len(), self.tombstone_bytes)
     }
 
     /// Returns the number of currently incomplete multi-fragment blobs.
@@ -4706,7 +4807,10 @@ impl BlobReassembler {
             tracing::debug!(blob_id = hdr.blob_id, "encrypted FragmentedBlob rejected");
             return Err(SessionError::EncryptedBlobRejected);
         }
-        if hdr.num_frags == 0 || hdr.num_frags <= hdr.frag_index {
+        if hdr.num_frags == 0
+            || hdr.num_frags <= hdr.frag_index
+            || ((hdr.blob_flags & BLOB_FLAG_IS_FRAGMENTED) != 0 && hdr.num_frags < 2)
+        {
             return Err(SessionError::InvalidFragmentBounds {
                 frag_index: hdr.frag_index,
                 num_frags: hdr.num_frags,
@@ -4763,7 +4867,7 @@ impl BlobReassembler {
         for frag in fragments {
             self.check_fragment(frag)?;
             let hdr = &frag.header;
-            if is_empty_control(hdr) {
+            if is_empty_control(hdr) || !has_identity(hdr) {
                 continue;
             }
             let key = blob_key(sender_rec_id, hdr);
@@ -4787,7 +4891,12 @@ impl BlobReassembler {
                 continue;
             }
             seen.push((key, frag));
-            if open.is_none() && !new_keys.contains(&key) {
+            // An exact repeat of a completed identity opens nothing (§9.3.9).
+            let repeat = open.is_none()
+                && self
+                    .tombstone(&key, now_sec)
+                    .is_some_and(|t| t.holds_part(hdr, &frag.payload));
+            if open.is_none() && !repeat && !new_keys.contains(&key) {
                 new_keys.push(key);
             }
         }
@@ -4833,7 +4942,8 @@ impl BlobReassembler {
         let alloc_size = (hdr.num_frags as usize).saturating_mul(MAX_BLOB_FRAG_PAYLOAD);
         self.purge_expired(now_sec);
         let key = blob_key(sender_rec_id, hdr);
-        if let Some(entry) = self.incomplete.get(&key)
+        if has_identity(hdr)
+            && let Some(entry) = self.incomplete.get(&key)
             && !agrees_with(entry, hdr, &frag.payload)
         {
             return Err(SessionError::ConflictingBlobIdentity);
@@ -4853,12 +4963,19 @@ impl BlobReassembler {
             return Ok(self.completed(key, fields, frag.payload, now_sec));
         }
 
+        // §9.3.9: an exact repeat of a part of a completed identity is ignored and opens nothing.
+        if !self.incomplete.contains_key(&key) && self.note_repeated_part(&key, hdr, &frag.payload)
+        {
+            return Ok(None);
+        }
+
         if !self.incomplete.contains_key(&key) && self.incomplete.len() >= self.max_concurrent_blobs
         {
             return Err(SessionError::ReassemblyTableFull {
                 max_concurrent: self.max_concurrent_blobs,
             });
         }
+        let opening = !self.incomplete.contains_key(&key);
 
         let entry = self.incomplete.entry(key).or_insert_with(|| {
             let mask_words = (hdr.num_frags as usize).div_ceil(32);
@@ -4877,6 +4994,12 @@ impl BlobReassembler {
                 created_at_sec: now_sec,
             }
         });
+        if opening {
+            let tombstone = self.tombstones.iter().find(|t| t.key == key);
+            if let Some(t) = tombstone {
+                Self::seed_from_repeats(entry, t, hdr.frag_index);
+            }
+        }
 
         let word_idx = (hdr.frag_index as usize) >> 5;
         let bit_mask = 1u32 << (hdr.frag_index & 0x1F);

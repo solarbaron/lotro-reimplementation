@@ -66,7 +66,10 @@ fn layouts() -> Vec<tessera_formats::ui_layout::UiLayout> {
         el("CharGen_Base_Field", t.field, 0, 0, 1440, 900),
         vec![
             el("chargen_viewport", t.viewport, 0, 0, 1440, 900),
-            el("CharGen_Back_Button", t.button, 386, 810, 261, 45),
+            with(
+                el("CharGen_Back_Button", t.button, 386, 810, 261, 45),
+                vec![el("CharGen_Back_Button_Label", t.text, 50, 0, 200, 45)],
+            ),
             el("CharGen_Exit_Button", t.button, 386, 810, 261, 45),
             el("CharGen_Continue_Button", t.button, 790, 810, 261, 45),
             el("CharGen_ErrorTextList", t.list_box, 400, 700, 600, 100),
@@ -277,6 +280,46 @@ fn msg(ui: &Ui, source: ElementKey, msg: u32) -> UiEvent {
 
 fn no_text(_: &StringInfo) -> Option<String> {
     None
+}
+
+/// `official-entry.md` §8.7: while an official selection runs, the Back element is a real Cancel: it
+/// shows on the selection screen with its own label, a click leaves, and the label goes with it.
+/// A sandbox selection keeps its hidden Back.
+#[test]
+fn an_official_selection_has_a_cancel_control_that_a_click_reaches() {
+    let mut ui = ui_with(env_with(layouts()), 1440, 900);
+    let mut screen = ScreenUi::open(&mut ui, refs());
+    let now = Instant::now();
+    let connected = tessera_net::Event::Connected {
+        characters: vec![tessera_net::CharacterSummary { name: "Ada".into() }],
+    };
+    let mut m = ScreenModel::new(synthetic_data(), BackendKind::Official);
+    m.handle_event(&connected, now);
+    screen.sync(&mut ui, &m, &no_text);
+    let back = find(&ui, "CharGen_Back_Button");
+    assert!(!ui.is_visible(back), "hidden until a selection runs");
+
+    m.apply(Action::Enter, now);
+    assert!(m.cancels_entry());
+    screen.sync(&mut ui, &m, &no_text);
+    assert!(ui.is_visible(back));
+    let label = find(&ui, "CharGen_Back_Button_Label");
+    assert_eq!(ui.text_of(label), "Cancel");
+    let ev = msg(&ui, back, ui.vocab().msgs.button_click);
+    let actions = screen.handle_event(&mut ui, &ev, &m, 0);
+    assert_eq!(actions, [Action::Back]);
+    m.apply(Action::Back, now);
+    assert_eq!(m.status(), &tessera_client::screens::Status::Quit);
+    screen.sync(&mut ui, &m, &no_text);
+    assert!(!ui.is_visible(back), "the entry is over");
+    assert_eq!(ui.text_of(label), "", "the layout's own label");
+
+    let mut sandbox = ScreenModel::new(synthetic_data(), BackendKind::PlainSandbox);
+    sandbox.handle_event(&connected, now);
+    sandbox.apply(Action::Enter, now);
+    assert!(!sandbox.cancels_entry());
+    screen.sync(&mut ui, &sandbox, &no_text);
+    assert!(!ui.is_visible(back));
 }
 
 #[test]

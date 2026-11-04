@@ -1337,6 +1337,40 @@ fn i16_prefix_tree_dictionary_did_map_and_deferred_redirection() {
 // Additional §2.2, §2.3, §3.1, §3.4, §3.5, §4.1, and Hostile-Input Tests
 // ============================================================================
 
+/// §9.3.9: only a missing preferred language falls back. One present and unusable, a directory or a
+/// dangling link of that name, refuses; it does not silently become another language.
+#[test]
+fn a_present_unusable_language_does_not_fall_back() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("client_local_English.dat"), b"x").unwrap();
+    std::fs::create_dir(dir.path().join("client_local_DE.dat")).unwrap();
+    assert!(matches!(
+        resolve_install_language(dir.path(), Some("DE")),
+        Err(LoginError::ConfigInvalid { .. })
+    ));
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            dir.path().join("nowhere"),
+            dir.path().join("client_local_FR.dat"),
+        )
+        .unwrap();
+        assert!(matches!(
+            resolve_install_language(dir.path(), Some("fr-FR")),
+            Err(LoginError::ConfigInvalid { .. })
+        ));
+    }
+    // A language that is not there still falls back, and a bad one nobody asked for is no matter.
+    assert_eq!(
+        resolve_install_language(dir.path(), Some("IT")).unwrap(),
+        "English"
+    );
+    assert_eq!(
+        resolve_install_language(dir.path(), None).unwrap(),
+        "English"
+    );
+}
+
 #[test]
 fn language_and_user_preferences_resolution() {
     assert_eq!(language_to_feed_code("English"), "en");

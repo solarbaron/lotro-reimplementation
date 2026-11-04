@@ -1008,6 +1008,18 @@ pub fn capture(
     Ok(renderer.read_pixels(&target)?)
 }
 
+/// Writes the screenshot `image` to `path` and logs how it went. On a run the official login handed
+/// over the line shows only the file's name, and nothing of an error, whose text names the path.
+pub fn save_screenshot(path: &Path, image: &RgbaImage) {
+    match save_png(path, image) {
+        Ok(()) => tracing::info!(path = %crate::log_paths::shown(path), "screenshot saved"),
+        Err(e) => tracing::warn!(
+            "screenshot failed: {}",
+            crate::log_paths::shown_error(&format!("{e:#}"))
+        ),
+    }
+}
+
 /// Writes `image` as an 8-bit RGBA PNG.
 ///
 /// # Errors

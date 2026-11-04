@@ -804,6 +804,13 @@ fn an_official_selection_shows_a_line_and_can_be_left() {
     m.apply(Action::Quit, now);
     assert_eq!(m.status(), &Status::Quit);
     assert_eq!(m.entering_line(), None);
+    // Its Cancel control does the same.
+    let (mut m, now) = official_model();
+    assert_eq!(m.back_button(), ButtonRule::Hidden);
+    m.apply(Action::Enter, now);
+    assert!(m.back_button().is_enabled());
+    m.apply(Action::Back, now);
+    assert_eq!(m.status(), &Status::Quit);
 
     let (mut sandbox, now) = select_model();
     sandbox.apply(Action::Enter, now);

@@ -2,7 +2,7 @@
 //! Error and warning types.
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Errors returned by the strict API ([`crate::Settings::from_toml_str`],
 /// [`crate::SettingsStore::save`], ...).
@@ -17,8 +17,9 @@ pub enum SettingsError {
     #[error("no per-user configuration directory is available on this platform")]
     NoConfigDir,
 
-    /// A filesystem operation failed.
-    #[error("{op} {}: {source}", path.display())]
+    /// A filesystem operation failed. Its text has the file's name and no directory, which can name
+    /// the user; [`SettingsStore::path`](crate::SettingsStore::path) has the rest.
+    #[error("{op} {}: {source}", file_name_of(path))]
     Io {
         /// What was being done (`"read"`, `"write"`, `"rename"`, ...).
         op: &'static str,
@@ -77,9 +78,8 @@ pub enum SettingsError {
     /// the game directories recorded in the settings. The game install is
     /// strictly read-only.
     #[error(
-        "refusing to write settings to {} because it is inside game directory {}",
-        path.display(),
-        game_dir.display()
+        "refusing to write settings to {} because it is inside a game directory",
+        file_name_of(path)
     )]
     InsideGameDir {
         /// The settings file path.
@@ -92,13 +92,22 @@ pub enum SettingsError {
     /// cannot be a settings file Tessera wrote (it is not a regular file, or
     /// it is larger than [`crate::MAX_FILE_SIZE`]). Move or delete it by
     /// hand.
-    #[error("refusing to replace {}: {reason}; move or delete it", path.display())]
+    #[error(
+        "refusing to replace {}: {reason}; move or delete it",
+        file_name_of(path)
+    )]
     WontReplace {
         /// The path that holds the foreign file.
         path: PathBuf,
         /// Why it was not replaced.
         reason: String,
     },
+}
+
+/// The file's name for a text that reaches a log: its folder can name the user.
+pub(crate) fn file_name_of(path: &Path) -> std::borrow::Cow<'_, str> {
+    path.file_name()
+        .map_or(std::borrow::Cow::Borrowed(""), |n| n.to_string_lossy())
 }
 
 /// Result alias for this crate.

@@ -31,6 +31,7 @@ use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::error::file_name_of;
 use crate::error::{LoadWarning, Result, SettingsError};
 use crate::migrate::SCHEMA_VERSION;
 use crate::model::Settings;
@@ -101,12 +102,6 @@ pub struct Loaded {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsStore {
     path: PathBuf,
-}
-
-/// The file's name for a log line: its folder can name the user.
-fn file_name_of(path: &Path) -> std::borrow::Cow<'_, str> {
-    path.file_name()
-        .map_or(std::borrow::Cow::Borrowed(""), |n| n.to_string_lossy())
 }
 
 /// The default settings file path: `$TESSERA_SETTINGS_FILE` when set and
@@ -827,6 +822,12 @@ fn backup_file(target: &Path, reason: &str, bytes: &[u8]) -> io::Result<PathBuf>
     Ok(path)
 }
 
+/// [`prune_backups`] for the log test of a handed-over run, which needs a removal that fails.
+#[doc(hidden)]
+pub fn prune_backups_for_log_test(dir: &Path, name: &str, keep: &Path) {
+    prune_backups(dir, name, keep);
+}
+
 /// Keep at most [`MAX_BACKUPS`] of our backups of `name` in `dir`, deleting
 /// the oldest by name stamp. Never deletes `keep` or the newest backup of
 /// each kind.
@@ -852,7 +853,7 @@ fn prune_backups(dir: &Path, name: &str, keep: &Path) {
         match fs::remove_file(&b.path) {
             Ok(()) => excess -= 1,
             Err(e) => {
-                tracing::debug!(path = %b.path.display(), error = %e, "cannot prune settings backup")
+                tracing::debug!(file = %file_name_of(&b.path), error = %e, "cannot prune settings backup")
             }
         }
     }

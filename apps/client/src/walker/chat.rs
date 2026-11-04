@@ -547,6 +547,67 @@ mod tests {
         );
     }
 
+    /// §9.3.9: normal input starts after `WorldEntered`. A held viewer stays at its placement
+    /// whatever is pressed; the menu key still works, so Escape cancels.
+    #[test]
+    fn held_input_leaves_the_viewer_at_its_placement() {
+        use super::super::controls::{Controls, MoveMode};
+        use tessera_world::WorldPos;
+        let keymap = tessera_input::default_keymap();
+        let flat = |_: f64, _: f64| Some(100.0_f32);
+        let mut controls = Controls::new(&keymap, MoveMode::Walk, 40.0);
+        let start = WorldPos::new(1, 20_000.0, 20_000.0, 100.0);
+        controls.place(&start, 0.0, 30.0, -0.25);
+        controls.set_input_held(true);
+        route(&mut ChatOverlay::default(), &mut controls, &key(KeyCode::W));
+        for _ in 0..10 {
+            let _ = controls.frame(1.0 / 60.0, &flat, None);
+        }
+        let held = controls.focus();
+        assert!((held.x - start.x).abs() < 1e-3, "{held:?}");
+        assert!((held.y - start.y).abs() < 1e-3, "{held:?}");
+        // No mode change from its key, no mount request, no camera reset and no autorun.
+        let mode = controls.mode();
+        for code in [
+            KeyCode::ControlLeft,
+            KeyCode::F,
+            KeyCode::M,
+            KeyCode::Home,
+            KeyCode::R,
+        ] {
+            route(&mut ChatOverlay::default(), &mut controls, &key(code));
+        }
+        let ev = controls.frame(1.0 / 60.0, &flat, None);
+        assert!(!ev.mode_changed && !ev.toggle_mount && !ev.reset_camera);
+        assert_eq!(controls.mode(), mode);
+        for code in [KeyCode::ControlLeft, KeyCode::F, KeyCode::M, KeyCode::Home] {
+            controls.handle(&RawEvent::Key {
+                key: code,
+                pressed: false,
+                repeat: false,
+            });
+        }
+        let _ = controls.frame(1.0 / 60.0, &flat, None);
+        // The menu key works.
+        route(
+            &mut ChatOverlay::default(),
+            &mut controls,
+            &key(KeyCode::Escape),
+        );
+        let ev = controls.frame(1.0 / 60.0, &flat, None);
+        assert!(ev.quit || ev.menu, "Escape still cancels");
+        // Free again: the key still down walks.
+        controls.set_input_held(false);
+        for _ in 0..30 {
+            let _ = controls.frame(1.0 / 60.0, &flat, None);
+        }
+        assert!(
+            controls.focus().x > start.x + 0.01,
+            "{:?}",
+            controls.focus()
+        );
+    }
+
     #[test]
     fn opening_the_chat_releases_held_movement_keys() {
         use super::super::controls::{Controls, MoveMode};

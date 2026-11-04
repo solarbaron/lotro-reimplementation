@@ -703,6 +703,7 @@ impl ClientUi {
         if !self.attached_walker {
             return;
         }
+        walker.set_screens_hold_input(self.pre_world.is_some());
         self.run_script(walker, rt, window);
         if let State::Ready(host) = &mut self.state {
             if self.timing {

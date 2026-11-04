@@ -114,8 +114,10 @@ label_table! {
         error_list = "CharGen_ErrorTextList",
         /// The error line template.
         error_template = "CharGenErrorTextTemplate",
-        /// Shared: back.
+        /// Shared: back, and the Cancel of an official selection under way.
         back = "CharGen_Back_Button",
+        /// Shared: back's label.
+        back_label = "CharGen_Back_Button_Label",
         /// Shared: exit (hidden in P1).
         exit = "CharGen_Exit_Button",
         /// Shared: continue.
@@ -597,6 +599,7 @@ impl ScreenUi {
             ids.viewport,
             ids.error_list,
             ids.back,
+            ids.back_label,
             ids.exit,
             ids.continue_button,
             ids.turntable,
@@ -886,6 +889,17 @@ impl ScreenUi {
             ui.set_shown(*k, on);
         }
         self.apply_button(ui, ids.back, &model.back_button());
+        // `official-entry.md` §8.7: the Back element is the entry's Cancel while it runs; the layout's
+        // own label comes back afterwards. The tooltip serves a layout without its label element.
+        let cancel = model
+            .cancels_entry()
+            .then(|| super::texts::OwnText::CancelEntry.to_string());
+        if let Some(k) = self.el(ids.back_label) {
+            ui.set_text(k, cancel.clone());
+        }
+        if let (Some(k), Some(label)) = (self.el(ids.back), cancel) {
+            ui.set_tooltip_text(k, Some(label));
+        }
         self.apply_button(ui, ids.continue_button, &model.continue_button());
         self.apply_button(ui, ids.create, &model.create_button());
         self.apply_button(ui, ids.new, &model.new_button());

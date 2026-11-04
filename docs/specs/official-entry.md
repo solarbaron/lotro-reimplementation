@@ -1027,6 +1027,14 @@ Leaving the character screens back to the start ends the session
 (`Disconnect`) and returns to the account form; the warning is not shown again in that run
 unless it was withdrawn.
 
+> **OPEN (implementer, `apps/client/src/net.rs` `holds_input`, 2026-11-04; an engineering choice, the
+> spec is silent):** while an official session is `EnteringWorld` or its character screens are open, the
+> walker takes no movement, look, mode or mount input, and the hold ends autorun; the menu action
+> stays. Other sessions (sandbox, scenario, `--server`) never hold, with or without the screens. Typing
+> in the chat line is separate: its keys go to the line and never reach the walker. Please confirm, or
+> say where the rule belongs. Several client comments and `docs/DEVELOPMENT.md` cite
+> `official-session.md` §9.3.9, which this tree's spec does not have.
+
 > **OPEN (implementer, 2026-10-23):** the client cannot feed an official session into the pre-world flow
 > yet; what does §8.7 show meanwhile?
 >

@@ -700,10 +700,10 @@ impl ClientUi {
         window: &mut dyn CursorWindow,
     ) {
         self.frame_start = Some(Instant::now());
+        walker.set_screens_open(self.attached_walker && self.pre_world.is_some());
         if !self.attached_walker {
             return;
         }
-        walker.set_screens_hold_input(self.pre_world.is_some());
         self.run_script(walker, rt, window);
         if let State::Ready(host) = &mut self.state {
             if self.timing {

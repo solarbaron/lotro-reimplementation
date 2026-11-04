@@ -785,6 +785,76 @@ mod tests {
         assert!(back.contains(&2), "Neutral at the crossing: {back:?}");
     }
 
+    /// The gaits of `--mount` with `--autorun` through the frame loop's order: frames of the
+    /// session's entry, with the session's answer on the hold, and only then the placement, the
+    /// mover and the mount. `session` is what the walker would ask, with the character screens
+    /// open or not.
+    fn gaits_after_an_entry(
+        mut session: crate::net::World,
+        screens_open: bool,
+        lock: Option<u32>,
+    ) -> std::collections::BTreeSet<u32> {
+        use crate::walker::WalkerSession as _;
+        use crate::walker::controls::{Controls, MoveMode};
+        let (w, feet) = world();
+        let ground = |_: f64, _: f64| Some(feet[2] as f32);
+        let mut c = Controls::new(&tessera_input::default_keymap(), MoveMode::Walk, 40.0);
+        c.set_autorun(true, false);
+        let mut now = std::time::Instant::now();
+        let mut frame = |c: &mut Controls, placed: bool| {
+            session.update(now);
+            now += std::time::Duration::from_millis(16);
+            c.set_input_held(session.holds_input(screens_open));
+            let _ = c.frame(1.0 / 60.0, &ground, placed.then_some(&w as _));
+        };
+        for _ in 0..30 {
+            frame(&mut c, false);
+        }
+        let at = tessera_world::WorldPos::new(1, feet[0], feet[1], feet[2]);
+        c.place(&at, 0.0, 30.0, -0.25);
+        c.enable_physics(MoverSetup::builtin());
+        let timeline = Timeline {
+            fade_in: 0.25,
+            fade_out: 0.25,
+            ..Timeline::default()
+        };
+        c.physics_mut().unwrap().set_mount(Some(MountMover::new(
+            Arc::new(profile(MountKind::WarSteed, 0x20)),
+            timeline,
+            false,
+            lock,
+        )));
+        let mut gaits = std::collections::BTreeSet::new();
+        for _ in 0..300 {
+            frame(&mut c, true);
+            gaits.insert(c.physics().unwrap().mount().unwrap().gait());
+        }
+        gaits
+    }
+
+    /// `walker.md` §16.2, §16.11 through the frame loop: offline, `--autorun` with `--mount` rises
+    /// to the gallop, however long the session's entry took and whether or not character screens
+    /// are open, and a locked gear holds. Behind an official selection's screens nothing moves the
+    /// steed.
+    #[test]
+    fn an_offline_entry_leaves_a_mounted_autorun_its_gears() {
+        let now = std::time::Instant::now();
+        let sandbox = || crate::net::World::sandbox(now).expect("sandbox");
+        for screens_open in [false, true] {
+            let gaits = gaits_after_an_entry(sandbox(), screens_open, None);
+            assert!(gaits.contains(&7), "the gallop: {gaits:?}");
+            let gaits = gaits_after_an_entry(sandbox(), screens_open, Some(6));
+            assert!(gaits.contains(&6), "the canter: {gaits:?}");
+            assert!(!gaits.contains(&7), "never the gallop: {gaits:?}");
+        }
+        let handed = crate::net::World::handed_over(now, crate::net::test_hand_over(now));
+        let held = gaits_after_an_entry(handed, true, None);
+        assert!(
+            !held.iter().any(|g| *g >= 4),
+            "no gear while held: {held:?}"
+        );
+    }
+
     /// `mounts.md` §14.6 Decision for the Clydesdale; §14.11 the hobby-horse stays on foot.
     #[test]
     fn clydesdale_gait_rule_and_hobby_horse_on_foot() {

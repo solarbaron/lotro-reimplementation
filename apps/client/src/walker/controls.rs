@@ -547,8 +547,8 @@ pub struct Controls {
     placed: bool,
     /// A game UI is attached: `menu` opens the game menu instead of quitting.
     ui_attached: bool,
-    /// The session is not in the world yet: the viewer stays at its placement (module docs of
-    /// [`Self::set_input_held`]).
+    /// An official selection is entering or its screens are open: the viewer stays at its
+    /// placement ([`Self::set_input_held`]).
     input_held: bool,
     /// The mover of the collision walk mode, once loaded.
     mover: Option<MoverSetup>,
@@ -623,11 +623,12 @@ impl Controls {
         self.ui_attached = on;
     }
 
-    /// Holds or frees the player's movement, look, mode and mount input. `official-session.md`
-    /// §9.3.9 starts normal input after `WorldEntered`: until then a placement loads behind the
-    /// character screens, and the viewer must not walk away from it. The menu action stays, so
-    /// Escape still cancels; the controller still runs, with nothing asked of it, so a placement
-    /// lands on the ground.
+    /// Holds or frees the player's movement, look, mode and mount input, once per frame with the
+    /// session's answer ([`super::WalkerSession::holds_input`]). A placement loads behind the
+    /// character screens (`official-entry.md` §8.7), and the viewer must not walk away from it.
+    /// The menu action stays, so Escape still cancels; the controller still runs, with nothing
+    /// asked of it, so a placement lands on the ground. A hold ends autorun for good, so only an
+    /// official selection may ask for one: offline, `--autorun` has to outlast the entry.
     pub fn set_input_held(&mut self, held: bool) {
         if held {
             self.autorun = false;
@@ -1819,6 +1820,91 @@ mod tests {
             let _ = c.frame(1.0 / 60.0, &ground, None);
         }
         assert_eq!(c.physics().unwrap().state().steps, before);
+    }
+
+    /// What the walker does each frame: the session's answer on the hold, then the controls.
+    fn offline_frames(
+        c: &mut Controls,
+        session: &mut crate::net::World,
+        now: &mut Instant,
+        frames: usize,
+        ground: &dyn Fn(f64, f64) -> Option<f32>,
+        world: Option<&dyn CollisionWorld>,
+    ) {
+        use super::super::WalkerSession as _;
+        for _ in 0..frames {
+            session.update(*now);
+            *now += Duration::from_millis(16);
+            for screens_open in [true, false] {
+                assert!(
+                    !session.holds_input(screens_open),
+                    "{:?} with screens {screens_open}",
+                    session.state()
+                );
+            }
+            c.set_input_held(session.holds_input(false));
+            let _ = c.frame(1.0 / 60.0, ground, world);
+        }
+    }
+
+    /// `--autorun` is set before the first frame, and a sandbox session spends its first frames
+    /// in `EnteringWorld`: the entry must leave it alone, on the terrain walk controller.
+    #[test]
+    fn a_command_line_autorun_outlasts_an_offline_entry_on_terrain() {
+        let flat = |_: f64, _: f64| Some(100.0_f32);
+        let mut now = Instant::now();
+        let mut session = crate::net::World::sandbox(now).expect("sandbox");
+        let mut c = Controls::new(&default_keymap(), MoveMode::Walk, 40.0);
+        c.set_autorun(true, false);
+        offline_frames(&mut c, &mut session, &mut now, 30, &flat, None);
+        assert_eq!(session.state(), tessera_net::SessionState::InWorld);
+        assert!(c.autorun, "the entry left --autorun on");
+        let start = WorldPos::new(1, 20_000.0, 20_000.0, 100.0);
+        c.place(&start, 0.0, 30.0, -0.25);
+        offline_frames(&mut c, &mut session, &mut now, 60, &flat, None);
+        assert!(c.focus().x > start.x + 1.0, "{:?}", c.focus());
+    }
+
+    /// The same on the collision controller, where `--autorun` is the run lock.
+    #[test]
+    fn a_command_line_autorun_outlasts_an_offline_entry_on_collision() {
+        let (world, g) = flat_collision();
+        let ground = |_: f64, _: f64| Some(g as f32);
+        let mut now = Instant::now();
+        let mut session = crate::net::World::sandbox(now).expect("sandbox");
+        let mut c = Controls::new(&default_keymap(), MoveMode::Walk, 40.0);
+        c.set_autorun(true, false);
+        offline_frames(&mut c, &mut session, &mut now, 30, &ground, Some(&world));
+        let start = WorldPos::new(1, 16_080.0, 16_080.0, g);
+        c.place(&start, 0.0, 30.0, -0.25);
+        c.enable_physics(MoverSetup::builtin());
+        offline_frames(&mut c, &mut session, &mut now, 60, &ground, Some(&world));
+        assert!(c.physics().unwrap().run_lock());
+        assert!(c.focus().x > start.x + 3.0, "{:?}", c.focus());
+    }
+
+    /// A hold keeps the collision controller from running on its lock, and its end does not bring
+    /// the lock back: a character re-entered on an official selection stands still.
+    #[test]
+    fn an_official_hold_ends_the_run_lock_for_good() {
+        let (world, g) = flat_collision();
+        let ground = |_: f64, _: f64| Some(g as f32);
+        let mut c = Controls::new(&default_keymap(), MoveMode::Walk, 40.0);
+        let start = WorldPos::new(1, 16_080.0, 16_080.0, g);
+        c.place(&start, 0.0, 30.0, -0.25);
+        c.enable_physics(MoverSetup::builtin());
+        c.set_autorun(true, false);
+        c.set_input_held(true);
+        for _ in 0..60 {
+            let _ = c.frame(1.0 / 60.0, &ground, Some(&world));
+        }
+        assert!((c.focus().x - start.x).abs() < 1e-3, "{:?}", c.focus());
+        c.set_input_held(false);
+        for _ in 0..60 {
+            let _ = c.frame(1.0 / 60.0, &ground, Some(&world));
+        }
+        assert!(!c.physics().unwrap().run_lock());
+        assert!((c.focus().x - start.x).abs() < 1e-3, "{:?}", c.focus());
     }
 
     #[test]

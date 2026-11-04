@@ -300,10 +300,13 @@ impl crate::walker::WalkerSession for World {
         World::player_location(self)
     }
 
-    /// `official-session.md` §9.3.9: normal input starts after `WorldEntered`, so a session on its
-    /// way into the world has no player to move.
-    fn holds_input(&self) -> bool {
-        self.state() == SessionState::EnteringWorld
+    /// An official selection has no player to move while it enters or while its character screens
+    /// are open: a placement loads behind them (`official-entry.md` §8.7), and normal input starts
+    /// in the world. Offline sessions (the sandbox, a scenario, `--server`) pass through
+    /// `EnteringWorld` too, for as long as their data takes, and never hold: a `--autorun` of the
+    /// command line must outlast it.
+    fn holds_input(&self, screens_open: bool) -> bool {
+        self.is_handed_over() && (screens_open || self.state() == SessionState::EnteringWorld)
     }
 
     fn send_move(
@@ -2305,6 +2308,78 @@ mod tests {
         }
     }
 
+    /// The hold belongs to an official selection: from the list, with the screens open, through
+    /// the entry and until the screens have closed in the world.
+    #[test]
+    fn a_handed_over_session_holds_input_while_entering_or_behind_its_screens() {
+        use crate::walker::WalkerSession as _;
+        let mut now = Instant::now();
+        let mut world = handed_sandbox(now);
+        assert_eq!(world.state(), SessionState::Connected);
+        assert!(world.holds_input(true), "at the list");
+        assert!(!world.holds_input(false), "no screens and not entering");
+        world
+            .session_mut()
+            .send(
+                now,
+                Command::EnterWorld {
+                    character: "Alda".into(),
+                },
+            )
+            .expect("enter");
+        assert_eq!(world.state(), SessionState::EnteringWorld);
+        assert!(world.holds_input(true), "entering behind the screens");
+        assert!(world.holds_input(false), "entering, screens closed");
+        settle(&mut world, &mut now, 30);
+        assert_eq!(world.state(), SessionState::InWorld);
+        assert!(world.holds_input(true), "in the world, screens still open");
+        assert!(!world.holds_input(false), "in the world: normal input");
+    }
+
+    /// Offline, `EnteringWorld` is only how long the data takes: no hold in any state, screens or
+    /// not, automatic entry or the player's choice. `--autorun` and the keys depend on it.
+    #[test]
+    fn a_sandbox_session_never_holds_input() {
+        use crate::walker::WalkerSession as _;
+        fn check(world: &World, seen: &mut Vec<SessionState>) {
+            for screens_open in [false, true] {
+                assert!(!world.holds_input(screens_open), "{:?}", world.state());
+            }
+            if !seen.contains(&world.state()) {
+                seen.push(world.state());
+            }
+        }
+        let mut now = Instant::now();
+        // The automatic entry of a walker without character screens.
+        let mut world = World::sandbox(now).expect("sandbox");
+        let mut seen = Vec::new();
+        for _ in 0..30 {
+            check(&world, &mut seen);
+            world.update(now);
+            now += Duration::from_millis(16);
+        }
+        check(&world, &mut seen);
+        assert!(seen.contains(&SessionState::InWorld), "{seen:?}");
+        // The player's choice on the character screens (`--character-select`).
+        let mut world = World::sandbox(now).expect("sandbox");
+        world.set_manual_enter(true);
+        settle(&mut world, &mut now, 5);
+        assert_eq!(world.state(), SessionState::Connected);
+        let mut seen = Vec::new();
+        check(&world, &mut seen);
+        let character = world.character_list().first().expect("a character");
+        let character = character.name.clone();
+        world
+            .session_mut()
+            .send(now, Command::EnterWorld { character })
+            .expect("enter");
+        assert_eq!(world.state(), SessionState::EnteringWorld);
+        check(&world, &mut seen);
+        settle(&mut world, &mut now, 30);
+        check(&world, &mut seen);
+        assert_eq!(world.state(), SessionState::InWorld);
+    }
+
     #[test]
     fn a_handed_over_session_never_enters_a_character_on_its_own() {
         let mut now = Instant::now();
@@ -3057,6 +3132,24 @@ at 0s spawn $dummy
         for k in 0..ms / 10 {
             w.update(start + Duration::from_millis(10 * k));
         }
+    }
+
+    /// `--scenario` is offline: a scenario session holds no input while it enters or later, with
+    /// or without character screens.
+    #[test]
+    fn a_scenario_session_never_holds_input() {
+        use crate::walker::WalkerSession as _;
+        let mut w = world(SCENARIO);
+        let start = Instant::now();
+        let mut in_world = false;
+        for k in 0..100 {
+            for screens_open in [false, true] {
+                assert!(!w.holds_input(screens_open), "{:?}", w.state());
+            }
+            in_world |= w.state() == SessionState::InWorld;
+            w.update(start + Duration::from_millis(10 * k));
+        }
+        assert!(in_world, "{:?}", w.state());
     }
 
     #[test]

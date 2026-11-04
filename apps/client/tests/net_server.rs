@@ -442,6 +442,55 @@ fn a_wrong_pin_is_refused_with_a_pin_hint() {
     assert_eq!(handle.stats().logged_in, 0);
 }
 
+/// `--server` is no official selection: the session passes through `EnteringWorld` on a real
+/// connection and holds no input in any state, with or without character screens.
+#[test]
+fn a_test_server_session_never_holds_input() {
+    let Some(server) = start_server() else {
+        return;
+    };
+    let handle = server.handle.as_ref().expect("server");
+    let mut world = World::remote(
+        Instant::now(),
+        &settings(handle, "alice", "Aldith"),
+        None,
+        None,
+    )
+    .expect("session");
+    world.set_manual_enter(true);
+    let no_hold = |world: &World| {
+        for screens_open in [false, true] {
+            assert!(
+                !WalkerSession::holds_input(world, screens_open),
+                "{:?} with screens {screens_open}",
+                world.state()
+            );
+        }
+    };
+    no_hold(&world);
+    run_one(&mut world, |w| {
+        no_hold(w);
+        w.state() == SessionState::Connected
+    });
+    assert_eq!(world.state(), SessionState::Connected, "not connected");
+    world
+        .session_mut()
+        .send(
+            Instant::now(),
+            tessera_net::Command::EnterWorld {
+                character: "Aldith".into(),
+            },
+        )
+        .expect("EnterWorld sent");
+    assert_eq!(world.state(), SessionState::EnteringWorld);
+    run_one(&mut world, |w| {
+        no_hold(w);
+        w.state() == SessionState::InWorld
+    });
+    assert_eq!(world.state(), SessionState::InWorld, "not in the world");
+    no_hold(&world);
+}
+
 /// With the character screens (manual entry) a refused `EnterWorld` keeps the session
 /// (`tessera-protocol.md` §6.2.11, Appendix A "Decision on `EnterWorldFailed`"): it stays
 /// connected, chat names the refusal, and another `EnterWorld` then enters the world.

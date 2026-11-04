@@ -556,7 +556,14 @@ Paste what the command gives, from the last `official evidence: stage` you care 
 is long. Those lines carry no address, port, account, ticket, seed, cookie, character name or ID,
 install path, identifier or iteration value. Read what you paste all the same, and do not paste the
 password prompt, a datagram dump (`TESSERA_OFFICIAL_DUMP_DIR`), a packet capture or anything from
-outside that command's output. Do not commit the log: reports of live runs go in prose, without
+outside that command's output.
+
+Who reads a log is set by [decision 0046](decisions/0046-m8-initial-advertisement-policy.md) item 11: the
+owner, the spec writer, and the builder session the owner gives it to, nobody else. Logs describe official
+traffic, so a session that reads one is exposed: it is recorded under
+[decision 0041](decisions/0041-incident-m8-spec-contamination.md), and the code it writes afterwards is not
+strictly clean-room for M8. This is a recorded exception, not a contamination incident. An implementer that
+was not given a log does not open one. Never commit a log: reports of live runs go in prose, without
 captured values.
 
 ### Official session handshake diagnostics (M8 live verification)

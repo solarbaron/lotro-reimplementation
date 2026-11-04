@@ -547,8 +547,8 @@ mod tests {
         );
     }
 
-    /// §9.3.9: normal input starts after `WorldEntered`. A held viewer stays at its placement
-    /// whatever is pressed; the menu key still works, so Escape cancels.
+    /// A held viewer (an official selection entering or behind its screens) stays at its
+    /// placement whatever is pressed; the menu key still works, so Escape cancels.
     #[test]
     fn held_input_leaves_the_viewer_at_its_placement() {
         use super::super::controls::{Controls, MoveMode};
@@ -647,5 +647,94 @@ mod tests {
             "the avatar stays while typing: {stopped} -> {x}"
         );
         assert_eq!(chat.input(), Some("w"));
+    }
+
+    /// The walker asks the session once per frame whether input is held. The chat line's own
+    /// hold is its routing, so that per-frame answer cannot free typing, and closing the line
+    /// gives the keys back whatever the mode: at once offline and in the world, and only at the
+    /// end of the hold while an official selection is entering.
+    #[test]
+    fn the_per_frame_hold_leaves_the_chat_lines_own_hold_alone() {
+        use super::super::WalkerSession as _;
+        use super::super::controls::{Controls, MoveMode};
+        use tessera_world::WorldPos;
+        let flat = |_: f64, _: f64| Some(100.0_f32);
+        let now = Instant::now();
+        let handed = crate::net::World::handed_over(now, crate::net::test_hand_over(now));
+        let sandbox = crate::net::World::sandbox(now).expect("sandbox");
+        for (name, session) in [
+            ("sandbox", sandbox),
+            ("official, no screens and not entering", handed),
+        ] {
+            let held = session.holds_input(false);
+            assert!(!held, "{name}");
+            let mut controls =
+                Controls::new(&tessera_input::default_keymap(), MoveMode::Walk, 40.0);
+            let start = WorldPos::new(1, 20_000.0, 20_000.0, 100.0);
+            controls.place(&start, 0.0, 30.0, -0.25);
+            let mut chat = ChatOverlay::default();
+            route(&mut chat, &mut controls, &key(KeyCode::Enter));
+            assert!(chat.is_open());
+            // Typing W keeps the avatar still, frame after frame of "not held".
+            route(&mut chat, &mut controls, &key(KeyCode::W));
+            route(&mut chat, &mut controls, &RawEvent::Text('w'));
+            for _ in 0..60 {
+                controls.set_input_held(session.holds_input(false));
+                let _ = controls.frame(1.0 / 60.0, &flat, None);
+            }
+            assert!(chat.is_open(), "{name}");
+            assert_eq!(chat.input(), Some("w"), "{name}");
+            let typed = controls.focus();
+            assert!((typed.x - start.x).abs() < 1e-3, "{name}: {typed:?}");
+            // The release of the typed W stays in the chat too, then Escape closes the line.
+            route(
+                &mut chat,
+                &mut controls,
+                &RawEvent::Key {
+                    key: KeyCode::W,
+                    pressed: false,
+                    repeat: false,
+                },
+            );
+            route(&mut chat, &mut controls, &key(KeyCode::Escape));
+            assert!(!chat.is_open(), "{name}");
+            // Closed: the keys walk again.
+            route(&mut chat, &mut controls, &key(KeyCode::W));
+            for _ in 0..30 {
+                controls.set_input_held(session.holds_input(false));
+                let _ = controls.frame(1.0 / 60.0, &flat, None);
+            }
+            assert!(
+                controls.focus().x > start.x + 0.01,
+                "{name}: {:?}",
+                controls.focus()
+            );
+        }
+
+        // An official selection entering: the line opens, types and closes without freeing the
+        // viewer, and the hold's end does.
+        let mut controls = Controls::new(&tessera_input::default_keymap(), MoveMode::Walk, 40.0);
+        let start = WorldPos::new(1, 20_000.0, 20_000.0, 100.0);
+        controls.place(&start, 0.0, 30.0, -0.25);
+        controls.set_input_held(true);
+        let mut chat = ChatOverlay::default();
+        route(&mut chat, &mut controls, &key(KeyCode::Enter));
+        route(&mut chat, &mut controls, &RawEvent::Text('w'));
+        route(&mut chat, &mut controls, &key(KeyCode::Escape));
+        assert!(!chat.is_open());
+        route(&mut chat, &mut controls, &key(KeyCode::W));
+        for _ in 0..30 {
+            let _ = controls.frame(1.0 / 60.0, &flat, None);
+        }
+        assert!((controls.focus().x - start.x).abs() < 1e-3);
+        controls.set_input_held(false);
+        for _ in 0..30 {
+            let _ = controls.frame(1.0 / 60.0, &flat, None);
+        }
+        assert!(
+            controls.focus().x > start.x + 0.01,
+            "{:?}",
+            controls.focus()
+        );
     }
 }

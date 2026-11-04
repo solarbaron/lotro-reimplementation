@@ -4744,8 +4744,8 @@ fn a_pending_placement_loads_behind_the_screens_and_is_answered_once() {
         )
         .expect("enter");
     assert_eq!(world.state(), tessera_net::SessionState::EnteringWorld);
-    // §9.3.9: normal input starts after `WorldEntered`.
-    assert!(crate::walker::WalkerSession::holds_input(&world));
+    // Normal input starts in the world: the walker takes none while the placement loads.
+    assert!(crate::walker::WalkerSession::holds_input(&world, false));
     // A settled frame before any placement sends nothing.
     world.walker_frame(t, None, true);
     assert_eq!(world.loaded_signals(), 0);

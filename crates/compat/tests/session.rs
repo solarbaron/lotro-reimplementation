@@ -5,7 +5,7 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use tessera_compat::session::{
     AUTH_FLAG_HAS_EXTRA_BLOB, AUTH_FLAG_HAS_SECOND_STRING, AUTH_TYPE_CHAT, AUTH_TYPE_PRIMARY,
-    AuthConnection, AuthServerAddressHeader, BIT_TREE_TABLE_FORMAT_UUID,
+    AuthConnection, AuthServerAddressHeader, BIT_TREE_TABLE_FORMAT_UUID, BLOB_FLAG_CONTROL_02,
     BLOB_FLAG_DEFAULT_RECIPIENT, BLOB_FLAG_ENCRYPTED, BindPlan, BindPorts, BitTreeCodec,
     BitTreeNode, BitTreeTable, BlobFragment, BlobFragmentHeader, BlobReassembler,
     ClientVersionMessage, CodecUuids, ConnectAcceptHeader, ConnectChallengeHeader, ConnectionState,
@@ -644,6 +644,177 @@ fn zero_recipient_ids_in_a_challenge_are_refused() {
         (conn.local_rec_id(), conn.server_rec_id()),
         (0x0001, 0x0304)
     );
+}
+
+/// §9.3.9 and the atomic receive policy: a zero-recipient challenge ends the attempt only once its
+/// datagram has been judged. A malformed or refused sibling drops the whole datagram, as for a
+/// non-zero recipient, with no close and no reply, and the auth retries go on.
+#[test]
+fn a_zero_recipient_challenge_is_judged_with_its_siblings() {
+    let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 8), 9000);
+    let small = || queue_1_frag(0, 1, 16);
+    let encrypted = || {
+        let mut frag = small();
+        frag.header.blob_flags |= BLOB_FLAG_ENCRYPTED;
+        frag
+    };
+    let control_bit = || {
+        let mut frag = multi_frag(0, 1, 16);
+        frag.header.blob_flags |= BLOB_FLAG_CONTROL_02;
+        frag
+    };
+    let datagram = |rec_id: u16, outgoing: u16, fragments: &[BlobFragment]| {
+        let mut dgram = encode_datagram(
+            DatagramHeader {
+                rec_id,
+                peer_word: 0x3344,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders {
+                connect_challenge: Some(ConnectChallengeHeader {
+                    outgoing_rec_id: outgoing,
+                    incoming_codec_guid: guid_fields_swapped(IN_UUID),
+                    ..ConnectChallengeHeader::default()
+                }),
+                ..OptionalHeaders::default()
+            },
+            fragments,
+            None,
+            None,
+        )
+        .unwrap();
+        // Tessera's writer does not encode a fragment's flags 0x02: put in by hand.
+        if let Some(last) = fragments
+            .last()
+            .filter(|f| f.header.blob_flags & BLOB_FLAG_CONTROL_02 != 0)
+        {
+            let mut wire = Vec::new();
+            last.encode(&mut wire).unwrap();
+            let at = dgram.len() - wire.len() + 1;
+            dgram[at] |= BLOB_FLAG_CONTROL_02;
+        }
+        // The send rule's checksum is per buffer; rebuild it by the receive rule, so the checksum
+        // is valid and only the sibling is wrong.
+        let mut parsed = decode_datagram(&dgram, true, None, false).unwrap();
+        parsed.header.checksum =
+            combine_packet_checksum(parsed.header, parsed.payload_sum, None).unwrap();
+        dgram[2..22].copy_from_slice(&parsed.header.to_wire_bytes());
+        dgram
+    };
+    let cases: Vec<(Vec<BlobFragment>, SessionError)> = vec![
+        (
+            vec![queue_1_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD)],
+            SessionError::UnmaskedMultiPartFragment { queue_id: 1 },
+        ),
+        (
+            vec![multi_frag(0, 1, 16)],
+            SessionError::UnmaskedReliableFragment { queue_id: 2 },
+        ),
+        (
+            vec![control_bit()],
+            SessionError::UnsupportedFragment {
+                queue_id: 2,
+                blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT | BLOB_FLAG_CONTROL_02,
+            },
+        ),
+        (vec![encrypted()], SessionError::EncryptedBlobRejected),
+        // The bad one behind a good one.
+        (
+            vec![small(), encrypted()],
+            SessionError::EncryptedBlobRejected,
+        ),
+        (
+            vec![small(), queue_1_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD)],
+            SessionError::UnmaskedMultiPartFragment { queue_id: 1 },
+        ),
+    ];
+    for (header_rec_id, outgoing) in [(0u16, 0x0304u16), (0x0102, 0)] {
+        let mut conn = SessionConnection::new(server, 0.0);
+        conn.set_codec_uuids(UUIDS);
+        conn.start_login(account_auth("A", 0).unwrap(), 0.0)
+            .unwrap();
+        conn.pop_outbound_datagram();
+        for (fragments, expected) in &cases {
+            let dgram = datagram(header_rec_id, outgoing, fragments);
+            assert_eq!(
+                conn.receive_datagram(&dgram, server, 0.1, WireCodecs::NONE),
+                Err(expected.clone()),
+                "{fragments:?}"
+            );
+            assert_eq!(conn.state(), ConnectionState::SessionAuthSent);
+            assert_eq!((conn.local_rec_id(), conn.server_rec_id()), (0, 0));
+            assert!(conn.pop_event().is_none(), "nothing ended");
+            assert!(conn.pop_outbound_datagram().is_none(), "no reply");
+        }
+        // The retries went on.
+        conn.tick(2.5).unwrap();
+        assert!(conn.pop_outbound_datagram().is_some(), "the auth again");
+
+        // With a sibling that passes, the zero recipient is what ends the attempt, and the sibling
+        // is not delivered.
+        let dgram = datagram(header_rec_id, outgoing, &[small()]);
+        assert_eq!(
+            conn.receive_datagram(&dgram, server, 3.0, WireCodecs::NONE),
+            Err(SessionError::InvalidChallengeRecipient)
+        );
+        assert_eq!(conn.state(), ConnectionState::Closing);
+        assert_eq!((conn.local_rec_id(), conn.server_rec_id()), (0, 0));
+        assert!(matches!(
+            conn.pop_event(),
+            Some(SessionEvent::Disconnected {
+                reason: DisconnectReason::InvalidChallenge
+            })
+        ));
+        assert!(conn.pop_event().is_none(), "no blob");
+        assert!(conn.pop_outbound_datagram().is_none(), "no accept");
+    }
+}
+
+/// In State 2 a zero recipient is refused and closes nothing, and its siblings are judged first there
+/// too: the sibling's refusal is the result, and the adopted connection goes on.
+#[test]
+fn a_zero_recipient_challenge_in_state_2_is_judged_with_its_siblings() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 9), 9000);
+    let mut conn = challenged_connection(peer, 0x0100, 0x0000_7777);
+    for (header_rec_id, outgoing) in [(0u16, 0x0304u16), (0x0102, 0)] {
+        let datagram = |fragments: &[BlobFragment]| {
+            encode_datagram(
+                DatagramHeader {
+                    rec_id: header_rec_id,
+                    peer_word: 0x3344,
+                    ..DatagramHeader::default()
+                },
+                &OptionalHeaders {
+                    connect_challenge: Some(ConnectChallengeHeader {
+                        outgoing_rec_id: outgoing,
+                        incoming_codec_guid: guid_fields_swapped(IN_UUID),
+                        ..ConnectChallengeHeader::default()
+                    }),
+                    ..OptionalHeaders::default()
+                },
+                fragments,
+                None,
+                None,
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            conn.receive_datagram(
+                &datagram(&[queue_1_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD)]),
+                peer,
+                0.1,
+                WireCodecs::NONE
+            ),
+            Err(SessionError::UnmaskedMultiPartFragment { queue_id: 1 })
+        );
+        assert_eq!(
+            conn.receive_datagram(&datagram(&[]), peer, 0.1, WireCodecs::NONE),
+            Err(SessionError::InvalidChallengeRecipient)
+        );
+        assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
+        assert!(conn.pop_event().is_none());
+        assert!(conn.pop_outbound_datagram().is_none());
+    }
 }
 
 #[test]

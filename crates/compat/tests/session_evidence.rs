@@ -9,10 +9,12 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tessera_compat::session::{
-    AuthConnection, CodecUuids, ConnectChallengeHeader, DatagramHeader, EVIDENCE_TARGET,
-    IsaacCipher, MAX_EVIDENCE_CONTROL_LINES, MAX_EVIDENCE_LINES_PER_CONNECTION,
-    MAX_EVIDENCE_SEND_LINES, MAX_EVIDENCE_TAIL_LINES, OptionalHeaders, SessionAuthHeader,
-    SessionConnection, WireCodecs, encode_datagram, guid_fields_swapped,
+    AuthConnection, BLOB_FLAG_DEFAULT_RECIPIENT, BlobFragment, BlobFragmentHeader, CodecUuids,
+    ConnectChallengeHeader, ConnectionState, DatagramHeader, EVIDENCE_TARGET, IsaacCipher,
+    MAX_EVIDENCE_CONTROL_LINES, MAX_EVIDENCE_LINES_PER_CONNECTION, MAX_EVIDENCE_RECEIVE_LINES,
+    MAX_EVIDENCE_SEND_LINES, MAX_EVIDENCE_TAIL_LINES, MAX_UNACKED_SENT_PACKETS, OptionalHeaders,
+    SessionAuthHeader, SessionConnection, SessionError, SessionMultiplexer, WireCodecs,
+    encode_datagram, guid_fields_swapped,
 };
 
 const PEER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 90), 9000);
@@ -119,7 +121,18 @@ struct Server {
 }
 
 impl Server {
+    fn new() -> Self {
+        Self {
+            isaac: IsaacCipher::from_seed(SEED),
+            seq: 1,
+        }
+    }
+
     fn packet(&mut self, opt: &OptionalHeaders) -> Vec<u8> {
+        self.packet_with(opt, &[])
+    }
+
+    fn packet_with(&mut self, opt: &OptionalHeaders, fragments: &[BlobFragment]) -> Vec<u8> {
         self.seq += 1;
         encode_datagram(
             DatagramHeader {
@@ -128,11 +141,40 @@ impl Server {
                 ..DatagramHeader::default()
             },
             opt,
-            &[],
+            fragments,
             Some(self.isaac.next_mask()),
             None,
         )
         .expect("packet")
+    }
+
+    /// A packet that delivers one small queue-1 blob.
+    fn blob(&mut self) -> Vec<u8> {
+        let blob = BlobFragment {
+            header: BlobFragmentHeader {
+                queue_id: 1,
+                ext_word: None,
+                blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT,
+                seq_group: 0,
+                order_num: 0xFFFF,
+                blob_id: 0,
+                frag_index: 0,
+                num_frags: 1,
+                recipient_id: 2,
+                blob_header_word: Some(0x55),
+                frag_data_len: 4,
+                attachment: None,
+            },
+            payload: vec![0xA5; 4],
+        };
+        self.packet_with(&OptionalHeaders::default(), &[blob])
+    }
+
+    fn goodbye(&mut self) -> Vec<u8> {
+        self.packet(&OptionalHeaders {
+            disconnect: true,
+            ..OptionalHeaders::default()
+        })
     }
 }
 
@@ -140,10 +182,7 @@ fn connected() -> (SessionConnection, Server) {
     let mut conn = started();
     conn.receive_datagram(&challenge(), PEER, 0.1, WireCodecs::NONE)
         .expect("challenge");
-    let mut server = Server {
-        isaac: IsaacCipher::from_seed(SEED),
-        seq: 1,
-    };
+    let mut server = Server::new();
     conn.receive_datagram(
         &server.packet(&OptionalHeaders::default()),
         PEER,
@@ -406,4 +445,136 @@ fn the_lines_before_a_close_survive_the_budget() {
     );
     // The totals are out at the close, and the drop does not repeat them.
     assert_eq!(lines_of(&lines, "connection totals").len(), 1, "{lines:#?}");
+}
+
+/// The log of a connection that closed ends with one totals line, and it is the last: the tail is
+/// written once and before it, and `datagrams` is what came up to the close.
+fn assert_the_log_ended(lines: &[String], datagrams_to_close: u64) {
+    assert!(
+        lines.len() <= MAX_EVIDENCE_LINES_PER_CONNECTION,
+        "{} lines",
+        lines.len()
+    );
+    let totals = lines_of(lines, "connection totals");
+    assert_eq!(totals.len(), 1, "{totals:#?}");
+    let last = lines.last().expect("some lines");
+    assert!(last.contains("connection totals"), "{last}");
+    assert!(
+        last.contains(&format!(" datagrams={datagrams_to_close} ")),
+        "{last}"
+    );
+    assert!(lines_of(lines, "tail=true").len() <= MAX_EVIDENCE_TAIL_LINES);
+}
+
+/// EV-CLOSING-UNBOUNDED: a closed connection still routes by its ID and takes valid datagrams, and
+/// with every budget of the line classes spent or not they cost no line: after the server's Disconnect
+/// a hostile stream of accepted datagrams, blobs and our own late sends adds nothing to the log.
+#[test]
+fn a_hostile_stream_after_the_close_writes_no_lines() {
+    const STREAM: usize = 5_000;
+    // Below the budget, and then past it, where each accepted datagram used to go to the tail.
+    for traffic in [0, MAX_EVIDENCE_RECEIVE_LINES as usize + 100] {
+        let lines = evidence_of(|| {
+            let mut mux = SessionMultiplexer::new();
+            let id = mux.create_connection(PEER, 0.0).expect("a slot");
+            let conn = mux.connection_mut(id).expect("the connection");
+            conn.enable_evidence("login", 0.0);
+            conn.set_codec_uuids(UUIDS);
+            let auth = SessionAuthHeader::for_connection(
+                AuthConnection::Primary,
+                "netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10",
+                "A",
+                None,
+                None,
+                0,
+            )
+            .expect("auth");
+            conn.start_login(auth, 0.0).expect("login");
+            mux.receive_from_peer(&challenge(), PEER, 0.1, WireCodecs::NONE)
+                .expect("challenge");
+            let mut server = Server::new();
+            for _ in 0..=traffic {
+                mux.receive_from_peer(
+                    &server.packet(&OptionalHeaders::default()),
+                    PEER,
+                    0.2,
+                    WireCodecs::NONE,
+                )
+                .expect("traffic");
+            }
+            mux.receive_from_peer(&server.goodbye(), PEER, 1.0, WireCodecs::NONE)
+                .expect("the server's goodbye");
+            let conn = mux.connection_mut(id).expect("the connection");
+            assert_eq!(conn.state(), ConnectionState::Closing);
+
+            // Every one of these reaches the closed connection and is taken.
+            let mut now = 1.0;
+            for i in 0..STREAM {
+                now += 0.001;
+                let packet = if i % 2 == 0 {
+                    server.packet(&OptionalHeaders::default())
+                } else {
+                    server.blob()
+                };
+                let (routed, _) = mux
+                    .receive_from_peer(&packet, PEER, now, WireCodecs::NONE)
+                    .expect("a valid datagram");
+                assert_eq!(routed, id);
+            }
+            let conn = mux.connection_mut(id).expect("the connection");
+            assert_eq!(conn.state(), ConnectionState::Closing);
+            conn.send_blob(2, 0, 0x6F, &[0], now, None).expect("a send");
+            conn.tick(now).expect("a tick");
+            mux.remove_connection(id);
+        });
+        // The challenge, the traffic and the goodbye.
+        let datagrams = traffic as u64 + 3;
+        assert_the_log_ended(&lines, datagrams);
+        assert_eq!(lines_of(&lines, "official evidence: blob").len(), 0);
+        assert_eq!(lines_of(&lines, "opcode=0x6f").len(), 0);
+        let written = lines_of(&lines, "official evidence: datagram").len() as u64;
+        assert!(written <= datagrams, "{written} of {datagrams}");
+    }
+}
+
+/// The close of a full send window is a close too: its tail and totals go out then, and what comes
+/// after it, before any tick, is not in the log.
+#[test]
+fn the_log_ends_at_a_close_on_the_send_path() {
+    let lines = evidence_of(|| {
+        let (mut conn, mut server) = connected();
+        let mut refused = None;
+        for _ in 0..=MAX_UNACKED_SENT_PACKETS {
+            if let Err(err) = conn.send_blob(2, 0, 0x6F, &[0], 1.0, None) {
+                refused = Some(err);
+                break;
+            }
+            conn.pop_outbound_datagram();
+        }
+        assert_eq!(refused, Some(SessionError::OutboundWindowOverflow));
+        assert_eq!(conn.state(), ConnectionState::Closing);
+        for _ in 0..100 {
+            conn.receive_datagram(
+                &server.packet(&OptionalHeaders::default()),
+                PEER,
+                1.5,
+                WireCodecs::NONE,
+            )
+            .expect("a valid datagram");
+        }
+    });
+    // The challenge and the first packet.
+    assert_the_log_ended(&lines, 2);
+    let tail = lines_of(&lines, "tail=true");
+    assert_eq!(tail.len(), MAX_EVIDENCE_TAIL_LINES, "{}", lines.len());
+}
+
+/// A connection let go without a close has its tail and totals once as well, when it is dropped.
+#[test]
+fn a_connection_let_go_writes_its_totals_once() {
+    let lines = evidence_of(|| {
+        let (conn, _) = connected();
+        drop(conn);
+    });
+    assert_the_log_ended(&lines, 2);
 }

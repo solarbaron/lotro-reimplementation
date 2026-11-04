@@ -5744,15 +5744,15 @@ pub const MAX_EVIDENCE_OPCODES: usize = 256;
 /// The newest lines past their budget that are kept and written when the connection ends, so that
 /// what came just before a close is in the log however long the connection ran.
 pub const MAX_EVIDENCE_TAIL_LINES: usize = 64;
-/// Most evidence lines of one connection, totals included (they may go out twice: at its close, and
-/// when it is dropped if anything happened since).
+/// Most evidence lines of one connection, totals included. The tail and the totals go out once, at
+/// its close or when it is dropped, and nothing is written after them.
 pub const MAX_EVIDENCE_LINES_PER_CONNECTION: usize = (MAX_EVIDENCE_SEND_LINES
     + MAX_EVIDENCE_CONTROL_LINES
     + MAX_EVIDENCE_LIFECYCLE_LINES
     + MAX_EVIDENCE_RECEIVE_LINES) as usize
     + 2 * MAX_EVIDENCE_OPCODES
     + MAX_EVIDENCE_TAIL_LINES
-    + 2;
+    + 1;
 /// What the flow accumulator counts (§5.5 P10-22-POLICY).
 const FLOW_SCOPE: &str = "udp-payload-of-accepted-datagrams";
 
@@ -5895,7 +5895,9 @@ struct KeptLine {
 /// and flow reports cannot use up the lines of what carries an opcode. A line past its budget goes
 /// to a ring of the newest ([`MAX_EVIDENCE_TAIL_LINES`]), written with `tail=true` at the
 /// connection's close, so what came before the close is there; only what falls out of the ring is
-/// counted as not shown. The totals line goes out at the close, or when the connection is dropped.
+/// counted as not shown. The tail and the totals line go out once, at the close or when the
+/// connection is dropped. The log ends there: a closed connection still routes by its ID and may
+/// take valid datagrams, and those are neither written nor counted in anything that is written.
 #[derive(Debug)]
 struct Evidence {
     role: &'static str,
@@ -5918,8 +5920,8 @@ struct Evidence {
     datagrams: u64,
     blobs: u64,
     not_shown: u64,
-    /// The sum of the counts when the totals last went out.
-    totals_written: Option<u64>,
+    /// The tail and the totals are out, and nothing more is written.
+    finished: bool,
 }
 
 impl Evidence {
@@ -5945,7 +5947,7 @@ impl Evidence {
             datagrams: 0,
             blobs: 0,
             not_shown: 0,
-            totals_written: None,
+            finished: false,
         }
     }
 
@@ -5963,8 +5965,11 @@ impl Evidence {
         true
     }
 
-    /// Writes `line` now when `shown`, or keeps it for the tail.
+    /// Writes `line` now when `shown`, or keeps it for the tail; nothing once the log has ended.
     fn put(&mut self, line: EvidenceLine, shown: bool, now_sec: f64) {
+        if self.finished {
+            return;
+        }
         let kept = KeptLine {
             stage: self.stage,
             ms: self.ms(now_sec),
@@ -6132,25 +6137,15 @@ impl Evidence {
         self.put(line, shown, now_sec);
     }
 
-    /// The tail and the totals: at the connection's close, and when it is dropped if anything
-    /// happened since.
+    /// The tail and the totals, once: at the connection's close, or when it is dropped.
     fn finish(&mut self) {
+        if self.finished {
+            return;
+        }
+        self.finished = true;
         while let Some(kept) = self.tail.pop_front() {
             self.write(kept, true);
         }
-        let sum = self.sends
-            + self.resends
-            + self.controls
-            + self.handshakes
-            + self.handshake_resends
-            + self.disconnects
-            + self.queued_not_sent
-            + self.datagrams
-            + self.blobs;
-        if self.totals_written == Some(sum) {
-            return;
-        }
-        self.totals_written = Some(sum);
         tracing::info!(
             target: EVIDENCE_TARGET,
             role = self.role,
@@ -6901,6 +6896,7 @@ impl SessionConnection {
         }
         if self.retransmit_table.len() >= MAX_UNACKED_SENT_PACKETS {
             self.close(DisconnectReason::OutboundWindowOverflow, now_sec);
+            self.finish_evidence_at_close();
             return Err(SessionError::OutboundWindowOverflow);
         }
         let next_seq = {
@@ -6911,6 +6907,7 @@ impl SessionConnection {
             && next_seq.wrapping_sub(oldest_seq) > MAX_OUTBOUND_SEQ_SPAN
         {
             self.close(DisconnectReason::OutboundWindowOverflow, now_sec);
+            self.finish_evidence_at_close();
             return Err(SessionError::OutboundWindowOverflow);
         }
 
@@ -7253,7 +7250,8 @@ impl SessionConnection {
     }
 
     /// A connection that closed writes its tail and totals as soon as the pass that closed it has
-    /// written its own lines, and not only when it is dropped ([`Evidence::finish`]).
+    /// written its own lines, and not only when it is dropped. Later passes find the log ended
+    /// ([`Evidence::finish`]).
     fn finish_evidence_at_close(&mut self) {
         if self.state == ConnectionState::Closing
             && let Some(e) = self.evidence.as_mut()
@@ -7285,6 +7283,23 @@ impl SessionConnection {
             .map_err(|err| self.refused(err))?;
         let hdr = pkt.header;
 
+        // §6.3: the incoming recipient is the challenge datagram header's recId and the outgoing
+        // one payload bytes 18..19; Tessera adopts only non-zero IDs. §9.3.9: a zero recipient is
+        // unsupported at once, every auth retry cancelled and no reply, once its datagram has passed
+        // the checks below. A challenge after one was adopted is judged there too.
+        //
+        // Labelled (`docs/m8-remediation.md` §27 fix 9): "zero" is the checksum-valid header
+        // recipient or payload bytes 18..19. The header's opaque peer word is not tested. A
+        // checksum is verified here only with the masked flag clear: a challenge with that flag
+        // has proved nothing, so it ends nothing and is refused below like any other masked
+        // packet before the generators are seeded.
+        let zero_recipient = (hdr.flags & FLAG_MASKED_CHECKSUM) == 0
+            && pkt
+                .opt_headers
+                .connect_challenge
+                .as_ref()
+                .is_some_and(|cr| hdr.rec_id == 0 || cr.outgoing_rec_id == 0);
+
         if let Some(cr) = &pkt.opt_headers.connect_challenge {
             // §6.4: a ConnectChallengeHeader is acted on only in States 1 and 2.
             if !matches!(
@@ -7298,27 +7313,10 @@ impl SessionConnection {
                 let err = SessionError::UnexpectedConnectChallenge { state: self.state };
                 return Err(self.refused(err));
             }
-            // §6.3: the incoming recipient is the challenge datagram header's recId and the
-            // outgoing one payload bytes 18..19; Tessera adopts only non-zero IDs. §9.3.9: a zero
-            // recipient is unsupported at once, every auth retry cancelled and no reply. A challenge
-            // after one was adopted is judged below instead.
-            //
-            // Labelled (`docs/m8-remediation.md` §27 fix 9): "zero" is the checksum-valid header
-            // recipient or payload bytes 18..19. The header's opaque peer word is not tested. A
-            // checksum is verified here only with the masked flag clear: a challenge with that flag
-            // has proved nothing, so it ends nothing and is refused below like any other masked
-            // packet before the generators are seeded.
-            let verified = (hdr.flags & FLAG_MASKED_CHECKSUM) == 0;
-            if verified && (hdr.rec_id == 0 || cr.outgoing_rec_id == 0) {
-                tracing::debug!("ConnectChallengeHeader with a zero recipient");
-                if self.state == ConnectionState::SessionAuthSent {
-                    self.close(DisconnectReason::InvalidChallenge, now_sec);
-                }
-                return Err(SessionError::InvalidChallengeRecipient);
-            }
             // §6.1, §6.4.1: in State 2 only a repeat of the adopted challenge is answered
             // (with the pending accept); any other is refused before anything changes.
-            if self.state == ConnectionState::ChallengeAcceptSent
+            if !zero_recipient
+                && self.state == ConnectionState::ChallengeAcceptSent
                 && !self.repeats_adopted_challenge(hdr.rec_id, cr)
             {
                 tracing::debug!("a different ConnectChallengeHeader in State 2 dropped");
@@ -7327,7 +7325,7 @@ impl SessionConnection {
             // §3.4: when another active connection occupies the adopted ID, the challenge
             // is ignored (nothing changes, nothing is answered).
             let id = hdr.rec_id;
-            if id != self.local_rec_id && rec_id_in_use(id) {
+            if !zero_recipient && id != self.local_rec_id && rec_id_in_use(id) {
                 tracing::debug!(
                     rec_id = id,
                     "assigned recipient ID already in use; challenge ignored"
@@ -7402,7 +7400,7 @@ impl SessionConnection {
         // refusal can come after it: a conflict or a full table drops the datagram with nothing
         // applied, its siblings not delivered and its sequence free to be asked for again. A
         // terminal datagram is only judged: a conflict in it drops it like any other.
-        let judged = if unsupported.is_some() {
+        let judged = if unsupported.is_some() || zero_recipient {
             self.reassembler
                 .check_packet(sender_rec_id, &pkt.fragments, now_sec)
                 .map(|()| Vec::new())
@@ -7419,6 +7417,16 @@ impl SessionConnection {
                 return Err(self.refused(err));
             }
         };
+        // The zero recipient's terminal result: its datagram passed every check above, so a malformed
+        // or refused sibling has already dropped it whole, as for a non-zero recipient, with the auth
+        // retries going on. Nothing of it was taken.
+        if zero_recipient {
+            tracing::debug!("ConnectChallengeHeader with a zero recipient");
+            if self.state == ConnectionState::SessionAuthSent {
+                self.close(DisconnectReason::InvalidChallenge, now_sec);
+            }
+            return Err(SessionError::InvalidChallengeRecipient);
+        }
         if let Some(err) = unsupported {
             if self.queue_standalone_disconnect(now_sec).is_err() {
                 tracing::debug!("official session: the closing Disconnect was not encoded");

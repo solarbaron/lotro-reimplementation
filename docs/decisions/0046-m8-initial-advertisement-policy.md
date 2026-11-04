@@ -51,6 +51,10 @@ not only wire or observable facts.
 9. **Further known differences.** Tessera opens no chat connection at login, though both captures
    show one, and it may repeatedly ask for a resend of a datagram it dropped for an undefined flag
    bit, for up to 30 seconds. Both are accepted and listed where a refusal is analysed.
+10. **Later client messages before the final ready message.** Selection goes on while later world
+    0x30, 0x30000035, 0x24 and 0x19A are not sent, for any user past the warning and consent gate, until
+    a source for their contents exists. They are labelled known differences from the observed client,
+    and the server's reaction is untested. Nothing is invented to fill them.
 
 ## Consequences
 

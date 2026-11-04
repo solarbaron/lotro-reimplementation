@@ -4587,6 +4587,27 @@ fn a_silence_before_the_list_says_no_answer_on_the_account_form() {
     );
 }
 
+/// §8.6, `docs/m8-remediation.md` §27 fix 12: one entry says what a `ServiceUnavailable` panel reads
+/// when `TimedOut` or `TransportFailed` follows, and nothing else changes that panel.
+#[test]
+fn one_entry_words_the_service_unavailable_panel() {
+    use super::login::service_unavailable_words as words;
+    use tessera_net::DisconnectReason as R;
+    assert_eq!(words(&R::TimedOut), Some("official.error.no_answer"));
+    assert_eq!(
+        words(&R::TransportFailed(String::new())),
+        Some("official.error.service_unavailable")
+    );
+    for other in [
+        R::ClientRequested,
+        R::ServerClosed(String::new()),
+        R::Unsupported,
+        R::UnsupportedTimeout,
+    ] {
+        assert_eq!(words(&other), None);
+    }
+}
+
 /// OE-T14, §8.6: after `Connected`, the same two reasons go to the start screen, in their words.
 #[test]
 fn a_tessera_limit_after_the_list_goes_to_the_start_screen() {

@@ -201,6 +201,18 @@ pub fn disconnect_message(reason: &DisconnectReason) -> Option<Message> {
     })
 }
 
+/// The one text table entry for a `ServiceUnavailable` refusal that a `TimedOut` or `TransportFailed`
+/// follows: their one panel's words (§8.6; labelled, `docs/m8-remediation.md` §27 fix 12). Any other
+/// end keeps the refusal's own panel.
+#[must_use]
+pub const fn service_unavailable_words(reason: &DisconnectReason) -> Option<&'static str> {
+    match reason {
+        DisconnectReason::TimedOut => Some("official.error.no_answer"),
+        DisconnectReason::TransportFailed(_) => Some("official.error.service_unavailable"),
+        _ => None,
+    }
+}
+
 /// The queue panel's lines (§8.4).
 #[must_use]
 pub fn queue_lines(
@@ -467,12 +479,17 @@ impl LoginPresenter {
             {
                 end.message = disconnect_message(reason);
             }
-            // §8.6: an ordinary 20-second handshake expiry or 60-second silence keeps the
-            // "No answer" words, on the refusal's target. A service's own detail stays with them.
-            if r.reason == LoginRefusal::ServiceUnavailable && *reason == DisconnectReason::TimedOut
+            // §8.6: one panel. An ordinary 20-second handshake expiry or 60-second silence keeps
+            // the "No answer" words, on the refusal's target. A service's own detail stays with
+            // them.
+            if r.reason == LoginRefusal::ServiceUnavailable
+                && let Some(id) = service_unavailable_words(reason)
             {
                 let detail = end.message.take().and_then(|m| m.detail);
-                end.message = disconnect_message(reason).map(|m| Message { detail, ..m });
+                end.message = Some(Message {
+                    text: text(id).to_owned(),
+                    detail,
+                });
             }
             self.finish(end);
             return;

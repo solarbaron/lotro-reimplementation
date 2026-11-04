@@ -15,7 +15,8 @@
 //! session reaches the world (no production path has one: with the bit clear the entry stops at
 //! its readiness wait, and the world's messages go through the pending-entry store), bit 1 leaves
 //! the setup's `0x90` out, so the input decides what the wait for it sees, bit 2 a stand-in for the
-//! server gate, so `0x7C` and a `WorldLoaded` finish the entry in §9.3.9's order. Then arbitrary
+//! server gate, so `0x7C` and a `WorldLoaded` finish the entry in §9.3.9's order, bit 3 a stand-in for
+//! the exact placement, which that order needs (no production path has one either). Then arbitrary
 //! datagrams from the login, world and chat servers, arbitrary messages wrapped in valid
 //! sequenced datagrams of the world connection once it exists, else of the login connection (the
 //! widened opcodes of the bytes 0xC0 and above fall in the world-teardown band; a selector byte
@@ -213,6 +214,8 @@ struct Net {
     chat: Option<Arc<Mutex<Queues>>>,
     /// Off, like every production path: the entry stops at its readiness wait.
     readiness: bool,
+    /// Off, like every production path: no message is the exact placement (OPEN-WORLD-9).
+    placement: bool,
     /// Off, like every production path: a test's stand-in for the server gate of §9.3.9's order.
     gate: Option<u32>,
 }
@@ -224,6 +227,11 @@ impl ConnectorNet for Net {
     // one, `official-session.md` §9.3.8) and also the chat server's code.
     fn readiness_specified(&self) -> bool {
         self.readiness
+    }
+
+    // The test-only source of the exact placement, so the fuzzer reaches the pending placement.
+    fn placement_scripted(&self) -> bool {
+        self.placement
     }
 
     // The order of §9.3.9 to its end: the one `0xF4`, `WorldEntered`, the pending state's release.
@@ -514,6 +522,7 @@ fuzz_target!(|data: &[u8]| {
         chat: chat.clone(),
         readiness: extra & 0x01 != 0,
         gate: (extra & 0x04 != 0).then_some(0x7C),
+        placement: extra & 0x08 != 0,
     };
     let Some(mut driver) = start(&mut net, flags) else {
         return;

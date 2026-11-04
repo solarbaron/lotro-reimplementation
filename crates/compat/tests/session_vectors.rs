@@ -22,7 +22,7 @@ use tessera_compat::session::{
     WireCodecs, WorldReferralHeader, check_fragment_slice, combine_packet_checksum,
     compute_datagram_checksum, decode_datagram, decode_message, decode_variable_u32,
     encode_datagram, encode_variable_u32, guid_fields_swapped, max_recv_rate_for_speed,
-    parse_packet_payload, split_blob, verify_packet_checksum,
+    parse_packet_payload, payload_checksum, split_blob, verify_packet_checksum,
 };
 
 /// Parses a spec vector's hex text.
@@ -1965,6 +1965,52 @@ fn vector_18_explicit_f5_and_default_f4_send_forms() {
     assert_eq!(frag.header.ext_word, None);
     assert_eq!(frag.header.blob_header_word, Some(0xF4));
     assert_eq!(frag.header.recipient_id, 2);
+    assert_eq!(frag.payload, [0x00]);
+}
+
+/// `0xF4`'s header is six bytes with its pad (the row's "4" counts without the length and the pad;
+/// §5.6.3 and the bytes decide, `docs/m8-remediation.md` §27 fix 3), and it is one checksum buffer. The
+/// body is a separate one, which a zero byte cannot show: with data `FF` the sum of the two buffers
+/// differs from the checksum of the whole fragment.
+#[test]
+fn vector_18_f4_header_and_body_are_separate_checksum_buffers() {
+    let frag = &split_blob(1, 0, 0, 0, None, 0xF4, &[0xFF]).unwrap()[0];
+    let mut whole = Vec::new();
+    frag.encode(&mut whole).unwrap();
+    assert_eq!(whole, [0x01, 0x40, 0x80, 0xF4, 0x01, 0x00, 0xFF]);
+    let (header, used) = BlobFragmentHeader::decode(&whole).unwrap();
+    assert_eq!(used, 6, "with the pad");
+    assert_eq!(header.frag_data_len, 1);
+    let opt = OptionalHeaders::default();
+    // The primitive by hand: `014080F4 + 01000000 + 6 << 16`, then `FF000000 + 1 << 16`.
+    let required = payload_checksum(&opt, std::slice::from_ref(frag)).unwrap();
+    assert_eq!(required, 0x0147_80F4);
+    assert_eq!(
+        required,
+        compute_datagram_checksum(&whole[..used])
+            .wrapping_add(compute_datagram_checksum(&whole[used..]))
+    );
+    // A whole-fragment checksum, the form that must not be used, differs. The difference is the
+    // one the builder note's pair (0xA09C5C63 required, 0xA19D5B63 whole-fragment) has, whatever the
+    // datagram header that pair was summed with.
+    let whole_fragment = compute_datagram_checksum(&whole);
+    assert_eq!(whole_fragment, 0x0248_7FF4);
+    assert_eq!(
+        whole_fragment.wrapping_sub(required),
+        0xA19D_5B63u32.wrapping_sub(0xA09C_5C63)
+    );
+}
+
+/// `blobFlags` `0x01` with no extension word adds no field, and its data follows the padded header.
+#[test]
+fn vector_18_flags_01_without_an_extension_word_adds_no_field() {
+    let wire = [0x01, 0x41, 0x80, 0xF4, 0x01, 0x00, 0x00];
+    let (frag, used) = BlobFragment::decode(&wire).unwrap();
+    assert_eq!(used, wire.len());
+    assert_eq!(frag.header.ext_word, None);
+    assert_eq!(frag.header.attachment, None);
+    assert_eq!(frag.header.blob_flags, 0x41);
+    assert_eq!(frag.header.blob_header_word, Some(0xF4));
     assert_eq!(frag.payload, [0x00]);
 }
 

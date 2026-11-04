@@ -1038,6 +1038,11 @@ impl Flow {
     /// form is its Back; the progress, world-list and queue screens are Cancel (`Disconnect`,
     /// the account form); the interim character screen is its Back (§8.7). The "Checking…"
     /// screen of step 2 goes back to the start screen without an acceptance.
+    ///
+    /// The two rows §4.6 does not have yet, labelled (`docs/m8-remediation.md` §27 fix 14, with the
+    /// Cancel target held as a choice): on the handed-over character list and while entering, closing
+    /// the window ends that part of the run (`App::exit`, [`HandOverEnd::Left`]), which is
+    /// `Disconnect` and the account form with both fields empty, like Cancel.
     fn close_requested(&mut self, ev: &DeviceInput) {
         let now = ev.at();
         self.pressed_on = None;

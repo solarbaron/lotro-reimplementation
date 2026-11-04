@@ -230,38 +230,56 @@ fuzz_target!(|data: &[u8]| {
         while negotiated.pop_outbound_datagram().is_some() {}
     }
 
-    // Several decoded fragments through one table, each as its own packet (§5.6.4, §9.3.8): repeats,
-    // tombstones, conflicts across messages, the queue-3 gate and expiry stay bounded.
+    // Several decoded fragments through one table in datagrams of the input's lengths (§5.6.4,
+    // §9.3.9): repeats, tombstones, conflicts, the queue-3 gate and expiry stay bounded, the packet
+    // check answers what the packet step answers, and a refusal changes nothing.
     let mut fragments = Vec::new();
     let mut left = data;
-    while fragments.len() < 32 {
+    while fragments.len() < 64 {
         let Ok((frag, used)) = BlobFragment::decode(left) else {
             break;
         };
         left = left.get(used.max(1)..).unwrap_or_default();
         fragments.push(frag);
     }
+    let lengths = data.iter().rev().map(|b| 1 + usize::from(b % 5));
     let mut table = BlobReassembler::new(8, 65_536);
     let mut clock = 0.0f64;
-    for frag in &fragments {
-        let one = std::slice::from_ref(frag);
-        if table.check_packet(1, one, clock).is_ok() {
-            // What passed the packet check is not refused for its fragment alone (§9.3.9).
-            let taken = table.ingest(1, frag.clone(), clock);
-            assert!(taken.is_ok(), "{taken:?}");
-            // §9.3.9's caps on what stays of completed identities, past any repeat or reuse.
-            let (tombstones, bytes) = table.tombstone_sizes();
-            assert!(tombstones <= MAX_BLOB_TOMBSTONES);
-            assert!(bytes <= MAX_TOMBSTONE_BYTES);
-            if let Ok(Some(blob)) = taken {
-                assert_eq!(blob.queue_id, frag.header.queue_id);
-                assert_eq!(blob.recipient_id, frag.header.recipient_id);
-                // §5.6.3: never an empty control, and never past its slice rule.
-                assert!(frag.header.blob_flags & 0x80 == 0 || frag.header.num_frags > 1);
-            }
+    let mut rest = fragments.as_slice();
+    for length in lengths.chain(std::iter::repeat(1)) {
+        if rest.is_empty() {
+            break;
         }
+        let (datagram, after) = rest.split_at(length.min(rest.len()));
+        rest = after;
+        table.purge_expired(clock);
+        let before = table.clone();
+        let checked = table.check_packet(1, datagram, clock);
+        assert!(table.same_state(&before), "the check changed the table");
+        let taken = table.ingest_packet(1, datagram, clock);
+        assert_eq!(checked, taken.as_ref().map(|_| ()).map_err(Clone::clone));
+        match &taken {
+            Ok(blobs) => {
+                for blob in blobs {
+                    assert!((1..=4).contains(&blob.queue_id));
+                    // §5.6.3: never an empty control, and never past its slice rule.
+                    assert!(datagram.iter().any(|f| {
+                        f.header.queue_id == blob.queue_id
+                            && f.header.recipient_id == blob.recipient_id
+                            && (f.header.blob_flags & 0x80 == 0 || f.header.num_frags > 1)
+                    }));
+                }
+            }
+            Err(_) => assert!(table.same_state(&before), "a refusal changed the table"),
+        }
+        // §9.3.9's caps on what stays of completed identities, past any repeat or reuse.
+        let (tombstones, bytes) = table.tombstone_sizes();
+        assert!(tombstones <= MAX_BLOB_TOMBSTONES);
+        assert!(bytes <= MAX_TOMBSTONE_BYTES);
         assert!(table.incomplete_len() <= 8);
-        clock += f64::from(frag.header.frag_data_len & 0x0F);
+        clock += datagram
+            .first()
+            .map_or(0.0, |f| f64::from(f.header.frag_data_len & 0x0F));
     }
 
     let _ = decode_message(1, data, 65_536);

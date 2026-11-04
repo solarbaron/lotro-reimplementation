@@ -318,6 +318,8 @@ struct Service {
     no_readiness: bool,
     /// A stand-in for the server gate of the entry order (no production path has one, OPEN-WORLD-9).
     server_gate: Option<u32>,
+    /// Like every production path: no source for the exact placement (OPEN-WORLD-9).
+    no_placement_source: bool,
     /// Like every production path: no source for the chat codec (OPEN-SESSION-1).
     no_chat_codec: bool,
     auth: String,
@@ -367,6 +369,7 @@ impl Default for Service {
         Self {
             no_readiness: false,
             server_gate: None,
+            no_placement_source: false,
             no_chat_codec: false,
             auth: "https://auth.example.invalid/login".to_owned(),
             login: login_ok(1),
@@ -721,6 +724,10 @@ impl ConnectorNet for FakeNet {
 
     fn server_gate(&self) -> Option<u32> {
         self.0.service.server_gate
+    }
+
+    fn placement_scripted(&self) -> bool {
+        !self.0.service.no_placement_source
     }
 
     fn chat_codec_specified(&self) -> bool {

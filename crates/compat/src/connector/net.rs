@@ -85,6 +85,15 @@ pub trait ConnectorNet: Send + std::fmt::Debug + 'static {
         None
     }
 
+    /// Whether a test's scripted network names the local player's exact placement of §9.3.9's entry
+    /// order. Its source is OPEN-WORLD-9 (a `0xCC` for the default recipient may mean anyone, and
+    /// nothing says a `0xCE` naming the `0x90`'s ID is that placement), so there is none on any
+    /// production path: [`LiveNet`] keeps this default, no `WorldPlacementPending` is made and the
+    /// entry stops at the readiness wait (`docs/m8-remediation.md` §27 fix 6).
+    fn placement_scripted(&self) -> bool {
+        false
+    }
+
     /// Whether the chat server's codec has a source. It is OPEN-SESSION-1, so no chat connection,
     /// open or retry happens on any production path: [`LiveNet`] keeps this default (§9.3.8). Only
     /// the synthetic networks of the tests answer `true`.

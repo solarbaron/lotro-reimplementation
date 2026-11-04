@@ -15,14 +15,21 @@
 //! The bounds are per world connection: [`MAX_PENDING_ENTITIES`] entities and
 //! [`MAX_PENDING_BYTES`] of kept bodies. Past either the store answers [`Stored::Overflow`], which
 //! the driver turns into the `Unsupported` result. A replaced body gives its bytes back first, so
-//! one entity's repeats never overflow.
+//! one entity's repeats never overflow. Both bounds and that action are labelled choices that may
+//! move after the writer's replay (`docs/m8-remediation.md` §27 fix 17), so they stay named here.
+//!
+//! `0x88` and `0x92` merge per property over the `0x52` table: a later single wins for its property
+//! ([`PendingWorld::single`]) and a later table takes back the singles of the properties it carries
+//! ([`PendingWorld::table`]). `0x40` removes the entity with all it kept, and nothing but a new
+//! `0x98` brings it back ([`PendingWorld::despawn`]). Labelled, §27 fixes 16 and 17.
 //!
 //! # Targets
 //!
 //! A target is a nonzero ID announced by a validated `0x98` or the validated `0x90`'s own ID.
 //! The logical default recipient `2` alone is no target: it is what a `0xCC` with the default form
 //! carries, and which entity that means is OPEN-WORLD-9. Such a message is counted and skipped; it
-//! is never read as the local player.
+//! is never read as the local player. Holding data with no target for later is not done (labelled,
+//! `docs/m8-remediation.md` §27 fix 17).
 //!
 //! # What is not sent
 //!
@@ -53,9 +60,11 @@ pub struct WithheldSend {
 }
 
 /// The client messages withheld before `0xF4` (`official-session.md` §9.3.8, §9.3.9). The first
-/// three are decision 0046's fixed omissions. The others have no specified source or trigger, and
-/// no omission of them is authorized: they are not sent because nothing may be sent without a
-/// source, and that is a known difference for the owner (`docs/m8-remediation.md` §26.1).
+/// three are decision 0046 item 5's fixed omissions, the next four its item 10's: they stay unsent
+/// for any user past the warning and consent gate until a source for their contents exists. All are
+/// labelled known differences from the observed client, the server's reaction is untested, and the
+/// run ends at `UnsupportedTimeout` (`docs/m8-remediation.md` §27 fix 5, which waits on the owner's
+/// answer being carried into the spec). `0xF4` itself has no source yet (OPEN-WORLD-9).
 pub const WITHHELD_BEFORE_F4: [WithheldSend; 8] = [
     WithheldSend {
         family: "0x13D",
@@ -71,19 +80,19 @@ pub const WITHHELD_BEFORE_F4: [WithheldSend; 8] = [
     },
     WithheldSend {
         family: "later world 0x30",
-        held_by: "OPEN-SESSION-16",
+        held_by: "decision 0046 item 10, OPEN-SESSION-16",
     },
     WithheldSend {
         family: "0x30000035",
-        held_by: "OPEN-SESSION-16",
+        held_by: "decision 0046 item 10, OPEN-SESSION-16",
     },
     WithheldSend {
         family: "0x24",
-        held_by: "OPEN-WORLD-9",
+        held_by: "decision 0046 item 10, OPEN-WORLD-9",
     },
     WithheldSend {
         family: "0x19A",
-        held_by: "OPEN-SESSION-16",
+        held_by: "decision 0046 item 10, OPEN-SESSION-16",
     },
     WithheldSend {
         family: "0xF4",
@@ -248,9 +257,38 @@ impl PendingWorld {
         self.store(entity, body, |e| held(&e.create), |e, b| e.create = Some(b))
     }
 
-    /// A validated `0x52` for `target`.
-    pub fn table(&mut self, target: u64, body: &[u8]) -> Stored {
-        self.store(target, body, |e| held(&e.table), |e, b| e.table = Some(b))
+    /// A validated `0x52` for `target`, whose table carries `properties`: the kept singles of those
+    /// properties are older than this table, and go (module docs).
+    pub fn table(&mut self, target: u64, properties: &[u32], body: &[u8]) -> Stored {
+        let stored = self.store(target, body, |e| held(&e.table), |e, b| e.table = Some(b));
+        if stored == Stored::Kept
+            && let Some(entity) = self.entities.get_mut(&target)
+        {
+            for pid in properties {
+                if let Some((_, old)) = entity.single.remove(pid) {
+                    self.bytes = self.bytes.saturating_sub(old.len());
+                }
+            }
+        }
+        stored
+    }
+
+    /// A validated `0x40` for `target` (§9.3.9, `docs/m8-remediation.md` §27 fix 16): the entity and
+    /// all it kept are gone, so nothing of it is released, and until a new `0x98` announces the ID
+    /// again later updates have no target. Answers whether there was one.
+    pub fn despawn(&mut self, target: u64) -> bool {
+        let Some(entity) = self.entities.remove(&target) else {
+            return false;
+        };
+        self.order.retain(|id| *id != target);
+        let kept = held(&entity.create)
+            + held(&entity.table)
+            + held(&entity.appearance)
+            + held(&entity.position)
+            + held(&entity.sync)
+            + entity.single.values().map(|(_, b)| b.len()).sum::<usize>();
+        self.bytes = self.bytes.saturating_sub(kept);
+        true
     }
 
     /// A validated `0x88` or `0x92` of `property` for `target`.
@@ -386,7 +424,7 @@ mod tests {
     #[test]
     fn the_default_recipient_is_no_target() {
         let mut p = PendingWorld::default();
-        assert_eq!(p.table(DEFAULT_RECIPIENT, &[0]), Stored::NoTarget);
+        assert_eq!(p.table(DEFAULT_RECIPIENT, &[], &[0]), Stored::NoTarget);
         assert_eq!(p.create(DEFAULT_RECIPIENT, &[0]), Stored::NoTarget);
         assert_eq!(p.create(0, &[0]), Stored::NoTarget);
         assert_eq!(
@@ -399,9 +437,9 @@ mod tests {
     #[test]
     fn an_unannounced_target_is_skipped_and_an_announced_one_kept() {
         let mut p = PendingWorld::default();
-        assert_eq!(p.table(7, &[0, 1]), Stored::NoTarget);
+        assert_eq!(p.table(7, &[], &[0, 1]), Stored::NoTarget);
         assert_eq!(p.create(7, &[0, 2]), Stored::Kept);
-        assert_eq!(p.table(7, &[0, 1]), Stored::Kept);
+        assert_eq!(p.table(7, &[], &[0, 1]), Stored::Kept);
         assert_eq!(p.bytes(), 4);
     }
 
@@ -489,7 +527,7 @@ mod tests {
         assert_eq!(p.position(7, &[4], None), Stored::Kept);
         assert_eq!(p.appearance(7, &[5],), Stored::Kept);
         assert_eq!(p.single(7, 0x92, 9, &[6]), Stored::Kept);
-        assert_eq!(p.table(7, &[7]), Stored::Kept);
+        assert_eq!(p.table(7, &[], &[7]), Stored::Kept);
         let (spawns, states) = p.take_snapshots();
         let ids: Vec<u64> = spawns.iter().map(|s| s.entity).collect();
         assert_eq!(ids, [7, 8]);
@@ -499,6 +537,60 @@ mod tests {
         assert_eq!(p.entities(), 0);
         assert_eq!(p.bytes(), 0);
         assert_eq!(p.player(), None);
+    }
+
+    /// §27 fix 17: singles merge per property over the table, whichever came last.
+    #[test]
+    fn singles_merge_per_property_over_the_table() {
+        let mut p = PendingWorld::default();
+        assert_eq!(p.create(7, &[0]), Stored::Kept);
+        assert_eq!(p.single(7, 0x88, 1, &[1, 1]), Stored::Kept);
+        assert_eq!(p.single(7, 0x92, 2, &[2, 2, 2]), Stored::Kept);
+        assert_eq!(p.bytes(), 6);
+        // The table carries property 1, so that single is older; property 2's stays over it.
+        assert_eq!(p.table(7, &[1], &[3, 3, 3, 3]), Stored::Kept);
+        assert_eq!(p.bytes(), 8);
+        assert_eq!(p.single(7, 0x88, 1, &[4]), Stored::Kept);
+        let (_, states) = p.take_snapshots();
+        let messages = &states[0].messages;
+        assert_eq!(messages[0], (0x52, vec![3, 3, 3, 3]));
+        assert_eq!(messages[1], (0x88, vec![4]));
+        assert_eq!(messages[2], (0x92, vec![2, 2, 2]));
+        assert_eq!(messages.len(), 3);
+    }
+
+    /// §27 fix 16: `0x40` takes the entity with what it kept, and later updates do not bring it
+    /// back; only a new creation does.
+    #[test]
+    fn a_despawned_entity_is_gone_until_it_is_created_again() {
+        let mut p = PendingWorld::default();
+        assert_eq!(p.create(7, &[0; 4]), Stored::Kept);
+        assert_eq!(p.create(8, &[0; 2]), Stored::Kept);
+        assert_eq!(p.appearance(7, &[0; 8]), Stored::Kept);
+        assert_eq!(p.single(7, 0x88, 1, &[0; 16]), Stored::Kept);
+        assert!(p.despawn(7));
+        assert!(!p.despawn(7));
+        assert_eq!(p.bytes(), 2);
+        assert_eq!(p.entities(), 1);
+        for stored in [
+            p.table(7, &[], &[0]),
+            p.single(7, 0x88, 1, &[0]),
+            p.appearance(7, &[0]),
+            p.position(7, &[0], Some(at(1.0))),
+            p.sync(7, &[0], Some(at(1.0))),
+        ] {
+            assert_eq!(stored, Stored::NoTarget);
+        }
+        let (spawns, states) = p.take_snapshots();
+        assert_eq!(spawns.iter().map(|s| s.entity).collect::<Vec<_>>(), [8]);
+        assert!(states.is_empty());
+
+        let mut q = PendingWorld::default();
+        assert_eq!(q.create(7, &[0]), Stored::Kept);
+        assert!(q.despawn(7));
+        assert_eq!(q.create(7, &[1]), Stored::Kept);
+        let (spawns, _) = q.take_snapshots();
+        assert_eq!(spawns.len(), 1);
     }
 
     #[test]
@@ -515,6 +607,13 @@ mod tests {
             "0xF4",
         ] {
             assert!(s.contains(family), "{s}");
+        }
+        // Decision 0046 item 10 holds the later messages, with item 5 for the first three.
+        for send in &WITHHELD_BEFORE_F4[3..7] {
+            assert!(send.held_by.contains("decision 0046 item 10"), "{send:?}");
+        }
+        for send in &WITHHELD_BEFORE_F4[..3] {
+            assert!(send.held_by.contains("decision 0046 item 5"), "{send:?}");
         }
     }
 }

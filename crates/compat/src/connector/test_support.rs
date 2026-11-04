@@ -253,6 +253,8 @@ struct State {
     /// Whether this service's network has a source for readiness: the historical script's in-world
     /// tests do; [`SyntheticService::observed_order`] does not, like every production path.
     readiness: bool,
+    /// Whether this service's network names the exact placement ([`SyntheticService::script_placement`]).
+    placement: bool,
     /// The world server of the observed-order script, after its referral.
     world_server: Option<Server>,
     /// The client's blobs being put together in that mode.
@@ -306,6 +308,13 @@ impl SyntheticService {
         service.state().observed = true;
         service.state().readiness = false;
         service
+    }
+
+    /// Lets this service's network name the local player's exact placement, which
+    /// `official-session.md` §9.3.9 leaves OPEN-WORLD-9 on every production path, so a test reaches
+    /// the road from `WorldPlacementPending` to `WorldLoaded`.
+    pub fn script_placement(&self) {
+        self.state().placement = true;
     }
 
     /// Lets the client enter the world again after a return, which `official-session.md` §9.3.7
@@ -1148,6 +1157,10 @@ impl ConnectorNet for SyntheticNet {
 
     fn readiness_specified(&self) -> bool {
         self.0.state().readiness
+    }
+
+    fn placement_scripted(&self) -> bool {
+        self.0.state().placement
     }
 
     fn chat_codec_specified(&self) -> bool {

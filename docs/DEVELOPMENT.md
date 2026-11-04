@@ -477,6 +477,51 @@ After an update (with the golden steps above):
    install version, is a finding to fix. If such a change is accepted, rerun the test with
    `TESSERA_CENSUS_REBASE=1`.
 
+### Reading a live official run
+
+The next step of M8 is a live run by the owner, and the log is the only evidence it gives. Run the
+client with the two debug lines that carry the server's closing codes:
+
+```sh
+RUST_LOG=info,tessera_compat=debug tessera-client --official 2> official-run.log
+```
+
+No extra option is needed: every official run writes these lines at `info`, bounded per connection.
+The lines to read, in order (`grep official_evidence official-run.log`):
+
+- `official evidence: stage`: each stage reached, with `previous_ms` (how long the last one took)
+  and `since_start_ms`. How far the run got is the last of these. The stages run from `handshake`
+  through `login connection established`, the initial steps and `waiting for the referral` to
+  `waiting for world readiness`.
+- `official evidence: packet` (`dir="send"`): each sent packet with `seq`, `word_before`,
+  `word_after`, `word_input` (the labelled policy that made the word), `kind` (`new`, `resend`,
+  `ack`, `nak`, `out-of-order-ack`, `accept`), `queue`, `opcode`, `flow_event`, the reported and
+  accumulated flow counters and `flow_scope`. These show which policy Tessera used
+  (`official-session.md` §9.3.9 "Evidence for transport producers"). They cannot show the official
+  client's rules.
+- `official evidence: datagram` and `official evidence: blob` (`dir="recv"`): accepted datagrams and
+  delivered blobs with `seq`, `queue`, `opcode`, `order` and `bytes`; `first_of_opcode=true` marks
+  the first of each opcode, which is logged even after the line budget has run out.
+- `official evidence: counts after the session start`: batches, creations, positions, placements
+  and the rest after `0x90`, every 5 s during the readiness wait and again at its end.
+- `official evidence: client loading done` and `official evidence: entry deadline`: the load time
+  against the 30-second clock (`load_ms`, `readiness_clock_ms`, `limit_ms`), with the two gates kept
+  apart (`server_gate`, `local_gate`). While OPEN-WORLD-9 has no answer the expected end of a
+  selection is `server_gate="no source (OPEN-WORLD-9)"` and `local_gate="no placement"`: a Tessera
+  limit, not a refusal.
+- `official evidence: connection closed`: which connection closed, why and in which stage
+  (`retiring=true` is the old login connection, which no longer decides the session's end). If the
+  server closed it, the `debug` line `transport error from server` just before has its codes.
+- `official world entry: stopped`: what an entry that stopped withheld (`withheld=`).
+- `official evidence: connection totals`: the counts when a connection goes, with
+  `lines_not_shown` for what passed the line budget.
+
+Paste those lines and the `official session:` lines around the end. They carry no address, port,
+account, ticket, seed, cookie, character name or ID, install path, identifier or iteration value.
+Read what you paste all the same, and do not paste the password prompt, a datagram dump
+(`TESSERA_OFFICIAL_DUMP_DIR`), a packet capture or anything from outside `official-run.log`. Do not
+commit the log: reports of live runs go in prose, without captured values.
+
 ### Official session handshake diagnostics (M8 live verification)
 
 For the owner's live runs (M8 exit criterion 4) the session logs counts and labels of its

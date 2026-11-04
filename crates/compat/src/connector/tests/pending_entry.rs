@@ -58,7 +58,17 @@ fn at_session_start(service: Service) -> (World, SessionDriver<FakeNet>, Server)
     (world, d, server)
 }
 
+/// Every production path: no source for readiness or for the exact placement (OPEN-WORLD-9).
 fn production() -> Service {
+    Service {
+        no_readiness: true,
+        no_placement_source: true,
+        ..Service::default()
+    }
+}
+
+/// A test's scripted backend: an exact placement, and still no server gate.
+fn scripted() -> Service {
     Service {
         no_readiness: true,
         ..Service::default()
@@ -96,7 +106,7 @@ fn datagram(server: &mut Server, messages: &[ObservedMessage]) -> Vec<u8> {
 /// and siblings too; the player's own `0xCE` starts the scene; nothing is read as readiness.
 #[test]
 fn the_observed_world_stream_reads_to_the_pending_placement_and_the_readiness_wait() {
-    let (world, mut d, mut server) = at_session_start(production());
+    let (world, mut d, mut server) = at_session_start(scripted());
     let mut t = 1.4;
     for messages in observed_world_stream() {
         world.deliver(datagram(&mut server, &messages), WORLD_SERVER);
@@ -114,7 +124,10 @@ fn the_observed_world_stream_reads_to_the_pending_placement_and_the_readiness_wa
     assert_eq!((p.batches, p.sub_events), (1, 2));
     assert_eq!(p.creations, 2, "the `0x98` and its paired `0x52`");
     assert_eq!(p.appearances, 1, "for the announced entity");
-    assert_eq!(p.default_target, 1, "the first `0x89` has no target");
+    assert_eq!(
+        p.default_target, 2,
+        "the first `0x89` and the default-recipient `0x40` have no target"
+    );
     assert_eq!(
         p.actions, 1,
         "`0xA8` is counted until its variant is rechecked"
@@ -146,14 +159,14 @@ fn the_observed_world_stream_reads_to_the_pending_placement_and_the_readiness_wa
     );
 }
 
-/// A production path: the client loads the placement, `WorldLoaded` sets the local gate, no `0xF4`
-/// goes out, and the readiness wait ends in `UnsupportedTimeout`, naming the stage and what was
+/// A scripted placement with no server gate, as a production path has none: the client loads the
+/// placement, `WorldLoaded` sets the local gate, no `0xF4` goes out, and the readiness wait ends in `UnsupportedTimeout`, naming the stage and what was
 /// withheld in the log. One `WorldLoaded` per placement: another is counted. No loading time-out
 /// makes readiness.
 #[test]
 fn a_production_entry_stops_at_the_readiness_wait_and_withholds_every_unsourced_send() {
     let ((events, sent), logs) = super::diagnostics::logs_of(|| {
-        let (world, mut d, mut server) = at_session_start(production());
+        let (world, mut d, mut server) = at_session_start(scripted());
         world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
         d.step(2.0, true, &go);
         let at = service_support::player_position();
@@ -680,9 +693,10 @@ fn an_unsupported_appearance_is_counted_without_losing_its_siblings() {
     assert_eq!((p.unread, p.appearances), (2, 1));
 }
 
-/// §9.3.9: another placement is a new generation, which clears the local gate.
+/// `docs/m8-remediation.md` §27 fix 6: an entry has one placement. Later `0xCE` and `0xCC` updates are
+/// kept, ask for no second load and do not clear the gate, so `WorldEntered` needs no second signal.
 #[test]
-fn a_new_placement_needs_its_own_loaded_signal() {
+fn a_later_position_does_not_ask_for_another_load() {
     let (world, mut d, mut server) = at_session_start(gated());
     world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
     world.deliver(
@@ -704,14 +718,339 @@ fn a_new_placement_needs_its_own_loaded_signal() {
             .iter()
             .filter(|e| matches!(e, Event::WorldPlacementPending { .. }))
             .count(),
-        2
+        1
     );
+    assert_eq!(d.entry_progress().positions, 2, "the update is kept");
     world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
     d.step(2.3, true, &go);
-    assert!(!d.in_world(), "the new placement is not loaded");
-    d.command(&Command::WorldLoaded, 2.4).expect("loaded");
-    d.step(2.5, true, &go);
+    assert!(d.in_world(), "the one signal is enough");
+    assert_eq!(d.counters().stray_loaded, 0);
+}
+
+/// `docs/m8-remediation.md` §27 fix 6, on a production path: nothing names the exact placement yet,
+/// so no `WorldPlacementPending` goes out, for a `0xCE` naming the `0x90`'s ID, its `0xCC`, or one
+/// that came before the `0x90`; the data is kept and `WorldLoaded` has nothing to answer.
+#[test]
+fn no_production_message_is_the_exact_placement() {
+    let (world, mut d, mut server) = at_session_start(production());
+    let position = service_support::player_position();
+    world.deliver(server.event(0xCE, &position), WORLD_SERVER);
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(server.event(0xCE, &position), WORLD_SERVER);
+    d.step(2.0, true, &go);
+    let events = d.take_events();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::WorldPlacementPending { .. })),
+        "{events:?}"
+    );
+    assert_eq!(progress_stages(&events), [WorldEntryStage::Identity]);
+    let p = d.entry_progress();
+    assert!(p.session_started && !p.placed);
+    assert_eq!(p.positions, 1, "the player's own position is kept");
+    d.command(&Command::WorldLoaded, 2.1).expect("no effect");
+    assert!(!d.entry_progress().loaded);
+    assert_eq!(d.counters().stray_loaded, 1);
+    // Its deadline is the readiness wait's, with Tessera's own reason.
+    d.step(32.1, false, &go);
+    assert!(d.take_events().iter().any(|e| matches!(
+        e,
+        Event::Disconnected {
+            reason: DisconnectReason::UnsupportedTimeout
+        }
+    )));
+}
+
+/// `docs/m8-remediation.md` §27 fix 16: `0x40` removes the pending entity, nothing is published
+/// before `WorldEntered`, and a later update does not bring the entity back. Nothing of it reaches
+/// the client at the release.
+#[test]
+fn a_pending_despawn_removes_the_entity_and_nothing_brings_it_back() {
+    const OTHER: u64 = 0x0100_0000_0000_0123;
+    let (world, mut d, mut server) = at_session_start(gated());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(
+        server.event(0xCE, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    let create = EntityCreate {
+        template_did: 0x7000_0001,
+        entity_id: OTHER,
+    }
+    .to_bytes()
+    .expect("0x98");
+    world.deliver(server.event(0x98, &create), WORLD_SERVER);
+    d.step(2.0, true, &go);
+    assert_eq!(d.pending_sizes().0, 2);
+    world.deliver(server.event_to(0x40, OTHER, &[0x00]), WORLD_SERVER);
+    d.step(2.1, true, &go);
+    assert_eq!(d.pending_sizes().0, 1);
+    assert_eq!(d.entry_progress().despawns, 1);
+    let events = d.take_events();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::EntityDespawned { .. })),
+        "{events:?}"
+    );
+    // A later update of it finds no target.
+    let positions = d.entry_progress().positions;
+    world.deliver(
+        server.event(
+            0xCE,
+            &service_support::position(OTHER, [1.0; 3], 0, [0.0; 3]),
+        ),
+        WORLD_SERVER,
+    );
+    world.deliver(server.event_to(0x40, OTHER, &[0x00]), WORLD_SERVER);
+    d.step(2.2, true, &go);
+    assert_eq!(d.pending_sizes().0, 1, "no resurrection");
+    assert_eq!(d.entry_progress().positions, positions, "nothing kept");
+    assert_eq!(d.entry_progress().despawns, 1, "nothing left to remove");
+
+    d.command(&Command::WorldLoaded, 2.3).expect("loaded");
+    world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+    d.step(2.4, true, &go);
     assert!(d.in_world());
+    let events = d.take_events();
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::EntityCreated { id, .. } if id.0 == OTHER
+        )),
+        "{events:?}"
+    );
+}
+
+/// `docs/m8-remediation.md` §27 fix 16: a server `0x30`, `0x60` or `0x19A` before `WorldEntered` is
+/// counted and discarded: nothing runs, nothing is answered and nothing is kept.
+#[test]
+fn server_rpcs_before_the_world_are_counted_and_discarded() {
+    let (world, mut d, mut server) = at_session_start(production());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    d.step(2.0, true, &go);
+    let _ = world.take_sent();
+    for opcode in [0x30u32, 0x60, 0x19A] {
+        world.deliver(server.event(opcode, &[0x00, 1, 2, 3]), WORLD_SERVER);
+    }
+    d.step(2.1, true, &go);
+    assert_eq!(d.entry_progress().other, 3);
+    assert_eq!(d.pending_sizes(), (1, 0));
+    assert!(
+        !sent_opcodes(&world)
+            .iter()
+            .any(|o| *o == 0x30 || *o == 0xD0)
+    );
+}
+
+/// `docs/m8-remediation.md` §27 fix 7: a NAK of the `0xF4` sends it again, the same bytes, on the
+/// default-recipient form; the entry is not lost to an out-of-order answer.
+#[test]
+fn the_ready_message_is_kept_and_sent_again_on_a_nak() {
+    let (world, mut d, mut server) = at_session_start(gated());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(
+        server.event(0xCE, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    d.command(&Command::WorldLoaded, 2.1).expect("loaded");
+    let _ = world.take_sent();
+    world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+    d.step(2.2, true, &go);
+    assert!(d.in_world());
+    let ready = world
+        .take_sent()
+        .into_iter()
+        .find_map(|(bytes, _)| {
+            let packet = decode_client_datagram(&bytes, false).ok()?;
+            packet
+                .fragments
+                .iter()
+                .any(|f| f.header.blob_header_word == Some(0xF4))
+                .then_some((bytes, packet.header.seq_num))
+        })
+        .expect("the one 0xF4");
+    world.deliver(
+        server.control(OptionalHeaders {
+            sequence_nak: Some(vec![ready.1]),
+            ..OptionalHeaders::default()
+        }),
+        WORLD_SERVER,
+    );
+    d.step(2.3, true, &go);
+    let again: Vec<Vec<u8>> = world
+        .take_sent()
+        .into_iter()
+        .map(|(bytes, _)| bytes)
+        .filter(|bytes| *bytes == ready.0)
+        .collect();
+    assert_eq!(again.len(), 1, "the same bytes, once");
+}
+
+/// `docs/m8-remediation.md` §27 fix 5: while `0x24` is held a `Command::Move` in the world sends
+/// nothing, not even the historical 38-byte form, and the session goes on.
+#[test]
+fn a_move_in_the_world_is_held() {
+    let (world, mut d, mut server) = at_session_start(gated());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(
+        server.event(0xCE, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    d.command(&Command::WorldLoaded, 2.1).expect("loaded");
+    world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+    d.step(2.2, true, &go);
+    assert!(d.in_world());
+    let _ = world.take_sent();
+    for i in 0..3 {
+        d.command(
+            &Command::Move {
+                location: tessera_net::Location {
+                    region: tessera_net::RegionId(1),
+                    x: 1.0,
+                    y: 2.0,
+                    z: 3.0,
+                },
+                heading: 0.0,
+                velocity: tessera_net::Vec3::new(1.0, 0.0, 0.0),
+                on_ground: true,
+            },
+            2.3 + f64::from(i) / 10.0,
+        )
+        .expect("held, not refused");
+        d.step(2.3 + f64::from(i) / 10.0, true, &go);
+    }
+    assert_eq!(d.counters().moves_held, 3);
+    assert!(!sent_opcodes(&world).contains(&0x24));
+    assert!(d.in_world());
+}
+
+/// `docs/DEVELOPMENT.md` "Reading a live official run", `official-session.md` §9.3.9 "Evidence for
+/// transport producers": a run's evidence lines name their stage, opcode, queue, sequence, local word
+/// and flow counters with times since the stage's start, keep the entry's two gates apart at its
+/// deadline, and carry no address, port, account, ticket, cookie, name or ID.
+#[test]
+fn the_evidence_lines_say_what_ran_and_nothing_private() {
+    let (_, logs) = super::diagnostics::logs_of(|| {
+        let (world, mut d, mut server) = at_session_start(scripted());
+        world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+        world.deliver(
+            server.event(0xCE, &service_support::player_position()),
+            WORLD_SERVER,
+        );
+        d.step(2.0, true, &go);
+        d.step(7.5, true, &go);
+        d.command(&Command::WorldLoaded, 8.0).expect("loaded");
+        d.step(8.1, true, &go);
+        world.deliver(
+            server.control(OptionalHeaders {
+                transport_error: Some(crate::session::TransportErrorHeader {
+                    error_code: 0x0001_2345,
+                    error_subcode: 2,
+                }),
+                ..OptionalHeaders::default()
+            }),
+            WORLD_SERVER,
+        );
+        d.step(32.5, false, &go);
+    });
+    let evidence: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains(crate::session::EVIDENCE_TARGET))
+        .collect();
+    let all = evidence.join("\n");
+    for needle in [
+        "official evidence: stage",
+        "stage=\"waiting for the referral\"",
+        "stage=\"connecting to the world server\"",
+        "stage=\"waiting for world readiness\"",
+        "official evidence: packet",
+        "dir=\"send\"",
+        "kind=\"new\"",
+        "opcode=0x6f",
+        "queue=2",
+        "word_before=",
+        "word_after=",
+        "word_input=\"sequenced-plus-one\"",
+        "flow_event=",
+        "flow_accumulated=",
+        "flow_scope=\"udp-payload-of-accepted-datagrams\"",
+        "official evidence: blob",
+        "opcode=0x90",
+        "first_of_opcode=true",
+        "official evidence: datagram",
+        "official evidence: counts after the session start",
+        "positions=1",
+        "official evidence: client loading done",
+        "load_ms=",
+        "readiness_clock_ms=",
+        "official evidence: entry deadline",
+        "server_gate=\"no source (OPEN-WORLD-9)\"",
+        "local_gate=\"open\"",
+        "limit_ms=30000",
+        "ms=",
+    ] {
+        assert!(all.contains(needle), "{needle} not logged:\n{all}");
+    }
+    // Nothing private, in any form the fixtures use.
+    let peer = |a: SocketAddrV4| [a.ip().to_string(), a.port().to_string()];
+    for line in &evidence {
+        for private in peer(WORLD_SERVER).into_iter().chain(peer(LOGIN_SERVER)) {
+            assert!(!line.contains(&private), "{private} in {line}");
+        }
+        for private in [
+            "Aldo",
+            "acct",
+            "ticket",
+            "cookie",
+            "seed",
+            "0x100000000000007",
+            "72057594037927943",
+            "1122334455667788",
+            "1234605616436508552",
+            "password",
+        ] {
+            assert!(!line.contains(private), "{private} in {line}");
+        }
+    }
+    // Bounded per connection, and a connection's totals are there when it goes.
+    assert!(evidence.len() < 2000, "{}", evidence.len());
+}
+
+/// The bounds of the evidence log: a chatty connection stays within them, however long it talks, and
+/// its totals say how much was not shown.
+#[test]
+fn the_evidence_lines_are_bounded() {
+    use crate::session::{
+        MAX_EVIDENCE_OPCODES, MAX_EVIDENCE_RECEIVE_LINES, MAX_EVIDENCE_SEND_LINES,
+    };
+    let (_, logs) = super::diagnostics::logs_of(|| {
+        let (world, mut d, mut server) = at_session_start(production());
+        let mut t = 1.5;
+        for i in 0..1200u32 {
+            world.deliver(server.event(0x4000 + (i % 400), &[0x00]), WORLD_SERVER);
+            d.step(t, true, &go);
+            t += 0.001;
+        }
+    });
+    let world_lines = logs
+        .lines()
+        .filter(|l| l.contains(crate::session::EVIDENCE_TARGET) && l.contains("role=\"world\""))
+        .count();
+    let most =
+        (MAX_EVIDENCE_SEND_LINES + MAX_EVIDENCE_RECEIVE_LINES) as usize + MAX_EVIDENCE_OPCODES + 8;
+    assert!(world_lines <= most, "{world_lines} of at most {most}");
+    let totals = logs
+        .lines()
+        .find(|l| {
+            l.contains("official evidence: connection totals") && l.contains("role=\"world\"")
+        })
+        .unwrap_or_else(|| panic!("no totals:\n{logs}"));
+    assert!(totals.contains("datagrams="), "{totals}");
+    assert!(!totals.contains("lines_not_shown=0"), "{totals}");
 }
 
 /// The user's close while a placement is pending: exactly one Disconnect, a local close at once,
@@ -918,13 +1257,15 @@ fn notices_are_shown_in_every_phase_and_never_cut() {
     )));
 }
 
-/// §9.3.9: a challenge with a zero peer word is unsupported at once, retries stop, and no reply.
+/// §9.3.9, `docs/m8-remediation.md` §27 fix 9: a checksum-valid challenge with a zero header recipient
+/// or zero payload bytes 18-19 is unsupported at once, retries stop, and no reply. The header's opaque
+/// peer word is not tested: it goes through like any other.
 #[test]
-fn a_zero_peer_word_challenge_ends_the_attempt_with_no_reply() {
+fn a_zero_recipient_challenge_ends_the_attempt_with_no_reply() {
     let (world, mut d) = driver_at_login(Service::default(), 0);
     world.take_sent();
     world.deliver(
-        challenge_datagram(0x0111, 0x0222, 0, 1, 0xCAFE_1234, INCOMING_UUID),
+        challenge_datagram(0, 0x0222, 0x3344, 1, 0xCAFE_1234, INCOMING_UUID),
         LOGIN_SERVER,
     );
     d.step(0.1, true, &go);
@@ -945,6 +1286,28 @@ fn a_zero_peer_word_challenge_ends_the_attempt_with_no_reply() {
         t += 1.0;
     }
     assert!(world.take_sent().is_empty(), "no ticket, no accept");
+
+    let (world, mut d) = driver_at_login(Service::default(), 0);
+    world.take_sent();
+    world.deliver(
+        challenge_datagram(0x0111, 0, 0x3344, 1, 0xCAFE_1234, INCOMING_UUID),
+        LOGIN_SERVER,
+    );
+    d.step(0.1, true, &go);
+    assert!(d.ended(), "zero payload bytes 18-19");
+}
+
+#[test]
+fn a_zero_peer_word_challenge_is_answered_like_any_other() {
+    let (world, mut d) = driver_at_login(Service::default(), 0);
+    world.take_sent();
+    world.deliver(
+        challenge_datagram(0x0111, 0x0222, 0, 1, 0xCAFE_1234, INCOMING_UUID),
+        LOGIN_SERVER,
+    );
+    d.step(0.1, true, &go);
+    assert!(!d.ended());
+    assert!(!world.take_sent().is_empty(), "the accept");
 }
 
 /// [`at_session_start`] on an install with a `0xCC` schema.

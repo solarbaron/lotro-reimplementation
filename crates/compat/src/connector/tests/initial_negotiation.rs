@@ -384,6 +384,7 @@ fn the_observed_world_stream_reaches_the_pending_placement_over_the_connector() 
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (dir, acc) = proof_dir();
     let service = SyntheticService::observed_order();
+    service.script_placement();
     let live = service
         .live_config(&dir.path().join("install"))
         .expect("install");

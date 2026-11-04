@@ -42,6 +42,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::Read;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::Arc;
 
 use flate2::Compression;
 use flate2::read::ZlibDecoder;
@@ -4368,7 +4369,45 @@ struct IncompleteBlob {
     created_at_sec: f64,
 }
 
+impl IncompleteBlob {
+    /// Whether `other` is the same entry, compared where parts were received
+    /// ([`BlobReassembler::same_state`]).
+    fn same_parts(&self, other: &Self) -> bool {
+        let received = |index: u32| {
+            self.received_mask
+                .get((index as usize) >> 5)
+                .is_some_and(|w| w & (1u32 << (index & 0x1F)) != 0)
+        };
+        let part = |entry: &Self, index: u32| {
+            let offset = (index as usize).saturating_mul(MAX_BLOB_FRAG_PAYLOAD);
+            let end = if index.saturating_add(1) == entry.num_frags {
+                entry.trimmed_len.unwrap_or(offset)
+            } else {
+                offset.saturating_add(MAX_BLOB_FRAG_PAYLOAD)
+            };
+            entry.buffer.get(offset..end).map(<[u8]>::to_vec)
+        };
+        self.queue_id == other.queue_id
+            && self.order_num == other.order_num
+            && self.seq_group == other.seq_group
+            && self.blob_id == other.blob_id
+            && self.recipient_id == other.recipient_id
+            && self.num_frags == other.num_frags
+            && self.blob_header_word == other.blob_header_word
+            && self.received_mask == other.received_mask
+            && self.received_count == other.received_count
+            && self.trimmed_len == other.trimmed_len
+            && self.created_at_sec == other.created_at_sec
+            && (0..self.num_frags)
+                .filter(|i| received(*i))
+                .all(|i| part(self, i) == part(other, i))
+    }
+}
+
 /// §9.3.9: how long a completed identity is remembered.
+///
+/// Labelled (`docs/m8-remediation.md` §27 fix 2): keeping the whole body of a completed identity,
+/// and what past the caps goes first, are this choice's; the writer may change them.
 pub const BLOB_TOMBSTONE_SEC: f64 = 30.0;
 /// §9.3.9's cap on completed identities of queues `2..=4` per connection and direction.
 pub const MAX_BLOB_TOMBSTONES: usize = 64;
@@ -4378,18 +4417,15 @@ pub const MAX_BLOB_TOMBSTONES: usize = 64;
 pub const MAX_TOMBSTONE_BYTES: usize = 8 * 1024 * 1024;
 
 /// A completed identity on queues `2..=4` (§9.3.9): its full body, opcode and count, compared
-/// exactly and never by a digest.
-#[derive(Debug, Clone)]
+/// exactly and never by a digest. The body is shared, so a datagram's transaction can keep the list
+/// as it was without copying a byte ([`PacketTransaction`]).
+#[derive(Debug, Clone, PartialEq)]
 struct BlobTombstone {
     key: BlobKey,
     at: f64,
     opcode: u32,
     num_frags: u32,
-    body: Vec<u8>,
-    /// The parts repeated exactly since it completed, which opened nothing: a reused identity that
-    /// shares them is rebuilt from the body ([`BlobReassembler::seed_from_repeats`]). A bit per
-    /// part of a body already kept, allocated by the first such repeat.
-    repeated: Vec<u32>,
+    body: Arc<[u8]>,
 }
 
 impl BlobTombstone {
@@ -4408,6 +4444,36 @@ impl BlobTombstone {
             hdr.frag_index.saturating_add(1) < hdr.num_frags || end == self.body.len();
         right_length && self.body.get(offset..end).is_some_and(|b| b == data)
     }
+}
+
+/// One change a datagram made to the incomplete table or the queue-3 baselines, for its undoing.
+#[derive(Debug)]
+enum PacketUndo {
+    /// An entry this datagram opened.
+    Opened(BlobKey),
+    /// A part this datagram wrote: the slot goes free again, so its bytes are not read any more.
+    Part {
+        key: BlobKey,
+        index: u32,
+        opcode: Option<u32>,
+        trimmed_len: Option<usize>,
+    },
+    /// An entry this datagram completed or superseded.
+    Removed(BlobKey, IncompleteBlob),
+    /// A queue-3 baseline this datagram set, with its value before.
+    Baseline(Queue3Slot, Option<u16>),
+}
+
+/// Everything needed to put the reassembler back as it was before a datagram (§9.3.9: nothing is
+/// committed until the whole datagram qualifies). Nothing is copied but the counters: entries and
+/// tombstone bodies move or are shared.
+#[derive(Debug)]
+struct PacketTransaction {
+    undo: Vec<PacketUndo>,
+    counts: ReassemblyCounts,
+    superseded: u64,
+    /// The tombstones and their bytes, kept at the first change to them.
+    tombstones: Option<(VecDeque<BlobTombstone>, usize)>,
 }
 
 /// What the reassembler did with what it did not deliver, and its anomalies (§9.3.9).
@@ -4438,6 +4504,9 @@ pub struct ReassemblyCounts {
 /// no blob ID (P10-22-POLICY), and the fragment's own 64-bit recipient (field 7, or its default)
 /// on every queue. Another recipient is another identity, never a conflict.
 type BlobKey = (u16, u8, u16, u16, u64);
+
+/// A queue-3 comparison key (§9.3.9): sender, recipient and sequence group.
+type Queue3Slot = (u16, u64, u16);
 
 fn blob_key(sender_rec_id: u16, hdr: &BlobFragmentHeader) -> BlobKey {
     if hdr.queue_id == 3 {
@@ -4510,7 +4579,7 @@ pub struct BlobReassembler {
     /// The bytes of [`Self::tombstones`]' bodies.
     tombstone_bytes: usize,
     /// The latest accepted word per queue-3 comparison key: sender, recipient and group (§9.3.9).
-    queue3_latest: HashMap<(u16, u64, u16), u16>,
+    queue3_latest: HashMap<Queue3Slot, u16>,
     counts: ReassemblyCounts,
 }
 
@@ -4571,16 +4640,18 @@ impl BlobReassembler {
         self.counts
     }
 
-    /// The live tombstone of `key`, if any.
-    fn tombstone(&self, key: &BlobKey, now_sec: f64) -> Option<&BlobTombstone> {
-        self.tombstones
-            .iter()
-            .find(|t| t.key == *key && now_sec - t.at <= BLOB_TOMBSTONE_SEC)
+    /// The tombstone of `key`, if any. A datagram's work starts with [`Self::purge_expired`], so
+    /// what is here is live.
+    fn tombstone(&self, key: &BlobKey) -> Option<&BlobTombstone> {
+        self.tombstones.iter().find(|t| t.key == *key)
     }
 
-    /// Remembers a completed identity; past [`MAX_BLOB_TOMBSTONES`] or [`MAX_TOMBSTONE_BYTES`] the
-    /// oldest go, counted (§9.3.9).
-    fn remember(&mut self, tombstone: BlobTombstone) {
+    /// Remembers a completed identity. What this leaves over the caps goes at the datagram's end
+    /// ([`Self::trim_tombstones`]), so whether one fragment repeats a completed identity does not
+    /// depend on where its siblings stand in the datagram (§9.3.9).
+    fn remember(&mut self, tombstone: BlobTombstone, tx: &mut PacketTransaction) {
+        tx.tombstones
+            .get_or_insert_with(|| (self.tombstones.clone(), self.tombstone_bytes));
         let before = self.tombstones.len();
         self.tombstones.retain(|t| t.key != tombstone.key);
         if self.tombstones.len() != before {
@@ -4588,6 +4659,10 @@ impl BlobReassembler {
         }
         self.tombstone_bytes = self.tombstone_bytes.saturating_add(tombstone.body.len());
         self.tombstones.push_back(tombstone);
+    }
+
+    /// Past [`MAX_BLOB_TOMBSTONES`] or [`MAX_TOMBSTONE_BYTES`] the oldest go, counted (§9.3.9).
+    fn trim_tombstones(&mut self) {
         while self.tombstones.len() > MAX_BLOB_TOMBSTONES
             || (self.tombstone_bytes > MAX_TOMBSTONE_BYTES && self.tombstones.len() > 1)
         {
@@ -4599,24 +4674,44 @@ impl BlobReassembler {
         }
     }
 
-    /// §9.3.9's queue-3 gate for a completed identity: whether it is delivered, with the latest
-    /// accepted word and the superseding of older incomplete ones done. The comparison key has the
-    /// recipient, so another recipient has its own baseline.
-    fn queue3_gate(&mut self, sender_rec_id: u16, recipient: u64, group: u16, order: u16) -> bool {
+    /// Sets a queue-3 baseline, keeping what it was for the datagram's undoing.
+    fn set_baseline(&mut self, slot: Queue3Slot, order: u16, tx: &mut PacketTransaction) {
+        let before = self.queue3_latest.insert(slot, order);
+        tx.undo.push(PacketUndo::Baseline(slot, before));
+    }
+
+    /// The queue-3 gate for a completed identity: whether it is delivered, with the latest accepted
+    /// word and the superseding of older incomplete ones done. The comparison key has the recipient,
+    /// so another recipient has its own baseline.
+    ///
+    /// Labelled policy (`docs/m8-remediation.md` §27 fix 2, the definitions of spec commit 9e71f8f2
+    /// on §9.3.9's recipient-aware key until the writer restores them): the first completed identity
+    /// is the baseline; the distance is the word minus the baseline modulo 65,536; 1 to 32,767 is
+    /// newer, 32,769 to 65,535 older. Queue 2 delivers on arrival and queue 4 has no order gate, so
+    /// only queue 3 comes here. [`MAX_ORDER_GROUPS`] caps the baselines, with no eviction: a key past
+    /// it is delivered uncompared and counted.
+    fn queue3_gate(
+        &mut self,
+        sender_rec_id: u16,
+        recipient: u64,
+        group: u16,
+        order: u16,
+        tx: &mut PacketTransaction,
+    ) -> bool {
         let slot = (sender_rec_id, recipient, group);
         let Some(&latest) = self.queue3_latest.get(&slot) else {
             if self.queue3_latest.len() < MAX_ORDER_GROUPS {
-                self.queue3_latest.insert(slot, order);
+                self.set_baseline(slot, order, tx);
             } else {
                 self.counts.queue3_groups_over = self.counts.queue3_groups_over.saturating_add(1);
             }
-            self.supersede_older(sender_rec_id, recipient, group, order);
+            self.supersede_older(sender_rec_id, recipient, group, order, tx);
             return true;
         };
         match order_band(order, latest) {
             OrderBand::Newer => {
-                self.queue3_latest.insert(slot, order);
-                self.supersede_older(sender_rec_id, recipient, group, order);
+                self.set_baseline(slot, order, tx);
+                self.supersede_older(sender_rec_id, recipient, group, order, tx);
                 true
             }
             OrderBand::Equal => {
@@ -4642,6 +4737,7 @@ impl BlobReassembler {
         key: BlobKey,
         fields: CompletedFields,
         payload: Vec<u8>,
+        tx: &mut PacketTransaction,
         now_sec: f64,
     ) -> Option<ReassembledBlob> {
         let CompletedFields {
@@ -4655,29 +4751,31 @@ impl BlobReassembler {
         } = fields;
         let mut reused = false;
         if matches!(queue_id, 2..=4)
-            && let Some(t) = self.tombstone(&key, now_sec)
+            && let Some(t) = self.tombstone(&key)
         {
-            if t.opcode == opcode && t.num_frags == num_frags && t.body == payload {
+            if t.opcode == opcode && t.num_frags == num_frags && *t.body == *payload {
                 self.counts.duplicates = self.counts.duplicates.saturating_add(1);
                 return None;
             }
             reused = true;
         }
-        if queue_id == 3 && !self.queue3_gate(key.0, recipient_id, seq_group, order_num) {
+        if queue_id == 3 && !self.queue3_gate(key.0, recipient_id, seq_group, order_num, tx) {
             return None;
         }
         if reused {
             self.counts.reused_identities = self.counts.reused_identities.saturating_add(1);
         }
         if matches!(queue_id, 2..=4) {
-            self.remember(BlobTombstone {
-                key,
-                at: now_sec,
-                opcode,
-                num_frags,
-                body: payload.clone(),
-                repeated: Vec::new(),
-            });
+            self.remember(
+                BlobTombstone {
+                    key,
+                    at: now_sec,
+                    opcode,
+                    num_frags,
+                    body: Arc::from(payload.as_slice()),
+                },
+                tx,
+            );
         }
         Some(ReassembledBlob {
             queue_id,
@@ -4690,63 +4788,6 @@ impl BlobReassembler {
         })
     }
 
-    /// Whether a part of a multi-part blob exactly repeats the live completed identity of `key`
-    /// (§9.3.9). The repeat is counted, remembered for [`Self::seed_from_repeats`], and nothing
-    /// opens. Queue 1 has no completed identities.
-    fn note_repeated_part(&mut self, key: &BlobKey, hdr: &BlobFragmentHeader, data: &[u8]) -> bool {
-        let Some(t) = self.tombstones.iter_mut().find(|t| t.key == *key) else {
-            return false;
-        };
-        if !t.holds_part(hdr, data) {
-            return false;
-        }
-        t.repeated
-            .resize((hdr.num_frags as usize).div_ceil(32), 0u32);
-        if let Some(word) = t.repeated.get_mut((hdr.frag_index as usize) >> 5) {
-            *word |= 1u32 << (hdr.frag_index & 0x1F);
-        }
-        self.counts.duplicates = self.counts.duplicates.saturating_add(1);
-        true
-    }
-
-    /// A differing part of a reused identity opens `entry`. The parts already repeated from the
-    /// completed body were acknowledged and will not come again, so they are taken from it, or the
-    /// complete differing body §9.3.9 delivers once could never complete. The part that opens it
-    /// (`arriving`) is the new one, so it is not taken from the old body.
-    fn seed_from_repeats(entry: &mut IncompleteBlob, t: &BlobTombstone, arriving: u32) {
-        if t.repeated.is_empty() || t.num_frags != entry.num_frags {
-            return;
-        }
-        for index in (0..entry.num_frags).filter(|i| *i != arriving) {
-            let i = index as usize;
-            let word = (i >> 5, 1u32 << (index & 0x1F));
-            if t.repeated.get(word.0).is_none_or(|w| w & word.1 == 0) {
-                continue;
-            }
-            let offset = i.saturating_mul(MAX_BLOB_FRAG_PAYLOAD);
-            let end = offset
-                .saturating_add(MAX_BLOB_FRAG_PAYLOAD)
-                .min(t.body.len());
-            let (Some(from), Some(slot)) =
-                (t.body.get(offset..end), entry.received_mask.get_mut(word.0))
-            else {
-                continue;
-            };
-            let Some(to) = entry.buffer.get_mut(offset..end) else {
-                continue;
-            };
-            to.copy_from_slice(from);
-            *slot |= word.1;
-            entry.received_count += 1;
-            if index == 0 {
-                entry.blob_header_word = Some(t.opcode);
-            }
-            if index.saturating_add(1) == entry.num_frags {
-                entry.trimmed_len = Some(end);
-            }
-        }
-    }
-
     /// How many incomplete queue-3 blobs a newer completed one superseded.
     #[must_use]
     pub const fn superseded(&self) -> u64 {
@@ -4756,17 +4797,32 @@ impl BlobReassembler {
     /// A queue-3 blob of `group` for `recipient` completed with `order` as the newest: an older
     /// incomplete one of that comparison key is superseded (§9.3.9). A completed blob is not
     /// touched.
-    fn supersede_older(&mut self, sender_rec_id: u16, recipient: u64, group: u16, order: u16) {
-        let before = self.incomplete.len();
-        self.incomplete.retain(|&(sender, queue, g, o, r), _| {
-            !(sender == sender_rec_id
-                && queue == 3
-                && g == group
-                && r == recipient
-                && order_band(order, o) == OrderBand::Newer)
-        });
-        let gone = u64::try_from(before - self.incomplete.len()).unwrap_or(u64::MAX);
-        self.superseded = self.superseded.saturating_add(gone);
+    fn supersede_older(
+        &mut self,
+        sender_rec_id: u16,
+        recipient: u64,
+        group: u16,
+        order: u16,
+        tx: &mut PacketTransaction,
+    ) {
+        let older: Vec<BlobKey> = self
+            .incomplete
+            .keys()
+            .copied()
+            .filter(|&(sender, queue, g, o, r)| {
+                sender == sender_rec_id
+                    && queue == 3
+                    && g == group
+                    && r == recipient
+                    && order_band(order, o) == OrderBand::Newer
+            })
+            .collect();
+        for key in older {
+            if let Some(entry) = self.incomplete.remove(&key) {
+                tx.undo.push(PacketUndo::Removed(key, entry));
+                self.superseded = self.superseded.saturating_add(1);
+            }
+        }
     }
 
     /// Returns how many completed identities are remembered, and the bytes of their bodies.
@@ -4823,10 +4879,15 @@ impl BlobReassembler {
             });
         }
 
-        // Protocol ceiling check: (numFrags - 1) * 436 + fragDataLen <= 0x01B3E4C0 (§5.6.4 rule 1, §10.1 rule 8)
+        // Protocol ceiling check: (numFrags - 1) * 436 + the final slice <= 0x01B3E4C0 (§5.6.4 rule 1,
+        // §10.1 rule 8). A non-final part does not know its final slice, which is at least one byte
+        // (§9.3.9), so a blob of exactly the limit is not refused for its 436-byte parts; the final
+        // part decides.
+        let last = hdr.frag_index.saturating_add(1) == hdr.num_frags;
+        let final_slice = if last { hdr.frag_data_len as usize } else { 1 };
         let min_final_size = (hdr.num_frags as usize - 1)
             .saturating_mul(MAX_BLOB_FRAG_PAYLOAD)
-            .saturating_add(hdr.frag_data_len as usize);
+            .saturating_add(final_slice);
         if min_final_size > MAX_BLOB_BYTES {
             return Err(SessionError::BlobTooLarge {
                 total_bytes: min_final_size,
@@ -4844,69 +4905,70 @@ impl BlobReassembler {
         Ok(())
     }
 
-    /// Checks every fragment of one packet as [`Self::ingest`] would, without changing the
-    /// table: the per-fragment rules, that a fragment agrees with the identity in progress
-    /// (§9.3.9: a conflict drops the datagram, [`SessionError::ConflictingBlobIdentity`]), and room
-    /// for the entries the packet would open (expired entries count as gone, §5.6.4 rule 3,
-    /// §10.1 rule 8). A packet that passes is then ingested fragment by fragment.
+    /// The checks of a datagram's fragments that need no table state: what passes here is
+    /// well-formed, and these are safe to run before its checksum.
     ///
     /// # Errors
     ///
-    /// The errors of [`Self::ingest`].
+    /// The error of the first fragment that fails (§5.6.4 rules 1, 4, 5; §7.1; §10.1 rule 8).
+    pub fn check_fragments(&self, fragments: &[BlobFragment]) -> Result<(), SessionError> {
+        fragments.iter().try_for_each(|f| self.check_fragment(f))
+    }
+
+    /// Takes one datagram's fragments in order, all or nothing (§9.3.9: nothing is committed until
+    /// the whole datagram qualifies, and a bad sibling prevents all sibling delivery): this is the
+    /// one place that judges a fragment, so a caller commits a sequence only after a datagram that
+    /// has already gone in whole, and nothing can fail after that commit. A refused datagram leaves
+    /// the table as it was. Expired entries and tombstones go first (§5.6.4 rule 3, §9.3.9), which
+    /// any later call at this time would do too.
+    ///
+    /// Returns the blobs delivered, in the order they completed. §9.3.9 delivers no empty control,
+    /// exact repeat of a remembered identity or older queue-3 word.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::check_fragments`], [`SessionError::ConflictingBlobIdentity`] for a
+    /// fragment that conflicts with the identity in progress, in this datagram or before it, and
+    /// [`SessionError::ReassemblyTableFull`] when a fragment would open an entry past the cap.
+    pub fn ingest_packet(
+        &mut self,
+        sender_rec_id: u16,
+        fragments: &[BlobFragment],
+        now_sec: f64,
+    ) -> Result<Vec<ReassembledBlob>, SessionError> {
+        self.check_fragments(fragments)?;
+        self.purge_expired(now_sec);
+        let mut tx = self.begin_packet();
+        match self.take_fragments(sender_rec_id, fragments, now_sec, &mut tx) {
+            Ok(blobs) => {
+                self.trim_tombstones();
+                Ok(blobs)
+            }
+            Err(err) => {
+                self.roll_back(tx);
+                Err(err)
+            }
+        }
+    }
+
+    /// Answers what [`Self::ingest_packet`] would answer for this datagram now, by running that same
+    /// code and undoing it: the table is as it was afterwards, past the expiry that call makes too.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::ingest_packet`].
     pub fn check_packet(
-        &self,
+        &mut self,
         sender_rec_id: u16,
         fragments: &[BlobFragment],
         now_sec: f64,
     ) -> Result<(), SessionError> {
-        let live =
-            |entry: &IncompleteBlob| now_sec - entry.created_at_sec <= BLOB_REASSEMBLY_EXPIRY_SEC;
-        // This packet's own fragments of a multi-fragment identity it would open or add to.
-        let mut seen: Vec<(BlobKey, &BlobFragment)> = Vec::new();
-        let mut new_keys: Vec<BlobKey> = Vec::new();
-        for frag in fragments {
-            self.check_fragment(frag)?;
-            let hdr = &frag.header;
-            if is_empty_control(hdr) || !has_identity(hdr) {
-                continue;
-            }
-            let key = blob_key(sender_rec_id, hdr);
-            let open = self.incomplete.get(&key).filter(|e| live(e));
-            if let Some(entry) = open
-                && !agrees_with(entry, hdr, &frag.payload)
-            {
-                return Err(SessionError::ConflictingBlobIdentity);
-            }
-            for (k, other) in &seen {
-                let o = &other.header;
-                let differs = o.num_frags != hdr.num_frags
-                    || (o.frag_index == hdr.frag_index
-                        && (o.blob_header_word != hdr.blob_header_word
-                            || other.payload != frag.payload));
-                if *k == key && differs {
-                    return Err(SessionError::ConflictingBlobIdentity);
-                }
-            }
-            if hdr.num_frags == 1 {
-                continue;
-            }
-            seen.push((key, frag));
-            // An exact repeat of a completed identity opens nothing (§9.3.9).
-            let repeat = open.is_none()
-                && self
-                    .tombstone(&key, now_sec)
-                    .is_some_and(|t| t.holds_part(hdr, &frag.payload));
-            if open.is_none() && !repeat && !new_keys.contains(&key) {
-                new_keys.push(key);
-            }
-        }
-        let live_count = self.incomplete.values().filter(|e| live(e)).count();
-        if live_count.saturating_add(new_keys.len()) > self.max_concurrent_blobs {
-            return Err(SessionError::ReassemblyTableFull {
-                max_concurrent: self.max_concurrent_blobs,
-            });
-        }
-        Ok(())
+        self.check_fragments(fragments)?;
+        self.purge_expired(now_sec);
+        let mut tx = self.begin_packet();
+        let judged = self.take_fragments(sender_rec_id, fragments, now_sec, &mut tx);
+        self.roll_back(tx);
+        judged.map(|_| ())
     }
 
     /// Counts a datagram dropped for a conflicting identity (§9.3.9).
@@ -4914,33 +4976,123 @@ impl BlobReassembler {
         self.counts.conflicts_dropped = self.counts.conflicts_dropped.saturating_add(1);
     }
 
-    /// Ingests a single `BlobFragment` from `sender_rec_id` at `now_sec` (§5.6.4).
+    /// One fragment as a datagram of its own ([`Self::ingest_packet`]).
     ///
     /// Returns `Ok(Some(ReassembledBlob))` when all fragments of the blob have arrived
     /// (immediately for `numFrags == 1`) and it is to be delivered, or `Ok(None)` when waiting for
-    /// remaining fragments, or when §9.3.9 does not deliver it: an empty control, an exact repeat
-    /// of a remembered identity, or an older queue-3 word.
+    /// remaining fragments or when §9.3.9 does not deliver it.
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError`] if fragment bounds or total blob size limits are violated,
-    /// [`SessionError::ConflictingBlobIdentity`] for a fragment that conflicts with the identity
-    /// in progress, or [`SessionError::EncryptedBlobRejected`] for a fragment with
-    /// `EncryptedFragmentedBlob` set (§7.1, `OPEN-SESSION-6`).
+    /// The errors of [`Self::ingest_packet`].
     pub fn ingest(
         &mut self,
         sender_rec_id: u16,
         frag: BlobFragment,
         now_sec: f64,
     ) -> Result<Option<ReassembledBlob>, SessionError> {
-        self.check_fragment(&frag)?;
+        self.ingest_packet(sender_rec_id, std::slice::from_ref(&frag), now_sec)
+            .map(|mut blobs| blobs.pop())
+    }
+
+    /// Whether `other` holds the same table: the same entries with the same bytes where a part was
+    /// received, the same tombstones, baselines and counts. Bytes of a free slot are never read, so
+    /// they are not compared. For tests and fuzz targets.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn same_state(&self, other: &Self) -> bool {
+        self.counts == other.counts
+            && self.superseded == other.superseded
+            && self.tombstones == other.tombstones
+            && self.tombstone_bytes == other.tombstone_bytes
+            && self.queue3_latest == other.queue3_latest
+            && self.incomplete.len() == other.incomplete.len()
+            && self
+                .incomplete
+                .iter()
+                .all(|(key, a)| other.incomplete.get(key).is_some_and(|b| a.same_parts(b)))
+    }
+
+    fn begin_packet(&self) -> PacketTransaction {
+        PacketTransaction {
+            undo: Vec::new(),
+            counts: self.counts,
+            superseded: self.superseded,
+            tombstones: None,
+        }
+    }
+
+    /// Puts back everything `tx` recorded, newest first.
+    fn roll_back(&mut self, tx: PacketTransaction) {
+        for change in tx.undo.into_iter().rev() {
+            match change {
+                PacketUndo::Opened(key) => {
+                    self.incomplete.remove(&key);
+                }
+                PacketUndo::Part {
+                    key,
+                    index,
+                    opcode,
+                    trimmed_len,
+                } => {
+                    if let Some(entry) = self.incomplete.get_mut(&key) {
+                        if let Some(word) = entry.received_mask.get_mut((index as usize) >> 5) {
+                            *word &= !(1u32 << (index & 0x1F));
+                        }
+                        entry.received_count = entry.received_count.saturating_sub(1);
+                        entry.blob_header_word = opcode;
+                        entry.trimmed_len = trimmed_len;
+                    }
+                }
+                PacketUndo::Removed(key, entry) => {
+                    self.incomplete.insert(key, entry);
+                }
+                PacketUndo::Baseline(slot, Some(order)) => {
+                    self.queue3_latest.insert(slot, order);
+                }
+                PacketUndo::Baseline(slot, None) => {
+                    self.queue3_latest.remove(&slot);
+                }
+            }
+        }
+        self.counts = tx.counts;
+        self.superseded = tx.superseded;
+        if let Some((tombstones, bytes)) = tx.tombstones {
+            self.tombstones = tombstones;
+            self.tombstone_bytes = bytes;
+        }
+    }
+
+    fn take_fragments(
+        &mut self,
+        sender_rec_id: u16,
+        fragments: &[BlobFragment],
+        now_sec: f64,
+        tx: &mut PacketTransaction,
+    ) -> Result<Vec<ReassembledBlob>, SessionError> {
+        let mut blobs = Vec::new();
+        for frag in fragments {
+            if let Some(blob) = self.take_fragment(sender_rec_id, frag, now_sec, tx)? {
+                blobs.push(blob);
+            }
+        }
+        Ok(blobs)
+    }
+
+    /// The one judgement of one well-formed fragment ([`Self::check_fragments`]). An empty control
+    /// is skipped before any identity is looked at (labelled, `docs/m8-remediation.md` §27 fix 2).
+    fn take_fragment(
+        &mut self,
+        sender_rec_id: u16,
+        frag: &BlobFragment,
+        now_sec: f64,
+        tx: &mut PacketTransaction,
+    ) -> Result<Option<ReassembledBlob>, SessionError> {
         let hdr = &frag.header;
         if is_empty_control(hdr) {
             self.counts.empty_controls = self.counts.empty_controls.saturating_add(1);
             return Ok(None);
         }
-        let alloc_size = (hdr.num_frags as usize).saturating_mul(MAX_BLOB_FRAG_PAYLOAD);
-        self.purge_expired(now_sec);
         let key = blob_key(sender_rec_id, hdr);
         if has_identity(hdr)
             && let Some(entry) = self.incomplete.get(&key)
@@ -4960,83 +5112,104 @@ impl BlobReassembler {
                 opcode: hdr.blob_header_word.unwrap_or(0),
                 num_frags: 1,
             };
-            return Ok(self.completed(key, fields, frag.payload, now_sec));
+            return Ok(self.completed(key, fields, frag.payload.clone(), tx, now_sec));
         }
 
-        // §9.3.9: an exact repeat of a part of a completed identity is ignored and opens nothing.
-        if !self.incomplete.contains_key(&key) && self.note_repeated_part(&key, hdr, &frag.payload)
-        {
+        if !self.incomplete.contains_key(&key) {
+            // §9.3.9: an exact repeat of a part of a completed identity is ignored and opens nothing.
+            //
+            // OPEN for the spec writer: a reused identity whose new body shares such a part cannot
+            // be told from a repeat when that part comes first. The part is then ignored and, once
+            // acknowledged, does not come again, so the new body's entry expires under §5.6.4
+            // instead of being delivered. No local rule avoids a merge here (a later part cannot
+            // show whether the old bytes belong to the new body), so nothing is taken from the old
+            // body.
+            if self
+                .tombstone(&key)
+                .is_some_and(|t| t.holds_part(hdr, &frag.payload))
+            {
+                self.counts.duplicates = self.counts.duplicates.saturating_add(1);
+                return Ok(None);
+            }
+            // The one action at the cap (labelled, `docs/m8-remediation.md` §27 fix 15): the whole
+            // datagram is dropped and counted, with no Ack and no terminal result.
+            if self.incomplete.len() >= self.max_concurrent_blobs {
+                return Err(SessionError::ReassemblyTableFull {
+                    max_concurrent: self.max_concurrent_blobs,
+                });
+            }
+            let num_frags = hdr.num_frags as usize;
+            self.incomplete.insert(
+                key,
+                IncompleteBlob {
+                    queue_id: hdr.queue_id,
+                    order_num: hdr.order_num,
+                    seq_group: hdr.seq_group,
+                    blob_id: hdr.blob_id,
+                    recipient_id: hdr.recipient_id,
+                    num_frags: hdr.num_frags,
+                    blob_header_word: None,
+                    received_mask: vec![0u32; num_frags.div_ceil(32)],
+                    received_count: 0,
+                    buffer: vec![0u8; num_frags.saturating_mul(MAX_BLOB_FRAG_PAYLOAD)],
+                    trimmed_len: None,
+                    created_at_sec: now_sec,
+                },
+            );
+            tx.undo.push(PacketUndo::Opened(key));
+        }
+        let Some(entry) = self.incomplete.get_mut(&key) else {
             return Ok(None);
-        }
+        };
 
-        if !self.incomplete.contains_key(&key) && self.incomplete.len() >= self.max_concurrent_blobs
-        {
-            return Err(SessionError::ReassemblyTableFull {
-                max_concurrent: self.max_concurrent_blobs,
-            });
-        }
-        let opening = !self.incomplete.contains_key(&key);
-
-        let entry = self.incomplete.entry(key).or_insert_with(|| {
-            let mask_words = (hdr.num_frags as usize).div_ceil(32);
-            IncompleteBlob {
-                queue_id: hdr.queue_id,
-                order_num: hdr.order_num,
-                seq_group: hdr.seq_group,
-                blob_id: hdr.blob_id,
-                recipient_id: hdr.recipient_id,
-                num_frags: hdr.num_frags,
-                blob_header_word: None,
-                received_mask: vec![0u32; mask_words],
-                received_count: 0,
-                buffer: vec![0u8; alloc_size],
-                trimmed_len: None,
-                created_at_sec: now_sec,
-            }
-        });
-        if opening {
-            let tombstone = self.tombstones.iter().find(|t| t.key == key);
-            if let Some(t) = tombstone {
-                Self::seed_from_repeats(entry, t, hdr.frag_index);
-            }
-        }
-
-        let word_idx = (hdr.frag_index as usize) >> 5;
         let bit_mask = 1u32 << (hdr.frag_index & 0x1F);
-        if (entry.received_mask[word_idx] & bit_mask) == 0 {
-            entry.received_mask[word_idx] |= bit_mask;
-            entry.received_count += 1;
-
-            let offset = (hdr.frag_index as usize) * MAX_BLOB_FRAG_PAYLOAD;
-            entry.buffer[offset..offset + frag.payload.len()].copy_from_slice(&frag.payload);
+        let offset = (hdr.frag_index as usize).saturating_mul(MAX_BLOB_FRAG_PAYLOAD);
+        let end = offset.saturating_add(frag.payload.len());
+        if let (Some(word), Some(slot)) = (
+            entry.received_mask.get_mut((hdr.frag_index as usize) >> 5),
+            entry.buffer.get_mut(offset..end),
+        ) && *word & bit_mask == 0
+        {
+            tx.undo.push(PacketUndo::Part {
+                key,
+                index: hdr.frag_index,
+                opcode: entry.blob_header_word,
+                trimmed_len: entry.trimmed_len,
+            });
+            *word |= bit_mask;
+            entry.received_count = entry.received_count.saturating_add(1);
+            slot.copy_from_slice(&frag.payload);
             if hdr.frag_index == 0 {
                 entry.blob_header_word = hdr.blob_header_word;
             }
-            if hdr.frag_index + 1 == hdr.num_frags {
-                entry.trimmed_len = Some(offset + frag.payload.len());
+            if hdr.frag_index.saturating_add(1) == hdr.num_frags {
+                entry.trimmed_len = Some(end);
             }
         }
 
-        if entry.received_count == entry.num_frags {
-            let Some(mut done) = self.incomplete.remove(&key) else {
-                return Ok(None);
-            };
-            if let Some(final_len) = done.trimmed_len {
-                done.buffer.truncate(final_len);
-            }
-            let fields = CompletedFields {
-                queue_id: done.queue_id,
-                order_num: done.order_num,
-                seq_group: done.seq_group,
-                blob_id: done.blob_id,
-                recipient_id: done.recipient_id,
-                opcode: done.blob_header_word.unwrap_or(0),
-                num_frags: done.num_frags,
-            };
-            return Ok(self.completed(key, fields, done.buffer, now_sec));
+        if entry.received_count != entry.num_frags {
+            return Ok(None);
         }
-
-        Ok(None)
+        let Some(done) = self.incomplete.remove(&key) else {
+            return Ok(None);
+        };
+        let body = done
+            .buffer
+            .get(..done.trimmed_len.unwrap_or(done.buffer.len()))
+            .unwrap_or_default()
+            .to_vec();
+        let fields = CompletedFields {
+            queue_id: done.queue_id,
+            order_num: done.order_num,
+            seq_group: done.seq_group,
+            blob_id: done.blob_id,
+            recipient_id: done.recipient_id,
+            opcode: done.blob_header_word.unwrap_or(0),
+            num_frags: done.num_frags,
+        };
+        // The full entry stays with the transaction until the datagram has gone in whole.
+        tx.undo.push(PacketUndo::Removed(key, done));
+        Ok(self.completed(key, fields, body, tx, now_sec))
     }
 }
 
@@ -5536,6 +5709,239 @@ pub struct CodecUuids {
 /// Vector 9).
 pub const INITIAL_CLIENT_WORD: u16 = 1;
 
+/// The log target of a live official run's evidence (`official-session.md` §9.3.9 "Evidence for
+/// transport producers"; `docs/DEVELOPMENT.md` "Reading a live official run"). Its lines show which
+/// labelled policy Tessera actually used, for correlating a refusal: never an address, port, account,
+/// ticket, seed, cookie, name, ID, path, identifier or payload. They cannot show the official
+/// producer's rules.
+pub const EVIDENCE_TARGET: &str = "official_evidence";
+/// Most lines of one connection's sends and controls.
+pub const MAX_EVIDENCE_SEND_LINES: u32 = 400;
+/// Most lines of one connection's accepted datagrams and delivered blobs, past the first of each
+/// opcode (at most [`MAX_EVIDENCE_OPCODES`] more).
+pub const MAX_EVIDENCE_RECEIVE_LINES: u32 = 400;
+/// §9.3.7's cap on distinct opcodes, for the first-of-each lines.
+pub const MAX_EVIDENCE_OPCODES: usize = 256;
+/// What the flow accumulator counts (§5.5 P10-22-POLICY).
+const FLOW_SCOPE: &str = "udp-payload-of-accepted-datagrams";
+
+/// How the local word of a sent packet came to be (§9.3.9 "Evidence for transport producers").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WordInput {
+    /// A sequenced send: one more (P10-22-POLICY).
+    Sequenced,
+    /// A standalone control: kept as it is (§9.3.9).
+    ControlUnchanged,
+    /// A resend: the saved word.
+    ResendSaved,
+    /// The accept: the interim first word (§4.2, §6.4).
+    AcceptInitial,
+}
+
+impl WordInput {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Sequenced => "sequenced-plus-one",
+            Self::ControlUnchanged => "control-unchanged",
+            Self::ResendSaved => "resend-saved",
+            Self::AcceptInitial => "accept-initial",
+        }
+    }
+}
+
+/// One sent packet's evidence line.
+#[derive(Debug, Clone, Copy)]
+struct SendEvidence {
+    kind: &'static str,
+    seq: u32,
+    word_before: u16,
+    word_after: u16,
+    input: WordInput,
+    flow_event: &'static str,
+    flow: Option<FlowControlHeader>,
+    flow_accumulated: u32,
+    /// The first fragment's queue, opcode (its first part only), index and count, and how many.
+    fragment: Option<(u8, Option<u32>, u32, u32)>,
+    fragments: usize,
+}
+
+impl SendEvidence {
+    fn of(kind: &'static str, seq: u32, opt: &OptionalHeaders, frags: &[BlobFragment]) -> Self {
+        Self {
+            kind,
+            seq,
+            word_before: 0,
+            word_after: 0,
+            input: WordInput::ControlUnchanged,
+            flow_event: "none",
+            flow: opt.flow_control,
+            flow_accumulated: 0,
+            fragment: frags.first().map(|f| {
+                let h = &f.header;
+                (h.queue_id, h.blob_header_word, h.frag_index, h.num_frags)
+            }),
+            fragments: frags.len(),
+        }
+    }
+
+    const fn word(mut self, before: u16, after: u16, input: WordInput) -> Self {
+        self.word_before = before;
+        self.word_after = after;
+        self.input = input;
+        self
+    }
+}
+
+/// A connection's evidence log: off unless the connector turns it on (only its official runs do), and
+/// bounded ([`MAX_EVIDENCE_SEND_LINES`], [`MAX_EVIDENCE_RECEIVE_LINES`], [`MAX_EVIDENCE_OPCODES`]). A
+/// line past the bound is only counted, and the totals line goes out when the connection is dropped.
+#[derive(Debug)]
+struct Evidence {
+    role: &'static str,
+    stage: &'static str,
+    stage_since: f64,
+    send_left: u32,
+    receive_left: u32,
+    opcodes: BTreeSet<u32>,
+    sends: u64,
+    resends: u64,
+    controls: u64,
+    datagrams: u64,
+    blobs: u64,
+    not_shown: u64,
+}
+
+impl Evidence {
+    fn new(role: &'static str, now_sec: f64) -> Self {
+        Self {
+            role,
+            stage: "handshake",
+            stage_since: now_sec,
+            send_left: MAX_EVIDENCE_SEND_LINES,
+            receive_left: MAX_EVIDENCE_RECEIVE_LINES,
+            opcodes: BTreeSet::new(),
+            sends: 0,
+            resends: 0,
+            controls: 0,
+            datagrams: 0,
+            blobs: 0,
+            not_shown: 0,
+        }
+    }
+
+    /// Milliseconds since the stage started, floored.
+    fn ms(&self, now_sec: f64) -> u64 {
+        ((now_sec - self.stage_since).max(0.0) * 1000.0) as u64
+    }
+
+    fn sent(&mut self, line: SendEvidence, now_sec: f64) {
+        match line.input {
+            WordInput::Sequenced | WordInput::AcceptInitial => self.sends += 1,
+            WordInput::ControlUnchanged => self.controls += 1,
+            WordInput::ResendSaved => self.resends += 1,
+        }
+        if self.send_left == 0 {
+            self.not_shown += 1;
+            return;
+        }
+        self.send_left -= 1;
+        let (queue, opcode, part, parts) = line.fragment.unwrap_or((0, None, 0, 0));
+        let flow = line.flow.unwrap_or(FlowControlHeader {
+            bytes_received_delta: 0,
+            interval_ms: 0,
+        });
+        tracing::info!(
+            target: EVIDENCE_TARGET,
+            role = self.role,
+            stage = self.stage,
+            ms = self.ms(now_sec),
+            dir = "send",
+            kind = line.kind,
+            seq = line.seq,
+            word_before = line.word_before,
+            word_after = line.word_after,
+            word_input = line.input.label(),
+            queue,
+            opcode = format_args!("{:#x}", opcode.unwrap_or(0)),
+            part,
+            parts,
+            fragments = line.fragments,
+            flow_event = line.flow_event,
+            flow_reported_bytes = flow.bytes_received_delta,
+            flow_reported_ms = flow.interval_ms,
+            flow_accumulated = line.flow_accumulated,
+            flow_scope = FLOW_SCOPE,
+            "official evidence: packet"
+        );
+    }
+
+    fn accepted(&mut self, seq: u32, len: usize, fragments: usize, gaps: usize, now_sec: f64) {
+        self.datagrams += 1;
+        if self.receive_left == 0 {
+            self.not_shown += 1;
+            return;
+        }
+        self.receive_left -= 1;
+        tracing::info!(
+            target: EVIDENCE_TARGET,
+            role = self.role,
+            stage = self.stage,
+            ms = self.ms(now_sec),
+            dir = "recv",
+            seq,
+            bytes = len,
+            fragments,
+            gaps,
+            "official evidence: datagram"
+        );
+    }
+
+    fn delivered(&mut self, blob: &ReassembledBlob, now_sec: f64) {
+        self.blobs += 1;
+        let first =
+            self.opcodes.len() < MAX_EVIDENCE_OPCODES && self.opcodes.insert(blob.blob_header_word);
+        if !first && self.receive_left == 0 {
+            self.not_shown += 1;
+            return;
+        }
+        if !first {
+            self.receive_left -= 1;
+        }
+        tracing::info!(
+            target: EVIDENCE_TARGET,
+            role = self.role,
+            stage = self.stage,
+            ms = self.ms(now_sec),
+            dir = "recv",
+            queue = blob.queue_id,
+            opcode = format_args!("{:#x}", blob.blob_header_word),
+            group = blob.seq_group,
+            order = blob.order_num,
+            bytes = blob.payload.len(),
+            first_of_opcode = first,
+            "official evidence: blob"
+        );
+    }
+}
+
+impl Drop for Evidence {
+    fn drop(&mut self) {
+        tracing::info!(
+            target: EVIDENCE_TARGET,
+            role = self.role,
+            stage = self.stage,
+            sends = self.sends,
+            resends = self.resends,
+            controls = self.controls,
+            datagrams = self.datagrams,
+            blobs = self.blobs,
+            opcodes = self.opcodes.len(),
+            lines_not_shown = self.not_shown,
+            "official evidence: connection totals"
+        );
+    }
+}
+
 /// The interim flow-report counters of §5.5 (P10-22-POLICY, `OPEN-SESSION-13`).
 #[derive(Debug, Clone, Copy)]
 struct FlowReport {
@@ -5721,6 +6127,8 @@ pub struct SessionConnection {
     events: VecDeque<SessionEvent>,
 
     counts: HandshakeCounts,
+    /// The evidence log of an official run ([`Evidence`]); `None` for everything else.
+    evidence: Option<Box<Evidence>>,
     closed_from: Option<ConnectionState>,
 }
 
@@ -5801,7 +6209,22 @@ impl SessionConnection {
             events: VecDeque::new(),
 
             counts: HandshakeCounts::default(),
+            evidence: None,
             closed_from: None,
+        }
+    }
+
+    /// Turns on this connection's evidence log under the neutral `role` ([`EVIDENCE_TARGET`]). Only
+    /// the connector's official runs do.
+    pub fn enable_evidence(&mut self, role: &'static str, now_sec: f64) {
+        self.evidence = Some(Box::new(Evidence::new(role, now_sec)));
+    }
+
+    /// The stage the next evidence lines belong to, whose clock starts now.
+    pub fn evidence_stage(&mut self, stage: &'static str, now_sec: f64) {
+        if let Some(e) = self.evidence.as_mut() {
+            e.stage = stage;
+            e.stage_since = now_sec;
         }
     }
 
@@ -6153,7 +6576,19 @@ impl SessionConnection {
         };
         // A FlowControl-only packet has nothing to retransmit: a negative acknowledgement
         // of it is answered with OutOfOrderAckHeader (§5.3).
-        let seq = self.allocate_sequenced_with(opt, Vec::new(), false, now_sec, outgoing_codec)?;
+        let flow_event = if self.flow.initial_sent {
+            "report-unreported"
+        } else {
+            "report-first"
+        };
+        let seq = self.allocate_sequenced_with(
+            opt,
+            Vec::new(),
+            false,
+            flow_event,
+            now_sec,
+            outgoing_codec,
+        )?;
         self.flow.reset(now_sec);
         self.flow.initial_sent = true;
         Ok(seq)
@@ -6182,10 +6617,16 @@ impl SessionConnection {
         if attach_clock {
             opt_headers.clock_sync = Some(now_sec + self.server_clock_offset_sec);
         }
+        let flow_event = if attach_flow {
+            "report-attached"
+        } else {
+            "none"
+        };
         let seq = self.allocate_sequenced_with(
             opt_headers,
             fragments,
             retransmit_eligible,
+            flow_event,
             now_sec,
             outgoing_codec,
         )?;
@@ -6206,6 +6647,7 @@ impl SessionConnection {
         opt_headers: OptionalHeaders,
         fragments: Vec<BlobFragment>,
         retransmit_eligible: bool,
+        flow_event: &'static str,
         now_sec: f64,
         outgoing_codec: Option<&dyn BitTreeCodec>,
     ) -> Result<u32, SessionError> {
@@ -6244,6 +6686,16 @@ impl SessionConnection {
         let codec = self.data_codec(outgoing_codec);
         let dgram = Self::encode_own(hdr, &opt_headers, &fragments, Some(xor_mask), codec)?;
 
+        if let Some(e) = self.evidence.as_mut() {
+            let mut line = SendEvidence::of("new", next_seq, &opt_headers, &fragments).word(
+                self.client_word,
+                client_word,
+                WordInput::Sequenced,
+            );
+            line.flow_event = flow_event;
+            line.flow_accumulated = self.flow.bytes;
+            e.sent(line, now_sec);
+        }
         self.outgoing_isaac = Some(generator);
         self.send_seq_num = next_seq;
         self.client_word = client_word;
@@ -6353,6 +6805,40 @@ impl SessionConnection {
             outgoing_codec,
             true,
         )
+    }
+
+    /// [`Self::send_blob`], in its default-recipient form, whose packets stay resendable on a
+    /// `SequenceNakHeader` like [`Self::send_blob_retained`]'s.
+    ///
+    /// For `0xF4`, whose current form has flag `0x40` (§9.3.9, Vector 18). Labelled
+    /// (`docs/m8-remediation.md` §27 fix 7): §9.3.9 gives no retention rule for it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError`] if fragmentation or packet queueing fails.
+    pub fn send_blob_kept(
+        &mut self,
+        queue_id: u8,
+        seq_group: u16,
+        blob_header_word: u32,
+        payload: &[u8],
+        now_sec: f64,
+        outgoing_codec: Option<&dyn BitTreeCodec>,
+    ) -> Result<Vec<u32>, SessionError> {
+        let seqs = self.send_blob(
+            queue_id,
+            seq_group,
+            blob_header_word,
+            payload,
+            now_sec,
+            outgoing_codec,
+        )?;
+        for seq in &seqs {
+            if let Some(rec) = self.retransmit_table.get_mut(seq) {
+                rec.retained = true;
+            }
+        }
+        Ok(seqs)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6550,10 +7036,13 @@ impl SessionConnection {
             }
             // §6.3: the incoming recipient is the challenge datagram header's recId and the
             // outgoing one payload bytes 18..19; Tessera adopts only non-zero IDs. §9.3.9: a zero
-            // recipient or peer word is unsupported at once, every auth retry cancelled and no
-            // reply. A challenge after one was adopted is judged below instead.
-            if hdr.rec_id == 0 || cr.outgoing_rec_id == 0 || hdr.peer_word == 0 {
-                tracing::debug!("ConnectChallengeHeader with a zero recipient or word");
+            // recipient is unsupported at once, every auth retry cancelled and no reply. A challenge
+            // after one was adopted is judged below instead.
+            //
+            // Labelled (`docs/m8-remediation.md` §27 fix 9): "zero" is the checksum-valid header
+            // recipient or payload bytes 18..19. The header's opaque peer word is not tested.
+            if hdr.rec_id == 0 || cr.outgoing_rec_id == 0 {
+                tracing::debug!("ConnectChallengeHeader with a zero recipient");
                 if self.state == ConnectionState::SessionAuthSent {
                     self.close(DisconnectReason::InvalidChallenge, now_sec);
                 }
@@ -6588,17 +7077,10 @@ impl SessionConnection {
             .as_ref()
             .map_or(self.server_rec_id, |cr| cr.outgoing_rec_id);
 
-        // Rule 8: every fragment is checked before anything is committed. §9.3.9: a fragment that
-        // conflicts with an identity in progress is never merged: its whole datagram is dropped.
-        if let Err(err) = self
-            .reassembler
-            .check_packet(sender_rec_id, &pkt.fragments, now_sec)
-        {
-            if matches!(err, SessionError::ConflictingBlobIdentity) {
-                self.reassembler.note_conflict_dropped();
-            }
-            return Err(self.refused(err));
-        }
+        // Rule 8: well-formed fragments, before any checksum work.
+        self.reassembler
+            .check_fragments(&pkt.fragments)
+            .map_err(|err| self.refused(err))?;
 
         // Rules 5 & 6: sequence window and checksum, computed on copies (§5.1, §7.2).
         let commit = if (hdr.flags & FLAG_MASKED_CHECKSUM) != 0 {
@@ -6631,17 +7113,40 @@ impl SessionConnection {
             let queue_id = f.header.queue_id;
             return Err(self.refused(SessionError::UnmaskedReliableFragment { queue_id }));
         }
-        if let Some(f) = bit {
-            let err = SessionError::UnsupportedFragment {
-                queue_id: f.header.queue_id,
-                blob_flags: f.header.blob_flags,
-            };
-            if masked {
-                if self.queue_standalone_disconnect().is_err() {
-                    tracing::debug!("official session: the closing Disconnect was not encoded");
+        let unsupported = bit.map(|f| SessionError::UnsupportedFragment {
+            queue_id: f.header.queue_id,
+            blob_flags: f.header.blob_flags,
+        });
+        if let (false, Some(err)) = (masked, &unsupported) {
+            return Err(self.refused(err.clone()));
+        }
+
+        // §9.3.9: the whole datagram goes through the reassembler before the commit below, so no
+        // refusal can come after it: a conflict or a full table drops the datagram with nothing
+        // applied, its siblings not delivered and its sequence free to be asked for again. A
+        // terminal datagram is only judged: a conflict in it drops it like any other.
+        let judged = if unsupported.is_some() {
+            self.reassembler
+                .check_packet(sender_rec_id, &pkt.fragments, now_sec)
+                .map(|()| Vec::new())
+        } else {
+            self.reassembler
+                .ingest_packet(sender_rec_id, &pkt.fragments, now_sec)
+        };
+        let blobs = match judged {
+            Ok(blobs) => blobs,
+            Err(err) => {
+                if matches!(err, SessionError::ConflictingBlobIdentity) {
+                    self.reassembler.note_conflict_dropped();
                 }
-                self.close(DisconnectReason::UnsupportedTraffic, now_sec);
+                return Err(self.refused(err));
             }
+        };
+        if let Some(err) = unsupported {
+            if self.queue_standalone_disconnect().is_err() {
+                tracing::debug!("official session: the closing Disconnect was not encoded");
+            }
+            self.close(DisconnectReason::UnsupportedTraffic, now_sec);
             return Err(self.refused(err));
         }
 
@@ -6687,19 +7192,33 @@ impl SessionConnection {
         }
 
         // Process optional headers (§5.2–§5.4, §6.3–§6.7, §8.1–§8.2)
-        self.process_optional_headers(&pkt.opt_headers, hdr, now_sec, codecs.outgoing)?;
+        let headers =
+            self.process_optional_headers(&pkt.opt_headers, hdr, now_sec, codecs.outgoing);
 
-        // Process blob fragments (checked above; duplicate sequenced packets were dropped,
-        // §5.6.4)
-        for frag in &pkt.fragments {
-            if let Some(blob) = self
-                .reassembler
-                .ingest(sender_rec_id, frag.clone(), now_sec)?
-            {
+        // The blobs this committed datagram completed (duplicate sequenced packets were dropped
+        // above, §5.6.4). A challenge that named no usable dictionary closed the connection, and
+        // nothing of its datagram is delivered; a resend that could not be encoded takes nothing
+        // back from a datagram already committed.
+        if headers.is_ok() || self.state != ConnectionState::Closing {
+            for blob in blobs {
+                if let Some(e) = self.evidence.as_mut() {
+                    e.delivered(&blob, now_sec);
+                }
                 self.events.push_back(SessionEvent::BlobReceived(blob));
             }
         }
+        headers?;
 
+        if let Some(e) = self.evidence.as_mut() {
+            let gaps = self.missing_gaps.len();
+            e.accepted(
+                hdr.seq_num,
+                datagram.len(),
+                pkt.fragments.len(),
+                gaps,
+                now_sec,
+            );
+        }
         // Counted only once the whole datagram was taken (diagnostics, `HandshakeCounts`).
         self.counts.received_ok = self.counts.received_ok.saturating_add(1);
         Ok(pkt)
@@ -6857,6 +7376,14 @@ impl SessionConnection {
         let dgram = Self::encode_own(hdr, &resp_opt, &[], None, None)?;
         self.outbound_datagrams.push_back(dgram);
         self.counts.connect_accept = self.counts.connect_accept.saturating_add(1);
+        if let Some(e) = self.evidence.as_mut() {
+            let line = SendEvidence::of("accept", 0, &resp_opt, &[]).word(
+                self.client_word,
+                self.client_word,
+                WordInput::AcceptInitial,
+            );
+            e.sent(line, now_sec);
+        }
 
         // Only State 1 reaches here (State 2 answers with [`Self::repeat_accept`]).
         self.state = ConnectionState::ChallengeAcceptSent;
@@ -6957,6 +7484,12 @@ impl SessionConnection {
                         Some(rec.xor_mask),
                         codec,
                     )?;
+                    let line =
+                        SendEvidence::of("resend", rec.seq_num, &rec.opt_headers, &rec.fragments)
+                            .word(rec.client_word, rec.client_word, WordInput::ResendSaved);
+                    if let Some(e) = self.evidence.as_mut() {
+                        e.sent(line, now_sec);
+                    }
                     self.outbound_datagrams.push_back(dgram);
                 } else if self.out_of_order_ack_queue.len() >= MAX_PENDING_OUT_OF_ORDER_ACKS {
                     self.dropped_out_of_order_acks =
@@ -7163,6 +7696,7 @@ impl SessionConnection {
                         out_of_order_ack: Some(list),
                         ..OptionalHeaders::default()
                     })?;
+                    self.note_control("out-of-order-ack", now_sec);
                 }
 
                 // §5.5 P10-22-POLICY: the first FlowControl-only packet, then one for
@@ -7186,6 +7720,7 @@ impl SessionConnection {
                             sequence_nak: Some(list),
                             ..OptionalHeaders::default()
                         })?;
+                        self.note_control("nak", now_sec);
                     }
                 } else if self.recv_seq_expected > 1
                     && now_sec - self.last_ack_nak_sent_sec >= CUMULATIVE_ACK_INTERVAL_SEC
@@ -7195,6 +7730,7 @@ impl SessionConnection {
                         cumulative_ack: Some(self.recv_seq_expected),
                         ..OptionalHeaders::default()
                     })?;
+                    self.note_control("ack", now_sec);
                 }
             }
             ConnectionState::DisconnectingFlush => {
@@ -7299,6 +7835,20 @@ impl SessionConnection {
             | ConnectionState::ServerConnectSent => {}
         }
         next
+    }
+
+    /// A standalone control went into the queue: one evidence line, with the copied sequence and the
+    /// unchanged word (§9.3.9).
+    fn note_control(&mut self, kind: &'static str, now_sec: f64) {
+        let (seq, word) = (self.send_seq_num, self.client_word);
+        if let Some(e) = self.evidence.as_mut() {
+            let line = SendEvidence::of(kind, seq, &OptionalHeaders::default(), &[]).word(
+                word,
+                word,
+                WordInput::ControlUnchanged,
+            );
+            e.sent(line, now_sec);
+        }
     }
 
     /// When the oldest open sequence gap opened (its sequence number is the lowest).

@@ -293,14 +293,15 @@ fn a_differing_part_of_the_same_count_starts_a_new_assembly() {
     assert_eq!(r.counts().reused_identities, 1);
 }
 
+/// A reused body that shares a part already repeated: when that part comes first it cannot be told
+/// from a repeat, so nothing but the new parts opens. The entry then expires under §5.6.4, and
+/// nothing of the old body is taken (an OPEN returned to the spec writer, see `take_fragment`).
 #[test]
-fn a_reused_identity_sharing_a_repeated_part_is_still_delivered() {
+fn a_reused_identity_sharing_a_repeated_part_delivers_nothing_merged() {
     let mut r = BlobReassembler::default();
     let first = parts(2, 1, 7, 0x55, &long_body(1));
     r.ingest(1, first[0].clone(), 0.0).unwrap();
     assert!(r.ingest(1, first[1].clone(), 0.0).unwrap().is_some());
-    // The new body shares part 0 with the old one, and differs in part 1. Part 0 looks like a
-    // repeat when it arrives first, and it was acknowledged, so it does not come again.
     let mut body = long_body(1);
     if let Some(last) = body.last_mut() {
         *last ^= 0xFF;
@@ -308,14 +309,307 @@ fn a_reused_identity_sharing_a_repeated_part_is_still_delivered() {
     let reused = parts(2, 1, 7, 0x55, &body);
     assert_eq!(r.ingest(1, reused[0].clone(), 1.0).unwrap(), None);
     assert_eq!(r.incomplete_len(), 0);
-    let blob = r
-        .ingest(1, reused[1].clone(), 1.0)
-        .unwrap()
-        .expect("delivered once with its anomaly");
-    assert_eq!(blob.payload, body);
-    assert_eq!(blob.blob_header_word, 0x55);
-    assert_eq!(r.counts().reused_identities, 1);
+    assert_eq!(r.ingest(1, reused[1].clone(), 1.0).unwrap(), None);
+    assert_eq!(r.incomplete_len(), 1);
+    assert_eq!(r.counts().reused_identities, 0);
+    // Its time passes, and it is gone with nothing delivered.
+    r.purge_expired(40.0);
     assert_eq!(r.incomplete_len(), 0);
+}
+
+/// W2-SEED-MERGE: old part 0 repeated, then a differing body whose part 1 comes first. What is
+/// delivered is the new body whole, never the old part 0 with the new part 1, and no ghost stays.
+#[test]
+fn a_repeated_old_part_never_joins_a_differing_body() {
+    let mut r = BlobReassembler::default();
+    let first = parts(2, 1, 7, 0x55, &long_body(1));
+    r.ingest(1, first[0].clone(), 0.0).unwrap();
+    assert!(r.ingest(1, first[1].clone(), 0.0).unwrap().is_some());
+    assert_eq!(r.ingest(1, first[0].clone(), 1.0).unwrap(), None);
+    assert_eq!(r.counts().duplicates, 1);
+
+    let other = parts(2, 1, 7, 0x55, &long_body(100));
+    assert_eq!(
+        r.ingest(1, other[1].clone(), 2.0).unwrap(),
+        None,
+        "no merge"
+    );
+    assert_eq!(r.incomplete_len(), 1);
+    let blob = r.ingest(1, other[0].clone(), 2.0).unwrap().expect("whole");
+    assert_eq!(blob.payload, long_body(100));
+    assert_eq!(r.counts().reused_identities, 1);
+    assert_eq!(r.incomplete_len(), 0, "no ghost entry");
+}
+
+/// W2-SEED-COMMIT: the same steps inside one datagram with a sibling, on a real connection: the
+/// datagram is taken whole, in any order of its parts, and nothing fails after its sequence.
+#[test]
+fn a_reused_identity_after_a_repeat_goes_in_whole_or_not_at_all() {
+    let mut link = Link::new();
+    let body = |seed| bytes(seed, 2 * MAX_BLOB_FRAG_PAYLOAD + 10);
+    let old = parts(2, 1, 7, 0x55, &body(1));
+    assert_eq!(old.len(), 3);
+    link.send(&old, 1.0).expect("the first body");
+    assert_eq!(link.delivered().len(), 1);
+    link.send(&old[..1], 2.0).expect("a repeat of old part 0");
+    assert!(link.delivered().is_empty());
+
+    let new = parts(2, 1, 7, 0x55, &body(50));
+    let acked = link.acked();
+    link.send(
+        &[sibling(), new[1].clone(), new[0].clone(), new[2].clone()],
+        3.0,
+    )
+    .expect("one datagram");
+    assert_eq!(link.acked(), acked + 1);
+    let delivered = link.delivered();
+    assert_eq!(delivered.len(), 2);
+    assert_eq!(delivered[0].blob_header_word, 0x77);
+    assert_eq!(delivered[1].payload, body(50));
+    let counts = link.counts();
+    assert_eq!(counts.reused_identities, 1);
+    assert_eq!(counts.conflicts_dropped, 0);
+}
+
+/// A failure at the last fragment of a datagram takes back what its earlier fragments did: an entry
+/// opened, an entry completed, a tombstone, a baseline and the counts.
+#[test]
+fn a_refused_datagram_leaves_the_table_as_it_was() {
+    let mut r = BlobReassembler::new(2, 65_536);
+    let open = parts(2, 1, 7, 0x55, &long_body(1));
+    r.ingest(1, open[0].clone(), 0.0).unwrap();
+    let before = r.clone();
+    let queue3 = parts(3, 9, 0, 0x60, &long_body(2));
+    let datagram = [
+        sibling(),
+        parts(3, 9, 0, 0x61, &[1])[0].clone(),
+        open[1].clone(),
+        queue3[0].clone(),
+        part(0, 3, 9),
+        part(1, 3, 9),
+        part(0, 4, 9),
+    ];
+    assert_eq!(
+        r.ingest_packet(1, &datagram, 0.0),
+        Err(SessionError::ConflictingBlobIdentity)
+    );
+    assert!(r.same_state(&before));
+    assert_eq!(
+        r.check_packet(1, &datagram, 0.0),
+        Err(SessionError::ConflictingBlobIdentity)
+    );
+    assert!(r.same_state(&before));
+    // The open blob still takes its real next part.
+    assert!(r.ingest(1, open[1].clone(), 0.0).unwrap().is_some());
+}
+
+/// W2-EVICT-TABLE-FULL: a sibling that completes a new identity at the tombstone cap does not take
+/// away the tombstone of a repeat later in the same datagram, in either order. Eviction waits for
+/// the datagram's end.
+#[test]
+fn a_sibling_does_not_evict_a_tombstone_its_datagram_relies_on() {
+    for repeat_first in [false, true] {
+        let mut r = BlobReassembler::default();
+        // Sixty-four tombstones, identity 1000 the oldest.
+        let oldest = parts(2, 1, 1000, 0x55, &long_body(1));
+        r.ingest(1, oldest[0].clone(), 0.0).unwrap();
+        assert!(r.ingest(1, oldest[1].clone(), 0.0).unwrap().is_some());
+        for id in 0..(MAX_BLOB_TOMBSTONES as u16 - 1) {
+            assert!(
+                r.ingest(1, parts(4, id, id, 1, &[1])[0].clone(), 0.0)
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        assert_eq!(r.tombstone_sizes().0, MAX_BLOB_TOMBSTONES);
+        // A full table of incomplete blobs.
+        for id in 0..64u16 {
+            r.ingest(1, parts(2, id, id, 2, &long_body(3))[0].clone(), 0.0)
+                .unwrap();
+        }
+        assert_eq!(r.incomplete_len(), 64);
+        let new = parts(4, 500, 500, 3, &[3])[0].clone();
+        let repeat = oldest[0].clone();
+        let datagram = if repeat_first {
+            [repeat, new]
+        } else {
+            [new, repeat]
+        };
+        assert_eq!(r.check_packet(1, &datagram, 1.0), Ok(()), "{repeat_first}");
+        let blobs = r.ingest_packet(1, &datagram, 1.0).expect("taken whole");
+        assert_eq!(blobs.len(), 1);
+        assert_eq!(r.counts().duplicates, 1);
+        // The cap holds again at the datagram's end.
+        assert_eq!(r.tombstone_sizes().0, MAX_BLOB_TOMBSTONES);
+        assert_eq!(r.counts().tombstones_evicted, 1);
+        assert_eq!(r.incomplete_len(), 64);
+    }
+}
+
+/// Inside one datagram, siblings see each other in order: a part repeated after its identity
+/// completed opens nothing, and a queue-3 part after a newer sibling superseded its entry opens a
+/// new one.
+#[test]
+fn siblings_are_judged_in_order() {
+    let mut r = BlobReassembler::default();
+    let frags = parts(2, 1, 7, 0x55, &long_body(1));
+    let datagram = [frags[0].clone(), frags[1].clone(), frags[0].clone()];
+    assert_eq!(r.check_packet(1, &datagram, 0.0), Ok(()));
+    let blobs = r.ingest_packet(1, &datagram, 0.0).expect("taken");
+    assert_eq!(blobs.len(), 1);
+    assert_eq!(r.incomplete_len(), 0);
+    assert_eq!(r.counts().duplicates, 1);
+
+    let mut r = BlobReassembler::default();
+    let old = parts(3, 5, 0, 0x60, &long_body(1));
+    r.ingest(1, old[0].clone(), 0.0).unwrap();
+    let newer = parts(3, 6, 0, 0x60, &[1])[0].clone();
+    let mut other_count = parts(3, 5, 0, 0x60, &bytes(9, 3 * MAX_BLOB_FRAG_PAYLOAD))[0].clone();
+    other_count.header.blob_header_word = Some(0x60);
+    // Another count for word 5 conflicts before the newer word, and not after it.
+    assert_eq!(
+        r.check_packet(1, &[other_count.clone(), newer.clone()], 0.0),
+        Err(SessionError::ConflictingBlobIdentity)
+    );
+    let datagram = [newer, other_count];
+    assert_eq!(r.check_packet(1, &datagram, 0.0), Ok(()));
+    assert_eq!(r.ingest_packet(1, &datagram, 0.0).expect("taken").len(), 1);
+    assert_eq!(r.superseded(), 1);
+    assert_eq!(r.incomplete_len(), 1);
+}
+
+// ----- check_packet and ingest_packet answer alike, and a refusal changes nothing -----
+
+/// A small deterministic generator (xorshift64*), so a failure repeats.
+struct Gen(u64);
+
+impl Gen {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+}
+
+/// A fragment from a small space of identities, counts and bytes, so that repeats, conflicts,
+/// reused identities, superseded words, a full table and the tombstone cap all come up.
+fn generated_fragment(g: &mut Gen, ids: u64) -> BlobFragment {
+    let queue = 1 + g.below(4) as u8;
+    let id = g.below(ids) as u16;
+    let count = 1 + g.below(3) as u32;
+    let index = g.below(u64::from(count)) as u32;
+    let seed = g.below(3) as u8;
+    let last = index + 1 == count;
+    let len = if count == 1 {
+        g.below(4) as usize
+    } else if last {
+        1 + g.below(3) as usize
+    } else {
+        MAX_BLOB_FRAG_PAYLOAD
+    };
+    BlobFragment {
+        header: BlobFragmentHeader {
+            queue_id: queue,
+            ext_word: None,
+            blob_flags: 0x40 | if count > 1 { 0x10 } else { 0 },
+            seq_group: if queue == 3 { id % 3 } else { 0 },
+            order_num: if queue == 1 { 0xFFFF } else { id },
+            blob_id: if queue == 3 || (queue == 1 && count == 1) {
+                0
+            } else {
+                id
+            },
+            frag_index: index,
+            num_frags: count,
+            recipient_id: 2,
+            blob_header_word: (index == 0).then_some(0x40 + u32::from(seed)),
+            frag_data_len: len as u32,
+            attachment: None,
+        },
+        payload: vec![seed; len],
+    }
+}
+
+/// `check_packet` predicts `ingest_packet` on generated datagrams, neither changes anything on a
+/// refusal, and the caps hold after each.
+#[test]
+fn the_packet_check_and_the_packet_step_answer_alike() {
+    let mut refused = [0u64; 2];
+    let mut taken = 0u64;
+    for (round, ids) in [(1u64, 4), (2, 12), (3, 90)] {
+        let mut g = Gen(0x9E37_79B9_7F4A_7C15 ^ round);
+        let mut r = BlobReassembler::new(8, 65_536);
+        let mut clock = 0.0f64;
+        for _ in 0..4000 {
+            let count = 1 + g.below(MAX_FRAGS_PER_PACKET as u64) as usize;
+            let datagram: Vec<BlobFragment> = (0..count)
+                .map(|_| generated_fragment(&mut g, ids))
+                .collect();
+            clock += g.below(3) as f64 / 2.0;
+            r.purge_expired(clock);
+            let before = r.clone();
+
+            let checked = r.check_packet(1, &datagram, clock);
+            assert!(r.same_state(&before), "the check changed the table");
+
+            let ingested = r.ingest_packet(1, &datagram, clock);
+            assert_eq!(checked, ingested.as_ref().map(|_| ()).map_err(Clone::clone));
+            match &ingested {
+                Ok(_) => taken += 1,
+                Err(SessionError::ConflictingBlobIdentity) => refused[0] += 1,
+                Err(SessionError::ReassemblyTableFull { .. }) => refused[1] += 1,
+                Err(other) => panic!("{other:?}"),
+            }
+            if ingested.is_err() {
+                assert!(r.same_state(&before), "a refusal changed the table");
+            }
+            let (tombstones, bytes) = r.tombstone_sizes();
+            assert!(tombstones <= MAX_BLOB_TOMBSTONES);
+            assert!(bytes <= MAX_TOMBSTONE_BYTES);
+            assert!(r.incomplete_len() <= 8);
+        }
+    }
+    // The generator did reach every road.
+    assert!(taken > 100, "{taken}");
+    assert!(refused[0] > 100, "{refused:?}");
+    assert!(refused[1] > 10, "{refused:?}");
+}
+
+/// On a connection: whatever a generated datagram does, its sequence moves exactly when it is taken,
+/// and nothing of a refused one is delivered.
+#[test]
+fn a_connection_commits_a_sequence_only_with_the_whole_datagram() {
+    let mut g = Gen(0xDEAD_BEEF_0BAD_F00D);
+    let mut link = Link::new();
+    let mut taken = 0;
+    let mut dropped = 0;
+    for step in 0..1500u32 {
+        let count = 1 + g.below(6) as usize;
+        let datagram: Vec<BlobFragment> =
+            (0..count).map(|_| generated_fragment(&mut g, 6)).collect();
+        let seq = link.seq + 1;
+        let t = 1.0 + f64::from(step) / 200.0;
+        let result = link.send(&datagram, t);
+        let conn = link.mux.connection_mut(link.id).expect("conn");
+        if result.is_ok() {
+            taken += 1;
+            assert_eq!(conn.recv_seq_expected(), seq);
+        } else {
+            dropped += 1;
+            assert!(
+                link.delivered().is_empty(),
+                "a refused datagram delivered something: {result:?}"
+            );
+        }
+        let _ = link.delivered();
+    }
+    assert!(taken > 50, "{taken}");
+    assert!(dropped > 50, "{dropped}");
 }
 
 #[test]
@@ -573,6 +867,91 @@ fn the_bytes_of_the_tombstones_are_capped_too() {
     let oldest = frags_of(0);
     assert_eq!(r.ingest(1, oldest[0].clone(), 0.0).unwrap(), None);
     assert_eq!(r.incomplete_len(), 1, "forgotten: it assembles again");
+}
+
+// ----- `docs/m8-remediation.md` §27 fix 15 -----
+
+/// The one 1 MiB test: a blob of exactly the default limit assembles. One byte more is refused at its
+/// final part, whichever part comes first, and a count that cannot fit at its first part, before
+/// anything opens or is allocated.
+#[test]
+fn the_reassembled_size_limit_is_one_mebibyte() {
+    const ONE_MIB: usize = 1024 * 1024;
+    let mut r = BlobReassembler::default();
+    let frags = parts(2, 1, 7, 0x55, &vec![0x5A; ONE_MIB]);
+    let mut done = None;
+    for f in frags {
+        done = r.ingest(1, f, 0.0).unwrap();
+    }
+    assert_eq!(done.expect("whole").payload.len(), ONE_MIB);
+    let over = parts(2, 2, 8, 0x55, &vec![0x5A; ONE_MIB + 1]);
+    assert_eq!(
+        r.check_packet(1, &over[over.len() - 1..], 0.0),
+        Err(SessionError::BlobTooLarge {
+            total_bytes: ONE_MIB + 1,
+            limit: ONE_MIB,
+        })
+    );
+    assert_eq!(r.incomplete_len(), 0);
+    let mut too_many = over[0].clone();
+    too_many.header.num_frags += 1;
+    assert!(matches!(
+        r.check_packet(1, std::slice::from_ref(&too_many), 0.0),
+        Err(SessionError::BlobTooLarge { .. })
+    ));
+}
+
+/// The one action at 64 incomplete blobs: the whole datagram is dropped and counted, its siblings not
+/// delivered, its sequence not committed, and no terminal result.
+#[test]
+fn a_full_table_drops_the_datagram_and_nothing_else() {
+    let mut link = Link::new();
+    for id in 0..64u16 {
+        link.send(&parts(2, id, id, 2, &long_body(3))[..1], 1.0)
+            .expect("opened");
+    }
+    let acked = link.acked();
+    let d = link.masked(&[sibling(), parts(2, 500, 500, 2, &long_body(3))[0].clone()]);
+    assert_eq!(
+        link.mux
+            .receive_from_peer(&d, SERVER, 2.0, WireCodecs::NONE)
+            .map(|_| ()),
+        Err(SessionError::ReassemblyTableFull { max_concurrent: 64 })
+    );
+    assert_eq!(link.acked(), acked);
+    assert!(link.delivered().is_empty());
+    assert_eq!(
+        link.mux.connection_mut(link.id).expect("conn").state(),
+        ConnectionState::Connected
+    );
+}
+
+/// Malformed framing is judged before the terminal `0x02`: a datagram with both is only dropped.
+#[test]
+fn malformed_framing_goes_before_the_terminal_control_bit() {
+    let mut link = Link::new();
+    let mut bit = plain(0x40, &[1]);
+    bit.header.queue_id = 2;
+    bit.header.order_num = 3;
+    bit.header.blob_id = 3;
+    bit.header.blob_flags |= 0x02;
+    let mut bad = part(0, 3, 1);
+    bad.header.frag_data_len = 100;
+    bad.payload = bytes(1, 100);
+    let d = link.masked(&[bit, bad]);
+    let result = link
+        .mux
+        .receive_from_peer(&d, SERVER, 1.0, WireCodecs::NONE)
+        .map(|_| ());
+    assert!(
+        !matches!(result, Err(SessionError::UnsupportedFragment { .. })),
+        "{result:?}"
+    );
+    assert!(result.is_err());
+    assert_eq!(
+        link.mux.connection_mut(link.id).expect("conn").state(),
+        ConnectionState::Connected
+    );
 }
 
 // ----- W8: the receive side's limit of fragments per datagram -----

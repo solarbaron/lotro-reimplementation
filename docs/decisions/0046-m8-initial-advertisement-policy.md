@@ -31,7 +31,7 @@ not only wire or observable facts.
    labelled Tessera tie-break. This is an interim relation that fits the owner's two captures, not
    the official algorithm. The spec names the exact integer and the tie-break.
 4. **The flagged prose stays.** The owner, as maintainer, decided to keep the wording of §9.3.4–§9.3.6
-   and to continue. It is not treated as a contamination incident under `docs/CLEAN_ROOM.md` §10.
+   and to continue. On 2026-11-04 the owner extended this to the labelled evidence paragraphs of §9.3.9–§9.3.11. It is not treated as a contamination incident under `docs/CLEAN_ROOM.md` §10.
    Implementers still take no rule from a description the spec itself says is not a rule; the rules
    they need are stated as wire or observable facts.
 5. **Omissions.** Not sending 0x13D, 0x19E and the first world RPC is accepted for any user past the
@@ -55,6 +55,14 @@ not only wire or observable facts.
     0x30, 0x30000035, 0x24 and 0x19A are not sent, for any user past the warning and consent gate, until
     a source for their contents exists. They are labelled known differences from the observed client,
     and the server's reaction is untested. Nothing is invented to fill them.
+11. **Live-run logs.** The owner may give a live-run log to the builder session as well as to the spec
+    writer. Logs describe official traffic, so this is a recorded exception to the clean-room boundary, not
+    a contamination incident under `docs/CLEAN_ROOM.md` §10: a session that reads one is exposed, is listed
+    under decision 0041, and code it writes afterwards is not strictly clean-room for M8. Logs stay out of the
+    repository and carry no address, port, account, ticket, seed, cookie, character name or ID, install path,
+    identifier or iteration value.
+12. **Counts in the checks.** The per-stream replay counts of the owner's two private sessions, and the older
+    figures of that kind in `docs/m8-remediation.md` and the session spec, may stay as published.
 
 ## Consequences
 

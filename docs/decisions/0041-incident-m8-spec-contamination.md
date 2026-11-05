@@ -433,3 +433,7 @@ change-log edits. This writer has neither assigned reviewer identities nor recor
 **Owner confirmation (2026-10-30):** the pass-9 review coordinator started as a fresh Codex
 session without the writer's conversation; the pass-9 review is accepted as independent
 (`docs/m8-remediation.md` §18).
+
+**Live-run log exposure (decision 0046 item 11):** on 2026-11-05 the owner gave the filtered log of the first
+live run to the builder orchestrator session, which read it. The builder sessions of the follow-up fix received
+only the conclusion that repeated too-short datagrams ended the run. The log is not committed.

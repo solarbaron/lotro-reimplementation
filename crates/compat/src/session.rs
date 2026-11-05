@@ -56,8 +56,14 @@ use flate2::write::ZlibEncoder;
 /// `DatagramHeader` + `pakSize` payload, §3.5).
 pub const MAX_DATAGRAM_BUF: usize = 0xFF7C;
 
-/// Minimum valid UDP datagram length (`2` B wire prefix + `20` B `DatagramHeader` = `22` B, §3.5).
+/// Minimum valid UDP datagram length (`2` B wire prefix + `20` B `DatagramHeader` = `22` B, §3.5):
+/// the raw minimum of a zero wire prefix, and of any datagram once decompressed
+/// ([`raw_length_admitted`]).
 pub const MIN_DATAGRAM_BYTES: usize = 0x0016;
+
+/// Smallest raw length of a datagram with a non-zero wire prefix: the prefix and one compressed
+/// byte ([`raw_length_admitted`]).
+pub const MIN_COMPRESSED_DATAGRAM_BYTES: usize = 3;
 
 /// Fixed size of `DatagramHeader` (`20` B, §3.5).
 pub const DATAGRAM_HEADER_BYTES: usize = 0x0014;
@@ -317,10 +323,12 @@ pub const FLAG_FLOW_CONTROL: u32 = 0x0800_0000;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum SessionError {
-    /// Datagram is shorter than `MIN_DATAGRAM_BYTES` (22 bytes, §10.1 rule 1).
-    #[error("datagram length {len} is shorter than minimum {MIN_DATAGRAM_BYTES} bytes")]
+    /// Datagram is too short for its form ([`raw_length_admitted`]), or decompressed to less than
+    /// a whole `DatagramHeader` (§10.1 rule 1).
+    #[error("datagram length {len} is shorter than the minimum of its form")]
     DatagramTooShort {
-        /// Actual length in bytes.
+        /// Raw length in bytes; for a decompressed packet without a whole header, the length it
+        /// would have as an unencoded datagram.
         len: usize,
     },
     /// Datagram exceeds `MAX_DATAGRAM_BUF` (65,404 bytes, §3.5).
@@ -5545,6 +5553,23 @@ pub fn parse_packet_payload(
     Ok((opt_headers, fragments, sum))
 }
 
+/// Whether a datagram's raw length lets it reach the decoder (§10.1 rule 1).
+///
+/// Engineering reading of §10.1 rule 1, pending the writer's answer: the rule does not say whether
+/// its `22` bytes come before or after wire decompression, and a compressed datagram can be much
+/// shorter on the wire than its decompressed header (§4.1, §4.2). So a zero wire prefix keeps the
+/// raw minimum of [`MIN_DATAGRAM_BYTES`], a non-zero prefix needs only itself and one compressed
+/// byte ([`MIN_COMPRESSED_DATAGRAM_BYTES`]), and [`decode_datagram`] still requires the whole
+/// header and `pakSize` after decompression.
+#[must_use]
+pub fn raw_length_admitted(datagram: &[u8]) -> bool {
+    match datagram.first_chunk::<2>() {
+        None => false,
+        Some([0, 0]) => datagram.len() >= MIN_DATAGRAM_BYTES,
+        Some(_) => datagram.len() >= MIN_COMPRESSED_DATAGRAM_BYTES,
+    }
+}
+
 /// Decodes and validates a raw UDP datagram before sequence-window/ISAAC-mask lookup (§4.1–§4.3, §10.1 rules 1–3, 7, 8).
 ///
 /// The payload is parsed first, so that its per-buffer `payloadSum`
@@ -5563,7 +5588,7 @@ pub fn decode_datagram(
     wire_codec: Option<&dyn BitTreeCodec>,
     verify_unmasked_checksum: bool,
 ) -> Result<DecodedPacket, SessionError> {
-    if datagram.len() < MIN_DATAGRAM_BYTES {
+    if !raw_length_admitted(datagram) {
         return Err(SessionError::DatagramTooShort {
             len: datagram.len(),
         });
@@ -8664,7 +8689,7 @@ impl SessionMultiplexer {
         now_sec: f64,
         codecs: WireCodecs<'_>,
     ) -> Result<(u16, DecodedPacket), SessionError> {
-        if datagram.len() < MIN_DATAGRAM_BYTES {
+        if !raw_length_admitted(datagram) {
             return Err(SessionError::DatagramTooShort {
                 len: datagram.len(),
             });

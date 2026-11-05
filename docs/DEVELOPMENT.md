@@ -545,6 +545,8 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
 - `official session: datagram refused`, `official session: message refused` and
   `official session: control message refused` (`debug`): why something was not taken, by the kind of
   error and with `opcode` where one is known; at most one each 10 s, with `skipped` for the rest.
+  `datagram refused` also has `raw_len` (the datagram's length on the wire) and `prefix_zero` (its
+  wire prefix is zero; false when it is too short to have one).
   `official session: the server ended the session` and the logon and character-operation lines
   (`debug`) carry the server's number.
 - `official evidence: connection closed`: which connection closed, why and in which stage

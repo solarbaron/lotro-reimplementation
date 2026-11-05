@@ -10,6 +10,7 @@ mod diagnostics;
 mod handshake;
 mod initial_negotiation;
 mod pending_entry;
+mod short_datagrams;
 mod world_entry;
 mod world_feed;
 

@@ -115,6 +115,24 @@ fuzz_target!(|data: &[u8]| {
     let tables = BitTreeTable::synthetic_dictionary([0u8; 16]);
     let _ = decode_datagram(data, true, None, true);
     let _ = decode_datagram(data, false, Some(&tables), false);
+    // A non-zero wire prefix on a short body reaches the decoder (`raw_length_admitted`), and
+    // whatever comes back still has a whole header with the exact `pakSize`. The prefixes of the
+    // input itself cover the 0- to 4-byte datagrams.
+    let mut short = vec![0x01, 0x02];
+    short.extend_from_slice(data.get(..data.len().min(19)).unwrap_or_default());
+    for datagram in [short.as_slice()]
+        .into_iter()
+        .chain((0..=data.len().min(4)).filter_map(|n| data.get(..n)))
+    {
+        for codec in [
+            None,
+            Some(&tables as &dyn tessera_compat::session::BitTreeCodec),
+        ] {
+            if let Ok(pkt) = decode_datagram(datagram, true, codec, false) {
+                assert_eq!(usize::from(pkt.header.pak_size), pkt.raw_payload.len());
+            }
+        }
+    }
 
     if data.len() >= 4 {
         let flags = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
@@ -197,6 +215,7 @@ fuzz_target!(|data: &[u8]| {
             .is_ok()
     {
         let _ = negotiated.receive_datagram(data, peer, 0.5, codecs);
+        let _ = negotiated.receive_datagram(&short, peer, 0.5, codecs);
         // The counters of §5.6.2 and a retained blob (§5.3, §9.3.7): a
         // send keeps every invariant whatever the input said, and a NAK of input-chosen
         // sequence numbers finds what it finds.
@@ -311,6 +330,7 @@ fuzz_target!(|data: &[u8]| {
         }
         let _ = mux.receive_from_peer(data, peer, 0.5, WireCodecs::NONE);
         let _ = mux.receive_from_peer(data, peer, 0.6, codecs);
+        let _ = mux.receive_from_peer(&short, peer, 0.6, codecs);
         let _ = mux.tick(30.0);
     }
 });

@@ -252,9 +252,10 @@ use crate::session::{
     BindPlan, BindPorts, ClientVersionMessage, CodecUuids, ConnectionState, ControlMessage,
     DEFAULT_MAX_CONTAINER_DEPTH, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
     DisconnectReason as LinkEnd, EVIDENCE_TARGET, LogonOutcome, MAX_DATAGRAM_BUF,
-    MIN_DATAGRAM_BYTES, OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS,
-    OPCODE_SINGLE_WRAPPER, ReassembledBlob, ReassemblyCounts, SessionError, SessionEvent,
-    SessionMultiplexer, UdpDatagramTransport, dispatch_message, max_recv_rate_for_speed,
+    OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS,
+    OPCODE_SINGLE_WRAPPER, ReassembledBlob, ReassemblyCounts, SessionConnection, SessionError,
+    SessionEvent, SessionMultiplexer, UdpDatagramTransport, dispatch_message,
+    max_recv_rate_for_speed, raw_length_admitted,
 };
 use crate::world::{
     AccountEvictionNotice, CharacterEnterWorldRequest, CharacterListResponse,
@@ -1292,7 +1293,7 @@ pub fn refusal_cut(events: &[Event], n: usize) -> usize {
 /// The recipient ID a datagram names (`official-session.md` §3.4 step 1): the non-zero
 /// wire prefix, else `DatagramHeader.recId`.
 fn header_rec_id(datagram: &[u8]) -> Option<u16> {
-    if datagram.len() < MIN_DATAGRAM_BYTES {
+    if !raw_length_admitted(datagram) {
         return None;
     }
     let prefix = u16::from_be_bytes([*datagram.first()?, *datagram.get(1)?]);
@@ -1642,6 +1643,17 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.login.state(),
             self.world.as_ref().and_then(Link::state),
         )
+    }
+
+    /// The open sequence gaps of the login and world connections (tests).
+    #[must_use]
+    pub fn sequence_gaps(&self) -> (usize, usize) {
+        let gaps = |l: &Link| {
+            l.mux
+                .connection(l.conn)
+                .map_or(0, SessionConnection::missing_gap_count)
+        };
+        (gaps(&self.login), self.world.as_ref().map_or(0, gaps))
     }
 
     fn end(&mut self, reason: DisconnectReason) {
@@ -2422,6 +2434,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
                         tracing::debug!(
                             target: EVIDENCE_TARGET,
                             kind = %error_kind(&e),
+                            raw_len = datagram.len(),
+                            prefix_zero = datagram.starts_with(&[0, 0]),
                             skipped,
                             "official session: datagram refused"
                         );

@@ -30,6 +30,11 @@
 //! | `ReferralAuthHeader` (world) | the connect challenge |
 //! | `ConnectAcceptHeader` (world) | the stream of [`observed_world_stream`], with `0x90` and no readiness |
 //!
+//! [`SyntheticService::short_acks`] plays that script with the install's incoming dictionary
+//! replaced by [`short_header_dictionary`]: each client datagram with a blob part is answered
+//! first by a compressed sequenced packet that holds only its Ack, shorter on the wire than a
+//! whole header.
+//!
 //! A test plays the rest of the world with [`SyntheticService::send_world_event`] and the
 //! payload builders below ([`entity_batch`], [`position`], [`chat_line`]): other entities,
 //! their moves, chat lines and despawns. The synthetic install's property dictionary types
@@ -237,6 +242,11 @@ pub struct Seen {
     /// The sequence numbers and flags of the client's sequenced datagrams in that mode (the
     /// last [`MAX_KEPT`]).
     pub sequenced: VecDeque<(u32, u32)>,
+    /// The raw lengths of the short Acks sent in the [`SyntheticService::short_acks`] mode (the
+    /// last [`MAX_KEPT`]).
+    pub short_acks: VecDeque<usize>,
+    /// The client's datagrams with a `SequenceNakHeader` in the observed-order script.
+    pub naks: u64,
 }
 
 #[derive(Debug, Default)]
@@ -249,6 +259,8 @@ struct State {
     access: Option<NetworkAccess>,
     /// Plays [`SyntheticService::observed_order`]'s script.
     observed: bool,
+    /// [`SyntheticService::short_acks`].
+    short_acks: bool,
     /// [`SyntheticService::allow_re_entry`].
     re_entry: bool,
     /// Whether this service's network has a source for readiness: the historical script's in-world
@@ -311,6 +323,16 @@ impl SyntheticService {
         service
     }
 
+    /// [`Self::observed_order`] with the short Acks of the module docs: the server's compressed
+    /// sequenced packets come in the form `official-session.md` §4.1.2 names (an Ack piggybacked on
+    /// a sequenced packet), and the install's incoming dictionary compresses it under a whole header.
+    #[must_use]
+    pub fn short_acks() -> Self {
+        let service = Self::observed_order();
+        service.state().short_acks = true;
+        service
+    }
+
     /// Lets this service's network name the local player's exact placement, which
     /// `official-session.md` §9.3.9 leaves OPEN-WORLD-9 on every production path, so a test reaches
     /// the road from `WorldPlacementPending` to `WorldLoaded`.
@@ -344,6 +366,7 @@ impl SyntheticService {
     ///
     /// The files cannot be written.
     pub fn live_config(&self, root: &Path) -> std::io::Result<LiveConfig> {
+        let short = self.state().short_acks;
         std::fs::create_dir_all(root)?;
         std::fs::write(
             root.join("lotro.launcherconfig"),
@@ -378,9 +401,15 @@ impl SyntheticService {
                 user_settings_dir: None,
                 network_version: Some("9999".to_owned()),
             },
-            loader: Box::new(|_, _| Ok(Arc::new(records()) as Arc<dyn InstallData>)),
+            loader: Box::new(move |_, _| Ok(Arc::new(records(short)) as Arc<dyn InstallData>)),
             locate: None,
         })
+    }
+
+    /// The synthetic install's records as [`Self::live_config`]'s loader makes them.
+    #[must_use]
+    pub fn install_data(&self) -> Arc<dyn InstallData> {
+        Arc::new(records(self.state().short_acks))
     }
 
     /// The network factory of the live connector over this service.
@@ -555,6 +584,76 @@ pub fn client_to_server_codec() -> &'static BitTreeTable {
     CODEC.get_or_init(|| BitTreeTable::synthetic_dictionary(OUTGOING_UUID))
 }
 
+/// A synthetic dictionary that compresses a `DatagramHeader` with few payload bytes below its own
+/// size: `0` is four zero bytes (as in [`BitTreeTable::synthetic_dictionary`]), `10` one zero byte,
+/// and `11` then the eight bits of any other byte, LSB first. Read back through
+/// [`BitTreeTable::from_dat_bytes`], as the install's records are.
+#[must_use]
+pub fn short_header_dictionary(codec_uuid: [u8; 16]) -> BitTreeTable {
+    /// One leaf of the record's body (`official-session.md` §4.1.3).
+    fn leaf(body: &mut Vec<u8>, symbol: &[u8], bits: u8, code: u16) {
+        body.push(1);
+        body.push(u8::try_from(symbol.len()).unwrap_or(0));
+        body.extend_from_slice(symbol);
+        body.push(bits);
+        let code = code.to_le_bytes();
+        body.extend_from_slice(code.get(..usize::from(bits >> 3) + 1).unwrap_or(&code));
+    }
+    // Node indices: leaves 0 (four zeros), 1 (one zero), `1 + b` (byte `b`), then the root, its
+    // `1` child and the eight levels of the other bytes. The record's child links are 1-based.
+    const LEAVES: u16 = 257;
+    const ROOT_1BASED: u16 = LEAVES + 1;
+    let bytes_root_1based = ROOT_1BASED + 2;
+    let mut levels: Vec<[u16; 2]> = vec![[0, 0]];
+    for b in 1..=255u8 {
+        let leaf_1based = u16::from(b) + 2;
+        let mut at = 0usize;
+        for bit_at in 0..8u8 {
+            let bit = usize::from((b >> bit_at) & 1);
+            let next = levels
+                .get(at)
+                .and_then(|n| n.get(bit))
+                .copied()
+                .unwrap_or(0);
+            let child = if bit_at == 7 {
+                leaf_1based
+            } else if next != 0 {
+                next
+            } else {
+                levels.push([0, 0]);
+                bytes_root_1based + u16::try_from(levels.len() - 1).unwrap_or(0)
+            };
+            if let Some(slot) = levels.get_mut(at).and_then(|n| n.get_mut(bit)) {
+                *slot = child;
+            }
+            at = usize::from(child.saturating_sub(bytes_root_1based));
+        }
+    }
+    let nodes = usize::from(LEAVES) + 2 + levels.len();
+    let mut body = u32::try_from(nodes).unwrap_or(0).to_le_bytes().to_vec();
+    leaf(&mut body, &[0, 0, 0, 0], 1, 0b0);
+    leaf(&mut body, &[0], 2, 0b01);
+    for b in 1..=255u8 {
+        leaf(&mut body, &[b], 10, (u16::from(b) << 2) | 0b11);
+    }
+    let mut branch = |children: [u16; 2]| {
+        body.push(0);
+        body.extend_from_slice(&children[0].to_le_bytes());
+        body.extend_from_slice(&children[1].to_le_bytes());
+    };
+    branch([1, ROOT_1BASED + 1]);
+    branch([2, bytes_root_1based]);
+    for children in levels {
+        branch(children);
+    }
+    // The format's identifying fields come from the synthetic dictionary's own record.
+    let plain = BitTreeTable::synthetic_dictionary(codec_uuid);
+    let mut record = plain.to_dat_bytes().get(..40).unwrap_or_default().to_vec();
+    record.extend_from_slice(&u32::try_from(body.len()).unwrap_or(0).to_le_bytes());
+    record.extend_from_slice(&body);
+    BitTreeTable::from_dat_bytes(&record).unwrap_or(plain)
+}
+
 /// A datagram the client sent, decoded as a synthetic server reads it: compressed with the
 /// outgoing dictionary or not (`official-session.md` §4.1); the checksum is verified when
 /// `verify` (unmasked packets only, as [`decode_datagram`] does).
@@ -614,13 +713,16 @@ fn observed_answer(st: &mut State, datagram: &[u8]) {
         return;
     };
     if pkt.opt_headers.session_auth.is_some() {
-        let server = Server::new();
+        let server = Server::with_codec(st.short_acks);
         st.deliver(server.challenge());
         st.server = Some(server);
         return;
     }
     if pkt.opt_headers.disconnect {
         st.seen.disconnects += 1;
+    }
+    if pkt.opt_headers.sequence_nak.is_some() {
+        st.seen.naks += 1;
     }
     let Some(mut server) = st.server.take() else {
         return;
@@ -662,6 +764,16 @@ fn observed_answer(st: &mut State, datagram: &[u8]) {
     }
     let acked = pkt.header.seq_num;
     let has_fragments = !pkt.fragments.is_empty();
+    if has_fragments
+        && st.short_acks
+        && let Some(d) = server.short_ack(acked)
+    {
+        if st.seen.short_acks.len() >= MAX_KEPT {
+            st.seen.short_acks.pop_front();
+        }
+        st.seen.short_acks.push_back(d.len());
+        st.deliver(d);
+    }
     for f in pkt.fragments {
         if st.seen.fragment_headers.len() >= MAX_KEPT {
             st.seen.fragment_headers.pop_front();
@@ -711,7 +823,7 @@ fn observed_answer(st: &mut State, datagram: &[u8]) {
             st.deliver(d);
         }
     }
-    if has_fragments {
+    if has_fragments && !st.short_acks {
         let ack = server.control(OptionalHeaders {
             cumulative_ack: Some(acked),
             ..OptionalHeaders::default()
@@ -730,7 +842,7 @@ fn observed_world_answer(st: &mut State, datagram: &[u8]) {
     };
     if pkt.opt_headers.referral_auth.is_some() {
         st.seen.referral_auths += 1;
-        let server = Server::new();
+        let server = Server::with_codec(st.short_acks);
         st.deliver_world(server.challenge());
         st.world_server = Some(server);
         return;
@@ -970,6 +1082,12 @@ fn server_to_client_codec() -> &'static BitTreeTable {
     CODEC.get_or_init(|| BitTreeTable::synthetic_dictionary(INCOMING_UUID))
 }
 
+/// That dictionary in the [`SyntheticService::short_acks`] mode; built once.
+fn short_server_to_client_codec() -> &'static BitTreeTable {
+    static CODEC: std::sync::OnceLock<BitTreeTable> = std::sync::OnceLock::new();
+    CODEC.get_or_init(|| short_header_dictionary(INCOMING_UUID))
+}
+
 /// The synthetic login server's connection state.
 #[derive(Debug)]
 struct Server {
@@ -977,6 +1095,8 @@ struct Server {
     seq: u32,
     /// The observed-order script's first blobs went out.
     greeted: bool,
+    /// What it compresses with.
+    codec: &'static BitTreeTable,
 }
 
 impl Server {
@@ -985,7 +1105,40 @@ impl Server {
             isaac: IsaacCipher::from_seed(SEED),
             seq: 1,
             greeted: false,
+            codec: server_to_client_codec(),
         }
+    }
+
+    /// A server that compresses with [`short_server_to_client_codec`] when `short`.
+    fn with_codec(short: bool) -> Self {
+        let mut server = Self::new();
+        if short {
+            server.codec = short_server_to_client_codec();
+        }
+        server
+    }
+
+    /// The next sequenced packet, compressed, with nothing but the Ack of `acked`
+    /// (`official-session.md` §4.1.2: an Ack piggybacked on a sequenced packet).
+    fn short_ack(&mut self, acked: u32) -> Option<Vec<u8>> {
+        self.seq += 1;
+        let mask = self.isaac.next_mask();
+        let codec: &dyn BitTreeCodec = self.codec;
+        encode_datagram(
+            DatagramHeader {
+                rec_id: REC_ID,
+                seq_num: self.seq,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders {
+                cumulative_ack: Some(acked),
+                ..OptionalHeaders::default()
+            },
+            &[],
+            Some(mask),
+            Some(codec),
+        )
+        .ok()
     }
 
     /// A blob of the observed-order script: queue 1, the default recipient, compressed with
@@ -994,7 +1147,7 @@ impl Server {
         self.seq += 1;
         let frags = split_blob(1, 0xFFFF, 0, 0, None, opcode, data).ok()?;
         let mask = self.isaac.next_mask();
-        let codec: &dyn BitTreeCodec = server_to_client_codec();
+        let codec: &dyn BitTreeCodec = self.codec;
         encode_datagram(
             DatagramHeader {
                 rec_id: REC_ID,
@@ -1020,7 +1173,7 @@ impl Server {
         let buffers: Vec<(Vec<u8>, Vec<u8>)> =
             messages.iter().map(|m| observed_buffers(m, word)).collect();
         let mask = self.isaac.next_mask();
-        let codec: &dyn BitTreeCodec = server_to_client_codec();
+        let codec: &dyn BitTreeCodec = self.codec;
         Some(observed_raw_datagram(
             REC_ID,
             self.seq,
@@ -1273,7 +1426,9 @@ fn did_map(self_did: u32, entries: &[(u32, u32)]) -> Vec<u8> {
     out
 }
 
-fn records() -> Records {
+/// The synthetic records, with the incoming dictionary of [`SyntheticService::short_acks`] when
+/// `short`.
+fn records(short: bool) -> Records {
     let mut m = BTreeMap::new();
     m.insert(0x2800_0000, did_map(0x2800_0000, &[(3, 0x2800_0010)]));
     m.insert(
@@ -1287,10 +1442,12 @@ fn records() -> Records {
         0x0E01_0000,
         BitTreeTable::synthetic_dictionary(OUTGOING_UUID).to_dat_bytes(),
     );
-    m.insert(
-        0x0E01_0001,
-        BitTreeTable::synthetic_dictionary(INCOMING_UUID).to_dat_bytes(),
-    );
+    let incoming = if short {
+        short_header_dictionary(INCOMING_UUID)
+    } else {
+        BitTreeTable::synthetic_dictionary(INCOMING_UUID)
+    };
+    m.insert(0x0E01_0001, incoming.to_dat_bytes());
     Records(m)
 }
 

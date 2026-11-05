@@ -10,12 +10,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use tessera_compat::session::{
     AuthConnection, BLOB_FLAG_DEFAULT_RECIPIENT, BlobFragment, BlobFragmentHeader, CodecUuids,
-    ConnectChallengeHeader, ConnectionState, DatagramHeader, EVIDENCE_TARGET, IsaacCipher,
-    MAX_EVIDENCE_CONTROL_LINES, MAX_EVIDENCE_LINES_PER_CONNECTION,
-    MAX_EVIDENCE_QUEUE_DELIVER_LINES, MAX_EVIDENCE_RECEIVE_LINES, MAX_EVIDENCE_SEND_LINES,
-    MAX_EVIDENCE_TAIL_LINES, MAX_ORDER_GROUPS, MAX_UNACKED_SENT_PACKETS, OptionalHeaders,
-    SessionAuthHeader, SessionConnection, SessionError, SessionMultiplexer, WireCodecs,
-    encode_datagram, guid_fields_swapped,
+    ConnectChallengeHeader, ConnectionState, DatagramHeader, EVIDENCE_TARGET,
+    FLOW_REPORT_ONLY_PERIOD_SEC, IsaacCipher, MAX_EVIDENCE_CONTROL_LINES,
+    MAX_EVIDENCE_LINES_PER_CONNECTION, MAX_EVIDENCE_QUEUE_DELIVER_LINES,
+    MAX_EVIDENCE_RECEIVE_LINES, MAX_EVIDENCE_SEND_LINES, MAX_EVIDENCE_TAIL_LINES, MAX_ORDER_GROUPS,
+    MAX_UNACKED_SENT_PACKETS, OptionalHeaders, SessionAuthHeader, SessionConnection, SessionError,
+    SessionMultiplexer, WireCodecs, encode_datagram, guid_fields_swapped,
 };
 
 const PEER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 90), 9000);
@@ -307,6 +307,9 @@ fn the_accumulator_is_on_every_line() {
         conn.receive_datagram(&packet, PEER, 0.4, WireCodecs::NONE)
             .expect("the NAK");
         conn.tick(0.5).expect("the flush");
+        // The report of those bytes waits for the report tick period after the first one.
+        conn.tick(0.3 + FLOW_REPORT_ONLY_PERIOD_SEC)
+            .expect("the later report");
         assert!(held > 0);
     });
     let ooa = lines_of(&lines, "kind=\"out-of-order-ack\"");

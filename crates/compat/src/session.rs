@@ -207,6 +207,19 @@ pub const CUMULATIVE_ACK_INTERVAL_SEC: f64 = 2.0;
 /// Interval of `SequenceNakHeader` in State `5` while gaps exist: `0.6` s (§5.3).
 pub const SEQUENCE_NAK_INTERVAL_SEC: f64 = 0.6;
 
+/// Report tick period of the later FlowControl-only packets in State `5`: `1.0` s.
+///
+/// Tessera's value, an engineering choice within the §5.5 interim policy (P10-22-POLICY)
+/// pending the spec writer's answer to `OPEN-SESSION-13`; not an observed official
+/// period. The first FlowControl-only packet still goes out on the first tick after
+/// State `5`. After it, a tick sends a FlowControl-only packet for newly received
+/// datagrams only once this long has passed since the previous FlowControl-only packet,
+/// so at most one goes out per second per connection; until then the unreported bytes
+/// accumulate and ride on the next other outgoing sequenced packet, if one goes out first.
+/// Without this period every acknowledgement the server sends for a sequenced packet
+/// would be answered with a new sequenced packet, a loop at the round-trip time.
+pub const FLOW_REPORT_ONLY_PERIOD_SEC: f64 = 1.0;
+
 /// Silence timeout of State `5`: the connection closes once `now - lastRecvTime` exceeds
 /// `60.0` s (§8.2, §6.1 table).
 pub const SILENCE_TIMEOUT_SEC: f64 = 60.0;
@@ -6533,6 +6546,8 @@ struct FlowReport {
     pending: bool,
     /// The first FlowControl-only packet after State `5` went out.
     initial_sent: bool,
+    /// When the last FlowControl-only packet went out (meaningful once `initial_sent`).
+    last_flow_only_sec: f64,
 }
 
 impl FlowReport {
@@ -6542,7 +6557,30 @@ impl FlowReport {
             since_sec: now_sec,
             pending: false,
             initial_sent: false,
+            last_flow_only_sec: now_sec,
         }
+    }
+
+    /// When a tick in State `5` sends a FlowControl-only packet (§5.5 P10-22-POLICY,
+    /// [`FLOW_REPORT_ONLY_PERIOD_SEC`], `OPEN-SESSION-13`): at once for the first one, then
+    /// for newly received datagrams no other packet reported, but not before one report
+    /// tick period after the previous FlowControl-only packet. `None` when nothing waits.
+    /// The tick and [`SessionConnection::next_deadline`] both read this, so they agree.
+    fn flow_only_due_at(&self) -> Option<f64> {
+        if !self.initial_sent {
+            Some(f64::NEG_INFINITY)
+        } else if self.pending {
+            Some(self.last_flow_only_sec + FLOW_REPORT_ONLY_PERIOD_SEC)
+        } else {
+            None
+        }
+    }
+
+    /// A FlowControl-only packet went out at `now_sec`.
+    fn note_flow_only(&mut self, now_sec: f64) {
+        self.reset(now_sec);
+        self.initial_sent = true;
+        self.last_flow_only_sec = now_sec;
     }
 
     /// Counts one valid peer datagram of `len` bytes.
@@ -7174,8 +7212,7 @@ impl SessionConnection {
             now_sec,
             outgoing_codec,
         )?;
-        self.flow.reset(now_sec);
-        self.flow.initial_sent = true;
+        self.flow.note_flow_only(now_sec);
         Ok(seq)
     }
 
@@ -8251,8 +8288,8 @@ impl SessionConnection {
     ///   `OutOfOrderAckHeader` (no standalone ClockSync: the header rides on a sequenced
     ///   packet once its `30.0` s are up, [`Self::send_sequenced_packet`], `OPEN-SESSION-9`),
     ///   sends the FlowControl-only packets of the §5.5 interim policy (P10-22-POLICY: the
-    ///   first tick after State `5`, then any tick after newly received datagrams that no
-    ///   other packet reported), and sends `SequenceNakHeader` every `0.6` s when gaps exist,
+    ///   first tick after State `5`, then a tick after newly received datagrams that no
+    ///   other packet reported, at most once per [`FLOW_REPORT_ONLY_PERIOD_SEC`]), and sends `SequenceNakHeader` every `0.6` s when gaps exist,
     ///   or `CumulativeAckHeader` every `2.0` s when none exist.
     /// - State `6` / `7`: flushes outbound reliable packets, then retransmits
     ///   `DisconnectHeader` every `1.0` s.
@@ -8378,8 +8415,9 @@ impl SessionConnection {
                 }
 
                 // §5.5 P10-22-POLICY: the first FlowControl-only packet, then one for
-                // newly received datagrams no other packet reported.
-                if !self.flow.initial_sent || self.flow.pending {
+                // newly received datagrams no other packet reported, at most once per
+                // report tick period (FLOW_REPORT_ONLY_PERIOD_SEC, OPEN-SESSION-13).
+                if self.flow.flow_only_due_at().is_some_and(|t| now_sec >= t) {
                     self.send_flow_only(now_sec, outgoing_codec)?;
                 }
 
@@ -8450,7 +8488,8 @@ impl SessionConnection {
     /// The earliest time (on the clock of `now_sec`) at which [`Self::tick`] or the
     /// multiplexer's cleanup has work on this connection: the handshake retransmits and
     /// timeouts (§6.1), the out-of-order acknowledgements waiting (§5.4, due at once), the
-    /// first FlowControl-only packet (§5.5, due at once), the `SequenceNakHeader` or
+    /// first FlowControl-only packet (§5.5, due at once) and a later one for unreported
+    /// datagrams ([`FLOW_REPORT_ONLY_PERIOD_SEC`] after the previous), the `SequenceNakHeader` or
     /// `CumulativeAckHeader` (§5.2,
     /// §5.3), the silence timeout (§8.2), the disconnect's flush, retransmit and end
     /// (§6.1, §8.2), the cleanup after [`CLOSING_CLEANUP_SEC`] in State `8` (§6.1) and the expiry of an
@@ -8486,10 +8525,14 @@ impl SessionConnection {
                     SILENCE_TIMEOUT_SEC
                 };
                 at(self.last_recv_time_sec + silence_limit);
-                if !self.out_of_order_ack_queue.is_empty() || !self.flow.initial_sent {
-                    // Flushed on the next tick (§5.4); the first FlowControl-only packet
-                    // goes out on the first tick after State 5 (§5.5).
+                if !self.out_of_order_ack_queue.is_empty() {
+                    // Flushed on the next tick (§5.4).
                     at(f64::NEG_INFINITY);
+                }
+                // The first FlowControl-only packet goes out on the first tick after
+                // State 5, a later one a report tick period after the previous (§5.5).
+                if let Some(t) = self.flow.flow_only_due_at() {
+                    at(t);
                 }
                 if let Some(opened) = self.oldest_gap_opened_at() {
                     at(opened + MAX_GAP_AGE_SEC);

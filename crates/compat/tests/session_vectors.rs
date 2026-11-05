@@ -1212,13 +1212,15 @@ fn vector_13_standalone_nak() {
     }
     let nak = nak.expect("a standalone NAK");
     assert_eq!(nak.opt_headers.sequence_nak, Some(vec![3]));
-    // The flow report of the tick took sequence 3 and word 3; the NAK copies them and takes none.
-    assert_eq!((nak.header.seq_num, nak.header.client_word), (3, 3));
+    // The later packet's flow report waits for its report tick period (§5.5,
+    // FLOW_REPORT_ONLY_PERIOD_SEC), so the NAK copies the flow-only packet's sequence 2 and
+    // word 2, as in the vector, and takes none.
+    assert_eq!((nak.header.seq_num, nak.header.client_word), (2, 2));
     assert_eq!(
         nak.header.flags & tessera_compat::session::FLAG_MASKED_CHECKSUM,
         0
     );
-    assert_eq!(conn.send_seq_num(), 3, "no sequence allocated");
+    assert_eq!(conn.send_seq_num(), 2, "no sequence allocated");
 
     // Must fail: an advanced sequence or word, drawing a mask, or a big-endian count and sequence.
     for bad in [

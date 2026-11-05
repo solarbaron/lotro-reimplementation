@@ -217,7 +217,12 @@ pub const SEQUENCE_NAK_INTERVAL_SEC: f64 = 0.6;
 /// so at most one goes out per second per connection; until then the unreported bytes
 /// accumulate and ride on the next other outgoing sequenced packet, if one goes out first.
 /// Without this period every acknowledgement the server sends for a sequenced packet
-/// would be answered with a new sequenced packet, a loop at the round-trip time.
+/// would be answered with a new sequenced packet, a loop at the round-trip time. With it
+/// the exchange is bounded, not ended: a peer that acknowledges every sequenced packet also
+/// acknowledges each FlowControl-only packet, that acknowledgement is a newly received
+/// datagram, and so one FlowControl-only packet still goes out per period each way for as
+/// long as the peer keeps acknowledging. Whether a datagram that only acknowledges should
+/// count as newly received for this schedule is part of `OPEN-SESSION-13`.
 pub const FLOW_REPORT_ONLY_PERIOD_SEC: f64 = 1.0;
 
 /// Silence timeout of State `5`: the connection closes once `now - lastRecvTime` exceeds
@@ -8289,8 +8294,9 @@ impl SessionConnection {
     ///   packet once its `30.0` s are up, [`Self::send_sequenced_packet`], `OPEN-SESSION-9`),
     ///   sends the FlowControl-only packets of the §5.5 interim policy (P10-22-POLICY: the
     ///   first tick after State `5`, then a tick after newly received datagrams that no
-    ///   other packet reported, at most once per [`FLOW_REPORT_ONLY_PERIOD_SEC`]), and sends `SequenceNakHeader` every `0.6` s when gaps exist,
-    ///   or `CumulativeAckHeader` every `2.0` s when none exist.
+    ///   other packet reported, at most once per [`FLOW_REPORT_ONLY_PERIOD_SEC`]), and
+    ///   sends `SequenceNakHeader` every `0.6` s when gaps exist, or `CumulativeAckHeader`
+    ///   every `2.0` s when none exist.
     /// - State `6` / `7`: flushes outbound reliable packets, then retransmits
     ///   `DisconnectHeader` every `1.0` s.
     ///
@@ -8489,11 +8495,11 @@ impl SessionConnection {
     /// multiplexer's cleanup has work on this connection: the handshake retransmits and
     /// timeouts (§6.1), the out-of-order acknowledgements waiting (§5.4, due at once), the
     /// first FlowControl-only packet (§5.5, due at once) and a later one for unreported
-    /// datagrams ([`FLOW_REPORT_ONLY_PERIOD_SEC`] after the previous), the `SequenceNakHeader` or
-    /// `CumulativeAckHeader` (§5.2,
-    /// §5.3), the silence timeout (§8.2), the disconnect's flush, retransmit and end
-    /// (§6.1, §8.2), the cleanup after [`CLOSING_CLEANUP_SEC`] in State `8` (§6.1) and the expiry of an
-    /// incomplete blob (§5.6.4). `None` when no timer runs (States `0`, `3`, `4` with no
+    /// datagrams ([`FLOW_REPORT_ONLY_PERIOD_SEC`] after the previous), the
+    /// `SequenceNakHeader` or `CumulativeAckHeader` (§5.2, §5.3), the silence timeout
+    /// (§8.2), the disconnect's flush, retransmit and end (§6.1, §8.2), the cleanup after
+    /// [`CLOSING_CLEANUP_SEC`] in State `8` (§6.1) and the expiry of an incomplete blob
+    /// (§5.6.4). `None` when no timer runs (States `0`, `3`, `4` with no
     /// incomplete blob). A time already past is returned as it is: the caller ticks at once.
     /// Every timer read here is one [`Self::tick`] (or the multiplexer's cleanup) acts on
     /// when it is due, from the same constants ([`HANDSHAKE_TIMEOUT_SEC`] and the others),

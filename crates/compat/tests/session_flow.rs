@@ -212,7 +212,10 @@ fn the_first_report_comes_on_the_first_tick() {
 
 /// A server that acknowledges every sequenced packet at once, one round trip later, while a
 /// reliable client blob is in flight: no loop at the round-trip time. The client ticks every
-/// 5 ms and after every arrival, harder than the connector does.
+/// 5 ms and after every arrival, harder than the connector does. The exchange is bounded,
+/// not ended: the server acknowledges each FlowControl-only packet too, so one goes out per
+/// [`FLOW_REPORT_ONLY_PERIOD_SEC`] (0.1, 1.1, ... 5.1 s, the whole budget of 6) for as long
+/// as it keeps acknowledging (`OPEN-SESSION-13`).
 #[test]
 fn an_acknowledging_server_starts_no_report_loop() {
     let mut server = Server::new();

@@ -437,3 +437,6 @@ session without the writer's conversation; the pass-9 review is accepted as inde
 **Live-run log exposure (decision 0046 item 11):** on 2026-11-05 the owner gave the filtered log of the first
 live run to the builder orchestrator session, which read it. The builder sessions of the follow-up fix received
 only the conclusion that repeated too-short datagrams ended the run. The log is not committed.
+On 2026-11-05 the owner gave the filtered log of the second live run to the same builder orchestrator session.
+The follow-up builder sessions received only its conclusions: no refused datagram, no referral within 30 s of the
+selection, and one FlowControl-only packet sent for each received datagram while the server acknowledged each.

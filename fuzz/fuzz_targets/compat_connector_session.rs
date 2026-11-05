@@ -16,7 +16,9 @@
 //! its readiness wait, and the world's messages go through the pending-entry store), bit 1 leaves
 //! the setup's `0x90` out, so the input decides what the wait for it sees, bit 2 a stand-in for the
 //! server gate, so `0x7C` and a `WorldLoaded` finish the entry in §9.3.9's order, bit 3 a stand-in for
-//! the exact placement, which that order needs (no production path has one either). Then arbitrary
+//! the exact placement, which that order needs (no production path has one either), bit 4 sends
+//! fail once 8 times bits 6 and 7 of them went out, for good with bit 5 clear (§9.3.9's I/O row) and
+//! as a full socket with it set. Then arbitrary
 //! datagrams from the login, world and chat servers, arbitrary messages wrapped in valid
 //! sequenced datagrams of the world connection once it exists, else of the login connection (the
 //! widened opcodes of the bytes 0xC0 and above fall in the world-teardown band; a selector byte
@@ -170,6 +172,8 @@ impl InstallData for NoData {
 struct Queues {
     inbound: VecDeque<(Vec<u8>, SocketAddrV4)>,
     sent: usize,
+    /// Sends past this many fail, as the failure says.
+    fail_after: Option<(usize, SessionError)>,
 }
 
 #[derive(Debug)]
@@ -182,6 +186,11 @@ impl UdpDatagramTransport for Udp {
 
     fn send_to(&mut self, buf: &[u8], _target: SocketAddrV4) -> Result<usize, SessionError> {
         if let Ok(mut q) = self.0.lock() {
+            if let Some((allowed, failure)) = &q.fail_after
+                && q.sent >= *allowed
+            {
+                return Err(failure.clone());
+            }
             q.sent = q.sent.saturating_add(1);
         }
         Ok(buf.len())
@@ -513,9 +522,19 @@ fn ack() -> OptionalHeaders {
 }
 
 fuzz_target!(|data: &[u8]| {
-    let session = Arc::new(Mutex::new(Queues::default()));
     let flags = data.first().copied().unwrap_or(0);
     let extra = data.get(1).copied().unwrap_or(0);
+    let session = Arc::new(Mutex::new(Queues {
+        fail_after: (extra & 0x10 != 0).then(|| {
+            let failure = if extra & 0x20 == 0 {
+                SessionError::Io("no route in the fuzz target".to_owned())
+            } else {
+                SessionError::IoTransient("a full socket in the fuzz target".to_owned())
+            };
+            (usize::from(extra >> 6) * 8, failure)
+        }),
+        ..Queues::default()
+    }));
     let chat = (flags & 0x10 != 0).then(|| Arc::new(Mutex::new(Queues::default())));
     let mut net = Net {
         session: Arc::clone(&session),

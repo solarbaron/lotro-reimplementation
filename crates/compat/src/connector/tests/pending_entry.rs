@@ -9,7 +9,10 @@ use super::service_support::{
 };
 use super::*;
 use crate::connector::pending_world::{DEFAULT_RECIPIENT, MAX_PENDING_ENTITIES, withheld_summary};
-use crate::world::{EncodedPropertyTable, EntityCreate, PlayerSessionReady};
+use crate::world::{
+    EncodedPropertyEntry, EncodedPropertyTable, EncodedPropertyValue, EntityCreate,
+    PID_WORLD_TIME_OFFSET, PlayerSessionReady,
+};
 use tessera_net::WorldEntryStage;
 
 const PLAYER: u64 = 0x0100_0000_0000_0007;
@@ -2008,6 +2011,262 @@ fn the_scripted_entry_runs_in_the_specified_order() {
             .iter()
             .any(|e| matches!(e, Event::WorldEntered { .. }))
     );
+}
+
+/// A `0x90` whose table says the world clock's offset is `offset`.
+fn ready_with_clock(player: u64, offset: f32) -> Vec<u8> {
+    PlayerSessionReady {
+        player_id: player,
+        session_props: EncodedPropertyTable {
+            entries: vec![EncodedPropertyEntry::new(
+                PID_WORLD_TIME_OFFSET,
+                EncodedPropertyValue::Float(offset),
+            )],
+        },
+    }
+    .to_bytes()
+    .expect("0x90")
+}
+
+/// [`at_session_start`] on an install whose dictionary has the `0x90` table's property.
+fn at_session_start_with_clock(service: Service) -> (World, SessionDriver<FakeNet>, Server) {
+    let (world, mut d, login) =
+        driver_at_characters_from(service, super::world_entry::with_schema());
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    d.step(1.1, true, &go);
+    world.deliver(
+        login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+        LOGIN_SERVER,
+    );
+    d.step(1.2, true, &go);
+    let server = Server::new(0x0222, 0xBEEF_0002);
+    server.connect_to(&world, 0xBEEF_0002, WORLD_SERVER);
+    d.step(1.3, true, &go);
+    world.take_sent();
+    let _ = d.take_events();
+    (world, d, server)
+}
+
+/// §9.3.9 "keep its identity/properties pending" on the scripted road: a non-empty `0x90` table stays
+/// pending through the placement and both gates, a repeat with another table leaves the first
+/// (labelled, §28 fix 20), and the release has it. Nothing reads it before `WorldEntered`.
+#[test]
+fn the_first_session_table_stays_pending_until_the_release() {
+    let (world, mut d, mut server) = at_session_start_with_clock(gated());
+    world.deliver(
+        server.event(0x90, &ready_with_clock(PLAYER, 7.5)),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    assert!(d.entry_progress().session_started);
+    assert_eq!(d.session_property(PID_WORLD_TIME_OFFSET), None, "pending");
+    world.deliver(
+        server.event(0x90, &ready_with_clock(PLAYER, 9.0)),
+        WORLD_SERVER,
+    );
+    world.deliver(
+        server.event(0xCE, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.1, true, &go);
+    assert_eq!(d.counters().session_starts_repeated, 1);
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.2,
+    )
+    .expect("loaded");
+    assert_eq!(d.session_property(PID_WORLD_TIME_OFFSET), None, "pending");
+    world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+    d.step(2.3, true, &go);
+    assert!(d.in_world());
+    assert_eq!(
+        d.session_property(PID_WORLD_TIME_OFFSET),
+        Some(&EncodedPropertyValue::Float(7.5)),
+        "the first table, released"
+    );
+    assert_eq!(d.pending_sizes(), (0, 0));
+}
+
+/// §9.3.9: "discard everything on failure": an entry that stops releases no table.
+#[test]
+fn a_failed_entry_discards_the_session_table() {
+    let (world, mut d, mut server) = at_session_start_with_clock(production());
+    world.deliver(
+        server.event(0x90, &ready_with_clock(PLAYER, 7.5)),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    assert!(d.entry_progress().session_started);
+    d.step(
+        2.0 + crate::connector::session_phase::ENTER_WORLD_TIMEOUT_SEC,
+        true,
+        &go,
+    );
+    assert!(d.ended());
+    assert_eq!(d.session_property(PID_WORLD_TIME_OFFSET), None);
+}
+
+/// The reasons of the `Disconnected` events in `events`.
+fn disconnected(events: &[Event]) -> Vec<&DisconnectReason> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Disconnected { reason } => Some(reason),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Runs `d` from `from` to `to` in half seconds.
+fn run(d: &mut SessionDriver<FakeNet>, from: f64, to: f64) {
+    let mut t = from;
+    while t < to {
+        d.step(t, true, &go);
+        t += 0.5;
+    }
+}
+
+/// §9.3.9's I/O row after `Connected`: a send the socket refuses is `TransportFailed` with no refusal
+/// and no Disconnect, and nothing more is tried, whether the socket stays dead or heals.
+#[test]
+fn a_failed_send_in_the_session_is_the_io_row() {
+    let (world, mut d, _login) = driver_at_characters(production(), 0);
+    world.take_sent();
+    let _ = d.take_events();
+    world.fail_sends(SendFailure::Hard);
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    d.step(1.1, true, &go);
+    assert!(d.ended());
+    let events = d.take_events();
+    assert!(
+        matches!(
+            disconnected(&events)[..],
+            [DisconnectReason::TransportFailed(_)]
+        ),
+        "{events:?}"
+    );
+    assert!(!events.iter().any(|e| matches!(e, Event::Account(_))));
+    let attempts = world.failed_sends().len();
+    assert_eq!(attempts, 1, "the first refused send ends it");
+    world.heal_sends();
+    run(&mut d, 1.2, 70.0);
+    assert!(world.take_sent().is_empty(), "no Disconnect and no retry");
+    assert_eq!(world.failed_sends().len(), attempts);
+}
+
+/// §9.3.9's I/O row before `Connected`: `LoginRefused { ServiceUnavailable }`, then `TransportFailed`,
+/// and no further send of the ticket. Not the silence row's words after 20 s.
+#[test]
+fn a_failed_send_in_the_handshake_refuses_and_stops_the_ticket() {
+    let (world, mut d) = driver_at_login(Service::default(), 0);
+    world.take_sent();
+    world.fail_sends(SendFailure::Hard);
+    run(&mut d, 0.1, 5.0);
+    assert!(d.ended(), "well before the handshake's 20 s");
+    let events = d.take_events();
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::Account(AccountEvent::LoginRefused {
+                reason: LoginRefusal::ServiceUnavailable,
+                ..
+            })
+        )),
+        "{events:?}"
+    );
+    assert!(
+        matches!(
+            disconnected(&events)[..],
+            [DisconnectReason::TransportFailed(_)]
+        ),
+        "{events:?}"
+    );
+    let attempts = world.failed_sends().len();
+    assert_eq!(attempts, 1, "the auth's resend, once");
+    run(&mut d, 5.0, 30.0);
+    world.heal_sends();
+    run(&mut d, 30.0, 40.0);
+    assert_eq!(world.failed_sends().len(), attempts);
+    assert!(world.take_sent().is_empty(), "no ticket again");
+}
+
+/// A socket that is full just now is a count (labelled, engineering choice): the session goes on and
+/// its own clocks decide, and it can recover.
+#[test]
+fn a_full_socket_is_only_counted() {
+    let (world, mut d, mut login) = driver_at_characters(production(), 0);
+    world.take_sent();
+    world.fail_sends(SendFailure::Transient);
+    world.deliver(login.event(0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+    run(&mut d, 1.0, 10.0);
+    assert!(!d.ended());
+    assert!(!world.failed_sends().is_empty());
+    world.heal_sends();
+    world.deliver(login.event(0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+    run(&mut d, 10.0, 20.0);
+    assert!(!d.ended());
+    assert!(!world.take_sent().is_empty(), "it sends again");
+}
+
+/// §9.3.9: nothing the retiring login connection does decides the session: a dead route to it is only
+/// a count, and the same on the world connection, the primary one by then, is the I/O row, with no
+/// Disconnect to either.
+#[test]
+fn only_the_primary_connections_failed_send_ends_the_session() {
+    let (world, mut d, mut login) = driver_at_characters(production(), 0);
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    d.step(1.1, true, &go);
+    world.deliver(
+        login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+        LOGIN_SERVER,
+    );
+    d.step(1.2, true, &go);
+    assert!(d.entry_progress().referred);
+    let _ = d.take_events();
+    world.take_sent();
+    world.fail_sends(SendFailure::HardTo(LOGIN_SERVER));
+    world.deliver(login.event(0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+    run(&mut d, 1.3, 4.0);
+    assert!(
+        world.failed_sends().contains(&LOGIN_SERVER),
+        "the retiring connection tried"
+    );
+    assert!(!d.ended(), "and that decides nothing");
+
+    world.fail_sends(SendFailure::HardTo(WORLD_SERVER));
+    world.take_sent();
+    run(&mut d, 4.0, 10.0);
+    assert!(d.ended());
+    let events = d.take_events();
+    assert!(
+        matches!(
+            disconnected(&events)[..],
+            [DisconnectReason::TransportFailed(_)]
+        ),
+        "{events:?}"
+    );
+    assert_eq!(disconnects(&world, &[LOGIN_SERVER, WORLD_SERVER]), [0, 0]);
+    assert_eq!(world.failed_sends().last(), Some(&WORLD_SERVER));
 }
 
 /// The same with the server's gate first: the result does not depend on the gates' order, and no

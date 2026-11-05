@@ -31,7 +31,10 @@
 //! world connection once a referral made one, else the login connection. A local end, and an
 //! established connection's silence, send exactly one when it is established and none in its handshake,
 //! and close with no flush wait and no more ticket; a server's closing header and an I/O failure get
-//! none. A retired or retiring login connection gets none on any outcome. The
+//! none. An I/O failure is a send of the primary connection the socket refuses for good
+//! (`SessionDriver::flush`); a socket that is full just now is a count, as is a failed read, and a
+//! revoked right is `SessionDriver::abandon`. A retired or retiring login connection gets none on
+//! any outcome, and its failed sends decide nothing. The
 //! user's Cancel, Back, Escape, window close, typed logout and "Leave queue" do the same, with
 //! `Disconnected { ClientRequested }`; the one exception is a user's close while the world connection
 //! is in its handshake: one on the login connection and none on the world's
@@ -213,7 +216,7 @@
 //! it (credentials replaced), and the connection's counts are appended when it closes or is
 //! let go. Each chat-server socket does the same for its own connection ([`Metered`]).
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddrV4;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -255,11 +258,11 @@ use crate::session::{
 };
 use crate::world::{
     AccountEvictionNotice, CharacterEnterWorldRequest, CharacterListResponse,
-    CharacterOperationError, EntityCreate, EntityDespawn, PlayerSessionReady, PortalPositionSync,
-    PortalReadyAck, PositionUpdate, PropertyRemoval, PropertyScope, PropertyTableUpdate,
-    ServerShutdownText, SinglePropertyUpdate, SubEventBatch, SubEventFrame,
-    VisualDescriptionUpdate, WireReader, WorldError, active_target, encode_event_envelope,
-    one_shared_prefix, rebuild_shared_prefix,
+    CharacterOperationError, EncodedPropertyTable, EncodedPropertyValue, EntityCreate,
+    EntityDespawn, PlayerSessionReady, PortalPositionSync, PortalReadyAck, PositionUpdate,
+    PropertyRemoval, PropertyScope, PropertyTableUpdate, ServerShutdownText, SinglePropertyUpdate,
+    SubEventBatch, SubEventFrame, VisualDescriptionUpdate, WireReader, WorldError, active_target,
+    encode_event_envelope, one_shared_prefix, rebuild_shared_prefix,
 };
 
 use super::data::{SchemaView, chat_categories, prepare_advertisement};
@@ -277,7 +280,8 @@ use super::entities::{
 use super::login_phase::PlainSteps;
 use super::net::{ConnectorNet, SendHttpClient};
 use super::pending_world::{
-    DEFAULT_RECIPIENT, DEFAULT_RECIPIENT_DESPAWN_APPLIES, PendingWorld, Stored, withheld_summary,
+    DEFAULT_RECIPIENT, DEFAULT_RECIPIENT_DESPAWN_APPLIES, EntitySnapshot, PendingWorld, Stored,
+    withheld_summary,
 };
 
 /// `0x0000019E` (`ClientPlatformIdMessage`, `official-session.md` §5.6.2).
@@ -1035,7 +1039,7 @@ pub struct DriverCounters {
     /// `WorldLoaded` signals outside the world and without a pending placement of their generation,
     /// refused.
     pub stray_loaded: u64,
-    /// Valid `0x90`s that repeated the entry's ID: counted, the first table kept (§9.3.11; labelled,
+    /// Valid `0x90`s that repeated the entry's ID: counted, the first table stays pending (§9.3.11; labelled,
     /// `docs/m8-remediation.md` §28 fix 20 for a repeat with another table).
     pub session_starts_repeated: u64,
     /// Envelopes whose routing header named a `routingField0` other than the fragment's
@@ -1130,6 +1134,12 @@ pub struct SessionDriver<N: ConnectorNet> {
     /// The first valid `0x90`'s ID on this entry (§9.3.11): a repeat is counted and a different ID
     /// is unsupported. No silent rebinding.
     world_identity: Option<u64>,
+    /// The session properties the first `0x90`'s table gave, once released at `WorldEntered`
+    /// (`official-messages-world.md` §4.2). Nothing reads them yet: the world clock of §4.4.2 is not
+    /// wired to this driver.
+    session_properties: BTreeMap<u32, EncodedPropertyValue>,
+    /// A send of the primary connection failed for good: the next look ends the session by the I/O row.
+    send_failed: bool,
     /// The exact placement of the local player last given to the client.
     placement: Option<(Location, f32)>,
     /// That placement's generation, `0` before the first (§9.3.11).
@@ -1138,8 +1148,8 @@ pub struct SessionDriver<N: ConnectorNet> {
     local_ready: bool,
     /// The server gate of the entry (never set on a production path).
     server_ready: bool,
-    /// A referral arrived, so the login connection was disconnected gracefully
-    /// (`official-session.md` §6.5 step 2): its close no longer ends the session.
+    /// A valid referral arrived: the login connection retires with no Disconnect
+    /// (`official-session.md` §9.3.9), and its close no longer ends the session.
     login_referred: bool,
     /// The client's latest [`Command::WorldLoaded`] in this world: `Some(stamp)` with the
     /// entity stamp of the placement it answers (`None` inside while no stamp is known).
@@ -1415,6 +1425,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             entry_firsts: EntryFirsts::default(),
             pending: PendingWorld::default(),
             world_identity: None,
+            session_properties: BTreeMap::new(),
+            send_failed: false,
             placement: None,
             placement_generation: 0,
             local_ready: false,
@@ -1533,6 +1545,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }
         }
         counters
+    }
+
+    /// A session property the released first `0x90` table gave (`official-messages-world.md` §4.2).
+    #[must_use]
+    pub fn session_property(&self, pid: u32) -> Option<&EncodedPropertyValue> {
+        self.session_properties.get(&pid)
     }
 
     /// How far the world entry got (§9.3.9).
@@ -1740,6 +1758,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if self.ended {
             return false;
         }
+        // The flush that started the session.
+        if self.send_failed {
+            self.end_on_send_failure(now);
+            return true;
+        }
         let before = self.events.len();
         let read = read && !self.full();
         self.feed.begin_pass();
@@ -1770,6 +1793,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return read_any || self.events.len() != before;
         }
         self.flush(now);
+        self.end_on_send_failure(now);
         self.report_waiting(now);
         read_any || self.events.len() != before
     }
@@ -1893,17 +1917,56 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.release_pending();
     }
 
-    /// The pending state goes to the play layer and the store is empty (§9.3.9).
+    /// The pending state goes to the play layer and the store is empty (§9.3.9): every spawn, then the
+    /// first `0x90`'s table, then the merged properties and motion.
     fn release_pending(&mut self) {
+        let table = self.pending.take_session_table();
         let (spawns, states) = self.pending.take_snapshots();
-        for snapshot in spawns.iter().chain(states.iter()) {
+        if !self.release_snapshots(&spawns) {
+            return;
+        }
+        if let Some(table) = table {
+            self.release_session_table(&table);
+        }
+        self.release_snapshots(&states);
+    }
+
+    /// Plays `snapshots`; whether the session is still in the world.
+    fn release_snapshots(&mut self, snapshots: &[EntitySnapshot]) -> bool {
+        for snapshot in snapshots {
             for (opcode, body) in &snapshot.messages {
                 self.play_in_world(*opcode, snapshot.entity, body);
                 if !self.in_world_still() {
-                    return;
+                    return false;
                 }
             }
         }
+        true
+    }
+
+    /// The first `0x90`'s table becomes the session's properties (`official-messages-world.md` §4.2).
+    /// It read to exact exhaustion when it was kept; the count goes to the log, never a value.
+    fn release_session_table(&mut self, table: &[u8]) {
+        let mut reader = WireReader::new(table);
+        let decoded = EncodedPropertyTable::decode(&mut reader, &self.schema)
+            .and_then(|t| reader.finish().map(|()| t));
+        self.session_properties.clear();
+        match decoded {
+            Ok(table) => {
+                for entry in table.entries {
+                    if let Some(value) = entry.value {
+                        self.session_properties.insert(entry.pid, value);
+                    }
+                }
+            }
+            Err(_) => self.counters.decode_errors += 1,
+        }
+        tracing::info!(
+            target: EVIDENCE_TARGET,
+            bytes = table.len(),
+            properties = self.session_properties.len(),
+            "official evidence: session table released"
+        );
     }
 
     /// The initial exchange's wait ended ([`Negotiation`], §9.3.8): the attempt ends with that
@@ -2017,6 +2080,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     fn log_counts_line(&self) {
         let p = &self.entry_progress;
+        let queues = self
+            .world
+            .as_ref()
+            .and_then(|l| l.mux.connection(l.conn))
+            .map(|c| c.reassembly_counts())
+            .unwrap_or_default();
         tracing::info!(
             target: EVIDENCE_TARGET,
             batches = p.batches,
@@ -2040,6 +2109,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
             unread = p.unread,
             pending_entities = self.pending.entities(),
             pending_bytes = self.pending.bytes(),
+            session_table_bytes = self.pending.session_table_bytes(),
+            queue3_groups_over = queues.queue3_groups_over,
+            queue3_older = queues.queue3_older,
+            queue3_equal = queues.queue3_equal,
+            queue3_ambiguous = queues.queue3_ambiguous,
+            duplicates = queues.duplicates,
+            tombstones_evicted = queues.tombstones_evicted,
             "official evidence: counts after the session start"
         );
     }
@@ -2114,6 +2190,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.stage = Stage::Characters;
         self.returned_from_world = true;
         self.pending.discard();
+        self.session_properties.clear();
         self.placement = None;
         self.local_ready = false;
         self.server_ready = false;
@@ -3204,8 +3281,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// property table to exact exhaustion. The first of an entry must read, uncompressed and unrouted,
     /// with an ID other than zero and the logical default 2, or that is the unsupported row; the ID is
     /// never shifted by a guessed second byte. It starts the readiness wait and is not `WorldEntered` by
-    /// itself: its identity is kept pending (module docs). A later valid one repeating the ID is counted
-    /// and skipped, with the first table kept (labelled, `docs/m8-remediation.md` §28 fix 20), a later
+    /// itself: its identity and its encoded table are kept pending (module docs). A later valid one
+    /// repeating the ID is counted and skipped, the first table staying as it is (labelled,
+    /// `docs/m8-remediation.md` §28 fix 20), a later
     /// valid one with another ID is unsupported (no silent rebinding), and a later one that does not
     /// read is counted.
     fn session_ready(&mut self, m: &Inbound, now: f64) {
@@ -3255,6 +3333,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.world_identity = Some(ready.player_id);
         self.entry_counts_at = now;
         self.note_stage(EntryWait::Readiness.label(), now);
+        // What follows the ID read to exact exhaustion above.
+        if let Some(table) = m.body.get(size_of::<u64>()..) {
+            self.pending.keep_session_table(table);
+        }
         if self.readiness_specified {
             return self.enter_at_session_start(ready.player_id, name);
         }
@@ -4139,15 +4221,19 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// Sends what the connections have queued; a failure is logged at most once per
-    /// [`LOG_INTERVAL_SEC`] (a revoked right fails every send).
+    /// [`LOG_INTERVAL_SEC`] (a revoked right fails every send). A send of the primary connection that
+    /// the socket refuses for good ([`SessionError::Io`]) is §9.3.9's I/O row, which the caller's
+    /// [`Self::end_on_send_failure`] takes; the same on a retiring login connection decides nothing,
+    /// and every other failure is only counted.
     fn flush(&mut self, now: f64) {
-        let mut links: Vec<&mut Link> = Vec::with_capacity(2);
-        links.push(&mut self.login);
+        let world_is_primary = self.world.is_some();
+        let mut links: Vec<(bool, &mut Link)> = Vec::with_capacity(2);
+        links.push((!world_is_primary, &mut self.login));
         if let Some(w) = self.world.as_mut() {
-            links.push(w);
+            links.push((true, w));
         }
         let mut failed = None;
-        for l in links {
+        for (primary, l) in links {
             // The dump's tap is armed only around the flush of a connection whose first
             // datagram is still to be written ([`super::dump`]).
             let tap = self.dump.is_some() && l.wants_first_dump();
@@ -4155,6 +4241,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 self.transport.arm();
             }
             if let Err(e) = l.mux.flush_outbound(&mut self.transport) {
+                self.send_failed |= primary && matches!(e, SessionError::Io(_));
                 failed = Some(e);
             }
             if tap
@@ -4168,6 +4255,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
             && let Some(skipped) = self.send_log.allow(now)
         {
             tracing::debug!(error = %e, skipped, "official session: send failed");
+        }
+    }
+
+    /// §9.3.9's I/O row after a failed send ([`Self::flush`]): `TransportFailed`, no Disconnect on any
+    /// connection and every retry gone, with `LoginRefused { ServiceUnavailable }` before `Connected`.
+    fn end_on_send_failure(&mut self, now: f64) {
+        if std::mem::take(&mut self.send_failed) {
+            self.end_by_table(TableRow::Io, false, "a send failed", now);
         }
     }
 

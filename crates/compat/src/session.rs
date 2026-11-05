@@ -739,6 +739,15 @@ pub enum SessionError {
     /// Underlying UDP socket I/O error.
     #[error("UDP socket I/O error: {0}")]
     Io(String),
+    /// A send the socket could not take just now ([`crate::net_access`]'s choice of which errors these
+    /// are). The datagram is lost like any lost on the way, and the session goes on: the failure is
+    /// counted, and only [`Self::Io`] is `official-session.md` §9.3.9's "ordinary I/O failure".
+    #[error("UDP socket could not take this send: {0}")]
+    IoTransient(String),
+    /// The network right was revoked (`official-entry.md` §6.1). Nothing failed on the network: the
+    /// connector's thread abandons the session, which is no I/O failure of §9.3.9.
+    #[error("the network access was revoked")]
+    AccessRevoked,
 }
 
 impl From<std::io::Error> for SessionError {
@@ -918,7 +927,8 @@ pub trait UdpDatagramTransport: std::fmt::Debug + Send {
     /// # Errors
     ///
     /// Returns [`SessionError`] if the datagram exceeds `MAX_DATAGRAM_BUF` or
-    /// the underlying socket fails.
+    /// the underlying socket fails: [`SessionError::Io`] when it refuses the send for good,
+    /// [`SessionError::IoTransient`] when it could not take this one just now.
     fn send_to(&mut self, buf: &[u8], target: SocketAddrV4) -> Result<usize, SessionError>;
 
     /// Receives a single non-blocking UDP datagram into `buf`, returning
@@ -5859,6 +5869,17 @@ pub const MAX_EVIDENCE_LIFECYCLE_LINES: u32 = 64;
 /// Most lines of one connection's accepted datagrams and delivered blobs, past the first of each
 /// opcode (at most [`MAX_EVIDENCE_OPCODES`] more).
 pub const MAX_EVIDENCE_RECEIVE_LINES: u32 = 400;
+/// Most lines of one connection's queue decisions that discard, skip or repeat a blob or deliver at an
+/// odd distance, past the first of each class. They do not spend the receive lines: the discards of a
+/// crowded entry come after many deliveries.
+pub const MAX_EVIDENCE_QUEUE_LINES: u32 = 64;
+/// Most lines of one connection's plain queue-3 deliveries (first or newer), past the first of each
+/// class. A plain delivery past these has no line: its blob line has its group and order, and the
+/// totals count it.
+pub const MAX_EVIDENCE_QUEUE_DELIVER_LINES: u32 = 32;
+/// The classes of queue decision, each with one line that no budget can refuse: four actions by six
+/// distances at most ([`QueueDecision`]).
+pub const MAX_EVIDENCE_QUEUE_CLASSES: usize = 24;
 /// §9.3.7's cap on distinct opcodes, for the first-of-each lines of each direction.
 pub const MAX_EVIDENCE_OPCODES: usize = 256;
 /// The newest lines past their budget that are kept and written when the connection ends, so that
@@ -5869,7 +5890,11 @@ pub const MAX_EVIDENCE_TAIL_LINES: usize = 64;
 pub const MAX_EVIDENCE_LINES_PER_CONNECTION: usize = (MAX_EVIDENCE_SEND_LINES
     + MAX_EVIDENCE_CONTROL_LINES
     + MAX_EVIDENCE_LIFECYCLE_LINES
-    + MAX_EVIDENCE_RECEIVE_LINES) as usize
+    + MAX_EVIDENCE_RECEIVE_LINES
+    + MAX_EVIDENCE_QUEUE_LINES
+    + MAX_EVIDENCE_QUEUE_DELIVER_LINES)
+    as usize
+    + MAX_EVIDENCE_QUEUE_CLASSES
     + 2 * MAX_EVIDENCE_OPCODES
     + MAX_EVIDENCE_TAIL_LINES
     + 1;
@@ -6077,6 +6102,14 @@ struct Evidence {
     control_left: u32,
     lifecycle_left: u32,
     receive_left: u32,
+    queue_left: u32,
+    queue_deliver_left: u32,
+    /// The (action, distance) classes that have had a line.
+    queue_classes: BTreeSet<(&'static str, &'static str)>,
+    /// The reassembler's counts at the last datagram, for the totals.
+    reassembly: ReassemblyCounts,
+    /// Plain queue-3 deliveries, with or without a line.
+    queue3_plain_delivered: u64,
     opcodes: BTreeSet<u32>,
     sent_opcodes: BTreeSet<u32>,
     /// The recipients seen, in order: a line names the ordinal, never the ID (§9.3.11's tokens).
@@ -6106,6 +6139,11 @@ impl Evidence {
             control_left: MAX_EVIDENCE_CONTROL_LINES,
             lifecycle_left: MAX_EVIDENCE_LIFECYCLE_LINES,
             receive_left: MAX_EVIDENCE_RECEIVE_LINES,
+            queue_left: MAX_EVIDENCE_QUEUE_LINES,
+            queue_deliver_left: MAX_EVIDENCE_QUEUE_DELIVER_LINES,
+            queue_classes: BTreeSet::new(),
+            reassembly: ReassemblyCounts::default(),
+            queue3_plain_delivered: 0,
             opcodes: BTreeSet::new(),
             sent_opcodes: BTreeSet::new(),
             recipients: Vec::new(),
@@ -6379,12 +6417,32 @@ impl Evidence {
         self.put(line, shown, now_sec);
     }
 
-    /// What the queue rules did with a completed blob ([`EvidenceLine::Queue`]).
+    /// What the queue rules did with a completed blob ([`EvidenceLine::Queue`]). The first of each class
+    /// always has its line, so the first key-cap skip of a crowded entry is shown however much came
+    /// before it. These lines spend no receive line. Past its budget a plain delivery has no line at
+    /// all, not even in the tail, where it would push out what came before a close; any other goes to
+    /// the tail. The totals have the counts either way.
     fn queued(&mut self, decision: QueueDecision, now_sec: f64) {
         if decision.queue != 3 && decision.action == "deliver" {
             return;
         }
-        let shown = Self::budgeted(&mut self.receive_left);
+        let first = self.queue_classes.len() < MAX_EVIDENCE_QUEUE_CLASSES
+            && self
+                .queue_classes
+                .insert((decision.action, decision.distance));
+        let plain = decision.action == "deliver" && matches!(decision.distance, "first" | "newer");
+        if plain {
+            self.queue3_plain_delivered = self.queue3_plain_delivered.saturating_add(1);
+        }
+        let budget = if plain {
+            &mut self.queue_deliver_left
+        } else {
+            &mut self.queue_left
+        };
+        let shown = first || Self::budgeted(budget);
+        if plain && !shown {
+            return;
+        }
         let recipient_token = self.recipient_token(decision.recipient);
         self.put(
             EvidenceLine::Queue {
@@ -6420,6 +6478,13 @@ impl Evidence {
             blobs = self.blobs,
             opcodes = self.opcodes.len(),
             sent_opcodes = self.sent_opcodes.len(),
+            queue3_plain_delivered = self.queue3_plain_delivered,
+            queue3_groups_over = self.reassembly.queue3_groups_over,
+            queue3_older = self.reassembly.queue3_older,
+            queue3_equal = self.reassembly.queue3_equal,
+            queue3_ambiguous = self.reassembly.queue3_ambiguous,
+            duplicates = self.reassembly.duplicates,
+            tombstones_evicted = self.reassembly.tombstones_evicted,
             lines_not_shown = self.not_shown,
             "official evidence: connection totals"
         );
@@ -7762,6 +7827,7 @@ impl SessionConnection {
         if headers.is_ok() || self.state != ConnectionState::Closing {
             let decisions = self.reassembler.take_decisions();
             if let Some(e) = self.evidence.as_mut() {
+                e.reassembly = self.reassembler.counts();
                 for decision in decisions {
                     e.queued(decision, now_sec);
                 }

@@ -432,6 +432,10 @@ struct Shared {
     answers: Vec<(String, u16, String)>,
     /// How many of the next session socket reads fail ([`World::fail_reads`]).
     failing_reads: usize,
+    /// How sends fail, from now on ([`SendFailure`]).
+    failing_sends: Option<SendFailure>,
+    /// Failed sends, by their destination.
+    failed_sends: Vec<SocketAddrV4>,
 }
 
 /// The network right as the synthetic network sees it (`Service::follow_withdraw`).
@@ -452,7 +456,7 @@ struct World {
 }
 
 fn revoked_io() -> SessionError {
-    SessionError::Io("the network access was revoked".to_owned())
+    SessionError::AccessRevoked
 }
 
 impl World {
@@ -615,6 +619,21 @@ impl World {
         self.shared.lock().expect("shared").failing_reads = n;
     }
 
+    /// Sends fail from now on, as `failure` says.
+    fn fail_sends(&self, failure: SendFailure) {
+        self.shared.lock().expect("shared").failing_sends = Some(failure);
+    }
+
+    /// Sends work again.
+    fn heal_sends(&self) {
+        self.shared.lock().expect("shared").failing_sends = None;
+    }
+
+    /// Every send that failed, by its destination.
+    fn failed_sends(&self) -> Vec<SocketAddrV4> {
+        self.shared.lock().expect("shared").failed_sends.clone()
+    }
+
     /// A datagram from the chat server, to the chat sockets.
     fn deliver_chat(&self, datagram: Vec<u8>) {
         self.shared
@@ -652,6 +671,17 @@ impl World {
     }
 }
 
+/// A failing send of the session's socket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SendFailure {
+    /// Every send fails the way a lost route does (§9.3.9's I/O row).
+    Hard,
+    /// Sends to this address only fail that way.
+    HardTo(SocketAddrV4),
+    /// Every send finds the socket full, which is only a count.
+    Transient,
+}
+
 #[derive(Debug)]
 struct FakeHttp(World);
 
@@ -678,6 +708,24 @@ impl UdpDatagramTransport for FakeUdp {
         if !self.0.live() {
             s.dead_attempts += 1;
             return Err(revoked_io());
+        }
+        if !self.1 {
+            let failure = match s.failing_sends {
+                Some(SendFailure::Hard) => {
+                    Some(SessionError::Io("synthetic send failure".to_owned()))
+                }
+                Some(SendFailure::HardTo(peer)) if peer == target => {
+                    Some(SessionError::Io("synthetic send failure".to_owned()))
+                }
+                Some(SendFailure::Transient) => Some(SessionError::IoTransient(
+                    "synthetic full socket".to_owned(),
+                )),
+                _ => None,
+            };
+            if let Some(failure) = failure {
+                s.failed_sends.push(target);
+                return Err(failure);
+            }
         }
         s.udp.outbound.push_back((buf.to_vec(), target));
         Ok(buf.len())

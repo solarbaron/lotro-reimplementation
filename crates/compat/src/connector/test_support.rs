@@ -189,7 +189,8 @@ pub const NPC_AT: [f32; 3] = [20.0, 40.0, 6.0];
 /// tokenized texts (type 13, whose literal is a prefixed UTF-16LE string); real runs take
 /// every type from the install's property dictionary (`0x34000000`), and the chat line
 /// reads either form (`crate::play::chat`).
-pub const DICTIONARY: [(u32, PropertyType); 13] = [
+pub const DICTIONARY: [(u32, PropertyType); 14] = [
+    (crate::world::PID_WORLD_TIME_OFFSET, PropertyType::Float),
     (PID_ENTITY_DISPLAY_NAME, PropertyType::LocalizedTokenText),
     (PID_IS_NPC_AGENT, PropertyType::Boolean),
     (PID_IS_INANIMATE_PROP, PropertyType::Boolean),
@@ -1123,7 +1124,7 @@ impl HttpClient for SyntheticHttp {
 pub struct SyntheticUdp(SyntheticService);
 
 fn revoked() -> SessionError {
-    SessionError::Io("the network access was revoked".to_owned())
+    SessionError::AccessRevoked
 }
 
 impl UdpDatagramTransport for SyntheticUdp {

@@ -599,7 +599,9 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   work** (`docs/ROADMAP.md` M8 status):
   - **Spec pass 10 and C8 (2026-10-31 to 11-05; the current state, read this first):** from two
     passive captures of the owner's own sessions, pass 10 on branch `m8-spec-pass-10` (Review, not
-    merged, fresh dirty-room review pending; checks in its `docs/m8-remediation.md` §21–§28) corrects
+    merged, fresh dirty-room review pending; checks in its `docs/m8-remediation.md` §21–§27, and §28, the
+    check of a9f97b31 that the code's labelled choices cite, is not committed yet: it waits for the
+    writer's next commit on that branch) corrects
     the checksum, first sequence numbers, flags, compact integers, challenge and accept, ISAAC seeds and
     codec directions, and adds the referral, the world handshake, the initial install advertisement
     (0xEC after 0xDD), the character-list appearance codec and the 6F destination. Where the branch and
@@ -608,9 +610,11 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     without waiting for spec acceptance (decision 0046; a deliberate exception to decision 0018).
     No live run has been made yet. A production login reaches the character list and a selection, then
     the referral, which retires the login connection with no Disconnect, the world handshake and 0x90.
-    A full pending store counts and skips, and the first placement has no source, so the entry stops at
-    the readiness wait: `UnsupportedTimeout` after 30 s, one Disconnect, the start screen, with no F4 and
-    no `WorldEntered`, because OPEN-WORLD-9 is open. Quit, Escape and closing the window at the list or
+    A full pending store counts and skips, the first 0x90's table stays pending, and the first placement
+    has no source, so the entry stops at the readiness wait: `UnsupportedTimeout` after 30 s, one
+    Disconnect, the start screen, with no F4 and no `WorldEntered`, because OPEN-WORLD-9 is open. A send
+    the socket refuses for good ends the session as `TransportFailed`, no Disconnect; a full socket is a
+    count. Quit, Escape and closing the window at the list or
     while entering end the client; Cancel goes to the account form. Move and local mounts are refused
     locally, and typed logout closes with no RPC. Interim rules (header word, FlowControl, counters, EC
     order) and the writer's open questions are labelled in the code and known or suspected to differ from

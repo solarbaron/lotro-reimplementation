@@ -320,7 +320,7 @@ impl InstallData for WithSchema {
     }
 }
 
-fn with_schema() -> SessionStart {
+pub(super) fn with_schema() -> SessionStart {
     let mut start = session_start(0, None, Arc::default());
     start.schema = SchemaView(Arc::new(WithSchema(
         records(),

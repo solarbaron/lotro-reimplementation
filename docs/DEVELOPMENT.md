@@ -490,7 +490,7 @@ RUST_LOG=info,official_evidence=debug cargo run --release -p tessera-client -- -
 
 A log that is no terminal has no colour codes, so the field forms below match it as they are. No extra
 option is needed: every official run writes these lines, bounded per connection (at most
-`MAX_EVIDENCE_LINES_PER_CONNECTION`, about 1,600, in `crates/compat/src/session.rs`). The `debug` part
+`MAX_EVIDENCE_LINES_PER_CONNECTION`, about 1,700, in `crates/compat/src/session.rs`). The `debug` part
 adds the server's codes and the refused datagrams and messages, also bounded; do not widen it to
 `tessera_compat=debug` for a run whose log you will paste, because the crate's other debug lines have
 no such bound. `official-run.log` should grow as soon as the window opens; if it stays empty, the
@@ -528,7 +528,12 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   these lines is the order of the events. A placement here is a `0xCC` that read; whose it is has no
   source (OPEN-WORLD-9).
 - `official evidence: counts after the session start`: batches, creations, positions, placements
-  and the rest after `0x90`, every 5 s during the readiness wait and again at its end.
+  and the rest after `0x90`, every 5 s during the readiness wait and again at its end, with the kept
+  `0x90` table's size (`session_table_bytes`) and the world connection's queue counts so far
+  (`queue3_groups_over`, `queue3_older`, `queue3_equal`, `queue3_ambiguous`, `duplicates`,
+  `tombstones_evicted`).
+- `official evidence: session table released`: the first `0x90`'s table at `WorldEntered`, as a size
+  and a count of properties. A production run stops before this line.
 - `official evidence: client loading done` and `official evidence: entry deadline`: the load time
   against the 30-second clock (`load_ms`, `readiness_clock_ms`, `limit_ms`), with the two gates kept
   apart (`server_gate`, `local_gate`). While OPEN-WORLD-9 has no answer the expected end of a
@@ -549,13 +554,17 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   `allocation_kind`, and `recipient_token` (an ordinal per connection, never the ID) with
   `target_resolution_kind`.
 - `official evidence: queue`: what the queue rules did with a completed blob: `queue_action`,
-  `distance_class`, `baseline_present`.
+  `distance_class`, `baseline_present`. These lines have budgets of their own, so a crowded entry's
+  first skip is shown: the first of each class always, then 64 discards, repeats and odd distances
+  and 32 plain deliveries. A plain delivery past those has no line; the totals count it.
 - `official evidence: login connection retired`: the referred login connection, with no Disconnect,
   at the world connection's State 5.
 - `official evidence: connection totals`: the counts, once, when a connection closes or when it is let
   go, and the last of the session layer's lines for that connection: what reaches it after its close has no line and no count
   (`sends`, `resends`, `controls`, `handshakes`, `handshake_resends`, `disconnects`,
-  `queued_not_sent`, `datagrams`, `blobs`), with `lines_not_shown` for what passed both the line budget
+  `queued_not_sent`, `datagrams`, `blobs`, and what the queue rules did with blobs:
+  `queue3_plain_delivered`, `queue3_groups_over`, `queue3_older`, `queue3_equal`, `queue3_ambiguous`,
+  `duplicates`, `tombstones_evicted`), with `lines_not_shown` for what passed both the line budget
   and the tail. Closing the window waits up to 2 s for the session's Disconnect and these lines; a
   thread stuck past that loses them.
 

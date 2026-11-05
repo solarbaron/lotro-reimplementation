@@ -11,8 +11,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use tessera_compat::session::{
     AuthConnection, BLOB_FLAG_DEFAULT_RECIPIENT, BlobFragment, BlobFragmentHeader, CodecUuids,
     ConnectChallengeHeader, ConnectionState, DatagramHeader, EVIDENCE_TARGET, IsaacCipher,
-    MAX_EVIDENCE_CONTROL_LINES, MAX_EVIDENCE_LINES_PER_CONNECTION, MAX_EVIDENCE_RECEIVE_LINES,
-    MAX_EVIDENCE_SEND_LINES, MAX_EVIDENCE_TAIL_LINES, MAX_UNACKED_SENT_PACKETS, OptionalHeaders,
+    MAX_EVIDENCE_CONTROL_LINES, MAX_EVIDENCE_LINES_PER_CONNECTION,
+    MAX_EVIDENCE_QUEUE_DELIVER_LINES, MAX_EVIDENCE_RECEIVE_LINES, MAX_EVIDENCE_SEND_LINES,
+    MAX_EVIDENCE_TAIL_LINES, MAX_ORDER_GROUPS, MAX_UNACKED_SENT_PACKETS, OptionalHeaders,
     SessionAuthHeader, SessionConnection, SessionError, SessionMultiplexer, WireCodecs,
     encode_datagram, guid_fields_swapped,
 };
@@ -157,6 +158,28 @@ impl Server {
                 blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT,
                 seq_group: 0,
                 order_num: 0xFFFF,
+                blob_id: 0,
+                frag_index: 0,
+                num_frags: 1,
+                recipient_id: 2,
+                blob_header_word: Some(0x55),
+                frag_data_len: 4,
+                attachment: None,
+            },
+            payload: vec![0xA5; 4],
+        };
+        self.packet_with(&OptionalHeaders::default(), &[blob])
+    }
+
+    /// A packet that delivers one small queue-3 blob of `group`, with word `order`.
+    fn queue3(&mut self, group: u16, order: u16) -> Vec<u8> {
+        let blob = BlobFragment {
+            header: BlobFragmentHeader {
+                queue_id: 3,
+                ext_word: None,
+                blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT,
+                seq_group: group,
+                order_num: order,
                 blob_id: 0,
                 frag_index: 0,
                 num_frags: 1,
@@ -567,6 +590,74 @@ fn the_log_ends_at_a_close_on_the_send_path() {
     assert_the_log_ended(&lines, 2);
     let tail = lines_of(&lines, "tail=true");
     assert_eq!(tail.len(), MAX_EVIDENCE_TAIL_LINES, "{}", lines.len());
+}
+
+/// A crowded first entry (§9.3.9): queue decisions spend no receive line, so the first key-cap skip
+/// has its line however many keys came before it, past any later traffic, and the totals say how
+/// many blobs the queue rules discarded. Plain deliveries past their budget do not take the tail.
+#[test]
+fn a_crowded_entrys_queue_skips_can_be_read() {
+    const SKIPPED: usize = 40;
+    const OLDER: usize = 5;
+    let lines = evidence_of(|| {
+        let (mut conn, mut server) = connected();
+        let mut t = 0.3;
+        let mut feed = |conn: &mut SessionConnection, datagram: &[u8]| {
+            conn.receive_datagram(datagram, PEER, t, WireCodecs::NONE)
+                .expect("a valid datagram");
+            t += 0.001;
+        };
+        for group in 0..MAX_ORDER_GROUPS {
+            let datagram = server.queue3(u16::try_from(group).expect("small"), 100);
+            feed(&mut conn, &datagram);
+        }
+        for i in 0..SKIPPED {
+            let group = u16::try_from(MAX_ORDER_GROUPS + i).expect("small");
+            let datagram = server.queue3(group, 100);
+            feed(&mut conn, &datagram);
+        }
+        for _ in 0..OLDER {
+            let datagram = server.queue3(0, 50);
+            feed(&mut conn, &datagram);
+        }
+        // Later traffic, enough to overwrite the tail many times over.
+        for _ in 0..(MAX_EVIDENCE_RECEIVE_LINES as usize + 4 * MAX_EVIDENCE_TAIL_LINES) {
+            let datagram = server.blob();
+            feed(&mut conn, &datagram);
+        }
+    });
+    assert!(lines.len() <= MAX_EVIDENCE_LINES_PER_CONNECTION);
+    let shown = |action: &str| {
+        lines
+            .iter()
+            .filter(|l| l.contains(action) && !l.contains("tail=true"))
+            .count()
+    };
+    assert_eq!(
+        shown("queue_action=\"key-cap-skip\""),
+        SKIPPED,
+        "{lines:#?}"
+    );
+    assert_eq!(shown("queue_action=\"older-discard\""), OLDER, "{lines:#?}");
+    let delivered = lines_of(&lines, "queue_action=\"deliver\"");
+    assert_eq!(
+        delivered.len(),
+        MAX_EVIDENCE_QUEUE_DELIVER_LINES as usize + 1,
+        "the first of the class, then the budget"
+    );
+    let totals = lines_of(&lines, "connection totals");
+    assert_eq!(totals.len(), 1);
+    for field in [
+        format!("queue3_plain_delivered={MAX_ORDER_GROUPS}"),
+        format!("queue3_groups_over={SKIPPED}"),
+        format!("queue3_older={OLDER}"),
+        "queue3_equal=0".to_owned(),
+        "queue3_ambiguous=0".to_owned(),
+    ] {
+        assert!(totals[0].contains(&field), "{field}: {}", totals[0]);
+    }
+    assert!(totals[0].contains(" duplicates="), "{}", totals[0]);
+    assert!(totals[0].contains(" tombstones_evicted="), "{}", totals[0]);
 }
 
 /// A connection let go without a close has its tail and totals once as well, when it is dropped.

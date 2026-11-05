@@ -107,9 +107,7 @@ impl Right {
         if self.live() {
             Ok(())
         } else {
-            Err(SessionError::Io(
-                "the network access was revoked".to_owned(),
-            ))
+            Err(SessionError::AccessRevoked)
         }
     }
 }
@@ -716,7 +714,9 @@ impl UdpDatagramTransport for StdUdpTransport {
         if buf.len() > MAX_DATAGRAM_BUF {
             return Err(SessionError::DatagramTooLarge { len: buf.len() });
         }
-        Ok(self.socket.send_to(buf, SocketAddr::V4(target))?)
+        self.socket
+            .send_to(buf, SocketAddr::V4(target))
+            .map_err(send_failure)
     }
 
     fn recv_from(&mut self, buf: &mut [u8]) -> Result<Option<(usize, SocketAddrV4)>, SessionError> {
@@ -728,6 +728,39 @@ impl UdpDatagramTransport for StdUdpTransport {
             Err(e) => Err(SessionError::Io(e.to_string())),
         }
     }
+}
+
+/// The result of a failed UDP send (`official-session.md` §9.3.9 row "Ordinary I/O failure", which does
+/// not define "ordinary").
+fn send_failure(e: std::io::Error) -> SessionError {
+    if send_failure_is_transient(&e) {
+        SessionError::IoTransient(e.to_string())
+    } else {
+        SessionError::Io(e.to_string())
+    }
+}
+
+/// Which send failures are only a count: the datagram is lost like any lost on the way, and the
+/// session's own clocks decide if nothing more arrives. Labelled engineering choice, the spec is silent:
+/// a full socket or no buffers right now (would-block, interrupted, out of memory, `ENOBUFS`), and a
+/// reset or refused report, which on a datagram socket tells of an earlier send's unreachable answer
+/// and not of this send (Windows reports them on any later socket call). Every other failure of a send,
+/// no route among them, is the I/O row.
+fn send_failure_is_transient(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind::{
+        ConnectionRefused, ConnectionReset, Interrupted, OutOfMemory, WouldBlock,
+    };
+    #[cfg(unix)]
+    const NO_BUFFERS: i32 = libc::ENOBUFS;
+    // WSAENOBUFS.
+    #[cfg(windows)]
+    const NO_BUFFERS: i32 = 10_055;
+    #[cfg(not(any(unix, windows)))]
+    const NO_BUFFERS: i32 = i32::MIN;
+    matches!(
+        e.kind(),
+        WouldBlock | Interrupted | OutOfMemory | ConnectionReset | ConnectionRefused
+    ) || e.raw_os_error() == Some(NO_BUFFERS)
 }
 
 /// [`revoke_all`] ends every right of the process: a test that calls it holds this for
@@ -752,6 +785,45 @@ mod tests {
     };
 
     use super::TEST_REVOKE_LOCK as REVOKE;
+
+    /// §9.3.9's I/O row takes a send that cannot reach the network, not one the socket could not take
+    /// just now.
+    #[test]
+    fn a_full_socket_is_a_count_and_no_route_is_the_io_row() {
+        use std::io::{Error, ErrorKind};
+        for kind in [
+            ErrorKind::WouldBlock,
+            ErrorKind::Interrupted,
+            ErrorKind::OutOfMemory,
+            ErrorKind::ConnectionReset,
+            ErrorKind::ConnectionRefused,
+        ] {
+            assert!(
+                matches!(send_failure(kind.into()), SessionError::IoTransient(_)),
+                "{kind:?}"
+            );
+        }
+        #[cfg(unix)]
+        assert!(matches!(
+            send_failure(Error::from_raw_os_error(libc::ENOBUFS)),
+            SessionError::IoTransient(_)
+        ));
+        #[cfg(windows)]
+        assert!(matches!(
+            send_failure(Error::from_raw_os_error(10_055)),
+            SessionError::IoTransient(_)
+        ));
+        for kind in [
+            ErrorKind::NetworkUnreachable,
+            ErrorKind::HostUnreachable,
+            ErrorKind::PermissionDenied,
+        ] {
+            assert!(
+                matches!(send_failure(kind.into()), SessionError::Io(_)),
+                "{kind:?}"
+            );
+        }
+    }
 
     struct Fixture {
         _guard: std::sync::RwLockReadGuard<'static, ()>,

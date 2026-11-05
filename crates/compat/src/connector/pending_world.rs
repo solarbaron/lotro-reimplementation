@@ -15,9 +15,10 @@
 //! The bounds are per world connection: [`MAX_PENDING_ENTITIES`] target keys and
 //! [`MAX_PENDING_BYTES`] of kept encoded data. Past either a new entry or its growth is counted and
 //! skipped ([`Stored::KeyCap`], [`Stored::ByteCap`]), and what is kept stays: an overflow never ends
-//! a healthy entry. The local identity and the placement live apart from these bounds, with
-//! priority (`set_player`; the driver keeps the placement). A replaced value gives its bytes back
-//! first, so one entity's repeats never overflow.
+//! a healthy entry. The local identity, the first `0x90`'s encoded property table and the placement
+//! live apart from these bounds, with priority (`set_player`, `keep_session_table`; the driver keeps
+//! the placement). That one table is bounded by the session layer's largest message and kept once. A
+//! replaced value gives its bytes back first, so one entity's repeats never overflow.
 //!
 //! A `0x40` deletes its key's spawn, properties and motion and leaves a record there, which refuses
 //! every later `0x52`, `0x88`, `0x92`, `0x89`, `0xCE` and `0xCC` of that key, whichever field named
@@ -197,6 +198,8 @@ pub struct PendingWorld {
     order: Vec<u64>,
     bytes: usize,
     player: Option<u64>,
+    /// The first `0x90`'s encoded table: required local state (module docs).
+    session_table: Option<Vec<u8>>,
 }
 
 /// One entity's snapshot for its release at `WorldEntered`.
@@ -226,6 +229,25 @@ impl PendingWorld {
     pub fn set_player(&mut self, player: u64) -> Option<(Location, f32)> {
         self.player = Some(player);
         self.entities.get(&player).and_then(|e| e.placed)
+    }
+
+    /// Keeps the first validated `0x90`'s encoded property table (§9.3.9) until the release. A later
+    /// one changes nothing: the first stays (labelled, `docs/m8-remediation.md` §28 fix 20).
+    pub fn keep_session_table(&mut self, table: &[u8]) {
+        if self.session_table.is_none() {
+            self.session_table = Some(table.to_vec());
+        }
+    }
+
+    /// How many bytes the kept `0x90` table holds, outside [`Self::bytes`].
+    #[must_use]
+    pub fn session_table_bytes(&self) -> usize {
+        held(&self.session_table)
+    }
+
+    /// Takes the kept `0x90` table, for the release after every spawn.
+    pub fn take_session_table(&mut self) -> Option<Vec<u8>> {
+        self.session_table.take()
     }
 
     /// The local player, once known.
@@ -305,22 +327,27 @@ impl PendingWorld {
     }
 
     /// A validated `0x98` for `entity`: it announces the ID, keeps its body and ends a despawn record:
-    /// a new incarnation, with nothing of the old one.
+    /// a new incarnation, with nothing of the old one. One that does not fit changes nothing, so a
+    /// despawn record stays and later updates of the key stay refused (§9.3.9): only a `0x98` that
+    /// is kept starts a new incarnation.
     pub fn create(&mut self, entity: u64, body: &[u8]) -> Stored {
         if entity == 0 || entity == DEFAULT_RECIPIENT {
             return Stored::NoTarget;
         }
-        let was_despawned = self.despawned(entity);
-        if let Some(e) = self.entities.get_mut(&entity) {
-            e.despawned = false;
+        if self.despawned(entity) {
+            // A record holds no bytes, and its key has its slot.
+            if self.bytes.saturating_add(body.len()) > MAX_PENDING_BYTES {
+                return Stored::ByteCap;
+            }
+            if let Some(e) = self.entities.get_mut(&entity) {
+                e.despawned = false;
+            }
         }
         let stored = self.store(entity, body, |e| held(&e.create), |e, b| e.create = Some(b));
-        if stored == Stored::Kept {
-            if let Some(e) = self.entities.get_mut(&entity) {
-                e.announced = true;
-            }
-        } else if was_despawned && let Some(e) = self.entities.get_mut(&entity) {
-            e.despawned = true;
+        if stored == Stored::Kept
+            && let Some(e) = self.entities.get_mut(&entity)
+        {
+            e.announced = true;
         }
         stored
     }
@@ -457,6 +484,7 @@ impl PendingWorld {
         self.order.clear();
         self.bytes = 0;
         self.player = None;
+        self.session_table = None;
         for id in resolved {
             let Some(e) = entities.remove(&id) else {
                 continue;
@@ -788,6 +816,52 @@ mod tests {
         let (spawns, states) = q.take_snapshots();
         assert_eq!(spawns.len(), 1);
         assert_eq!(states.len(), 1);
+    }
+
+    /// §9.3.9: a `0x98` refused at the byte cap is no new incarnation: the record stays, later updates
+    /// stay refused, and nothing of them reaches the `0x98` that fits.
+    #[test]
+    fn a_creation_refused_at_the_byte_cap_keeps_the_despawn_record() {
+        let mut p = PendingWorld::default();
+        assert_eq!(p.create(1, &vec![0; MAX_PENDING_BYTES - 16]), Stored::Kept);
+        assert_eq!(p.create(7, &[0; 8]), Stored::Kept);
+        assert_eq!(p.despawn(7), Stored::Kept);
+        let (entities, bytes) = (p.entities(), p.bytes());
+        assert_eq!(p.create(7, &[0; 64]), Stored::ByteCap);
+        assert_eq!((p.entities(), p.bytes()), (entities, bytes), "no change");
+        assert_eq!(p.appearance(7, &[0; 2]), Stored::Despawned);
+        assert_eq!(p.position(7, &[0; 2], Some(at(1.0))), Stored::Despawned);
+        assert_eq!(p.single(7, 0x88, 1, &[0; 2]), Stored::Despawned);
+        assert_eq!(p.create(7, &[0; 4]), Stored::Kept, "one that fits");
+        assert_eq!(p.bytes(), bytes + 4, "nothing of the refused updates");
+        let (spawns, states) = p.take_snapshots();
+        assert_eq!(spawns.iter().map(|s| s.entity).collect::<Vec<_>>(), [1, 7]);
+        assert!(states.is_empty(), "{states:?}");
+    }
+
+    /// §9.3.9: the first `0x90`'s table is required state: it stays outside both bounds, a repeat does
+    /// not replace it, and a failure discards it.
+    #[test]
+    fn the_session_table_is_kept_once_and_outside_the_bounds() {
+        let mut p = PendingWorld::default();
+        for id in 0..MAX_PENDING_ENTITIES as u64 {
+            assert_eq!(p.create(id + 10, &[0]), Stored::Kept);
+        }
+        assert_eq!(p.create(5_000, &vec![0; MAX_PENDING_BYTES]), Stored::KeyCap);
+        let bytes = p.bytes();
+        let big = vec![0xA5; MAX_PENDING_BYTES];
+        p.keep_session_table(&big);
+        assert_eq!(p.bytes(), bytes, "not in the store's count");
+        assert_eq!(p.session_table_bytes(), MAX_PENDING_BYTES);
+        p.keep_session_table(&[1]);
+        assert_eq!(p.take_session_table().as_deref(), Some(big.as_slice()));
+        assert_eq!(p.take_session_table(), None);
+        p.keep_session_table(&[1]);
+        p.discard();
+        assert_eq!(p.session_table_bytes(), 0);
+        p.keep_session_table(&[1]);
+        let _ = p.take_snapshots();
+        assert_eq!(p.session_table_bytes(), 0, "the release empties the store");
     }
 
     /// A despawn keeps the local identity, which is held apart.

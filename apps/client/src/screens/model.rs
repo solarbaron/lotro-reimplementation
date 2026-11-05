@@ -158,6 +158,9 @@ pub enum Status {
     Entered(String),
     /// The player quit from the selection screen.
     Quit,
+    /// The player cancelled an official selection under way (`official-entry.md` §4.6): the account
+    /// form, both fields empty, while [`Self::Quit`] ends the client.
+    Cancelled,
     /// The session ended (the reason).
     Closed(String),
 }
@@ -416,10 +419,12 @@ impl ScreenModel {
         self.pending.as_ref().map(|p| p.name.as_str())
     }
 
-    /// The slots label (§3): used / allowed.
+    /// The slots label (§3): used / allowed. An official session shows the used count only: Tessera's
+    /// bound is no account allowance (`character-screens.md` §2.2, OE-T20).
     #[must_use]
-    pub fn slots(&self) -> (usize, usize) {
-        (self.rows.len(), SLOT_LIMIT)
+    pub fn slots(&self) -> (usize, Option<usize>) {
+        let allowed = (self.backend != BackendKind::Official).then_some(SLOT_LIMIT);
+        (self.rows.len(), allowed)
     }
 
     /// Whether the current figure is still loading (§4.3 loading notice and race blocker).
@@ -941,9 +946,14 @@ impl ScreenModel {
     /// Takes one action of the player.
     pub fn apply(&mut self, action: Action, now: Instant) {
         // An official selection can wait for up to four stages (`official-session.md` §9.3.8): the
-        // player may leave meanwhile, which ends the session (`official-entry.md` §8.7).
+        // player may leave meanwhile, which ends the session. The Cancel button goes to the account
+        // form and Quit, Escape and closing the window end the client (`official-entry.md` §4.6).
         if matches!(action, Action::Quit | Action::Back) && self.cancels_entry() {
-            self.status = Status::Quit;
+            self.status = if action == Action::Back {
+                Status::Cancelled
+            } else {
+                Status::Quit
+            };
             return;
         }
         if !matches!(self.status, Status::Open) {

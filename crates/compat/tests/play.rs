@@ -1850,14 +1850,28 @@ fn system_texts_and_eviction() {
         .expect("decode")
         .expect("msg");
     let out = a.handle(&m, &LiteralTexts);
+    // `official-session.md` §9.3.9: after `WorldEntered` a bounded `LoginNotice`.
     assert_eq!(
         out.events,
-        vec![Event::ChatMessage {
-            channel: ChatChannel::System,
-            sender: None,
-            text: "Notice".into()
-        }]
+        vec![Event::Account(
+            tessera_net::account::AccountEvent::LoginNotice {
+                text: "Notice".into()
+            }
+        )]
     );
+    // Past the bound it is skipped and counted, never cut into another notice.
+    let mut long = vec![0x00];
+    long.extend_from_slice(&5u64.to_le_bytes());
+    long.extend(
+        LocalizedTokenText::literal("x".repeat(257))
+            .to_bytes()
+            .expect("text"),
+    );
+    let m = decode_play_message(0xAA, 2, &long, &no_schema(), &portal_schemas())
+        .expect("decode")
+        .expect("msg");
+    assert!(a.handle(&m, &LiteralTexts).events.is_empty());
+    assert_eq!(a.counters().notices_over_bound, 1);
     // 0xB3 with an unresolvable text: Tessera's own reason.
     let mut b3 = vec![0x00, 0x04, 0x00, 0x00, 0x00];
     b3.extend(

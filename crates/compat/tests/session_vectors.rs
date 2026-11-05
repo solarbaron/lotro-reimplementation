@@ -759,10 +759,11 @@ fn vector_8_referral_to_referral_auth() {
         .expect("referral datagram");
         conn.receive_datagram(&dgram, SERVER, 0.4, WireCodecs::NONE)
             .expect("taken");
-        assert!(
-            !std::iter::from_fn(|| conn.pop_event())
-                .any(|e| matches!(e, SessionEvent::WorldReferralReceived { .. }))
-        );
+        // §9.3.9: judged where the selection is known; the session layer makes no connection.
+        assert!(std::iter::from_fn(|| conn.pop_event()).any(|e| matches!(
+            e,
+            SessionEvent::WorldReferralReceived { world_addr, .. } if world_addr == target
+        )));
     }
 }
 
@@ -1926,7 +1927,7 @@ const V18_F4: [u8; 7] = [0x01, 0x40, 0x80, 0xF4, 0x01, 0x00, 0x00];
 const V18_ATTACHED: [u8; 43] = [
     0x81, 0x00, 0x01, 0x00, 0x77, 0, 0, 0, 0, 0, 0, 0x01, 0x40, 0x01, 0x01, 0x02, 0x03, 0x04, 0x05,
     0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
-    0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x00,
+    0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0xFF,
 ];
 const V18_QUEUE4: [u8; 17] = [
     0x04, 0x04, 0x01, 0x00, 0x01, 0x00, 0x77, 0, 0, 0, 0, 0, 0, 0x01, 0x40, 0x01, 0x00,
@@ -2022,7 +2023,7 @@ fn vector_18_extension_attachment_is_one_checksum_buffer_with_the_header() {
     assert_eq!(h.ext_word, Some(0x0001));
     assert_eq!(h.recipient_id, 0x0100_0000_0000_0077);
     assert_eq!(h.blob_header_word, Some(0x40));
-    assert_eq!(frag.payload, [0x00]);
+    assert_eq!(frag.payload, [0xFF]);
     let a = h.attachment.expect("attachment");
     assert_eq!(a.words64[0], 0x0807_0605_0403_0201);
     assert_eq!(a.words64[2], 0x1817_1615_1413_1211);
@@ -2313,4 +2314,240 @@ fn vector_20_all_exercised_appearance_branches() {
     let mut base = data.clone();
     base[1] = 0xE3;
     assert!(VisualDescriptionUpdate::from_bytes(&base).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Vector 22: queue comparison and generation policies (§9.3.9)
+// ---------------------------------------------------------------------------
+
+const V22_A: &[u8] = &[0x11];
+const V22_B: &[u8] = &[0x22];
+const V22_C: &[u8] = &[0x33];
+
+/// One complete queue-3 blob of recipient 0x77, sequence group 5, on sender 1.
+fn v22_blob(order: u16, body: &[u8]) -> BlobFragment {
+    v22_keyed(0x77, order, body)
+}
+
+fn v22_keyed(recipient: u64, order: u16, body: &[u8]) -> BlobFragment {
+    split_blob(3, order, 0, 5, Some(recipient), 0x40, body)
+        .expect("split")
+        .remove(0)
+}
+
+/// Whether the blob is delivered at `t`.
+fn v22_take(r: &mut BlobReassembler, f: BlobFragment, t: f64) -> bool {
+    r.ingest(1, f, t).expect("accepted").is_some()
+}
+
+#[test]
+fn vector_22_distances() {
+    // First, then continuing over the wrap.
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(65_535, V22_A), 0.0), "first");
+    assert!(v22_take(&mut r, v22_blob(0, V22_B), 0.0), "distance 1");
+    assert!(v22_take(&mut r, v22_blob(32_767, V22_A), 0.0), "32,767");
+    // 32,768 delivers once with an anomaly and leaves the baseline.
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(0, V22_C), 0.0));
+    assert!(v22_take(&mut r, v22_blob(32_768, V22_A), 0.0));
+    assert_eq!(r.counts().queue3_ambiguous, 1);
+    assert!(
+        v22_take(&mut r, v22_blob(1, V22_B), 0.0),
+        "baseline stayed 0"
+    );
+    // 32,769 is older.
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(0, V22_C), 0.0));
+    assert!(!v22_take(&mut r, v22_blob(32_769, V22_A), 0.0));
+    assert_eq!(r.counts().queue3_older, 1);
+}
+
+#[test]
+fn vector_22_an_older_word_discards_even_a_conflicting_body_with_a_tombstone() {
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(6, V22_A), 0.0));
+    assert!(v22_take(&mut r, v22_blob(7, V22_C), 0.0));
+    assert!(!v22_take(&mut r, v22_blob(6, V22_B), 0.0));
+    assert_eq!(r.counts().queue3_older, 1);
+    assert_eq!(r.counts().reused_identities, 0);
+}
+
+/// Each delivered body has its own tombstone, so a repeat of the first deduplicates after the second
+/// (§28 fix 8's observable test of "retain both").
+#[test]
+fn vector_22_equal_word_bodies_each_keep_a_tombstone() {
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(7, V22_A), 0.0));
+    assert!(
+        v22_take(&mut r, v22_blob(7, V22_B), 0.0),
+        "once, an anomaly"
+    );
+    assert_eq!(r.counts().queue3_equal, 1);
+    assert_eq!(r.counts().reused_identities, 1);
+    assert!(!v22_take(&mut r, v22_blob(7, V22_B), 0.0), "B again");
+    assert!(!v22_take(&mut r, v22_blob(7, V22_A), 0.0), "A again");
+    assert_eq!(r.counts().duplicates, 2);
+    assert_eq!(r.tombstone_sizes().0, 2);
+}
+
+/// A 65th completion evicts the oldest and counts; its repeat is then a fresh delivery. A repeat after
+/// the 30 seconds likewise.
+#[test]
+fn vector_22_tombstones_are_bounded_and_expire() {
+    let mut r = BlobReassembler::default();
+    for order in 0..=64u16 {
+        assert!(v22_take(&mut r, v22_blob(order, V22_A), 0.0), "{order}");
+    }
+    assert_eq!(r.tombstone_sizes().0, 64);
+    assert_eq!(r.counts().tombstones_evicted, 1);
+    // The evicted identity's word is now older than the baseline, so it is the distance's discard; on
+    // queue 2 the same repeat has no gate and is delivered.
+    let queue2 = |id: u16, body: &[u8]| {
+        split_blob(2, id, id, 0, Some(0x77), 0x40, body)
+            .expect("split")
+            .remove(0)
+    };
+    let mut r = BlobReassembler::default();
+    for id in 0..=64u16 {
+        assert!(v22_take(&mut r, queue2(id, V22_A), 0.0), "{id}");
+    }
+    assert!(
+        v22_take(&mut r, queue2(0, V22_A), 0.0),
+        "evicted: delivered"
+    );
+    assert!(!v22_take(&mut r, queue2(64, V22_A), 0.0), "still kept");
+    // Past its 30 seconds a repeat is delivered again; within them it is not.
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, queue2(1, V22_A), 0.0));
+    assert!(!v22_take(&mut r, queue2(1, V22_A), 30.0), "at 30 s");
+    assert!(v22_take(&mut r, queue2(1, V22_A), 30.5), "past it");
+}
+
+/// Queue 2 and queue 4 deliver with a repeated order word, and exact identities still deduplicate.
+#[test]
+fn vector_22_queues_2_and_4_have_no_order_gate() {
+    for queue in [2u8, 4] {
+        let blob = |id: u16, body: &[u8]| {
+            split_blob(queue, 9, id, 0, Some(0x77), 0x40, body)
+                .expect("split")
+                .remove(0)
+        };
+        let mut r = BlobReassembler::default();
+        assert!(v22_take(&mut r, blob(1, V22_A), 0.0));
+        assert!(v22_take(&mut r, blob(2, V22_B), 0.0), "the same order word");
+        assert!(!v22_take(&mut r, blob(2, V22_B), 0.0), "an exact repeat");
+    }
+}
+
+/// A baseline expires 30 seconds after the last delivered blob of its key, and only a delivery
+/// refreshes it (§28 fix 8's row: baseline 100, then 40000 after 30 s).
+#[test]
+fn vector_22_a_baseline_expires_after_the_last_delivery() {
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(100, V22_A), 0.0));
+    assert!(!v22_take(&mut r, v22_blob(40_000, V22_B), 29.0), "older");
+    assert!(
+        !v22_take(&mut r, v22_blob(40_000, V22_B), 30.0),
+        "a discard refreshes nothing, and 30 s is still inside"
+    );
+    assert!(
+        v22_take(&mut r, v22_blob(40_000, V22_C), 30.5),
+        "a new first value"
+    );
+    // An equal-word delivery refreshes it.
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(100, V22_A), 0.0));
+    assert!(v22_take(&mut r, v22_blob(100, V22_B), 20.0));
+    assert!(
+        !v22_take(&mut r, v22_blob(40_000, V22_C), 45.0),
+        "still older"
+    );
+}
+
+/// A 257th key at a full map skips without eviction and takes no tombstone; expiry lets it in.
+#[test]
+fn vector_22_a_new_key_at_a_full_map_skips() {
+    let mut r = BlobReassembler::default();
+    for recipient in 0..256u64 {
+        assert!(v22_take(
+            &mut r,
+            v22_keyed(0x1000 + recipient, 1, V22_A),
+            0.0
+        ));
+    }
+    let tombstones = r.tombstone_sizes().0;
+    assert!(!v22_take(&mut r, v22_keyed(0x9999, 1, V22_B), 1.0));
+    assert_eq!(r.counts().queue3_groups_over, 1);
+    assert_eq!(r.tombstone_sizes().0, tombstones, "no tombstone");
+    // The live keys stay: the first key's older word is still older.
+    assert!(!v22_take(&mut r, v22_keyed(0x1000, 0, V22_B), 1.0));
+    // Its sibling in the same datagram is delivered, and the datagram is taken whole.
+    let done = r
+        .ingest_packet(
+            1,
+            &[v22_keyed(0x9999, 2, V22_B), v22_keyed(0x1001, 2, V22_C)],
+            1.0,
+        )
+        .expect("accepted");
+    assert_eq!(done.len(), 1);
+    assert_eq!(done[0].recipient_id, 0x1001);
+    // Past the 30 seconds the key can take its first word.
+    assert!(v22_take(&mut r, v22_keyed(0x9999, 3, V22_B), 40.0));
+}
+
+/// An empty omitted-chunk control makes no baseline, tombstone or entry.
+#[test]
+fn vector_22_an_empty_control_leaves_nothing() {
+    let (control, used) = BlobFragment::decode(&[0x01, 0xC0]).unwrap();
+    assert_eq!(used, 2);
+    let mut r = BlobReassembler::default();
+    assert!(r.ingest(1, control, 0.0).unwrap().is_none());
+    assert_eq!(r.counts().empty_controls, 1);
+    assert_eq!(r.tombstone_sizes(), (0, 0));
+    assert_eq!(r.incomplete_len(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Vector 23: attachment arithmetic and combined part IDs (§10.2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn vector_23_attachment_sums() {
+    let (head, data) = V18_ATTACHED.split_at(V18_ATTACHED.len() - 1);
+    assert_eq!((head.len(), data.len()), (14 + 28, 1));
+    assert_eq!(
+        compute_datagram_checksum(head).wrapping_add(compute_datagram_checksum(data)),
+        0xA09C_5C63
+    );
+    assert_eq!(fragments_sum(&V18_ATTACHED), 0xA09C_5C63);
+    assert_ne!(
+        fragments_sum(&V18_ATTACHED),
+        0xA19D_5B63,
+        "the whole fragment"
+    );
+    assert_eq!(compute_datagram_checksum(&V18_ATTACHED), 0xA19D_5B63);
+    let (header, attachment) = head.split_at(14);
+    assert_eq!(
+        compute_datagram_checksum(header)
+            .wrapping_add(compute_datagram_checksum(attachment))
+            .wrapping_add(compute_datagram_checksum(data)),
+        0x928E_6A71,
+        "separate buffers"
+    );
+    // The empty control's attachment is one buffer, with no data contribution, and the next header
+    // follows at once; a present zero extension adds no attachment.
+    let mut attached = vec![0x81, 0xC0, 0x01, 0x00];
+    attached.extend(0x01..=0x1Cu8);
+    let (frag, used) = BlobFragment::decode(&attached).unwrap();
+    assert_eq!(used, attached.len());
+    assert!(frag.payload.is_empty());
+    assert_eq!(
+        fragments_sum(&attached),
+        compute_datagram_checksum(&attached)
+    );
+    let zero_ext = [0x81, 0x40, 0x00, 0x00, 0x80, 0xF4, 0x01, 0x00, 0x00];
+    let (frag, used) = BlobFragment::decode(&zero_ext).unwrap();
+    assert_eq!((used, frag.payload.as_slice()), (9, &[0x00][..]));
+    assert_eq!(frag.header.attachment, None);
 }

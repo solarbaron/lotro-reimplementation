@@ -136,11 +136,16 @@ pub enum FlowRequest {
 /// How the handed-over part of an official run ended (§8.7; [`Flow::characters_ended`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandOverEnd {
-    /// The player left (quit the character screens, Escape, closed the window): no
+    /// The player went back: the Cancel of a selection, or leaving the world. The account form, no
     /// message.
     Left,
+    /// Quit, Escape or closing the window at the decoded list or while entering (§4.6): the session
+    /// closes per `official-session.md` §9.3.9 and the client exits with code 0.
+    Exit,
     /// The session ended: §8.6's row for its reason.
     SessionEnded(tessera_net::DisconnectReason),
+    /// `Disconnected { UnsupportedTimeout }` in the world: §8.6's row of its own.
+    InWorldLimit,
     /// The character screens or the walker could not start, or the client failed: only the
     /// kind of failure, never its error text (which can name user or install paths).
     Failed(HandOverFailure),
@@ -731,6 +736,21 @@ impl Flow {
         self.leave_characters();
         let message = match &end {
             HandOverEnd::Left => None,
+            HandOverEnd::Exit => {
+                self.quit();
+                return;
+            }
+            HandOverEnd::InWorldLimit => {
+                self.go_start();
+                self.show(Message {
+                    text: tessera_compat::consent::strings::text(
+                        "official.error.unsupported_timeout_in_world",
+                    )
+                    .to_owned(),
+                    detail: None,
+                });
+                return;
+            }
             HandOverEnd::SessionEnded(reason) => {
                 // §8.6: a Tessera limit goes to the start screen, and login stays available.
                 if super::login::ends_at_start_screen(reason) {

@@ -11,6 +11,7 @@
 
 use std::collections::BTreeSet;
 
+use tessera_net::account::{AccountEvent, MAX_ACCOUNT_DETAIL_LEN};
 use tessera_net::model::{MAX_CHAT_LEN, MAX_NAME_LEN, sanitize_text};
 use tessera_net::{
     ChatChannel, Command, DisconnectReason, EntityId, Event, LocationCause, Transform, Vec3,
@@ -44,6 +45,8 @@ pub struct PlayCounters {
     pub stale_stamps: u64,
     /// Chat lines whose category has no known channel.
     pub unmapped_category: u64,
+    /// `0xAA` texts past the bound of `LoginNotice`, skipped and never cut (§9.3.9).
+    pub notices_over_bound: u64,
     /// Position updates that carried no usable location (attachments, invalid positions).
     pub ignored_positions: u64,
     /// Typed motion-controller updates skipped and dropped (§4.6.2 receiver rule).
@@ -591,9 +594,16 @@ impl PlayAdapter {
             }
             PlayMessage::Rpc(rpc) => self.on_rpc(rpc, resolver, &mut out),
             PlayMessage::UnknownRpc(_) => self.counters.unknown_rpc += 1,
+            // §9.3.9: after `WorldEntered` a valid `0xAA` is a bounded `LoginNotice` for the in-world
+            // system-message area; text past the bound is skipped, never cut into another notice.
             PlayMessage::DisplayText(d) => {
-                if let Some(t) = self.resolve(&d.message, resolver) {
-                    out.events.push(system_line(t));
+                if let Some(text) = self.resolve(&d.message, resolver) {
+                    if text.len() > MAX_ACCOUNT_DETAIL_LEN {
+                        self.counters.notices_over_bound += 1;
+                    } else {
+                        out.events
+                            .push(Event::Account(AccountEvent::LoginNotice { text }));
+                    }
                 }
             }
             PlayMessage::ShutdownText(s) => {

@@ -1303,8 +1303,11 @@ pub fn resolve_install_language(
     Ok(selected)
 }
 
+/// The archive-label tokens a `LastLocale` value may name (`official-login.md` §2.2, §2.3).
+const ARCHIVE_LANGUAGE_TOKENS: [&str; 4] = ["English", "EN_GB", "FR", "DE"];
+
 /// Selects the active `<Lang>` token from a non-empty sorted list of installed
-/// languages according to §2.2.
+/// languages according to §2.2, with the `LastLocale` policy of §2.3.
 ///
 /// # Errors
 ///
@@ -1318,21 +1321,17 @@ pub fn select_language_from_list(
             reason: "no installed client_local_<Lang>.dat languages".to_owned(),
         });
     }
-    if let Some(pref) = preferred_locale.map(str::trim).filter(|s| !s.is_empty()) {
-        if let Some(exact) = installed.iter().find(|l| l.eq_ignore_ascii_case(pref)) {
-            return Ok(exact.clone());
-        }
-        let mapped_target = match pref.to_ascii_lowercase().as_str() {
-            "en" | "en-us" | "en_us" => Some("English"),
-            "en-gb" | "en_gb" => Some("EN_GB"),
-            "fr" | "fr-fr" | "fr_fr" => Some("FR"),
-            "de" | "de-de" | "de_de" => Some("DE"),
-            _ => None,
-        };
-        if let Some(target) = mapped_target
-            && let Some(found) = installed.iter().find(|l| l.eq_ignore_ascii_case(target))
+    if let Some(pref) = preferred_locale {
+        // §2.3 (P10-10I): the whole value, outer ASCII whitespace trimmed and ASCII case aside, names
+        // exactly one archive token. A language-region tag or a feed code is no preference: `en` is
+        // both `English` and `EN_GB`.
+        let pref = pref.trim_matches(|c: char| c.is_ascii_whitespace());
+        if ARCHIVE_LANGUAGE_TOKENS
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(pref))
+            && let Some(exact) = installed.iter().find(|l| l.eq_ignore_ascii_case(pref))
         {
-            return Ok(found.clone());
+            return Ok(exact.clone());
         }
     }
     if let Some(english) = installed.iter().find(|l| l.as_str() == "English") {

@@ -660,11 +660,26 @@ mod tests {
         use tessera_world::WorldPos;
         let flat = |_: f64, _: f64| Some(100.0_f32);
         let now = Instant::now();
-        let handed = crate::net::World::handed_over(now, crate::net::test_hand_over(now));
+        let mut handed = crate::net::World::handed_over(now, crate::net::test_hand_over(now));
+        handed
+            .session_mut()
+            .send(
+                now,
+                tessera_net::Command::EnterWorld {
+                    character: "Alda".to_owned(),
+                },
+            )
+            .expect("enter");
+        let mut t = now;
+        while handed.state() != tessera_net::SessionState::InWorld {
+            t += std::time::Duration::from_millis(16);
+            assert!(t < now + std::time::Duration::from_secs(60), "not entered");
+            handed.update(t);
+        }
         let sandbox = crate::net::World::sandbox(now).expect("sandbox");
         for (name, session) in [
             ("sandbox", sandbox),
-            ("official, no screens and not entering", handed),
+            ("official, no screens and in the world", handed),
         ] {
             let held = session.holds_input(false);
             assert!(!held, "{name}");

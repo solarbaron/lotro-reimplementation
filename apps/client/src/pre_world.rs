@@ -65,6 +65,9 @@ pub enum PreWorldState {
     Entered(String),
     /// The player quit, or the session ended (the reason): the client ends.
     Ended(String),
+    /// The player cancelled an official selection: the screens close and the session ends, and the
+    /// account form shows (`official-entry.md` §4.6).
+    Cancelled,
 }
 
 /// The character screens before world entry (module docs).
@@ -244,6 +247,7 @@ impl PreWorld {
         self.state = match self.screens.status() {
             Status::Entered(name) => PreWorldState::Entered(name.clone()),
             Status::Quit => PreWorldState::Ended("the player quit".into()),
+            Status::Cancelled => PreWorldState::Cancelled,
             Status::Closed(reason) => PreWorldState::Ended(reason.clone()),
             Status::Open | Status::Entering(_) => PreWorldState::Open,
         };

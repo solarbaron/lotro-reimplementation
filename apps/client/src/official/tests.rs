@@ -2672,8 +2672,9 @@ fn oe_t14_every_row_of_8_6_and_the_watchdog() {
             true,
         ),
         (
+            // §8.6: with the `TransportFailed` below, that row's words on this row's target.
             LoginRefusal::ServiceUnavailable,
-            "The official login service is not available right now.",
+            "The connection to the official service failed.",
             Target::AccountForm {
                 keep_account: false,
             },
@@ -4185,10 +4186,13 @@ fn the_official_flow_hands_its_session_to_the_character_screens_and_back() {
     assert_eq!(world.loaded_signals(), 1);
     let first_seq = placed.get().expect("placed");
 
-    // Back to character selection on the same session (only the player's `/logout`, i.e.
-    // `leave_world`, sends it).
+    // Back to character selection on the same session: the service's teardown. A typed logout
+    // closes the session instead (`official-session.md` §9.3.9).
     let back = |world: &mut crate::net::World| {
-        world.leave_world(Instant::now()).expect("leave");
+        assert!(
+            service.send_world_event(0x3000_001B, None, &[0]),
+            "teardown"
+        );
         while !world.take_returned() {
             assert!(
                 Instant::now() < until,
@@ -4579,11 +4583,12 @@ fn a_silence_before_the_list_says_no_answer_on_the_account_form() {
         },
         now,
     );
+    // §8.6: the pair's one panel has its own words.
     assert_eq!(
         p.end()
             .and_then(|e| e.message.as_ref())
             .map(|m| m.text.as_str()),
-        Some("The official login service is not available right now.")
+        Some("The connection to the official service failed.")
     );
 }
 
@@ -4596,7 +4601,7 @@ fn one_entry_words_the_service_unavailable_panel() {
     assert_eq!(words(&R::TimedOut), Some("official.error.no_answer"));
     assert_eq!(
         words(&R::TransportFailed(String::new())),
-        Some("official.error.service_unavailable")
+        Some("official.error.transport")
     );
     for other in [
         R::ClientRequested,
@@ -4701,7 +4706,9 @@ fn the_decoded_list_is_names_only_and_explains_the_disabled_actions() {
     model.apply(crate::screens::model::Action::Enter, Instant::now());
     assert_eq!(
         model.entering_line().map(|t| t.to_string()).as_deref(),
-        Some("Entering the world… Cancel, Escape or closing the window cancels.")
+        Some(
+            "Entering the world… Cancel goes back to the login; Escape or closing the window exits."
+        )
     );
     assert!(model.back_button().is_enabled(), "the Cancel control");
     model.handle_event(
@@ -4715,8 +4722,10 @@ fn the_decoded_list_is_names_only_and_explains_the_disabled_actions() {
             .entering_line()
             .is_some_and(|t| t.to_string().contains("Connected to the world server"))
     );
+    // §4.6: Quit, Escape and closing the window end the client; the Cancel button goes to the form.
     model.apply(crate::screens::model::Action::Back, Instant::now());
-    assert_eq!(*model.status(), crate::screens::model::Status::Quit);
+    assert_eq!(*model.status(), crate::screens::model::Status::Cancelled);
+    assert_eq!(model.slots().1, None, "the used count only");
 }
 
 /// §8.7: `WorldPlacementPending` starts the scene behind the screens: the walker places it, and on a
@@ -4753,6 +4762,7 @@ fn a_pending_placement_loads_behind_the_screens_and_is_answered_once() {
         character: "C".into(),
         position: tessera_net::Location::new(tessera_net::RegionId(1), 10.0, 20.0, 30.0),
         yaw: 0.5,
+        generation: 1,
     });
     world.update(t);
     let at = world.player_location().expect("the placement");
@@ -4769,7 +4779,12 @@ fn a_pending_placement_loads_behind_the_screens_and_is_answered_once() {
     assert_eq!(
         f.commands()
             .iter()
-            .filter(|c| matches!(c, tessera_net::Command::WorldLoaded))
+            .filter(|c| matches!(
+                c,
+                tessera_net::Command::WorldLoaded {
+                    generation: Some(1)
+                }
+            ))
             .count(),
         1
     );
@@ -4822,4 +4837,113 @@ fn the_documented_log_command_redirects_what_the_client_writes_to() {
         assert!(section.contains(needle), "{needle} not in:\n{section}");
     }
     assert!(!section.contains(" 2> official-run.log"), "{section}");
+}
+
+/// A fixture with its session handed over to the character screens.
+fn handed_over_fixture() -> Fixture {
+    let mut f = fixture(Availability::Available);
+    f.reach_login("a", "b");
+    f.push(Event::Connected {
+        characters: vec![CharacterSummary { name: "C".into() }],
+    });
+    f.flow.tick(f.t0);
+    assert_eq!(f.flow.take_request(), Some(FlowRequest::HandOver));
+    drop(f.flow.take_hand_over().expect("the session"));
+    f
+}
+
+/// OE-T14's extension: `Disconnected { UnsupportedTimeout }` in the world has its own words, on the
+/// start screen, while before the world it keeps the step's.
+#[test]
+fn oe_t14_a_deadline_in_the_world_has_its_own_words() {
+    let mut f = handed_over_fixture();
+    f.flow.characters_ended(HandOverEnd::InWorldLimit);
+    assert_eq!(f.flow.screen(), Screen::Start);
+    assert_eq!(
+        f.flow.notice().map(|n| n.message.text.as_str()),
+        Some("Tessera could not continue this session within its supported limits.")
+    );
+    let mut f = handed_over_fixture();
+    f.flow.characters_ended(HandOverEnd::SessionEnded(
+        tessera_net::DisconnectReason::UnsupportedTimeout,
+    ));
+    assert_eq!(f.flow.screen(), Screen::Start);
+    assert_eq!(
+        f.flow.notice().map(|n| n.message.text.as_str()),
+        Some("Tessera could not finish this step within its supported limits.")
+    );
+}
+
+/// OE-T14's extension: every pre-`Connected` pair is one panel with §8.6's words.
+#[test]
+fn oe_t14_every_refusal_pair_is_one_panel() {
+    use tessera_net::DisconnectReason as R;
+    let t0 = Instant::now();
+    let rows = [
+        (
+            LoginRefusal::UnsupportedStep,
+            R::Unsupported,
+            "This version of Tessera does not support this step yet.",
+        ),
+        (
+            LoginRefusal::UnsupportedStep,
+            R::UnsupportedTimeout,
+            "Tessera could not finish this step within its supported limits.",
+        ),
+        (
+            LoginRefusal::ServiceUnavailable,
+            R::TimedOut,
+            "No answer from the official service.",
+        ),
+        (
+            LoginRefusal::ServiceUnavailable,
+            R::TransportFailed(String::new()),
+            "The connection to the official service failed.",
+        ),
+        (
+            LoginRefusal::ClientNotAccepted,
+            R::ServerClosed(String::new()),
+            "The official service did not accept this client.",
+        ),
+        (
+            LoginRefusal::Other,
+            R::ServerClosed(String::new()),
+            "The login failed.",
+        ),
+    ];
+    for (refusal, end, words) in rows {
+        let mut p = LoginPresenter::new(t0, None);
+        p.on_event(
+            &Event::Account(AccountEvent::LoginRefused {
+                reason: refusal,
+                retry_after_seconds: None,
+                detail: None,
+            }),
+            t0,
+        );
+        p.on_event(&Event::Disconnected { reason: end }, t0);
+        let m = p.end().and_then(|e| e.message.as_ref()).expect("one panel");
+        assert_eq!(m.text, words, "{refusal:?}");
+        assert_eq!(m.detail, None, "{refusal:?}");
+    }
+}
+
+/// OE-T23's extension: Quit, Escape and closing the window at the decoded list or while entering end
+/// the client; the Cancel of a selection goes to the empty account form.
+#[test]
+fn oe_t23_leaving_the_list_exits_and_cancel_goes_to_the_form() {
+    let mut f = handed_over_fixture();
+    f.flow.characters_ended(HandOverEnd::Exit);
+    assert_eq!(f.flow.take_request(), Some(FlowRequest::Quit));
+    assert!(
+        f.flow
+            .form()
+            .is_none_or(|form| form.account_text().is_empty())
+    );
+
+    let mut f = handed_over_fixture();
+    f.flow.characters_ended(HandOverEnd::Left);
+    assert_eq!(f.flow.screen(), Screen::Form);
+    assert_eq!(f.flow.form().map(AccountForm::account_text), Some(""));
+    assert_eq!(f.flow.take_request(), None);
 }

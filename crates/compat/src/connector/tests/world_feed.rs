@@ -1173,7 +1173,8 @@ fn a_routed_envelope_keeps_its_recipient() {
 /// Ends the world entry's portal space: the server gate `0x7C` and the client's loading.
 fn out_of_portal_space(world: &World, d: &mut SessionDriver<FakeNet>, login: &mut Server) {
     world.deliver(login.event(0x7C, &[0]), LOGIN_SERVER);
-    d.command(&Command::WorldLoaded, 1.5).expect("loaded");
+    d.command(&Command::WorldLoaded { generation: None }, 1.5)
+        .expect("loaded");
     d.step(1.6, true, &go);
     assert_eq!(
         sent_payloads(world, 0xF4).len(),
@@ -1264,7 +1265,8 @@ fn a_portal_space_begun_by_the_server_waits_for_a_fresh_loading_signal() {
     );
     out_of_portal_space(&world, &mut d, &mut login);
     // A loading signal outside portal space answers the stamp-0 placement.
-    d.command(&Command::WorldLoaded, 1.9).expect("accepted");
+    d.command(&Command::WorldLoaded { generation: None }, 1.9)
+        .expect("accepted");
     deliver(&world, &mut d, login.event(0x5E, &portal_space(1, 7)), 2.0);
     assert_eq!(d.counters().portal_spaces, 1);
     // The server gate alone does not end it, nor does the placement without its loading.
@@ -1280,7 +1282,8 @@ fn a_portal_space_begun_by_the_server_waits_for_a_fresh_loading_signal() {
         sent_payloads(&world, 0xF4).is_empty(),
         "waits for the loading"
     );
-    d.command(&Command::WorldLoaded, 2.3).expect("loaded");
+    d.command(&Command::WorldLoaded { generation: None }, 2.3)
+        .expect("loaded");
     d.step(2.4, true, &go);
     assert_eq!(sent_payloads(&world, 0xF4).len(), 1);
 }
@@ -1300,7 +1303,8 @@ fn the_sent_portal_exit_has_its_observed_form() {
         1.25,
     );
     world.take_sent();
-    d.command(&Command::WorldLoaded, 1.3).expect("loaded");
+    d.command(&Command::WorldLoaded { generation: None }, 1.3)
+        .expect("loaded");
     d.step(1.4, true, &go);
     let frags: Vec<crate::session::BlobFragment> = world
         .take_sent()
@@ -1334,7 +1338,8 @@ fn a_placement_before_its_portal_space_keeps_its_loading_signal() {
         login.event(0xCE, &stamped_placement(200)),
         1.2,
     );
-    d.command(&Command::WorldLoaded, 1.3).expect("loaded");
+    d.command(&Command::WorldLoaded { generation: None }, 1.3)
+        .expect("loaded");
     deliver(
         &world,
         &mut d,
@@ -1355,7 +1360,8 @@ fn a_placement_before_its_portal_space_keeps_its_loading_signal() {
         login.event(0xCE, &stamped_placement(201)),
         2.0,
     );
-    d.command(&Command::WorldLoaded, 2.1).expect("loaded");
+    d.command(&Command::WorldLoaded { generation: None }, 2.1)
+        .expect("loaded");
     deliver(
         &world,
         &mut d,
@@ -1395,7 +1401,8 @@ fn the_first_stamp_of_a_world_is_taken_whatever_its_value() {
         "{events:?}"
     );
     deliver(&world, &mut d, login.event(0x7C, &[0]), 1.4);
-    d.command(&Command::WorldLoaded, 1.5).expect("loaded");
+    d.command(&Command::WorldLoaded { generation: None }, 1.5)
+        .expect("loaded");
     d.step(1.6, true, &go);
     assert_eq!(sent_payloads(&world, 0xF4).len(), 1);
     d.command(

@@ -545,6 +545,13 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
 - `official evidence: connection closed`: which connection closed, why and in which stage
   (`retiring=true` is the old login connection, which no longer decides the session's end).
 - `official world entry: stopped`: what an entry that stopped withheld (`withheld=`).
+- `official evidence: packet` and `official evidence: blob`: also the ordering word, blob ID and
+  `allocation_kind`, and `recipient_token` (an ordinal per connection, never the ID) with
+  `target_resolution_kind`.
+- `official evidence: queue`: what the queue rules did with a completed blob: `queue_action`,
+  `distance_class`, `baseline_present`.
+- `official evidence: login connection retired`: the referred login connection, with no Disconnect,
+  at the world connection's State 5.
 - `official evidence: connection totals`: the counts, once, when a connection closes or when it is let
   go, and the last of the session layer's lines for that connection: what reaches it after its close has no line and no count
   (`sends`, `resends`, `controls`, `handshakes`, `handshake_resends`, `disconnects`,

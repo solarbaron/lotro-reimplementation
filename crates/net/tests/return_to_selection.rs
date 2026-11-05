@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The way from the world back to character selection (`Command::LeaveWorld`,
 //! `Event::ReturnedToCharacterSelect`; `official-messages-play.md` §7.2, §8) and the
-//! client's loading signal (`Command::WorldLoaded`, §4.5 item 4): the session rules with a
+//! client's loading signal (`Command::WorldLoaded { generation: None }`, §4.5 item 4): the session rules with a
 //! scripted backend, and the sandbox's answer.
 
 use std::sync::{Arc, Mutex};
@@ -84,7 +84,8 @@ fn scripted_in_world(t: Instant) -> (Scripted, Session) {
 fn the_return_goes_from_the_world_to_character_selection() {
     let t = Instant::now();
     let (b, mut s) = scripted_in_world(t);
-    s.send(t, Command::WorldLoaded).expect("loaded");
+    s.send(t, Command::WorldLoaded { generation: None })
+        .expect("loaded");
     s.send(t, Command::LeaveWorld).expect("leave");
     assert_eq!(s.state(), SessionState::InWorld, "until the answer");
     b.push(returned(&["Aldo", "Bera\u{7}"]));
@@ -109,7 +110,7 @@ fn the_return_goes_from_the_world_to_character_selection() {
         Err(NetError::InvalidState { .. })
     ));
     assert!(matches!(
-        s.send(t, Command::WorldLoaded),
+        s.send(t, Command::WorldLoaded { generation: None }),
         Err(NetError::InvalidState { .. })
     ));
     s.send(
@@ -120,7 +121,10 @@ fn the_return_goes_from_the_world_to_character_selection() {
     )
     .expect("enter again");
     let got = b.got.lock().expect("got").clone();
-    assert!(got.contains(&Command::WorldLoaded) && got.contains(&Command::LeaveWorld));
+    assert!(
+        got.contains(&Command::WorldLoaded { generation: None })
+            && got.contains(&Command::LeaveWorld)
+    );
 }
 
 #[test]
@@ -166,7 +170,7 @@ fn the_sandbox_leaves_the_world_and_enters_again() {
     let ev = s.poll(t);
     assert!(ev.iter().any(|e| matches!(e, Event::WorldEntered { .. })));
     assert_eq!(s.state(), SessionState::InWorld);
-    s.send(t, Command::WorldLoaded)
+    s.send(t, Command::WorldLoaded { generation: None })
         .expect("the sandbox ignores it");
     assert!(
         s.poll(t)

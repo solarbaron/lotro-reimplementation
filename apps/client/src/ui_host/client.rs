@@ -87,6 +87,8 @@ pub struct ClientUi {
     pre_world: Option<crate::pre_world::PreWorld>,
     /// The player quit from the character screens (or their session ended).
     quit: bool,
+    /// That quit was the Cancel of an official selection ([`Self::entry_cancelled`]).
+    entry_cancelled: bool,
     /// Where creation choices are kept (`character-screens.md` §7.1): the test server's
     /// connect string and account.
     server_key: Option<String>,
@@ -274,6 +276,7 @@ impl ClientUi {
             want_screens: args.character_select,
             pre_world: None,
             quit: false,
+            entry_cancelled: false,
             server_key: args
                 .server
                 .as_ref()
@@ -307,6 +310,13 @@ impl ClientUi {
     #[must_use]
     pub fn quit_requested(&self) -> bool {
         self.quit
+    }
+
+    /// Whether the player cancelled an official selection on the character screens
+    /// (`official-entry.md` §4.6).
+    #[must_use]
+    pub const fn entry_cancelled(&self) -> bool {
+        self.entry_cancelled
     }
 
     /// Whether the character screens are open.
@@ -439,6 +449,14 @@ impl ClientUi {
                 host.collect_screen_events(false);
                 self.pre_world = None;
                 self.quit = true;
+                walker.set_preview(None);
+            }
+            crate::pre_world::PreWorldState::Cancelled => {
+                tracing::info!("character screens ended: the entry was cancelled");
+                host.collect_screen_events(false);
+                self.pre_world = None;
+                self.quit = true;
+                self.entry_cancelled = true;
                 walker.set_preview(None);
             }
         }

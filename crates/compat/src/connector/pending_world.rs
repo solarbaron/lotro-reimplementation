@@ -6,30 +6,36 @@
 //! # The store
 //!
 //! After the world connection's messages have decoded to exact exhaustion under their named
-//! layouts, [`PendingWorld`] keeps the latest state per entity, as complete message bodies: `0x98`,
-//! `0x52`, `0x88`/`0x92` by property, `0x89`, `0xCE` and `0xCC`. On `WorldEntered` the driver takes
-//! one snapshot per entity, spawn before property and motion ([`PendingWorld::take_snapshots`]),
-//! and the store is empty; on a failure it is discarded. Nothing here is published, and nothing
-//! acts on it before `WorldEntered`.
+//! layouts, [`PendingWorld`] keeps the latest state per target key, as encoded data: `0x98`, the
+//! `0x52` entries merged by property, `0x88`/`0x92` by property in arrival order, `0x89`, `0xCE` and
+//! `0xCC`. On `WorldEntered` the driver takes one snapshot per resolved entity, spawn before merged
+//! properties, appearance and motion ([`PendingWorld::take_snapshots`]), and the store is empty; on a
+//! failure it is discarded. Nothing here is published, and nothing acts on it before `WorldEntered`.
 //!
-//! The bounds are per world connection: [`MAX_PENDING_ENTITIES`] entities and
-//! [`MAX_PENDING_BYTES`] of kept bodies. Past either the store answers [`Stored::Overflow`], which
-//! the driver turns into the `Unsupported` result. A replaced body gives its bytes back first, so
-//! one entity's repeats never overflow. Both bounds and that action are labelled choices that may
-//! move after the writer's replay (`docs/m8-remediation.md` §27 fix 17), so they stay named here.
+//! The bounds are per world connection: [`MAX_PENDING_ENTITIES`] target keys and
+//! [`MAX_PENDING_BYTES`] of kept encoded data. Past either a new entry or its growth is counted and
+//! skipped ([`Stored::KeyCap`], [`Stored::ByteCap`]), and what is kept stays: an overflow never ends
+//! a healthy entry. The local identity and the placement live apart from these bounds, with
+//! priority (`set_player`; the driver keeps the placement). A replaced value gives its bytes back
+//! first, so one entity's repeats never overflow.
 //!
-//! `0x88` and `0x92` merge per property over the `0x52` table: a later single wins for its property
-//! ([`PendingWorld::single`]) and a later table takes back the singles of the properties it carries
-//! ([`PendingWorld::table`]). `0x40` removes the entity with all it kept, and nothing but a new
-//! `0x98` brings it back ([`PendingWorld::despawn`]). Labelled, §27 fixes 16 and 17.
+//! A `0x40` deletes its key's spawn, properties and motion and leaves a record there, which refuses
+//! every later `0x52`, `0x88`, `0x92`, `0x89`, `0xCE` and `0xCC` of that key, whichever field named
+//! the key ([`Stored::Despawned`]); only a new validated `0x98` starts a new incarnation
+//! ([`PendingWorld::despawn`]). The record takes a key slot, and at the cap a `0x40` of a new key is
+//! counted and skipped.
 //!
 //! # Targets
 //!
-//! A target is a nonzero ID announced by a validated `0x98` or the validated `0x90`'s own ID.
-//! The logical default recipient `2` alone is no target: it is what a `0xCC` with the default form
-//! carries, and which entity that means is OPEN-WORLD-9. Such a message is counted and skipped; it
-//! is never read as the local player. Holding data with no target for later is not done (labelled,
-//! `docs/m8-remediation.md` §27 fix 17).
+//! Data whose target nothing has announced is kept under its raw logical recipient within the
+//! bounds, the default recipient `2` included: which entity that means is OPEN-WORLD-9, and `2`
+//! never becomes the `0x90`'s ID by a numerical substitution. A key is resolved by a validated `0x98`
+//! or as the validated `0x90`'s own ID. What is still unresolved at the release is discarded, not
+//! guessed into a player.
+//!
+//! Labelled (`docs/m8-remediation.md` §28 fixes 1, 21, 23): `0xCE`'s key is the ID in its body, the
+//! `0x90`'s own ID counts as resolved with no `0x98`, a despawn has no public event at the release,
+//! and a `0x40` to the default recipient is counted and skipped ([`DEFAULT_RECIPIENT_DESPAWN_APPLIES`]).
 //!
 //! # What is not sent
 //!
@@ -41,14 +47,22 @@ use std::collections::BTreeMap;
 
 use tessera_net::Location;
 
-/// Most entities kept per world connection (§9.3.9).
+use crate::world::PropertyTableUpdate;
+
+/// Most target keys kept per world connection (§9.3.9).
 pub const MAX_PENDING_ENTITIES: usize = 256;
 
-/// Most bytes of kept bodies per world connection (§9.3.9).
+/// Most bytes of kept encoded data per world connection (§9.3.9).
 pub const MAX_PENDING_BYTES: usize = 1024 * 1024;
 
 /// The logical default recipient (§5.6.3): no entity by itself (module docs).
 pub const DEFAULT_RECIPIENT: u64 = crate::session::DEFAULT_BLOB_RECIPIENT_ID;
+
+/// Whether a `0x40` to the default recipient deletes and blocks key `2`. Labelled
+/// (`docs/m8-remediation.md` §28 fix 21): read literally, one such `0x40` would delete everything under
+/// the key and refuse every later default-recipient message, for an entity nothing has resolved. So
+/// it is counted and skipped until the writer gives its one action.
+pub const DEFAULT_RECIPIENT_DESPAWN_APPLIES: bool = false;
 
 /// One client message of the observed road to `0xF4` that Tessera does not send, and why.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,13 +73,12 @@ pub struct WithheldSend {
     pub held_by: &'static str,
 }
 
-/// The client messages withheld before `0xF4` (`official-session.md` §9.3.8, §9.3.9). The first
-/// three are decision 0046 item 5's fixed omissions, the next four its item 10's: they stay unsent
-/// for any user past the warning and consent gate until a source for their contents exists. All are
-/// labelled known differences from the observed client, the server's reaction is untested, and the
-/// run ends at `UnsupportedTimeout` (`docs/m8-remediation.md` §27 fix 5; the owner's answer is
-/// recorded as item 10, and the spec text at e5e0eebc does not carry it yet). `0xF4` itself has no
-/// source yet (OPEN-WORLD-9).
+/// The client messages withheld before `0xF4` (`official-session.md` §9.3.8, §9.3.9 "World send
+/// inventory"). The first three are decision 0046 item 5's fixed omissions, the next four its item
+/// 10's, which §9.3.9 cites: they stay unsent for any user past the warning and consent gate until a
+/// source for their contents exists. All are labelled known differences from the observed client, the
+/// server's reaction is untested, and the run ends at `UnsupportedTimeout`. `0xF4` itself has no source
+/// yet (OPEN-WORLD-9).
 pub const WITHHELD_BEFORE_F4: [WithheldSend; 8] = [
     WithheldSend {
         family: "0x13D",
@@ -117,37 +130,70 @@ pub type KeptMessage = (u32, Vec<u8>);
 /// What [`PendingWorld`] did with a message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stored {
-    /// Kept as the entity's latest.
+    /// Kept as its key's latest.
     Kept,
-    /// The target is no announced entity: counted and skipped.
+    /// A `0x98` for the ID `0` or `2`, which names no entity: counted and skipped.
     NoTarget,
-    /// Past a bound of the store (the `Unsupported` result).
-    Overflow,
+    /// Its key has a despawn record: counted and skipped, no resurrection.
+    Despawned,
+    /// A new key past [`MAX_PENDING_ENTITIES`]: counted and skipped, nothing else changes.
+    KeyCap,
+    /// Past [`MAX_PENDING_BYTES`]: counted and skipped, nothing else changes.
+    ByteCap,
 }
 
-/// The kept state of one entity. Deliberately not `Clone`: a store update touches one field, and
+/// The kept state of one target key. Deliberately not `Clone`: a store update touches one field, and
 /// one batch can hold many thousands of them on the connector's thread, so an update never copies
 /// what it does not change.
 #[derive(Debug, Default)]
 struct PendingEntity {
     create: Option<Vec<u8>>,
-    table: Option<Vec<u8>>,
-    /// `0x88` and `0x92`, by property.
-    single: BTreeMap<u32, KeptMessage>,
+    /// The newest encoded update per property: a `0x52` entry's encoded bytes (`opcode` `0x52`) or a
+    /// complete `0x88` or `0x92` body.
+    properties: BTreeMap<u32, KeptProperty>,
     appearance: Option<Vec<u8>>,
     position: Option<Vec<u8>>,
     sync: Option<Vec<u8>>,
-    /// Whether a validated message announced the ID.
+    /// Whether a validated `0x98` announced the ID.
     announced: bool,
-    /// The latest exact placement of this entity.
+    /// A `0x40` deleted this key: only a new `0x98` takes the record away.
+    despawned: bool,
+    /// The latest exact placement of this key, kept with its motion.
     placed: Option<(Location, f32)>,
+    /// The next arrival number of a property of this key.
+    next_arrival: u64,
+}
+
+impl PendingEntity {
+    /// The bytes this key keeps.
+    fn held(&self) -> usize {
+        held(&self.create)
+            + held(&self.appearance)
+            + held(&self.position)
+            + held(&self.sync)
+            + self
+                .properties
+                .values()
+                .map(|p| p.encoded.len())
+                .sum::<usize>()
+    }
+}
+
+/// The newest encoded update of one property.
+#[derive(Debug)]
+struct KeptProperty {
+    /// `0x52` for an entry of a table; else the single update's opcode.
+    opcode: u32,
+    encoded: Vec<u8>,
+    /// Its order among the properties of its key.
+    arrival: u64,
 }
 
 /// The pending world state of one world connection (module docs).
 #[derive(Debug, Default)]
 pub struct PendingWorld {
     entities: BTreeMap<u64, PendingEntity>,
-    /// The entities in the order they were first announced.
+    /// The keys in the order they were first kept.
     order: Vec<u64>,
     bytes: usize,
     player: Option<u64>,
@@ -163,28 +209,23 @@ pub struct EntitySnapshot {
 }
 
 impl PendingWorld {
-    /// How many entities are kept.
+    /// How many target keys are kept.
     #[must_use]
     pub fn entities(&self) -> usize {
         self.entities.len()
     }
 
-    /// How many bytes of bodies are kept.
+    /// How many bytes of encoded data are kept.
     #[must_use]
     pub const fn bytes(&self) -> usize {
         self.bytes
     }
 
-    /// The validated `0x90`'s ID: the local player, an announced target. Answers its placement when
-    /// one is already kept, and [`Stored::Overflow`] past the entity bound.
-    ///
-    /// # Errors
-    ///
-    /// [`Stored::Overflow`] past [`MAX_PENDING_ENTITIES`].
-    pub fn set_player(&mut self, player: u64) -> Result<Option<(Location, f32)>, Stored> {
+    /// The validated `0x90`'s ID: the local player. It is required state, held apart from the
+    /// bounds, so a full store cannot lose it. Answers its placement when one is already kept.
+    pub fn set_player(&mut self, player: u64) -> Option<(Location, f32)> {
         self.player = Some(player);
-        self.announce(player)?;
-        Ok(self.entities.get(&player).and_then(|e| e.placed))
+        self.entities.get(&player).and_then(|e| e.placed)
     }
 
     /// The local player, once known.
@@ -193,103 +234,150 @@ impl PendingWorld {
         self.player
     }
 
-    fn announce(&mut self, id: u64) -> Result<(), Stored> {
-        if let Some(e) = self.entities.get_mut(&id) {
-            e.announced = true;
-            return Ok(());
-        }
-        if self.entities.len() >= MAX_PENDING_ENTITIES {
-            return Err(Stored::Overflow);
-        }
-        self.entities.insert(
-            id,
-            PendingEntity {
-                announced: true,
-                ..PendingEntity::default()
-            },
-        );
-        self.order.push(id);
-        Ok(())
-    }
-
-    /// Whether `id` can be a target (module docs).
+    /// Whether `id` is resolved at this point: a validated `0x98` announced it, or it is the
+    /// `0x90`'s own ID (labelled, module docs).
     #[must_use]
-    pub fn announced(&self, id: u64) -> bool {
-        id != 0 && id != DEFAULT_RECIPIENT && self.entities.get(&id).is_some_and(|e| e.announced)
+    pub fn resolved(&self, id: u64) -> bool {
+        if id == 0 || id == DEFAULT_RECIPIENT {
+            return false;
+        }
+        self.player == Some(id)
+            || self
+                .entities
+                .get(&id)
+                .is_some_and(|e| e.announced && !e.despawned)
     }
 
-    /// Puts `new` in one slot of the announced entity `id` (`slot` says what it holds, `put` fills
-    /// it), keeping the byte count and
-    /// its bound: the old value's bytes come back first, a body that does not fit changes nothing,
-    /// and the cost is that of the one slot.
+    /// Whether `key` has a despawn record.
+    fn despawned(&self, key: u64) -> bool {
+        self.entities.get(&key).is_some_and(|e| e.despawned)
+    }
+
+    /// A slot for `key`, new when it has none and the bound allows it.
+    fn slot(&mut self, key: u64) -> Result<&mut PendingEntity, Stored> {
+        if !self.entities.contains_key(&key) {
+            if self.entities.len() >= MAX_PENDING_ENTITIES {
+                return Err(Stored::KeyCap);
+            }
+            self.order.push(key);
+        }
+        Ok(self.entities.entry(key).or_default())
+    }
+
+    /// Takes a key slot back when nothing went into it.
+    fn free_if_empty(&mut self, key: u64) {
+        if self
+            .entities
+            .get(&key)
+            .is_some_and(|e| !e.announced && !e.despawned && e.held() == 0 && e.placed.is_none())
+        {
+            self.entities.remove(&key);
+            self.order.retain(|k| *k != key);
+        }
+    }
+
+    /// Puts `new` in one field of `key` (`slot` says what it holds, `put` fills it), keeping the byte
+    /// count and its bound: the old value's bytes come back first, a body that does not fit changes
+    /// nothing, and the cost is that of the one field. A despawn record refuses it.
     fn store(
         &mut self,
-        id: u64,
+        key: u64,
         new: &[u8],
         slot: impl FnOnce(&PendingEntity) -> usize,
         put: impl FnOnce(&mut PendingEntity, Vec<u8>),
     ) -> Stored {
-        if !self.announced(id) {
-            return Stored::NoTarget;
+        if self.despawned(key) {
+            return Stored::Despawned;
         }
-        let Some(entity) = self.entities.get_mut(&id) else {
-            return Stored::NoTarget;
+        let bytes = self.bytes;
+        let entity = match self.slot(key) {
+            Ok(entity) => entity,
+            Err(stored) => return stored,
         };
-        let total = self
-            .bytes
-            .saturating_sub(slot(entity))
-            .saturating_add(new.len());
+        let total = bytes.saturating_sub(slot(entity)).saturating_add(new.len());
         if total > MAX_PENDING_BYTES {
-            return Stored::Overflow;
+            self.free_if_empty(key);
+            return Stored::ByteCap;
         }
         put(entity, new.to_vec());
         self.bytes = total;
         Stored::Kept
     }
 
-    /// A validated `0x98` for `entity`: it announces the ID and keeps its body.
+    /// A validated `0x98` for `entity`: it announces the ID, keeps its body and ends a despawn record:
+    /// a new incarnation, with nothing of the old one.
     pub fn create(&mut self, entity: u64, body: &[u8]) -> Stored {
         if entity == 0 || entity == DEFAULT_RECIPIENT {
             return Stored::NoTarget;
         }
-        if self.announce(entity).is_err() {
-            return Stored::Overflow;
+        let was_despawned = self.despawned(entity);
+        if let Some(e) = self.entities.get_mut(&entity) {
+            e.despawned = false;
         }
-        self.store(entity, body, |e| held(&e.create), |e, b| e.create = Some(b))
-    }
-
-    /// A validated `0x52` for `target`, whose table carries `properties`: the kept singles of those
-    /// properties are older than this table, and go (module docs).
-    pub fn table(&mut self, target: u64, properties: &[u32], body: &[u8]) -> Stored {
-        let stored = self.store(target, body, |e| held(&e.table), |e, b| e.table = Some(b));
-        if stored == Stored::Kept
-            && let Some(entity) = self.entities.get_mut(&target)
-        {
-            for pid in properties {
-                if let Some((_, old)) = entity.single.remove(pid) {
-                    self.bytes = self.bytes.saturating_sub(old.len());
-                }
+        let stored = self.store(entity, body, |e| held(&e.create), |e, b| e.create = Some(b));
+        if stored == Stored::Kept {
+            if let Some(e) = self.entities.get_mut(&entity) {
+                e.announced = true;
             }
+        } else if was_despawned && let Some(e) = self.entities.get_mut(&entity) {
+            e.despawned = true;
         }
         stored
     }
 
-    /// A validated `0x40` for `target` (§9.3.9, `docs/m8-remediation.md` §27 fix 16): the entity and
-    /// all it kept are gone, so nothing of it is released, and until a new `0x98` announces the ID
-    /// again later updates have no target. Answers whether there was one.
-    pub fn despawn(&mut self, target: u64) -> bool {
-        let Some(entity) = self.entities.remove(&target) else {
-            return false;
+    /// A validated `0x52` for `target`, as its entries' encoded bytes by property: merged by
+    /// property key, each newest update kept, never a whole table replaced (§9.3.9). All of it fits
+    /// or nothing of it changes, so a table is never half-merged. A later table takes the place of
+    /// an older single of the properties it carries.
+    pub fn table(&mut self, target: u64, entries: &[(u32, &[u8])]) -> Stored {
+        if self.despawned(target) {
+            return Stored::Despawned;
+        }
+        let bytes = self.bytes;
+        let entity = match self.slot(target) {
+            Ok(entity) => entity,
+            Err(stored) => return stored,
         };
-        self.order.retain(|id| *id != target);
-        let kept = held(&entity.create)
-            + held(&entity.table)
-            + held(&entity.appearance)
-            + held(&entity.position)
-            + held(&entity.sync)
-            + entity.single.values().map(|(_, b)| b.len()).sum::<usize>();
+        let total = merged_size(entity, entries, bytes);
+        if total > MAX_PENDING_BYTES {
+            self.free_if_empty(target);
+            return Stored::ByteCap;
+        }
+        for (property, encoded) in entries {
+            let arrival = entity.next_arrival;
+            entity.next_arrival = arrival.saturating_add(1);
+            entity.properties.insert(
+                *property,
+                KeptProperty {
+                    opcode: OPCODE_TABLE,
+                    encoded: encoded.to_vec(),
+                    arrival,
+                },
+            );
+        }
+        self.bytes = total;
+        self.free_if_empty(target);
+        Stored::Kept
+    }
+
+    /// A validated `0x40` for `target` (§9.3.9): a record stays, and the key's spawn, properties and
+    /// motion are gone, so nothing of it is released and nothing but a new `0x98` brings it back. The
+    /// local identity stays. Answers what happened: at the key cap, a new key is counted and skipped.
+    pub fn despawn(&mut self, target: u64) -> Stored {
+        if self.despawned(target) {
+            return Stored::Despawned;
+        }
+        let entity = match self.slot(target) {
+            Ok(entity) => entity,
+            Err(stored) => return stored,
+        };
+        let kept = entity.held();
+        *entity = PendingEntity {
+            despawned: true,
+            ..PendingEntity::default()
+        };
         self.bytes = self.bytes.saturating_sub(kept);
-        true
+        Stored::Kept
     }
 
     /// A validated `0x88` or `0x92` of `property` for `target`.
@@ -297,9 +385,18 @@ impl PendingWorld {
         self.store(
             target,
             body,
-            |e| e.single.get(&property).map_or(0, |(_, b)| b.len()),
+            |e| e.properties.get(&property).map_or(0, |p| p.encoded.len()),
             |e, b| {
-                e.single.insert(property, (opcode, b));
+                let arrival = e.next_arrival;
+                e.next_arrival = arrival.saturating_add(1);
+                e.properties.insert(
+                    property,
+                    KeptProperty {
+                        opcode,
+                        encoded: b,
+                        arrival,
+                    },
+                );
             },
         )
     }
@@ -344,17 +441,23 @@ impl PendingWorld {
         )
     }
 
-    /// One latest snapshot per entity, in the order they were announced, every entity's spawn
-    /// before any property or motion of another (§9.3.9). The store is empty afterwards.
+    /// One latest snapshot per resolved entity, in the order their keys were first kept, every
+    /// entity's spawn before any property or motion of another (§9.3.9). Unresolved keys and despawn
+    /// records are discarded with no event. The store is empty afterwards.
     pub fn take_snapshots(&mut self) -> (Vec<EntitySnapshot>, Vec<EntitySnapshot>) {
+        let resolved: Vec<u64> = self
+            .order
+            .iter()
+            .copied()
+            .filter(|id| self.resolved(*id))
+            .collect();
         let mut spawns = Vec::new();
         let mut states = Vec::new();
-        let entities = std::mem::take(&mut self.entities);
-        let order = std::mem::take(&mut self.order);
+        let mut entities = std::mem::take(&mut self.entities);
+        self.order.clear();
         self.bytes = 0;
         self.player = None;
-        let mut entities = entities;
-        for id in order {
+        for id in resolved {
             let Some(e) = entities.remove(&id) else {
                 continue;
             };
@@ -365,10 +468,25 @@ impl PendingWorld {
                 });
             }
             let mut messages = Vec::new();
-            if let Some(body) = e.table {
+            let mut properties: Vec<KeptProperty> = e.properties.into_values().collect();
+            properties.sort_by_key(|p| p.arrival);
+            let table: Vec<&[u8]> = properties
+                .iter()
+                .filter(|p| p.opcode == OPCODE_TABLE)
+                .map(|p| p.encoded.as_slice())
+                .collect();
+            // Its entries read to exact exhaustion when they were kept, so the one body holds them.
+            if !table.is_empty()
+                && let Ok(body) = PropertyTableUpdate::body_of_entries(&table)
+            {
                 messages.push((OPCODE_TABLE, body));
             }
-            messages.extend(e.single.into_values());
+            messages.extend(
+                properties
+                    .into_iter()
+                    .filter(|p| p.opcode != OPCODE_TABLE)
+                    .map(|p| (p.opcode, p.encoded)),
+            );
             if let Some(body) = e.appearance {
                 messages.push((OPCODE_APPEARANCE, body));
             }
@@ -392,6 +510,22 @@ impl PendingWorld {
     pub fn discard(&mut self) {
         *self = Self::default();
     }
+}
+
+/// The store's byte count once `entries` are merged into `entity`: each property counts once, its
+/// old bytes coming back first.
+fn merged_size(entity: &PendingEntity, entries: &[(u32, &[u8])], bytes: usize) -> usize {
+    let mut seen: BTreeMap<u32, usize> = BTreeMap::new();
+    for (property, encoded) in entries {
+        seen.insert(*property, encoded.len());
+    }
+    seen.iter().fold(bytes, |total, (property, len)| {
+        let old = entity
+            .properties
+            .get(property)
+            .map_or(0, |p| p.encoded.len());
+        total.saturating_sub(old).saturating_add(*len)
+    })
 }
 
 /// The bytes one kept body holds.
@@ -422,38 +556,48 @@ mod tests {
         )
     }
 
+    /// §9.3.9: logical 2 never names an entity by itself, and a `0x98` cannot make it one. Its data is
+    /// kept under its raw key and discarded at the release.
     #[test]
-    fn the_default_recipient_is_no_target() {
+    fn the_default_recipient_is_kept_raw_and_never_released() {
         let mut p = PendingWorld::default();
-        assert_eq!(p.table(DEFAULT_RECIPIENT, &[], &[0]), Stored::NoTarget);
         assert_eq!(p.create(DEFAULT_RECIPIENT, &[0]), Stored::NoTarget);
         assert_eq!(p.create(0, &[0]), Stored::NoTarget);
-        assert_eq!(
-            p.sync(DEFAULT_RECIPIENT, &[0], Some(at(1.0))),
-            Stored::NoTarget
-        );
-        assert_eq!(p.entities(), 0);
+        assert_eq!(p.table(DEFAULT_RECIPIENT, &[(1, &[9])]), Stored::Kept);
+        assert_eq!(p.sync(DEFAULT_RECIPIENT, &[0], Some(at(1.0))), Stored::Kept);
+        assert_eq!(p.entities(), 1);
+        assert_eq!(p.set_player(7), None, "2 is not the player's ID");
+        assert!(!p.resolved(DEFAULT_RECIPIENT));
+        let (spawns, states) = p.take_snapshots();
+        assert!(spawns.is_empty() && states.is_empty());
+        assert_eq!(p.bytes(), 0);
     }
 
     #[test]
-    fn an_unannounced_target_is_skipped_and_an_announced_one_kept() {
+    fn an_unannounced_target_is_kept_and_resolved_by_a_later_creation() {
         let mut p = PendingWorld::default();
-        assert_eq!(p.table(7, &[], &[0, 1]), Stored::NoTarget);
+        assert_eq!(p.appearance(7, &[0, 1]), Stored::Kept);
+        assert!(!p.resolved(7));
+        assert_eq!(p.appearance(8, &[0, 3]), Stored::Kept);
         assert_eq!(p.create(7, &[0, 2]), Stored::Kept);
-        assert_eq!(p.table(7, &[], &[0, 1]), Stored::Kept);
-        assert_eq!(p.bytes(), 4);
+        assert!(p.resolved(7));
+        assert_eq!(p.bytes(), 6);
+        let (spawns, states) = p.take_snapshots();
+        assert_eq!(spawns.iter().map(|s| s.entity).collect::<Vec<_>>(), [7]);
+        assert_eq!(states.iter().map(|s| s.entity).collect::<Vec<_>>(), [7]);
     }
 
     #[test]
-    fn the_player_is_a_target_and_its_kept_placement_is_answered() {
+    fn the_player_is_required_state_and_its_kept_placement_is_answered() {
         let mut p = PendingWorld::default();
         assert_eq!(p.create(9, &[0]), Stored::Kept);
         assert_eq!(p.position(9, &[0, 1], Some(at(4.0))), Stored::Kept);
-        assert_eq!(p.set_player(9), Ok(Some(at(4.0))));
+        assert_eq!(p.set_player(9), Some(at(4.0)));
         assert_eq!(p.player(), Some(9));
         let mut q = PendingWorld::default();
-        assert_eq!(q.set_player(9), Ok(None));
+        assert_eq!(q.set_player(9), None);
         assert_eq!(q.sync(9, &[0], Some(at(5.0))), Stored::Kept);
+        assert!(q.resolved(9), "the 0x90's own ID");
     }
 
     #[test]
@@ -469,23 +613,42 @@ mod tests {
         assert_eq!(p.bytes(), 19);
     }
 
+    /// §9.3.9: past a cap a new entry or growth is counted and skipped and what is kept stays.
     #[test]
-    fn the_bounds_overflow_and_a_replacement_still_fits() {
+    fn the_caps_skip_and_keep_what_is_there() {
         let mut p = PendingWorld::default();
         for id in 0..MAX_PENDING_ENTITIES as u64 {
             assert_eq!(p.create(id + 10, &[0]), Stored::Kept);
         }
-        assert_eq!(p.create(5_000, &[0]), Stored::Overflow);
-        assert_eq!(p.create(10, &[0, 0]), Stored::Kept);
+        assert_eq!(p.create(5_000, &[0]), Stored::KeyCap);
+        assert_eq!(p.single(5_000, 0x88, 1, &[0]), Stored::KeyCap);
+        assert_eq!(p.despawn(5_000), Stored::KeyCap);
+        assert_eq!(
+            p.create(10, &[0, 0]),
+            Stored::Kept,
+            "a kept key still updates"
+        );
         assert_eq!(p.entities(), MAX_PENDING_ENTITIES);
+        assert_eq!(
+            p.set_player(5_001),
+            None,
+            "the local identity is not bounded"
+        );
+        assert_eq!(p.player(), Some(5_001));
+        assert!(p.resolved(5_001));
 
         let mut q = PendingWorld::default();
         assert_eq!(q.create(7, &[0; 1024]), Stored::Kept);
         assert_eq!(
             q.appearance(7, &vec![0; MAX_PENDING_BYTES]),
-            Stored::Overflow
+            Stored::ByteCap
         );
         assert_eq!(q.bytes(), 1024, "a refused body changes nothing");
+        assert_eq!(
+            q.appearance(9, &vec![0; MAX_PENDING_BYTES]),
+            Stored::ByteCap
+        );
+        assert_eq!(q.entities(), 1, "a refused new key takes no slot");
         assert_eq!(
             q.appearance(7, &vec![0; MAX_PENDING_BYTES - 1024]),
             Stored::Kept
@@ -509,14 +672,14 @@ mod tests {
         assert_eq!(p.single(7, 0x88, 0, &[1, 2, 3]), Stored::Kept);
         assert_eq!(p.bytes(), heavy + 100_001);
         let room = MAX_PENDING_BYTES - p.bytes();
-        assert_eq!(p.single(7, 0x88, 0, &vec![0; room + 4]), Stored::Overflow);
+        assert_eq!(p.single(7, 0x88, 0, &vec![0; room + 4]), Stored::ByteCap);
         assert_eq!(p.bytes(), heavy + 100_001, "a refused body changes nothing");
         assert_eq!(p.single(7, 0x88, 0, &vec![0; room + 3]), Stored::Kept);
         assert_eq!(p.bytes(), MAX_PENDING_BYTES);
         // The kept placement stays with a refused body.
         assert_eq!(p.position(7, &[], Some(at(1.0))), Stored::Kept);
-        assert_eq!(p.position(7, &[0; 16], Some(at(2.0))), Stored::Overflow);
-        assert_eq!(p.set_player(7), Ok(Some(at(1.0))));
+        assert_eq!(p.position(7, &[0; 16], Some(at(2.0))), Stored::ByteCap);
+        assert_eq!(p.set_player(7), Some(at(1.0)));
     }
 
     #[test]
@@ -528,7 +691,7 @@ mod tests {
         assert_eq!(p.position(7, &[4], None), Stored::Kept);
         assert_eq!(p.appearance(7, &[5],), Stored::Kept);
         assert_eq!(p.single(7, 0x92, 9, &[6]), Stored::Kept);
-        assert_eq!(p.table(7, &[], &[7]), Stored::Kept);
+        assert_eq!(p.table(7, &[(1, &[7])]), Stored::Kept);
         let (spawns, states) = p.take_snapshots();
         let ids: Vec<u64> = spawns.iter().map(|s| s.entity).collect();
         assert_eq!(ids, [7, 8]);
@@ -540,58 +703,101 @@ mod tests {
         assert_eq!(p.player(), None);
     }
 
-    /// §27 fix 17: singles merge per property over the table, whichever came last.
+    /// §9.3.9: `0x52` tables merge by property, never one replacing another whole; the newest update
+    /// per property stays, and `0x88`/`0x92` overlay in arrival order.
     #[test]
-    fn singles_merge_per_property_over_the_table() {
+    fn tables_and_singles_merge_by_property() {
         let mut p = PendingWorld::default();
         assert_eq!(p.create(7, &[0]), Stored::Kept);
-        assert_eq!(p.single(7, 0x88, 1, &[1, 1]), Stored::Kept);
-        assert_eq!(p.single(7, 0x92, 2, &[2, 2, 2]), Stored::Kept);
-        assert_eq!(p.bytes(), 6);
-        // The table carries property 1, so that single is older; property 2's stays over it.
-        assert_eq!(p.table(7, &[1], &[3, 3, 3, 3]), Stored::Kept);
+        assert_eq!(p.table(7, &[(1, &[0xA1]), (2, &[0xA2])]), Stored::Kept);
+        assert_eq!(p.bytes(), 3);
+        assert_eq!(p.single(7, 0x88, 3, &[1, 1]), Stored::Kept);
+        assert_eq!(p.single(7, 0x92, 4, &[2, 2, 2]), Stored::Kept);
         assert_eq!(p.bytes(), 8);
+        // A second table with one property keeps the first table's other, and takes the single's
+        // place for property 3; property 4's single stays over the table.
+        assert_eq!(
+            p.table(7, &[(2, &[0xB2, 0xB2]), (3, &[0xB3])]),
+            Stored::Kept
+        );
+        assert_eq!(p.bytes(), 1 + 1 + 2 + 1 + 3);
         assert_eq!(p.single(7, 0x88, 1, &[4]), Stored::Kept);
         let (_, states) = p.take_snapshots();
         let messages = &states[0].messages;
-        assert_eq!(messages[0], (0x52, vec![3, 3, 3, 3]));
-        assert_eq!(messages[1], (0x88, vec![4]));
-        assert_eq!(messages[2], (0x92, vec![2, 2, 2]));
+        assert_eq!(
+            messages[0],
+            (0x52, vec![0, 2, 0xB2, 0xB2, 0xB3]),
+            "properties 2 and 3 in one table body"
+        );
+        assert_eq!(messages[1], (0x92, vec![2, 2, 2]));
+        assert_eq!(messages[2], (0x88, vec![4]));
         assert_eq!(messages.len(), 3);
     }
 
-    /// §27 fix 16: `0x40` takes the entity with what it kept, and later updates do not bring it
-    /// back; only a new creation does.
+    /// A table that would pass the byte cap changes nothing, and one that replaces its own bytes fits.
     #[test]
-    fn a_despawned_entity_is_gone_until_it_is_created_again() {
+    fn a_table_is_merged_whole_or_not_at_all() {
+        let mut p = PendingWorld::default();
+        let big = vec![0; MAX_PENDING_BYTES];
+        assert_eq!(p.table(7, &[(1, &big)]), Stored::Kept);
+        assert_eq!(p.table(7, &[(1, &big)]), Stored::Kept, "replaces its own");
+        assert_eq!(p.table(7, &[(1, &[1]), (2, &big)]), Stored::ByteCap);
+        assert_eq!(p.bytes(), MAX_PENDING_BYTES);
+        assert_eq!(p.table(8, &[]), Stored::Kept);
+        assert_eq!(p.entities(), 1, "an empty table takes no key");
+    }
+
+    /// §9.3.9: `0x40` takes the key's data and leaves a record: later updates do not bring it back,
+    /// whichever field names the key; only a new creation does, with nothing of the old incarnation.
+    #[test]
+    fn a_despawned_key_stays_gone_until_it_is_created_again() {
         let mut p = PendingWorld::default();
         assert_eq!(p.create(7, &[0; 4]), Stored::Kept);
         assert_eq!(p.create(8, &[0; 2]), Stored::Kept);
         assert_eq!(p.appearance(7, &[0; 8]), Stored::Kept);
         assert_eq!(p.single(7, 0x88, 1, &[0; 16]), Stored::Kept);
-        assert!(p.despawn(7));
-        assert!(!p.despawn(7));
+        assert_eq!(p.despawn(7), Stored::Kept);
+        assert_eq!(p.despawn(7), Stored::Despawned, "a repeat changes nothing");
         assert_eq!(p.bytes(), 2);
-        assert_eq!(p.entities(), 1);
+        assert!(!p.resolved(7));
         for stored in [
-            p.table(7, &[], &[0]),
+            p.table(7, &[(1, &[0])]),
             p.single(7, 0x88, 1, &[0]),
             p.appearance(7, &[0]),
             p.position(7, &[0], Some(at(1.0))),
             p.sync(7, &[0], Some(at(1.0))),
         ] {
-            assert_eq!(stored, Stored::NoTarget);
+            assert_eq!(stored, Stored::Despawned);
         }
         let (spawns, states) = p.take_snapshots();
         assert_eq!(spawns.iter().map(|s| s.entity).collect::<Vec<_>>(), [8]);
         assert!(states.is_empty());
 
+        // A despawn of a key with no data yet blocks too.
+        let mut r = PendingWorld::default();
+        assert_eq!(r.despawn(9), Stored::Kept);
+        assert_eq!(r.appearance(9, &[1]), Stored::Despawned);
+
         let mut q = PendingWorld::default();
         assert_eq!(q.create(7, &[0]), Stored::Kept);
-        assert!(q.despawn(7));
+        assert_eq!(q.appearance(7, &[0; 3]), Stored::Kept);
+        assert_eq!(q.despawn(7), Stored::Kept);
         assert_eq!(q.create(7, &[1]), Stored::Kept);
-        let (spawns, _) = q.take_snapshots();
+        assert_eq!(q.bytes(), 1, "nothing of the old incarnation");
+        assert_eq!(q.appearance(7, &[2]), Stored::Kept);
+        let (spawns, states) = q.take_snapshots();
         assert_eq!(spawns.len(), 1);
+        assert_eq!(states.len(), 1);
+    }
+
+    /// A despawn keeps the local identity, which is held apart.
+    #[test]
+    fn a_despawn_leaves_the_local_identity() {
+        let mut p = PendingWorld::default();
+        p.set_player(7);
+        assert_eq!(p.create(7, &[0]), Stored::Kept);
+        assert_eq!(p.despawn(7), Stored::Kept);
+        assert_eq!(p.player(), Some(7));
     }
 
     #[test]

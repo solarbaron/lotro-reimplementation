@@ -171,6 +171,10 @@ pub const TABLE: &[(&str, &str)] = &[
         "Tessera could not finish this step within its supported limits.",
     ),
     (
+        "official.error.unsupported_timeout_in_world",
+        "Tessera could not continue this session within its supported limits.",
+    ),
+    (
         "official.error.client_not_accepted",
         "The official service did not accept this client.",
     ),

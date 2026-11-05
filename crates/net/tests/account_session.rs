@@ -329,34 +329,54 @@ fn entering() -> (Session, Scripted, Instant) {
     (s, b, now)
 }
 
-fn placement() -> Event {
+fn placement(generation: u64) -> Event {
     Event::WorldPlacementPending {
         character: "Aldo".to_owned(),
         position: tessera_net::Location::new(tessera_net::RegionId(1), 1.0, 2.0, 3.0),
         yaw: 0.5,
+        generation,
     }
 }
 
-/// `WorldLoaded` is valid while entering only after a placement, once per placement.
+const fn loaded(generation: u64) -> Command {
+    Command::WorldLoaded {
+        generation: Some(generation),
+    }
+}
+
+/// `official-session.md` §9.3.11: while entering `WorldLoaded` names the pending placement's
+/// generation, once; a stale, duplicate or early one is a local `InvalidCommand`.
 #[test]
 fn a_pending_placement_allows_one_world_loaded() {
     let (mut s, b, now) = entering();
     assert!(matches!(
-        s.send(now, Command::WorldLoaded),
-        Err(NetError::InvalidState { .. })
+        s.send(now, loaded(1)),
+        Err(NetError::InvalidCommand(_))
     ));
-    b.push(placement());
+    b.push(placement(1));
     assert_eq!(s.poll(now).len(), 1);
     assert_eq!(s.state(), SessionState::EnteringWorld);
-    s.send(now, Command::WorldLoaded).expect("the first");
     assert!(matches!(
-        s.send(now, Command::WorldLoaded),
-        Err(NetError::InvalidState { .. })
+        s.send(now, loaded(2)),
+        Err(NetError::InvalidCommand(_))
     ));
-    // A new placement is a new generation.
-    b.push(placement());
+    assert!(matches!(
+        s.send(now, Command::WorldLoaded { generation: None }),
+        Err(NetError::InvalidCommand(_))
+    ));
+    s.send(now, loaded(1)).expect("the first");
+    assert!(matches!(
+        s.send(now, loaded(1)),
+        Err(NetError::InvalidCommand(_))
+    ));
+    // A new placement is a new generation, and it invalidates the old one's answer.
+    b.push(placement(2));
     assert_eq!(s.poll(now).len(), 1);
-    s.send(now, Command::WorldLoaded).expect("the second");
+    assert!(matches!(
+        s.send(now, loaded(1)),
+        Err(NetError::InvalidCommand(_))
+    ));
+    s.send(now, loaded(2)).expect("the second");
 }
 
 /// The entry's two events are accepted only while entering; a bad placement is dropped.
@@ -365,7 +385,7 @@ fn entry_progress_and_placement_are_only_for_an_entry() {
     use tessera_net::WorldEntryStage as W;
     let (mut s, b, now) = connecting();
     b.push(Event::WorldEntryProgress { stage: W::Referral });
-    b.push(placement());
+    b.push(placement(1));
     assert!(s.poll(now).is_empty(), "before any entry");
 
     let (mut s, b, now) = entering();
@@ -375,19 +395,22 @@ fn entry_progress_and_placement_are_only_for_an_entry() {
         character: "Aldo".to_owned(),
         position: tessera_net::Location::new(tessera_net::RegionId(1), f64::NAN, 2.0, 3.0),
         yaw: 0.5,
+        generation: 1,
     });
     b.push(Event::WorldPlacementPending {
         character: "Aldo".to_owned(),
         position: tessera_net::Location::new(tessera_net::RegionId(1), 1.0, 2.0, 3.0),
         yaw: f32::INFINITY,
+        generation: 1,
     });
+    b.push(placement(0));
     assert!(s.poll(now).is_empty(), "invalid placements are dropped");
     assert!(matches!(
-        s.send(now, Command::WorldLoaded),
-        Err(NetError::InvalidState { .. })
+        s.send(now, loaded(1)),
+        Err(NetError::InvalidCommand(_))
     ));
     // `WorldEntered` and a refusal end the placement's allowance.
-    b.push(placement());
+    b.push(placement(1));
     let _ = s.poll(now);
     b.push(Event::EnterWorldFailed {
         character: "Aldo".to_owned(),
@@ -396,7 +419,7 @@ fn entry_progress_and_placement_are_only_for_an_entry() {
     let _ = s.poll(now);
     assert_eq!(s.state(), SessionState::Connected);
     assert!(matches!(
-        s.send(now, Command::WorldLoaded),
+        s.send(now, loaded(1)),
         Err(NetError::InvalidState { .. })
     ));
 }

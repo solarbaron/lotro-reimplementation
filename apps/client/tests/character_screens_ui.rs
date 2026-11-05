@@ -309,7 +309,7 @@ fn an_official_selection_has_a_cancel_control_that_a_click_reaches() {
     let actions = screen.handle_event(&mut ui, &ev, &m, 0);
     assert_eq!(actions, [Action::Back]);
     m.apply(Action::Back, now);
-    assert_eq!(m.status(), &tessera_client::screens::Status::Quit);
+    assert_eq!(m.status(), &tessera_client::screens::Status::Cancelled);
     screen.sync(&mut ui, &m, &no_text);
     assert!(!ui.is_visible(back), "the entry is over");
     assert_eq!(ui.text_of(label), "", "the layout's own label");

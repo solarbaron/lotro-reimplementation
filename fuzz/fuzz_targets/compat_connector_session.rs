@@ -664,7 +664,14 @@ fuzz_target!(|data: &[u8]| {
                 let text = String::from_utf8_lossy(chunk).into_owned();
                 let cmd = match chunk.first().copied().unwrap_or(0) % 7 {
                     5 => Command::LeaveWorld,
-                    6 => Command::WorldLoaded,
+                    6 => Command::WorldLoaded {
+                        // The first generation, the in-world form or a stale one.
+                        generation: match chunk.get(1).copied().unwrap_or(0) % 3 {
+                            0 => Some(1),
+                            1 => None,
+                            _ => Some(2),
+                        },
+                    },
                     0 => Command::EnterWorld { character: text },
                     1 => Command::Chat {
                         channel: ChatChannel::Say,

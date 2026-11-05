@@ -14,8 +14,10 @@
 //! `--character-select`, with its own plugin host, §4.5) takes every event. When its part of
 //! the run ends (`App::handed_over_ended`: the player left the character
 //! screens, closed the window, the session ended, or the character screens or the walker
-//! could not start) it is shut down (its session ends and its plugin host stops) and this
-//! window opens again on the account form, both fields empty, with the end's message. The
+//! could not start) it is shut down (its session ends and its plugin host stops). Quit, Escape
+//! and closing the window at the decoded list or while entering then end the client (§4.6);
+//! otherwise this window opens again on the account form, both fields empty, or on the start
+//! screen for a Tessera limit, with the end's message. The
 //! handed-over client gets an allowlist of this run's options ([`handed_over_args`]), never
 //! a copy of them.
 
@@ -393,7 +395,13 @@ impl EntryApp {
                 tracing::debug!("official session: the handed-over client ended with an error");
             }
         }
+        let exits = end == super::flow::HandOverEnd::Exit;
         self.flow.characters_ended(end);
+        if exits {
+            // §4.6: no window opens again; the run ends with code 0.
+            self.handle_request(event_loop);
+            return;
+        }
         if self.gfx.is_none()
             && let Err(e) = self.create_gfx(event_loop)
         {

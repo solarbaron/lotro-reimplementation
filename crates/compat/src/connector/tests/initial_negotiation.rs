@@ -433,10 +433,21 @@ fn the_observed_world_stream_reaches_the_pending_placement_over_the_connector() 
         stages,
         [W::Referral, W::WorldHandshake, W::Identity, W::Placement]
     );
-    s.send(Instant::now(), Command::WorldLoaded)
-        .expect("loaded");
+    s.send(
+        Instant::now(),
+        Command::WorldLoaded {
+            generation: Some(1),
+        },
+    )
+    .expect("loaded");
     assert!(
-        s.send(Instant::now(), Command::WorldLoaded).is_err(),
+        s.send(
+            Instant::now(),
+            Command::WorldLoaded {
+                generation: Some(1)
+            }
+        )
+        .is_err(),
         "once per placement"
     );
     let settle = Instant::now() + Duration::from_millis(200);

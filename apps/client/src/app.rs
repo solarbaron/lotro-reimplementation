@@ -134,6 +134,20 @@ pub(crate) struct App {
     ended: Option<crate::official::flow::HandOverEnd>,
 }
 
+/// A closed handed-over session's end, with `official-entry.md` §8.6's row: a Tessera deadline in the
+/// world has its own words.
+fn session_end(world: &crate::net::World) -> Option<crate::official::flow::HandOverEnd> {
+    use crate::official::flow::HandOverEnd;
+    let reason = world.disconnect_reason()?;
+    Some(
+        if *reason == tessera_net::DisconnectReason::UnsupportedTimeout && world.ended_in_world() {
+            HandOverEnd::InWorldLimit
+        } else {
+            HandOverEnd::SessionEnded(reason.clone())
+        },
+    )
+}
+
 /// The pointer-lock window operations over the winit window (decision 0015 §2.5).
 struct WinitCursor<'a>(&'a Window);
 
@@ -279,18 +293,26 @@ impl App {
         self.end_part(event_loop, end);
     }
 
-    /// `Left`, or the session's end when it has ended (the character screens close on it
-    /// before the frame's own check sees it).
+    /// How the player's leaving ends a handed-over part: the session's end when it has ended (the
+    /// character screens close on it before the frame's own check sees it); the account form for
+    /// the Cancel of a selection; else, at the decoded list and while entering, Quit, Escape and
+    /// closing the window end the client (`official-entry.md` §4.6). In the world, which has no row
+    /// there, it stays the way back to the account form.
     fn left_or_session_end(&self) -> crate::official::flow::HandOverEnd {
-        self.runtime
-            .as_ref()
-            .and_then(|rt| rt.world.as_ref())
+        use crate::official::flow::HandOverEnd;
+        let world = self.runtime.as_ref().and_then(|rt| rt.world.as_ref());
+        if let Some(end) = world
             .filter(|w| w.state() == tessera_net::SessionState::Closed)
-            .and_then(|w| w.disconnect_reason().cloned())
-            .map_or(
-                crate::official::flow::HandOverEnd::Left,
-                crate::official::flow::HandOverEnd::SessionEnded,
-            )
+            .and_then(session_end)
+        {
+            return end;
+        }
+        if self.ui.as_ref().is_some_and(|u| u.entry_cancelled())
+            || world.is_some_and(|w| w.state() == tessera_net::SessionState::InWorld)
+        {
+            return HandOverEnd::Left;
+        }
+        HandOverEnd::Exit
     }
 
     /// Ends the event loop, or, for a handed-over session, only this part of the run with
@@ -339,19 +361,18 @@ impl App {
             // The kind only: the walker's error can name user or install paths.
             rt.fail_handed(HandOverFailure::Walker);
         }
-        let end =
-            if let Some(kind) = rt.handed_failure() {
-                Some(HandOverEnd::Failed(kind))
-            } else {
-                rt.world
-                    .as_ref()
-                    .filter(|w| w.state() == tessera_net::SessionState::Closed)
-                    .map(|w| {
-                        HandOverEnd::SessionEnded(w.disconnect_reason().cloned().unwrap_or(
-                            tessera_net::DisconnectReason::TransportFailed(String::new()),
-                        ))
-                    })
-            };
+        let end = if let Some(kind) = rt.handed_failure() {
+            Some(HandOverEnd::Failed(kind))
+        } else {
+            rt.world
+                .as_ref()
+                .filter(|w| w.state() == tessera_net::SessionState::Closed)
+                .map(|w| {
+                    session_end(w).unwrap_or(HandOverEnd::SessionEnded(
+                        tessera_net::DisconnectReason::TransportFailed(String::new()),
+                    ))
+                })
+        };
         match end {
             Some(e) => self.end_handed_part(e),
             None => false,
@@ -1101,14 +1122,19 @@ mod tests {
     }
 
     /// `official-entry.md` §8.7: in a handed-over run, leaving, the session's end and a
-    /// walker that cannot start end only this part of the run, each with its reason.
+    /// walker that cannot start end this part of the run, each with its reason; the start screen's
+    /// window decides what follows.
     #[test]
     fn a_handed_over_run_ends_its_part_not_the_client() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut app = handed_app(dir.path());
         assert!(!app.handed_over_ended());
         assert!(!app.handed_over_check());
-        assert_eq!(app.left_or_session_end(), HandOverEnd::Left);
+        assert_eq!(
+            app.left_or_session_end(),
+            HandOverEnd::Exit,
+            "§4.6: at the list, Quit, Escape and closing the window end the client"
+        );
         assert!(app.end_handed_part(HandOverEnd::Left), "not the event loop");
         assert!(app.end_handed_part(HandOverEnd::Failed(HandOverFailure::Run)));
         assert!(app.handed_over_ended());

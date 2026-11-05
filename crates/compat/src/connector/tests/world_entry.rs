@@ -213,7 +213,7 @@ fn the_session_start_is_not_world_entry_and_the_stage_is_named() {
     assert!(!sent.contains(&0xF4), "{sent:x?}");
     assert!(!sent.contains(&0x30), "{sent:x?}");
     // The client's loading signal changes nothing either.
-    let _ = d.command(&Command::WorldLoaded, 4.0);
+    let _ = d.command(&Command::WorldLoaded { generation: None }, 4.0);
     d.step(4.1, true, &go);
     assert!(!opcodes(&sent_packets(&world)).contains(&0xF4));
     // No chat connection is due.
@@ -584,11 +584,7 @@ fn a_session_start_on_the_login_connection_stops_no_wait() {
     world.deliver(server.event(0x90, &ready), WORLD_SERVER);
     d.step(30.0, true, &go);
     assert!(!d.ended());
-    assert_eq!(
-        d.entry_progress().other,
-        2,
-        "counted with the other traffic"
-    );
+    assert_eq!(d.counters().session_starts_repeated, 1);
     d.step(23.0 + ENTER_WORLD_TIMEOUT_SEC, false, &go);
     assert!(timed_out_locally(&d.take_events()));
 }

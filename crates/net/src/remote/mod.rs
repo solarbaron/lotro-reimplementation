@@ -268,7 +268,7 @@ fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
         }
         Command::Disconnect => Routed::Disconnect,
         // The test server does not wait for the client's loading (nothing to send).
-        Command::WorldLoaded => Routed::Local,
+        Command::WorldLoaded { .. } => Routed::Local,
         // `tessera-protocol.md` has no message that leaves the world for character
         // selection.
         Command::LeaveWorld => {

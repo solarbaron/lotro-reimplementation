@@ -597,22 +597,27 @@ fine. Format-level terms like "DID" or "landblock" are fine.
 - **M8 (official-server compatibility) is in scope** by the owner's decision of 2026-10-11
   (`docs/decisions/0034-official-server-compatibility.md`); **partly done and needs more
   work** (`docs/ROADMAP.md` M8 status):
-  - **Spec pass 10 and C8 (2026-10-31 to 11-04; the current state, read this first):** from two
+  - **Spec pass 10 and C8 (2026-10-31 to 11-05; the current state, read this first):** from two
     passive captures of the owner's own sessions, pass 10 on branch `m8-spec-pass-10` (Review, not
-    merged, fresh dirty-room review pending; checks in its `docs/m8-remediation.md` §21–§26) corrects
+    merged, fresh dirty-room review pending; checks in its `docs/m8-remediation.md` §21–§28) corrects
     the checksum, first sequence numbers, flags, compact integers, challenge and accept, ISAAC seeds and
     codec directions, and adds the referral, the world handshake, the initial install advertisement
     (0xEC after 0xDD), the character-list appearance codec and the 6F destination. Where the branch and
     the stage-1 specs below disagree, the branch is current. C8 (`crates/compat/src/initial.rs`,
-    `session`, `connector`, `world`) follows the branch at 9e71f8f2 and is merged by the owner's decision
+    `session`, `connector`, `world`) follows the branch at a9f97b31 and is merged by the owner's decision
     without waiting for spec acceptance (decision 0046; a deliberate exception to decision 0018).
-    No live run has been made yet. Production login reaches the character list and selection, then the
-    world handshake and 0x90, and stops at the readiness wait: no F4 and no `WorldEntered`, because
-    OPEN-WORLD-9 and OPEN-SESSION-18 are open. Interim rules (header word, FlowControl, counters, EC
-    order) are labelled in the code and known or suspected to differ from the official client.
-    Decision 0046 records the owner's scope: any user past the warning; truthful install data only;
-    0x13D, 0x19E, the first world RPC and chat at login omitted; create and delete withheld.
-    Diagnostics: `TESSERA_OFFICIAL_DUMP_DIR`, `TESSERA_OFFICIAL_LOGIN_SERVER`.
+    No live run has been made yet. A production login reaches the character list and a selection, then
+    the referral, which retires the login connection with no Disconnect, the world handshake and 0x90.
+    A full pending store counts and skips, and the first placement has no source, so the entry stops at
+    the readiness wait: `UnsupportedTimeout` after 30 s, one Disconnect, the start screen, with no F4 and
+    no `WorldEntered`, because OPEN-WORLD-9 is open. Quit, Escape and closing the window at the list or
+    while entering end the client; Cancel goes to the account form. Move and local mounts are refused
+    locally, and typed logout closes with no RPC. Interim rules (header word, FlowControl, counters, EC
+    order) and the writer's open questions are labelled in the code and known or suspected to differ from
+    the official client. Decision 0046 records the owner's scope: any user past the warning; truthful
+    install data only; 0x13D, 0x19E, the first world RPC, later world 0x30, 0x30000035, 0x24, 0x19A and
+    chat at login omitted; create and delete withheld. Diagnostics: `TESSERA_OFFICIAL_DUMP_DIR`,
+    `TESSERA_OFFICIAL_LOGIN_SERVER`.
   - **Specs: stage 1 Accepted (2026-10-25).** `official-login.md`, `official-session.md`,
     `official-messages-world.md`, `official-messages-play.md` and `property-system.md` §10
     passed independent review and the default-mode audit with notes after seven remediation

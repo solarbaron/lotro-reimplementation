@@ -251,14 +251,16 @@ impl<F: NetFactory> LiveConnector<F> {
 /// Whether the live session carries `command` at all (the rest is refused at once,
 /// `NetError::InvalidCommand`): the Account commands, `EnterWorld`, `LeaveWorld`,
 /// `WorldLoaded`, `Move`, `Chat` and the chat-server channel commands. Character creation
-/// and deletion, and the gameplay groups, wait for their specs.
+/// and deletion, and the gameplay groups, wait for their specs. Labelled
+/// (`docs/m8-remediation.md` §28 fix 30): `Chat` still passes here, since no production path reaches
+/// the world, until the writer's table of held commands and their refusal strings.
 fn carried(command: &Command) -> bool {
     matches!(
         command,
         Command::Account(_)
             | Command::EnterWorld { .. }
             | Command::LeaveWorld
-            | Command::WorldLoaded
+            | Command::WorldLoaded { .. }
             | Command::Move { .. }
             | Command::Chat { .. }
             | Command::Social(
@@ -282,6 +284,9 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
         let revocation = network.revocation();
         let net = self.factory.make(network);
         let control = Arc::new(Control::new(credentials));
+        if net.readiness_specified() {
+            control.carry_moves();
+        }
         let (cmd_tx, cmd_rx) = mpsc::sync_channel(COMMAND_QUEUE);
         let (ev_tx, ev_rx) = mpsc::channel();
         let input = worker::WorkerInput {
@@ -343,6 +348,10 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
             return Ok(());
         };
         if matches!(command, Command::Move { .. }) {
+            // §9.3.9: while `0x24` is held a move is refused here, and the thread is not woken.
+            if !r.control.moves_carried() {
+                return Err(NetError::InvalidCommand(session_phase::MOVE_HELD));
+            }
             // The newest-move slot (§19.4): a move replaces the one waiting.
             if r.control.put_move(command) && tx.try_send(Msg::Wake).is_err() {
                 r.control.wake_not_queued();

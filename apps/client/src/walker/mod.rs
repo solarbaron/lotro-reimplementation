@@ -132,6 +132,13 @@ use self::view::{Anchor, Frustum};
 use self::water::WaterLayer;
 use crate::net::PlayerLocation;
 
+/// Whether the walker reports its position in this mode. In fly mode that position is the fly
+/// camera's, which is no character's, so an official session never gets it; offline sessions take
+/// it as before.
+const fn reports_moves(mode: MoveMode, official: bool) -> bool {
+    !(official && matches!(mode, MoveMode::Fly))
+}
+
 /// What the walker needs of a world session: the player's authoritative position and a
 /// way to report movement. The client's [`crate::net::World`] implements it; a remote
 /// session (M7) or a test double can too.
@@ -143,6 +150,15 @@ pub trait WalkerSession {
     /// ([`crate::net::World`]'s answer); the default, like every offline session, holds nothing.
     fn holds_input(&self, screens_open: bool) -> bool {
         let _ = screens_open;
+        false
+    }
+    /// Whether this is a session of the official service. Every offline session answers false.
+    fn is_official_session(&self) -> bool {
+        false
+    }
+    /// Whether a mount the player asks for is refused here, with a local system line saying so.
+    /// Every offline session mounts locally.
+    fn refuse_local_mount(&mut self) -> bool {
         false
     }
     /// Reports the player's movement (`heading` in radians, 0 = east, counter-clockwise;
@@ -2067,7 +2083,7 @@ impl Walker {
             }
         }
         // The `toggle_mount` action (`walker.md` §16.4) does what `/ride` does.
-        if ce.toggle_mount {
+        if ce.toggle_mount && !world.as_deref_mut().is_some_and(|w| w.refuse_local_mount()) {
             self.toggle_mount();
         }
         // Mounts (`walker.md` §16.8): requests, the mover, clips, the camera's offsets.
@@ -2965,6 +2981,9 @@ impl Walker {
     }
 
     fn report_move(&mut self, world: &mut dyn WalkerSession, now: Instant) {
+        if !reports_moves(self.controls.mode(), world.is_official_session()) {
+            return;
+        }
         if !self.controls.placed()
             || self
                 .move_sent
@@ -4053,6 +4072,21 @@ impl Walker {
         }
         self.streamer.clear();
         self.places = None;
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::{MoveMode, reports_moves};
+
+    /// The fly camera's position never goes to an official session; offline sessions and walking are
+    /// as before.
+    #[test]
+    fn fly_mode_reports_nothing_to_an_official_session() {
+        assert!(!reports_moves(MoveMode::Fly, true));
+        assert!(reports_moves(MoveMode::Walk, true));
+        assert!(reports_moves(MoveMode::Fly, false));
+        assert!(reports_moves(MoveMode::Walk, false));
     }
 }
 

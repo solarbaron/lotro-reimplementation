@@ -13,7 +13,7 @@
 //! | `0x12C` (version) | `0x12D` (accepted) and the character list `0x6C` (one character, "Aldo") |
 //! | `0x6F` (enter world) | `0x90` (session start), `0x5E` (portal space, stamp 0, scene [`ENTRY_SCENE_ID`]), the player's placement `0xCE` (teleport stamp 0, at [`PLAYER_AT`]) and `0x7C` (`login_finished`), in the order of `official-messages-world.md` §4.3.3; no referral: the login connection carries the world |
 //! | `0xF4` (portal exit) | nothing (counted) |
-//! | `0x30` (an RPC: the logout request of `LeaveWorld`) | a world teardown `0x3000001B` and the list `0x6C` again |
+//! | `0x30` (an RPC; the driver sends none on these paths, `LeaveWorld` closes) | a world teardown `0x3000001B` and the list `0x6C` again |
 //! | `0xD0` (a missing-entity query) | nothing (counted) |
 //!
 //! [`SyntheticService::new`] is that historical script, for the tests of what follows the
@@ -1554,7 +1554,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use tessera_net::account::{AccountCommand, AccountEvent, WorldId};
-    use tessera_net::{Command, Event, Session, SessionState};
+    use tessera_net::{Command, Event, Session};
 
     use super::*;
     use crate::consent::{self, UserConfirmation, WarningText};
@@ -1629,7 +1629,7 @@ mod tests {
         service.revoke();
         let before = service.seen();
         // A loading signal and a logout request would each send a blob.
-        let _ = s.send(Instant::now(), Command::WorldLoaded);
+        let _ = s.send(Instant::now(), Command::WorldLoaded { generation: None });
         let _ = s.send(Instant::now(), Command::LeaveWorld);
         wait(&mut s, "the end", |e| {
             matches!(e, Event::Disconnected { .. })
@@ -1791,17 +1791,24 @@ mod tests {
         wait(&mut s, "WorldEntered", |e| {
             matches!(e, Event::WorldEntered { .. })
         });
-        s.send(Instant::now(), Command::WorldLoaded)
+        s.send(Instant::now(), Command::WorldLoaded { generation: None })
             .expect("loaded");
+        // `official-session.md` §9.3.9: a typed logout closes with one Disconnect and no RPC.
         s.send(Instant::now(), Command::LeaveWorld).expect("leave");
-        wait(&mut s, "the return", |e| {
-            matches!(e, Event::ReturnedToCharacterSelect { .. })
+        wait(&mut s, "the close", |e| {
+            matches!(
+                e,
+                Event::Disconnected {
+                    reason: tessera_net::DisconnectReason::ClientRequested
+                }
+            )
         });
-        assert_eq!(s.state(), SessionState::Connected);
-        let blobs = service.seen().blobs;
-        for op in [0x12C, 0x6F, 0xF4, 0x30] {
-            assert!(blobs.contains(&op), "{op:#x} in {blobs:x?}");
+        let seen = service.seen();
+        for op in [0x12C, 0x6F, 0xF4] {
+            assert!(seen.blobs.contains(&op), "{op:#x} in {:x?}", seen.blobs);
         }
+        assert!(!seen.blobs.contains(&0x30), "{:x?}", seen.blobs);
+        assert_eq!(seen.disconnects, 1);
         assert_eq!(service.seen().binds, 1);
     }
 }

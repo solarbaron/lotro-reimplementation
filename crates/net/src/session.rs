@@ -220,6 +220,10 @@ pub enum Event {
         position: Location,
         /// The character's heading there, in radians.
         yaw: f32,
+        /// The placement's per-session token, from 1 (`official-session.md` §9.3.11):
+        /// [`Command::WorldLoaded`] names it. Labelled (`docs/m8-remediation.md` §28 fix 27): no
+        /// interior anchor here yet.
+        generation: u64,
     },
     /// The replicated state of an entity or the player changed (`docs/ARCHITECTURE.md`
     /// §19.1 "property changed"): its whole [`EntityState`] after the change.
@@ -456,21 +460,27 @@ pub enum Command {
     /// [`Event::ReturnedToCharacterSelect`] once the world is left (a timed logout may come
     /// first, as system chat lines); one that cannot leave the world refuses the command
     /// with [`NetError::InvalidCommand`]. The session stays [`SessionState::InWorld`] until
-    /// the answer.
+    /// the answer. The official backend has no return to the list: it closes the session
+    /// (`official-session.md` §9.3.9), and `Disconnected { ClientRequested }` is its answer.
     ///
     /// Only the player's own action sends it (a typed command or a menu choice, device
     /// input): never start-up lines, scripts, plugins or automation (decision 0034).
     LeaveWorld,
     /// The client finished loading the world around the player's latest placement. While
-    /// entering, once per [`Event::WorldPlacementPending`] (`official-entry.md` §8.7): it sets the
-    /// local gate and fabricates no server readiness. In the world
+    /// entering, once per [`Event::WorldPlacementPending`] (`official-entry.md` §8.7), naming its
+    /// `generation`: it sets the local gate and fabricates no server readiness, and a stale, duplicate
+    /// or early one is [`NetError::InvalidCommand`]. In the world `generation` is `None`
     /// (`official-messages-play.md` §4.5 item 4): after [`Event::WorldEntered`] and
     /// after each later [`Event::LocationReport`] with [`LocationCause::Teleported`] for the
     /// player, once the client has placed the player at that location and its area is
     /// loaded. One signal per placement; a backend that waits for it (portal space) takes
     /// one signal per portal space and ignores the others. Backends that do not wait for
     /// the client's loading accept and ignore it.
-    WorldLoaded,
+    WorldLoaded {
+        /// The pending placement it answers while entering; `None` in the world. This shape is
+        /// labelled: the in-world signal has no generation yet (`docs/m8-remediation.md` §28 fix 27).
+        generation: Option<u64>,
+    },
 }
 
 impl Command {
@@ -499,7 +509,7 @@ impl Command {
             Self::Progression(c) => c.name(),
             Self::Account(c) => c.name(),
             Self::LeaveWorld => "LeaveWorld",
-            Self::WorldLoaded => "WorldLoaded",
+            Self::WorldLoaded { .. } => "WorldLoaded",
         }
     }
 }
@@ -586,9 +596,9 @@ pub struct Session {
     /// When a dropped Account event of each variant was last logged (one line per variant
     /// per [`ACCOUNT_LOG_INTERVAL`], §8.2).
     account_logged: [Option<Instant>; 6],
-    /// A surfaced [`Event::WorldPlacementPending`] has had no [`Command::WorldLoaded`] yet
-    /// (`official-entry.md` §8.7: once per placement while entering).
-    placement_unanswered: bool,
+    /// The generation of a surfaced [`Event::WorldPlacementPending`] that has had no
+    /// [`Command::WorldLoaded`] yet (`official-entry.md` §8.7: once per placement while entering).
+    placement_unanswered: Option<u64>,
 }
 
 /// One log line per Account variant at most this often for dropped events
@@ -626,7 +636,7 @@ impl Session {
             world_ids: Vec::new(),
             login_refused: false,
             account_logged: [None; 6],
-            placement_unanswered: false,
+            placement_unanswered: None,
         }
     }
 
@@ -710,9 +720,17 @@ impl Session {
             | Command::World(_)
             | Command::Progression(_)
             | Command::LeaveWorld => self.state == S::InWorld,
-            Command::WorldLoaded => {
-                self.state == S::InWorld
-                    || (self.state == S::EnteringWorld && self.placement_unanswered)
+            Command::WorldLoaded { generation } => {
+                // `official-session.md` §9.3.11: while entering it answers the pending placement it
+                // names; a stale, duplicate or early one is refused here, locally.
+                if self.state == S::EnteringWorld
+                    && (generation.is_none() || *generation != self.placement_unanswered)
+                {
+                    return Err(NetError::InvalidCommand(
+                        "no pending placement of that generation",
+                    ));
+                }
+                matches!(self.state, S::InWorld | S::EnteringWorld)
             }
             Command::Account(_) => self.state == S::Connecting && !self.login_refused,
             Command::Disconnect => !matches!(self.state, S::Idle | S::Closing | S::Closed),
@@ -752,10 +770,10 @@ impl Session {
             } => Some((*location, *heading)),
             _ => None,
         };
-        let answers_placement = matches!(command, Command::WorldLoaded);
+        let answers_placement = matches!(command, Command::WorldLoaded { .. });
         self.backend.submit(now, command)?;
         if answers_placement {
-            self.placement_unanswered = false;
+            self.placement_unanswered = None;
         }
         if let Some((location, heading)) = moved_to {
             self.track_player(location, heading);
@@ -904,7 +922,7 @@ impl Session {
                 } else if self.state == S::EnteringWorld {
                     self.state = S::InWorld;
                     self.player = Some(*player);
-                    self.placement_unanswered = false;
+                    self.placement_unanswered = None;
                     Verdict::Surface
                 } else if closing {
                     Verdict::Stale
@@ -982,11 +1000,16 @@ impl Session {
                 character,
                 position,
                 yaw,
+                generation,
             } => {
-                if !position.is_valid() || !yaw.is_finite() || !is_valid_name(character) {
+                if !position.is_valid()
+                    || !yaw.is_finite()
+                    || !is_valid_name(character)
+                    || *generation == 0
+                {
                     Verdict::Invalid("invalid pending placement")
                 } else if self.state == S::EnteringWorld {
-                    self.placement_unanswered = true;
+                    self.placement_unanswered = Some(*generation);
                     Verdict::Surface
                 } else if closing {
                     Verdict::Stale
@@ -997,7 +1020,7 @@ impl Session {
             Event::EnterWorldFailed { .. } => match self.state {
                 S::EnteringWorld => {
                     self.state = S::Connected;
-                    self.placement_unanswered = false;
+                    self.placement_unanswered = None;
                     Verdict::Surface
                 }
                 _ if closing => Verdict::Stale,
@@ -1072,7 +1095,7 @@ impl Session {
                 self.player_anchor = None;
                 self.world_ids.clear();
                 self.login_refused = false;
-                self.placement_unanswered = false;
+                self.placement_unanswered = None;
                 if ok {
                     Verdict::Surface
                 } else {
@@ -1238,7 +1261,7 @@ fn validate(command: &Command) -> Result<(), NetError> {
         | Command::Stance { .. }
         | Command::Account(_)
         | Command::LeaveWorld
-        | Command::WorldLoaded => {}
+        | Command::WorldLoaded { .. } => {}
         Command::Character(c) => c.validate().map_err(NetError::InvalidCommand)?,
         Command::Inventory(c) => c.validate().map_err(NetError::InvalidCommand)?,
         Command::Combat(c) => c.validate().map_err(NetError::InvalidCommand)?,

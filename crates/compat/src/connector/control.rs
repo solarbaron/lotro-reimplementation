@@ -31,6 +31,8 @@ pub struct Control {
     pending: AtomicUsize,
     /// A selection is refused locally from here on (`SessionDriver::re_entry_blocked`).
     re_entry_blocked: AtomicBool,
+    /// [`Self::carry_moves`] was called.
+    moves_carried: AtomicBool,
 }
 
 impl Control {
@@ -56,6 +58,18 @@ impl Control {
     /// A selection is refused locally from here on (`official-session.md` §9.3.9).
     pub fn block_re_entry(&self) {
         self.re_entry_blocked.store(true, Ordering::SeqCst);
+    }
+
+    /// A test's synthetic in-world path carries moves (`ConnectorNet::readiness_specified`). On every
+    /// production path `0x24` is held, and the backend refuses a move at once.
+    pub fn carry_moves(&self) {
+        self.moves_carried.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether moves go to the thread at all.
+    #[must_use]
+    pub fn moves_carried(&self) -> bool {
+        self.moves_carried.load(Ordering::SeqCst)
     }
 
     /// Whether a selection is refused locally.

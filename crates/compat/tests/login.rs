@@ -26,8 +26,8 @@ use tessera_compat::login::{
     fetch_world_status, is_rfc1918_queue_url, language_to_feed_code,
     parse_dat_superblock_didver_descriptor, parse_get_datacenters_response,
     parse_login_account_response, resolve_bit_tree_table, resolve_install_language,
-    resolve_ticket_intake, root_did_map_from_superblock, split_arg_template_argv,
-    substitute_arg_template,
+    resolve_ticket_intake, root_did_map_from_superblock, select_language_from_list,
+    split_arg_template_argv, substitute_arg_template,
 };
 use tessera_compat::session::BIT_TREE_TABLE_FORMAT_UUID;
 use tessera_compat::version_resource::read_version_resource_from_file;
@@ -1356,7 +1356,7 @@ fn a_present_unusable_language_does_not_fall_back() {
         )
         .unwrap();
         assert!(matches!(
-            resolve_install_language(dir.path(), Some("fr-FR")),
+            resolve_install_language(dir.path(), Some("FR")),
             Err(LoginError::ConfigInvalid { .. })
         ));
     }
@@ -1734,4 +1734,47 @@ fn user_preferences_read_the_net_keys_with_their_defaults() {
     assert_eq!(prefs.net.connection_speed_kbps, 0.0);
     let on = UserPreferences::parse(b"[Net]\nComputeUniquePort=True\n").unwrap();
     assert!(on.net.compute_unique_port);
+}
+
+/// `official-login.md` §2.3 (P10-10I): only the whole value counts, trimmed of ASCII whitespace and
+/// ASCII case aside, and it must name an archive token. A tag or a feed code is no preference, and
+/// the install's fallback applies.
+#[test]
+fn only_a_whole_archive_token_is_a_language_preference() {
+    let installed: Vec<String> = ["DE", "EN_GB", "English", "FR"]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+    for (pref, want) in [
+        (Some("FR"), "FR"),
+        (Some("  fr\t"), "FR"),
+        (Some("en_gb"), "EN_GB"),
+        (Some("english"), "English"),
+        // Each was a mapped tag once; none is a token.
+        (Some("en"), "English"),
+        (Some("en-gb"), "English"),
+        (Some("fr-FR"), "English"),
+        (Some("de_de"), "English"),
+        (Some("IT"), "English"),
+        (Some(""), "English"),
+        (None, "English"),
+    ] {
+        assert_eq!(
+            select_language_from_list(&installed, pref).unwrap(),
+            want,
+            "{pref:?}"
+        );
+    }
+    // A token that is not installed falls back to the first in order without `English`.
+    let others: Vec<String> = ["EN_GB", "FR"].iter().map(|s| (*s).to_owned()).collect();
+    assert_eq!(
+        select_language_from_list(&others, Some("DE")).unwrap(),
+        "EN_GB"
+    );
+    // An installed label outside the tokens is no preference either.
+    let unknown: Vec<String> = ["AA", "BB"].iter().map(|s| (*s).to_owned()).collect();
+    assert_eq!(
+        select_language_from_list(&unknown, Some("BB")).unwrap(),
+        "AA"
+    );
 }

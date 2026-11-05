@@ -1088,30 +1088,34 @@ fn the_bytes_of_the_tombstones_are_capped_too() {
 /// final part, whichever part comes first, and a count that cannot fit at its first part, before
 /// anything opens or is allocated.
 #[test]
-fn the_reassembled_size_limit_is_one_mebibyte() {
+fn the_worst_case_buffer_of_a_fragmented_blob_is_checked_before_allocation() {
     const ONE_MIB: usize = 1024 * 1024;
+    // §5.6.4 rule 1: the count alone decides, for a final and a non-final part alike. 2404 parts of
+    // 436 bytes fit and 2405 do not, even with a one-byte final part.
+    let fits = 2404 * 436;
+    assert!(fits <= ONE_MIB && fits + 436 > ONE_MIB);
     let mut r = BlobReassembler::default();
-    let frags = parts(2, 1, 7, 0x55, &vec![0x5A; ONE_MIB]);
     let mut done = None;
-    for f in frags {
+    for f in parts(2, 1, 7, 0x55, &vec![0x5A; fits]) {
         done = r.ingest(1, f, 0.0).unwrap();
     }
-    assert_eq!(done.expect("whole").payload.len(), ONE_MIB);
-    let over = parts(2, 2, 8, 0x55, &vec![0x5A; ONE_MIB + 1]);
-    assert_eq!(
-        r.check_packet(1, &over[over.len() - 1..], 0.0),
-        Err(SessionError::BlobTooLarge {
-            total_bytes: ONE_MIB + 1,
-            limit: ONE_MIB,
-        })
-    );
+    assert_eq!(done.expect("whole").payload.len(), fits);
+    let over = parts(2, 2, 8, 0x55, &vec![0x5A; fits + 1]);
+    assert_eq!(over.len(), 2405);
+    for part in [&over[0], &over[1], &over[2404]] {
+        assert_eq!(
+            r.check_packet(1, std::slice::from_ref(part), 0.0),
+            Err(SessionError::BlobTooLarge {
+                total_bytes: 2405 * 436,
+                limit: ONE_MIB,
+            }),
+            "part {}",
+            part.header.frag_index
+        );
+    }
     assert_eq!(r.incomplete_len(), 0);
-    let mut too_many = over[0].clone();
-    too_many.header.num_frags += 1;
-    assert!(matches!(
-        r.check_packet(1, std::slice::from_ref(&too_many), 0.0),
-        Err(SessionError::BlobTooLarge { .. })
-    ));
+    // A total below the limit with that count is refused too: the deliberate conservative policy.
+    assert!(fits + 1 < ONE_MIB);
 }
 
 /// The one action at 64 incomplete blobs: the whole datagram is dropped and counted, its siblings not

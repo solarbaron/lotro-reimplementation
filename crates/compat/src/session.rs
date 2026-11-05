@@ -4419,11 +4419,16 @@ impl IncompleteBlob {
 /// Labelled (`docs/m8-remediation.md` §27 fix 2): keeping the whole body of a completed identity,
 /// and what past the caps goes first, are this choice's; the writer may change them.
 pub const BLOB_TOMBSTONE_SEC: f64 = 30.0;
-/// §9.3.9's cap on completed identities of queues `2..=4` per connection and direction.
+/// §9.3.9's cap on full-body tombstones of queues `2..=4` per connection and direction. Each
+/// delivered body has its own, so a repeat of a conflicting second body deduplicates too.
 pub const MAX_BLOB_TOMBSTONES: usize = 64;
+/// §9.3.9: a queue-3 baseline expires this long after the last delivered blob of its key, and the
+/// key may then take a new first value.
+pub const QUEUE3_BASELINE_SEC: f64 = 30.0;
 /// Most bytes of completed bodies kept for comparison per connection and direction (engineering
 /// choice under §9.3.9's cap: 64 bodies of the largest reassembled size would be 64 MiB). Past it
-/// the oldest are evicted and counted, as past the count.
+/// the oldest are evicted and counted, as past the count. Labelled: the spec has no such cap, and
+/// the writer is asked whether it may stay (`docs/m8-remediation.md` §28).
 pub const MAX_TOMBSTONE_BYTES: usize = 8 * 1024 * 1024;
 
 /// A completed identity on queues `2..=4` (§9.3.9): its full body, opcode and count, compared
@@ -4470,8 +4475,8 @@ enum PacketUndo {
     },
     /// An entry this datagram completed or superseded.
     Removed(BlobKey, IncompleteBlob),
-    /// A queue-3 baseline this datagram set, with its value before.
-    Baseline(Queue3Slot, Option<u16>),
+    /// A queue-3 baseline this datagram set or refreshed, with its value before.
+    Baseline(Queue3Slot, Option<Queue3Baseline>),
 }
 
 /// Everything needed to put the reassembler back as it was before a datagram (§9.3.9: nothing is
@@ -4503,7 +4508,8 @@ pub struct ReassemblyCounts {
     pub queue3_equal: u64,
     /// Completed queue-3 blobs at distance 32,768, delivered once without replacing the baseline.
     pub queue3_ambiguous: u64,
-    /// Queue-3 comparison keys past [`MAX_ORDER_GROUPS`], delivered without a comparison.
+    /// Completed queue-3 blobs of a new key at a full [`MAX_ORDER_GROUPS`] map: skipped, their
+    /// datagram accepted and acknowledged and their siblings delivered (§10.2 Vector 22).
     pub queue3_groups_over: u64,
     /// `OmitChunkInfo` control fragments, which have no application dispatch (§9.3.9).
     pub empty_controls: u64,
@@ -4517,6 +4523,33 @@ type BlobKey = (u16, u8, u16, u16, u64);
 
 /// A queue-3 comparison key (§9.3.9): sender, recipient and sequence group.
 type Queue3Slot = (u16, u64, u16);
+
+/// A queue-3 baseline: the latest word of its key, and when a blob of the key was last delivered.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Queue3Baseline {
+    word: u16,
+    delivered_at: f64,
+}
+
+/// What the reassembler did with one completed blob, for the live evidence log (§9.3.11 SESSION-19):
+/// fixed words and numbers, never a body. Dropped at the next datagram.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueDecision {
+    /// The fragment's queue.
+    pub queue: u8,
+    /// The sequence group (queue 3).
+    pub group: u16,
+    /// The ordering word.
+    pub order: u16,
+    /// The fragment's recipient: stays in memory, the log has a token for it.
+    pub recipient: u64,
+    /// `deliver`, `duplicate`, `older-discard` or `key-cap-skip`.
+    pub action: &'static str,
+    /// `first`, `newer`, `equal`, `ambiguous`, `older`, or `none` outside queue 3.
+    pub distance: &'static str,
+    /// Whether the key had a live baseline when the blob completed.
+    pub baseline_present: bool,
+}
 
 fn blob_key(sender_rec_id: u16, hdr: &BlobFragmentHeader) -> BlobKey {
     if hdr.queue_id == 3 {
@@ -4540,6 +4573,9 @@ fn blob_key(sender_rec_id: u16, hdr: &BlobFragmentHeader) -> BlobKey {
 
 /// An `OmitChunkInfo` control with no chunk fields: opcode and length are zero, and it has no
 /// application dispatch (§9.3.9, `OPEN-SESSION-14` keeps its meaning).
+///
+/// Labelled (`docs/m8-remediation.md` §28 fix 7): `0x90`, with a fragment count and no length, is
+/// not read as a control here; the writer has been asked for one row per form.
 const fn is_empty_control(hdr: &BlobFragmentHeader) -> bool {
     hdr.blob_flags & BLOB_FLAG_OMIT_CHUNK_INFO != 0 && hdr.num_frags == 1
 }
@@ -4547,6 +4583,10 @@ const fn is_empty_control(hdr: &BlobFragmentHeader) -> bool {
 /// Whether a fragment is one of a blob with an identity (§9.3.9: an unfragmented queue-1 message has
 /// none). Its decoded blob ID 0 is no blob ID, so it can neither repeat nor conflict with a
 /// fragmented queue-1 blob whose ID is 0.
+///
+/// Labelled (`docs/m8-remediation.md` §28 fix 4): the text no longer limits the identity to queues
+/// 2 to 4, and :1742 names only 2, 3 and 4. A fragmented queue-1 blob keeps this reassembly identity
+/// and takes no tombstone ([`BlobReassembler::completed`]).
 const fn has_identity(hdr: &BlobFragmentHeader) -> bool {
     hdr.queue_id != 1 || hdr.num_frags > 1
 }
@@ -4584,8 +4624,10 @@ pub struct BlobReassembler {
     /// The bytes of [`Self::tombstones`]' bodies.
     tombstone_bytes: usize,
     /// The latest accepted word per queue-3 comparison key: sender, recipient and group (§9.3.9).
-    queue3_latest: HashMap<Queue3Slot, u16>,
+    queue3_latest: HashMap<Queue3Slot, Queue3Baseline>,
     counts: ReassemblyCounts,
+    /// What the last datagram's completed blobs came to, for the evidence log.
+    decisions: Vec<QueueDecision>,
 }
 
 /// Where a queue-3 ordering word lies from the latest accepted one of its comparison key (§9.3.9):
@@ -4636,6 +4678,7 @@ impl BlobReassembler {
             tombstone_bytes: 0,
             queue3_latest: HashMap::new(),
             counts: ReassemblyCounts::default(),
+            decisions: Vec::new(),
         }
     }
 
@@ -4645,23 +4688,19 @@ impl BlobReassembler {
         self.counts
     }
 
-    /// The tombstone of `key`, if any. A datagram's work starts with [`Self::purge_expired`], so
-    /// what is here is live.
-    fn tombstone(&self, key: &BlobKey) -> Option<&BlobTombstone> {
-        self.tombstones.iter().find(|t| t.key == *key)
+    /// The tombstones of `key`, each with one delivered body. A datagram's work starts with
+    /// [`Self::purge_expired`], so what is here is live.
+    fn tombstones_of<'a>(&'a self, key: &'a BlobKey) -> impl Iterator<Item = &'a BlobTombstone> {
+        self.tombstones.iter().filter(move |t| t.key == *key)
     }
 
-    /// Remembers a completed identity. What this leaves over the caps goes at the datagram's end
+    /// Remembers a delivered body as its own tombstone (§9.3.9: "each successive delivered
+    /// opcode/body/count"). What this leaves over the caps goes at the datagram's end
     /// ([`Self::trim_tombstones`]), so whether one fragment repeats a completed identity does not
-    /// depend on where its siblings stand in the datagram (§9.3.9).
+    /// depend on where its siblings stand in the datagram.
     fn remember(&mut self, tombstone: BlobTombstone, tx: &mut PacketTransaction) {
         tx.tombstones
             .get_or_insert_with(|| (self.tombstones.clone(), self.tombstone_bytes));
-        let before = self.tombstones.len();
-        self.tombstones.retain(|t| t.key != tombstone.key);
-        if self.tombstones.len() != before {
-            self.tombstone_bytes = self.tombstones.iter().map(|t| t.body.len()).sum();
-        }
         self.tombstone_bytes = self.tombstone_bytes.saturating_add(tombstone.body.len());
         self.tombstones.push_back(tombstone);
     }
@@ -4679,64 +4718,108 @@ impl BlobReassembler {
         }
     }
 
-    /// Sets a queue-3 baseline, keeping what it was for the datagram's undoing.
-    fn set_baseline(&mut self, slot: Queue3Slot, order: u16, tx: &mut PacketTransaction) {
-        let before = self.queue3_latest.insert(slot, order);
+    /// Sets a queue-3 baseline with a delivery at `now_sec`, keeping what it was for the datagram's
+    /// undoing.
+    fn set_baseline(
+        &mut self,
+        slot: Queue3Slot,
+        word: u16,
+        now_sec: f64,
+        tx: &mut PacketTransaction,
+    ) {
+        let before = self.queue3_latest.insert(
+            slot,
+            Queue3Baseline {
+                word,
+                delivered_at: now_sec,
+            },
+        );
         tx.undo.push(PacketUndo::Baseline(slot, before));
     }
 
-    /// The queue-3 gate for a completed identity: whether it is delivered, with the latest accepted
-    /// word and the superseding of older incomplete ones done. The comparison key has the recipient,
-    /// so another recipient has its own baseline.
+    /// The queue-3 gate for a completed identity (§9.3.9): whether it is delivered, what it was, and
+    /// the baseline and the superseding of older incomplete blobs done. The comparison key has the
+    /// recipient, so another recipient has its own baseline. Every delivery refreshes its key's
+    /// baseline clock ([`QUEUE3_BASELINE_SEC`]).
     ///
-    /// Labelled policy (`docs/m8-remediation.md` §27 fix 2, the definitions of spec commit 9e71f8f2
-    /// on §9.3.9's recipient-aware key until the writer restores them): the first completed identity
-    /// is the baseline; the distance is the word minus the baseline modulo 65,536; 1 to 32,767 is
-    /// newer, 32,769 to 65,535 older. Queue 2 delivers on arrival and queue 4 has no order gate, so
-    /// only queue 3 comes here. [`MAX_ORDER_GROUPS`] caps the baselines, with no eviction: a key past
-    /// it is delivered uncompared and counted.
+    /// Queue 2 delivers on arrival and queue 4 has no order gate, so only queue 3 comes here.
+    ///
+    /// Labelled (`docs/m8-remediation.md` §28 fix 3): a new key at a full [`MAX_ORDER_GROUPS`] map
+    /// takes Vector 22's skip: no eviction, no baseline, no tombstone and nothing superseded, while
+    /// the datagram stays accepted and acknowledged and its siblings deliver. §10.1's wording for
+    /// this may still move. Fix 4: distance 0 with no tombstone delivers once with an anomaly and
+    /// does not advance, as does any fresh body at distance 0.
     fn queue3_gate(
         &mut self,
         sender_rec_id: u16,
         recipient: u64,
         group: u16,
         order: u16,
+        now_sec: f64,
         tx: &mut PacketTransaction,
-    ) -> bool {
+    ) -> Queue3Verdict {
         let slot = (sender_rec_id, recipient, group);
         let Some(&latest) = self.queue3_latest.get(&slot) else {
-            if self.queue3_latest.len() < MAX_ORDER_GROUPS {
-                self.set_baseline(slot, order, tx);
-            } else {
+            if self.queue3_latest.len() >= MAX_ORDER_GROUPS {
                 self.counts.queue3_groups_over = self.counts.queue3_groups_over.saturating_add(1);
+                return Queue3Verdict {
+                    deliver: false,
+                    action: "key-cap-skip",
+                    distance: "first",
+                    baseline_present: false,
+                };
             }
+            self.set_baseline(slot, order, now_sec, tx);
             self.supersede_older(sender_rec_id, recipient, group, order, tx);
-            return true;
+            return Queue3Verdict {
+                deliver: true,
+                action: "deliver",
+                distance: "first",
+                baseline_present: false,
+            };
         };
-        match order_band(order, latest) {
+        let delivered = |distance| Queue3Verdict {
+            deliver: true,
+            action: "deliver",
+            distance,
+            baseline_present: true,
+        };
+        match order_band(order, latest.word) {
             OrderBand::Newer => {
-                self.set_baseline(slot, order, tx);
+                self.set_baseline(slot, order, now_sec, tx);
                 self.supersede_older(sender_rec_id, recipient, group, order, tx);
-                true
+                delivered("newer")
             }
             OrderBand::Equal => {
                 self.counts.queue3_equal = self.counts.queue3_equal.saturating_add(1);
-                true
+                self.set_baseline(slot, latest.word, now_sec, tx);
+                delivered("equal")
             }
             OrderBand::Ambiguous => {
                 self.counts.queue3_ambiguous = self.counts.queue3_ambiguous.saturating_add(1);
-                true
+                self.set_baseline(slot, latest.word, now_sec, tx);
+                delivered("ambiguous")
             }
             OrderBand::Older => {
                 self.counts.queue3_older = self.counts.queue3_older.saturating_add(1);
-                false
+                Queue3Verdict {
+                    deliver: false,
+                    action: "older-discard",
+                    distance: "older",
+                    baseline_present: true,
+                }
             }
         }
     }
 
-    /// A blob completed under `key` (§9.3.9): an exact repeat of what is remembered there is
-    /// ignored, a different complete body is delivered once with an anomaly count, and on queue 3
-    /// the ordering gate decides. Queue 1 has no identity to remember.
+    /// A blob completed under `key` (§9.3.9): an exact repeat of a body remembered there is ignored
+    /// at any distance, a different complete body is delivered once with an anomaly count and its
+    /// own tombstone, and on queue 3 the ordering gate decides. Queue 1 has no identity to remember.
+    ///
+    /// Labelled (`docs/m8-remediation.md` §28 fix 4): the tombstone comes before the distance, so
+    /// an exact repeat at a newer distance deduplicates; a complete blob with an opcode and zero
+    /// bytes is an ordinary blob here, which sets or advances a baseline, since only an omitted-chunk
+    /// control is skipped ([`is_empty_control`]).
     fn completed(
         &mut self,
         key: BlobKey,
@@ -4754,18 +4837,44 @@ impl BlobReassembler {
             opcode,
             num_frags,
         } = fields;
+        let decision = |action, distance, baseline_present| QueueDecision {
+            queue: queue_id,
+            group: seq_group,
+            order: order_num,
+            recipient: recipient_id,
+            action,
+            distance,
+            baseline_present,
+        };
         let mut reused = false;
-        if matches!(queue_id, 2..=4)
-            && let Some(t) = self.tombstone(&key)
-        {
-            if t.opcode == opcode && t.num_frags == num_frags && *t.body == *payload {
+        if matches!(queue_id, 2..=4) {
+            let mut exact = false;
+            for t in self.tombstones_of(&key) {
+                reused = true;
+                exact |= t.opcode == opcode && t.num_frags == num_frags && *t.body == *payload;
+            }
+            if exact {
                 self.counts.duplicates = self.counts.duplicates.saturating_add(1);
+                let baseline = self
+                    .queue3_latest
+                    .contains_key(&(key.0, recipient_id, seq_group));
+                self.decisions
+                    .push(decision("duplicate", "none", queue_id == 3 && baseline));
                 return None;
             }
-            reused = true;
         }
-        if queue_id == 3 && !self.queue3_gate(key.0, recipient_id, seq_group, order_num, tx) {
-            return None;
+        if queue_id == 3 {
+            let verdict = self.queue3_gate(key.0, recipient_id, seq_group, order_num, now_sec, tx);
+            self.decisions.push(decision(
+                verdict.action,
+                verdict.distance,
+                verdict.baseline_present,
+            ));
+            if !verdict.deliver {
+                return None;
+            }
+        } else {
+            self.decisions.push(decision("deliver", "none", false));
         }
         if reused {
             self.counts.reused_identities = self.counts.reused_identities.saturating_add(1);
@@ -4851,13 +4960,22 @@ impl BlobReassembler {
             .reduce(f64::min)
     }
 
-    /// Purges incomplete blobs older than `30.0` seconds (§5.6.4).
+    /// Purges incomplete blobs older than `30.0` seconds (§5.6.4), tombstones past
+    /// [`BLOB_TOMBSTONE_SEC`] and queue-3 baselines [`QUEUE3_BASELINE_SEC`] after their key's last
+    /// delivery (§9.3.9), which frees their slots and lets those keys take a new first value.
     pub fn purge_expired(&mut self, now_sec: f64) {
         self.incomplete
             .retain(|_, entry| now_sec - entry.created_at_sec <= BLOB_REASSEMBLY_EXPIRY_SEC);
         self.tombstones
             .retain(|t| now_sec - t.at <= BLOB_TOMBSTONE_SEC);
         self.tombstone_bytes = self.tombstones.iter().map(|t| t.body.len()).sum();
+        self.queue3_latest
+            .retain(|_, b| now_sec - b.delivered_at <= QUEUE3_BASELINE_SEC);
+    }
+
+    /// What the last datagram's completed blobs came to (the evidence log).
+    pub fn take_decisions(&mut self) -> Vec<QueueDecision> {
+        std::mem::take(&mut self.decisions)
     }
 
     /// The checks of one fragment that need no table state (§5.6.4 rules 1, 4, 5; §7.1;
@@ -4884,28 +5002,19 @@ impl BlobReassembler {
             });
         }
 
-        // Protocol ceiling check: (numFrags - 1) * 436 + the final slice <= 0x01B3E4C0 (§5.6.4 rule 1,
-        // §10.1 rule 8). A non-final part does not know its final slice, which is at least one byte
-        // (§9.3.9), so a blob of exactly the limit is not refused for its 436-byte parts; the final
-        // part decides.
-        let last = hdr.frag_index.saturating_add(1) == hdr.num_frags;
-        let final_slice = if last { hdr.frag_data_len as usize } else { 1 };
-        let min_final_size = (hdr.num_frags as usize - 1)
-            .saturating_mul(MAX_BLOB_FRAG_PAYLOAD)
-            .saturating_add(final_slice);
-        if min_final_size > MAX_BLOB_BYTES {
-            return Err(SessionError::BlobTooLarge {
-                total_bytes: min_final_size,
-                limit: MAX_BLOB_BYTES,
-            });
-        }
-        // §5.6.4 rule 1: the reassembled size must also fit the configured limit. The
-        // buffer itself is `numFrags * 436` bytes (rule 4), at most 435 bytes above it.
-        if min_final_size > self.max_blob_bytes {
-            return Err(SessionError::BlobTooLarge {
-                total_bytes: min_final_size,
-                limit: self.max_blob_bytes,
-            });
+        // §5.6.4 rule 1: the worst-case buffer of a fragmented blob, `numFrags * 436`, fits the
+        // configured limit before anything is allocated, the same check for a final and a non-final
+        // part. So at the default limit a count of 2404 passes and 2405 fails, whatever the final
+        // length, which deliberately excludes some shorter totals. `max_blob_bytes` is never above
+        // the architectural ceiling (`Self::new`).
+        if hdr.num_frags > 1 {
+            let allocated = (hdr.num_frags as usize).saturating_mul(MAX_BLOB_FRAG_PAYLOAD);
+            if allocated > self.max_blob_bytes {
+                return Err(SessionError::BlobTooLarge {
+                    total_bytes: allocated,
+                    limit: self.max_blob_bytes,
+                });
+            }
         }
         Ok(())
     }
@@ -4943,6 +5052,7 @@ impl BlobReassembler {
     ) -> Result<Vec<ReassembledBlob>, SessionError> {
         self.check_fragments(fragments)?;
         self.purge_expired(now_sec);
+        self.decisions.clear();
         let mut tx = self.begin_packet();
         match self.take_fragments(sender_rec_id, fragments, now_sec, &mut tx) {
             Ok(blobs) => {
@@ -5052,8 +5162,8 @@ impl BlobReassembler {
                 PacketUndo::Removed(key, entry) => {
                     self.incomplete.insert(key, entry);
                 }
-                PacketUndo::Baseline(slot, Some(order)) => {
-                    self.queue3_latest.insert(slot, order);
+                PacketUndo::Baseline(slot, Some(baseline)) => {
+                    self.queue3_latest.insert(slot, baseline);
                 }
                 PacketUndo::Baseline(slot, None) => {
                     self.queue3_latest.remove(&slot);
@@ -5062,6 +5172,7 @@ impl BlobReassembler {
         }
         self.counts = tx.counts;
         self.superseded = tx.superseded;
+        self.decisions.clear();
         if let Some((tombstones, bytes)) = tx.tombstones {
             self.tombstones = tombstones;
             self.tombstone_bytes = bytes;
@@ -5136,8 +5247,8 @@ impl BlobReassembler {
             .is_some_and(|entry| entry.has_part(hdr.frag_index));
         if !slot_taken
             && self
-                .tombstone(&key)
-                .is_some_and(|t| t.holds_part(hdr, &frag.payload))
+                .tombstones_of(&key)
+                .any(|t| t.holds_part(hdr, &frag.payload))
         {
             self.counts.duplicates = self.counts.duplicates.saturating_add(1);
             return Ok(None);
@@ -5224,6 +5335,15 @@ impl BlobReassembler {
         tx.undo.push(PacketUndo::Removed(key, done));
         Ok(self.completed(key, fields, body, tx, now_sec))
     }
+}
+
+/// What the queue-3 gate decided ([`BlobReassembler::queue3_gate`]).
+#[derive(Debug, Clone, Copy)]
+struct Queue3Verdict {
+    deliver: bool,
+    action: &'static str,
+    distance: &'static str,
+    baseline_present: bool,
 }
 
 /// What [`BlobReassembler::completed`] needs of a completed blob besides its body.
@@ -5830,9 +5950,37 @@ struct SendEvidence {
     flow: Option<FlowControlHeader>,
     /// What the flow accumulator holds as this line is written ([`SessionConnection::note_send`]).
     flow_accumulated: u32,
-    /// The first fragment's queue, opcode (its first part only), index and count, and how many.
-    fragment: Option<(u8, Option<u32>, u32, u32)>,
+    /// The first fragment's numbers, and how many.
+    fragment: Option<SentFragment>,
     fragments: usize,
+}
+
+/// A send line's first fragment (§9.3.11 SESSION-19): its queue, opcode (its first part only), index
+/// and count, and what was allocated for it. The recipient stays in memory: the line has a token.
+#[derive(Debug, Clone, Copy)]
+struct SentFragment {
+    queue: u8,
+    opcode: Option<u32>,
+    part: u32,
+    parts: u32,
+    group: u16,
+    order: u16,
+    blob_id: u16,
+    recipient: u64,
+    default_form: bool,
+}
+
+impl SentFragment {
+    /// Which of the sender's interim counters gave this fragment its numbers (§5.6.2).
+    const fn allocation_kind(&self) -> &'static str {
+        match (self.queue, has_blob_id(self.queue, self.parts > 1)) {
+            (3, _) => "group-order",
+            (1, true) => "blob-id",
+            (1, false) => "none",
+            (_, true) => "order-and-blob-id",
+            (_, false) => "order",
+        }
+    }
 }
 
 impl SendEvidence {
@@ -5848,7 +5996,17 @@ impl SendEvidence {
             flow_accumulated: 0,
             fragment: frags.first().map(|f| {
                 let h = &f.header;
-                (h.queue_id, h.blob_header_word, h.frag_index, h.num_frags)
+                SentFragment {
+                    queue: h.queue_id,
+                    opcode: h.blob_header_word,
+                    part: h.frag_index,
+                    parts: h.num_frags,
+                    group: h.seq_group,
+                    order: h.order_num,
+                    blob_id: h.blob_id,
+                    recipient: h.recipient_id,
+                    default_form: h.blob_flags & BLOB_FLAG_DEFAULT_RECIPIENT != 0,
+                }
             }),
             fragments: frags.len(),
         }
@@ -5865,7 +6023,11 @@ impl SendEvidence {
 /// One line of a connection's evidence log, as it is written or kept for the tail.
 #[derive(Debug, Clone, Copy)]
 enum EvidenceLine {
-    Send(SendEvidence, bool),
+    Send {
+        line: SendEvidence,
+        first_of_opcode: bool,
+        recipient_token: u32,
+    },
     Datagram {
         seq: u32,
         bytes: usize,
@@ -5879,6 +6041,14 @@ enum EvidenceLine {
         order: u16,
         bytes: usize,
         first: bool,
+        recipient_token: u32,
+        default_recipient: bool,
+    },
+    /// What the queue rules did with a completed blob: every one of queue 3, and any other that
+    /// was not delivered.
+    Queue {
+        decision: QueueDecision,
+        recipient_token: u32,
     },
 }
 
@@ -5909,6 +6079,8 @@ struct Evidence {
     receive_left: u32,
     opcodes: BTreeSet<u32>,
     sent_opcodes: BTreeSet<u32>,
+    /// The recipients seen, in order: a line names the ordinal, never the ID (§9.3.11's tokens).
+    recipients: Vec<u64>,
     tail: VecDeque<KeptLine>,
     sends: u64,
     resends: u64,
@@ -5936,6 +6108,7 @@ impl Evidence {
             receive_left: MAX_EVIDENCE_RECEIVE_LINES,
             opcodes: BTreeSet::new(),
             sent_opcodes: BTreeSet::new(),
+            recipients: Vec::new(),
             tail: VecDeque::new(),
             sends: 0,
             resends: 0,
@@ -5949,6 +6122,19 @@ impl Evidence {
             not_shown: 0,
             finished: false,
         }
+    }
+
+    /// The ordinal of `recipient` on this connection, from 1; 0 past [`MAX_EVIDENCE_OPCODES`] of
+    /// them.
+    fn recipient_token(&mut self, recipient: u64) -> u32 {
+        if let Some(i) = self.recipients.iter().position(|r| *r == recipient) {
+            return (i as u32).saturating_add(1);
+        }
+        if self.recipients.len() >= MAX_EVIDENCE_OPCODES {
+            return 0;
+        }
+        self.recipients.push(recipient);
+        self.recipients.len() as u32
     }
 
     /// Milliseconds since the stage started, floored.
@@ -5989,8 +6175,12 @@ impl Evidence {
     fn write(&self, kept: KeptLine, tail: bool) {
         let KeptLine { stage, ms, line } = kept;
         match line {
-            EvidenceLine::Send(line, first_of_opcode) => {
-                let (queue, opcode, part, parts) = line.fragment.unwrap_or((0, None, 0, 0));
+            EvidenceLine::Send {
+                line,
+                first_of_opcode,
+                recipient_token,
+            } => {
+                let f = line.fragment;
                 let flow = line.flow.unwrap_or(FlowControlHeader {
                     bytes_received_delta: 0,
                     interval_ms: 0,
@@ -6006,10 +6196,20 @@ impl Evidence {
                     word_before = line.word_before,
                     word_after = line.word_after,
                     word_input = line.input.label(),
-                    queue,
-                    opcode = format_args!("{:#x}", opcode.unwrap_or(0)),
-                    part,
-                    parts,
+                    queue = f.map_or(0, |f| f.queue),
+                    opcode = format_args!("{:#x}", f.and_then(|f| f.opcode).unwrap_or(0)),
+                    part = f.map_or(0, |f| f.part),
+                    parts = f.map_or(0, |f| f.parts),
+                    group = f.map_or(0, |f| f.group),
+                    order = f.map_or(0, |f| f.order),
+                    blob_id = f.map_or(0, |f| f.blob_id),
+                    allocation_kind = f.map_or("none", |f| f.allocation_kind()),
+                    recipient_token,
+                    target_resolution_kind = match f {
+                        Some(f) if f.default_form => "default-recipient",
+                        Some(_) => "explicit",
+                        None => "none",
+                    },
                     fragments = line.fragments,
                     first_of_opcode,
                     flow_event = line.flow_event,
@@ -6048,6 +6248,8 @@ impl Evidence {
                 order,
                 bytes,
                 first,
+                recipient_token,
+                default_recipient,
             } => {
                 tracing::info!(
                     target: EVIDENCE_TARGET,
@@ -6061,8 +6263,35 @@ impl Evidence {
                     order,
                     bytes,
                     first_of_opcode = first,
+                    recipient_token,
+                    target_resolution_kind = if default_recipient {
+                        "default-recipient"
+                    } else {
+                        "raw-recipient"
+                    },
                     tail,
                     "official evidence: blob"
+                );
+            }
+            EvidenceLine::Queue {
+                decision,
+                recipient_token,
+            } => {
+                tracing::info!(
+                    target: EVIDENCE_TARGET,
+                    role = self.role,
+                    stage,
+                    ms,
+                    dir = "recv",
+                    queue = decision.queue,
+                    group = decision.group,
+                    order = decision.order,
+                    recipient_token,
+                    queue_action = decision.action,
+                    distance_class = decision.distance,
+                    baseline_present = decision.baseline_present,
+                    tail,
+                    "official evidence: queue"
                 );
             }
         }
@@ -6074,7 +6303,7 @@ impl Evidence {
             SendKind::New | SendKind::Resend => {
                 if line.kind == SendKind::New {
                     self.sends += 1;
-                    let opcode = line.fragment.and_then(|(_, opcode, _, _)| opcode);
+                    let opcode = line.fragment.and_then(|f| f.opcode);
                     first = opcode.is_some_and(|op| {
                         self.sent_opcodes.len() < MAX_EVIDENCE_OPCODES
                             && self.sent_opcodes.insert(op)
@@ -6106,7 +6335,18 @@ impl Evidence {
                 Self::budgeted(&mut self.lifecycle_left)
             }
         };
-        self.put(EvidenceLine::Send(line, first), shown, now_sec);
+        let recipient_token = line
+            .fragment
+            .map_or(0, |f| self.recipient_token(f.recipient));
+        self.put(
+            EvidenceLine::Send {
+                line,
+                first_of_opcode: first,
+                recipient_token,
+            },
+            shown,
+            now_sec,
+        );
     }
 
     fn accepted(&mut self, seq: u32, len: usize, fragments: usize, gaps: usize, now_sec: f64) {
@@ -6133,8 +6373,27 @@ impl Evidence {
             order: blob.order_num,
             bytes: blob.payload.len(),
             first,
+            recipient_token: self.recipient_token(blob.recipient_id),
+            default_recipient: blob.recipient_id == DEFAULT_BLOB_RECIPIENT_ID,
         };
         self.put(line, shown, now_sec);
+    }
+
+    /// What the queue rules did with a completed blob ([`EvidenceLine::Queue`]).
+    fn queued(&mut self, decision: QueueDecision, now_sec: f64) {
+        if decision.queue != 3 && decision.action == "deliver" {
+            return;
+        }
+        let shown = Self::budgeted(&mut self.receive_left);
+        let recipient_token = self.recipient_token(decision.recipient);
+        self.put(
+            EvidenceLine::Queue {
+                decision,
+                recipient_token,
+            },
+            shown,
+            now_sec,
+        );
     }
 
     /// The tail and the totals, once: at the connection's close, or when it is dropped.
@@ -6354,6 +6613,8 @@ pub struct SessionConnection {
 
     order_counters: OrderCounters,
     reassembler: BlobReassembler,
+    /// [`Self::retire`] was called.
+    retiring: bool,
     outbound_datagrams: VecDeque<Vec<u8>>,
     events: VecDeque<SessionEvent>,
 
@@ -6436,6 +6697,7 @@ impl SessionConnection {
 
             order_counters: OrderCounters::new(),
             reassembler: BlobReassembler::default(),
+            retiring: false,
             outbound_datagrams: VecDeque::new(),
             events: VecDeque::new(),
 
@@ -7186,6 +7448,21 @@ impl SessionConnection {
         Ok(())
     }
 
+    /// This login connection was referred away (§9.3.9): from now on no outcome of its own sends a
+    /// Disconnect, while its Ack, clock and flow transport goes on until the world's State 5. Labelled
+    /// (`docs/m8-remediation.md` §28 fix 14): its NAKs go on with them, as §9.3.9's gap rule says
+    /// and the login retirement row does not.
+    pub fn retire(&mut self) {
+        self.retiring = true;
+    }
+
+    /// The one Disconnect of a close this connection decides itself, unless it is retiring.
+    fn closing_disconnect(&mut self, now_sec: f64) {
+        if !self.retiring && self.queue_standalone_disconnect(now_sec).is_err() {
+            tracing::debug!("official session: the closing Disconnect was not encoded");
+        }
+    }
+
     /// What the reassembler ignored, discarded or found odd (§9.3.9).
     #[must_use]
     pub const fn reassembly_counts(&self) -> ReassemblyCounts {
@@ -7428,9 +7705,7 @@ impl SessionConnection {
             return Err(SessionError::InvalidChallengeRecipient);
         }
         if let Some(err) = unsupported {
-            if self.queue_standalone_disconnect(now_sec).is_err() {
-                tracing::debug!("official session: the closing Disconnect was not encoded");
-            }
+            self.closing_disconnect(now_sec);
             self.close(DisconnectReason::UnsupportedTraffic, now_sec);
             return Err(self.refused(err));
         }
@@ -7485,6 +7760,12 @@ impl SessionConnection {
         // nothing of its datagram is delivered; a resend that could not be encoded takes nothing
         // back from a datagram already committed.
         if headers.is_ok() || self.state != ConnectionState::Closing {
+            let decisions = self.reassembler.take_decisions();
+            if let Some(e) = self.evidence.as_mut() {
+                for decision in decisions {
+                    e.queued(decision, now_sec);
+                }
+            }
             for blob in blobs {
                 if let Some(e) = self.evidence.as_mut() {
                     e.delivered(&blob, now_sec);
@@ -7804,19 +8085,15 @@ impl SessionConnection {
             }
         }
 
-        // WorldReferralHeader (0x00000800, §6.5): the address and port as received. The
-        // zero-address fallback is OPEN-SESSION-2, so a referral with a zero address or
-        // port raises no event (nothing is sent to an endpoint the spec does not give).
+        // WorldReferralHeader (0x00000800, §6.5): the address and port as received. A zero address
+        // or port is judged where the selection is known (§9.3.9 "Referral endpoint validity"):
+        // unsupported required progress for a pending selection, a skip otherwise, and never a bind
+        // or a send to it. So the session layer makes no connection from this event.
         if let Some(ref_hdr) = &opt.world_referral {
-            let addr = ref_hdr.target_addr;
-            if addr.ip().is_unspecified() || addr.port() == 0 {
-                tracing::debug!("WorldReferralHeader without an address or port ignored");
-            } else {
-                self.events.push_back(SessionEvent::WorldReferralReceived {
-                    cookie: ref_hdr.cookie,
-                    world_addr: addr,
-                });
-            }
+            self.events.push_back(SessionEvent::WorldReferralReceived {
+                cookie: ref_hdr.cookie,
+                world_addr: ref_hdr.target_addr,
+            });
         }
 
         // ServerRedirectHeader (0x00000100, §6.6): four opaque bytes, no state effect
@@ -7974,6 +8251,8 @@ impl SessionConnection {
                     SILENCE_TIMEOUT_SEC
                 };
                 if now_sec - self.last_recv_time_sec > silence_limit {
+                    // §9.3.9: exactly one Disconnect on the affected connection, no drain.
+                    self.closing_disconnect(now_sec);
                     self.close(DisconnectReason::SilenceTimeout, now_sec);
                     return Ok(());
                 }
@@ -7991,9 +8270,7 @@ impl SessionConnection {
                     );
                     // §9.3.8: one Disconnect if established, and this is the last moment it is,
                     // before the connection stops being State 5.
-                    if self.queue_standalone_disconnect(now_sec).is_err() {
-                        tracing::debug!("official session: the closing Disconnect was not encoded");
-                    }
+                    self.closing_disconnect(now_sec);
                     self.close(DisconnectReason::GapDeadline, now_sec);
                     return Ok(());
                 }

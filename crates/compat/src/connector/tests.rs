@@ -24,7 +24,7 @@ use tessera_net::account::{
     AccountCommand, AccountEvent, LoginRefusal, LoginStage, WorldId, WorldRefusal,
 };
 use tessera_net::{
-    Backend, CharacterEvent, ChatChannel, Command, DisconnectReason, Event, NetError, Session, Vec3,
+    Backend, ChatChannel, Command, DisconnectReason, Event, NetError, Session, Vec3,
 };
 
 use super::data::SchemaView;
@@ -1338,7 +1338,7 @@ fn into_world(run: &mut Run, login: &Server) -> Server {
 fn ack_portal_exit(run: &mut Run, world: &Server) {
     // The client's loading is done (`official-messages-play.md` §4.5 item 4).
     run.session
-        .send(Instant::now(), Command::WorldLoaded)
+        .send(Instant::now(), Command::WorldLoaded { generation: None })
         .expect("loaded");
     let acked = loop {
         let (d, dst) = run.wait_sent();
@@ -2708,12 +2708,11 @@ fn a_world_that_never_answers_the_entry_ends_with_a_named_deadline() {
     assert!(d.ended());
 }
 
+/// `official-session.md` §9.3.9: zero Disconnect to the login connection at a valid referral. It goes
+/// on with its bounded transport until the world's State 5, is then retired silently, and nothing it
+/// does decides the session's end.
 #[test]
-fn the_referral_disconnects_the_login_connection_gracefully() {
-    // `official-session.md` §6.5 step 2: the client opens the world connection and starts
-    // the graceful disconnect (State 6, then 7) of the login connection. Its close does not
-    // end the session; after a failed entry with no connection left for a later `0x6F`, the
-    // session ends.
+fn the_referral_retires_the_login_connection_with_no_disconnect() {
     let (world, mut d, login) = driver_at_characters(Service::default(), 0);
     d.command(
         &Command::EnterWorld {
@@ -2728,14 +2727,22 @@ fn the_referral_disconnects_the_login_connection_gracefully() {
         LOGIN_SERVER,
     );
     d.step(1.1, true, &go);
-    assert!(
-        matches!(
-            d.connection_states().0,
-            Some(ConnectionState::DisconnectingFlush | ConnectionState::DisconnectSent)
-        ),
-        "{:?}",
-        d.connection_states()
+    assert_eq!(
+        d.connection_states().0,
+        Some(ConnectionState::Connected),
+        "until the world's State 5"
     );
+    let disconnects_to = |world: &World, to: SocketAddrV4| {
+        world
+            .take_sent()
+            .iter()
+            .filter(|(dg, dst)| {
+                *dst == to
+                    && decode_client_datagram(dg, false).is_ok_and(|p| p.opt_headers.disconnect)
+            })
+            .count()
+    };
+    assert_eq!(disconnects_to(&world, LOGIN_SERVER), 0);
     let ws = Server::new(0x0111, 0xBEEF_0002);
     ws.connect_to(&world, 0xBEEF_0002, WORLD_SERVER);
     d.step(1.2, true, &go);
@@ -2744,8 +2751,7 @@ fn the_referral_disconnects_the_login_connection_gracefully() {
         Some(ConnectionState::Connected),
         "the world connection is up"
     );
-    // The login connection says Disconnect and closes; the world keeps the session.
-    let mut said_disconnect = false;
+    assert_eq!(d.connection_states().0, None, "retired silently");
     for t in [5.0, 10.0, 15.0, 20.0, 25.0] {
         world.deliver(
             ws.control(OptionalHeaders {
@@ -2755,23 +2761,11 @@ fn the_referral_disconnects_the_login_connection_gracefully() {
             WORLD_SERVER,
         );
         d.step(t, true, &go);
-        said_disconnect |= world.take_sent().iter().any(|(dg, dst)| {
-            *dst == LOGIN_SERVER
-                && decode_client_datagram(dg, false).is_ok_and(|p| p.opt_headers.disconnect)
-        });
-        assert!(
-            !d.take_events()
-                .iter()
-                .any(|e| matches!(e, Event::Disconnected { .. })),
-            "the login connection's close ended the session at {t}"
-        );
+        assert_eq!(disconnects_to(&world, LOGIN_SERVER), 0, "at {t}");
+        assert!(!d.ended());
     }
-    assert!(said_disconnect, "the login connection said Disconnect");
-    assert!(!matches!(
-        d.connection_states().0,
-        Some(ConnectionState::Connected)
-    ));
-    // The world never answers the entry: the wait for its session start names the stage.
+    // The world never answers the entry: the wait for its session start names the stage, with no
+    // Disconnect to the retired login connection.
     d.step(31.5, true, &go);
     let events = d.take_events();
     assert!(
@@ -2783,6 +2777,7 @@ fn the_referral_disconnects_the_login_connection_gracefully() {
         )),
         "{events:?}"
     );
+    assert_eq!(disconnects_to(&world, LOGIN_SERVER), 0);
 }
 
 #[test]
@@ -2972,14 +2967,8 @@ fn a_datagram_naming_a_connection_from_another_address_is_discarded() {
     // The world server assigns an ID other than the login connection's.
     let mut ws = Server::new(0x0222, 0xBEEF_0002);
     world.deliver(ws.challenge(0xBEEF_0002), WORLD_SERVER);
-    world.deliver(
-        ws.control(OptionalHeaders {
-            cumulative_ack: Some(0),
-            ..OptionalHeaders::default()
-        }),
-        WORLD_SERVER,
-    );
     d.step(1.2, true, &go);
+    // The world connection has its ID and no State 5 yet, so the retiring login connection is there.
     assert_eq!(d.connection_ids(), (0x0111, Some(0x0222)));
     // The same datagram once naming the login connection's ID (`DatagramHeader.recId`
     // behind a zero wire prefix), from the world server's address.
@@ -2996,6 +2985,13 @@ fn a_datagram_naming_a_connection_from_another_address_is_discarded() {
     assert_eq!(after.address_mismatches, before.address_mismatches + 1);
     assert_eq!(after.refused_datagrams, before.refused_datagrams);
     assert!(!d.in_world(), "the stray datagram reached no connection");
+    world.deliver(
+        ws.control(OptionalHeaders {
+            cumulative_ack: Some(0),
+            ..OptionalHeaders::default()
+        }),
+        WORLD_SERVER,
+    );
     world.deliver(ready, WORLD_SERVER);
     d.step(1.4, true, &go);
     assert!(d.in_world());
@@ -4268,7 +4264,8 @@ fn the_portal_exit_waits_for_the_clients_loading() {
         !sent_blobs(&world).iter().any(|(op, _)| *op == 0xF4),
         "no portal exit before the client's loading is done"
     );
-    d.command(&Command::WorldLoaded, 20.5).expect("loaded");
+    d.command(&Command::WorldLoaded { generation: None }, 20.5)
+        .expect("loaded");
     d.step(20.6, true, &go);
     let sent = sent_blobs(&world);
     assert_eq!(
@@ -4277,7 +4274,8 @@ fn the_portal_exit_waits_for_the_clients_loading() {
         "{sent:?}"
     );
     // Once: a later WorldLoaded outside portal space sends nothing.
-    d.command(&Command::WorldLoaded, 21.0).expect("loaded");
+    d.command(&Command::WorldLoaded { generation: None }, 21.0)
+        .expect("loaded");
     d.step(21.1, true, &go);
     assert!(!sent_blobs(&world).iter().any(|(op, _)| *op == 0xF4));
 }
@@ -4296,11 +4294,6 @@ fn the_portal_exit_follows_its_time_out_without_the_clients_signal() {
 fn leaving_the_world_returns_to_the_character_list_on_the_same_session() {
     let (world, mut d, mut login) = driver_in_world();
     let _ = sent_blobs(&world);
-    // `LeaveWorld` is the logout request (`0x30`, `official-messages-play.md` §7.2 item 1).
-    d.command(&Command::LeaveWorld, 2.0).expect("leave");
-    d.step(2.1, true, &go);
-    let sent = sent_blobs(&world);
-    assert!(sent.contains(&(0x30, LOGIN_SERVER)), "{sent:?}");
     // The teardown (§7.2 item 3) keeps the session; the client unloads the world on the
     // notice, so the return comes at once with the latest list.
     world.deliver(login.event(0x3000_001B, &[0]), LOGIN_SERVER);
@@ -4368,32 +4361,38 @@ fn a_list_received_in_the_world_is_counted_and_the_return_offers_the_last_valid_
     assert!(!d.ended());
 }
 
+/// `official-session.md` §9.3.9: every later `0x6C` is counted and skipped, at the idle list too, and
+/// the first list and its private IDs stay the ones `EnterWorld` reads.
 #[test]
-fn a_later_list_at_character_selection_surfaces_its_changes() {
+fn a_later_list_at_character_selection_changes_nothing() {
     let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
     let next = [(0x0200_0000_0000_0043, "Bera")];
     world.deliver(login.event(0x6C, &character_list_of(&next)), LOGIN_SERVER);
     d.step(0.5, true, &go);
-    let events = d.take_events();
-    assert!(
-        matches!(
-            events.as_slice(),
-            [
-                Event::Character(CharacterEvent::CharacterRemoved { name: gone }),
-                Event::Character(CharacterEvent::CharacterInfo { name: new, .. }),
-            ] if gone == "Aldo" && new == "Bera"
-        ),
-        "names gone first, then new names (`official-messages-play.md` §8): {events:?}"
-    );
-    // The new list is the one `EnterWorld` reads.
+    assert!(d.take_events().is_empty());
+    assert_eq!(d.counters().later_lists_skipped, 1);
     d.command(
         &Command::EnterWorld {
             character: "Bera".to_owned(),
         },
         0.6,
     )
+    .expect("answered");
+    assert!(
+        d.take_events().iter().any(|e| matches!(
+            e,
+            Event::EnterWorldFailed { character, .. } if character == "Bera"
+        )),
+        "the later list named nobody"
+    );
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        0.7,
+    )
     .expect("enter");
-    d.step(0.7, true, &go);
+    d.step(0.8, true, &go);
     assert!(sent_blobs(&world).contains(&(0x6F, LOGIN_SERVER)));
 }
 
@@ -4475,11 +4474,7 @@ fn a_login_message_during_the_entry_is_skipped_and_not_replayed() {
 #[test]
 fn a_stray_loading_signal_does_not_end_the_next_portal_space() {
     let (world, mut d, mut login) = driver_in_world();
-    // Leaving while still in portal space (no `WorldLoaded` yet).
-    d.command(&Command::LeaveWorld, 1.2)
-        .expect("leave in portal space");
-    d.step(1.3, true, &go);
-    assert!(sent_blobs(&world).contains(&(0x30, LOGIN_SERVER)));
+    // The world goes while still in portal space (no `WorldLoaded` yet).
     world.deliver(login.event(0x3000_001B, &[0]), LOGIN_SERVER);
     d.step(1.4, true, &go);
     assert!(
@@ -4487,8 +4482,11 @@ fn a_stray_loading_signal_does_not_end_the_next_portal_space() {
             .iter()
             .any(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }))
     );
-    // A loading signal of the left world, outside portal space: ignored and counted.
-    d.command(&Command::WorldLoaded, 1.5).expect("accepted");
+    // A loading signal of the left world, outside portal space: refused and counted.
+    assert!(matches!(
+        d.command(&Command::WorldLoaded { generation: None }, 1.5),
+        Err(tessera_net::NetError::InvalidCommand(_))
+    ));
     assert_eq!(d.counters().stray_loaded, 1);
     // Re-entry: a fresh portal space waits for its own signal.
     d.forget_the_return_for_tests();
@@ -4510,7 +4508,8 @@ fn a_stray_loading_signal_does_not_end_the_next_portal_space() {
     // The portal space's time-out is a deadline of the driver.
     let next = d.next_deadline(5.0).expect("a deadline");
     assert!(next <= 2.1 + PORTAL_LOADING_TIMEOUT_SEC + 1e-9, "{next}");
-    d.command(&Command::WorldLoaded, 5.5).expect("loaded");
+    d.command(&Command::WorldLoaded { generation: None }, 5.5)
+        .expect("loaded");
     d.step(5.6, true, &go);
     assert_eq!(
         sent_blobs(&world)
@@ -4527,15 +4526,6 @@ fn the_live_connector_returns_to_character_selection() {
     let login = to_character_list(&mut run);
     let mut world = into_world(&mut run, &login);
     ack_portal_exit(&mut run, &world);
-    run.session
-        .send(Instant::now(), Command::LeaveWorld)
-        .expect("leave");
-    loop {
-        let (op, _) = run.wait_blob(WORLD_SERVER);
-        if op == 0x30 {
-            break;
-        }
-    }
     // The teardown on the world connection, and no list after it: the return comes at once, and
     // the session stays. Entering again is not supported (§9.3.7, OPEN-SESSION-16).
     run.world

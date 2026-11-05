@@ -316,6 +316,18 @@ pub fn run_p5_requests(
     // before it has mounted.
     let hold_ride = walker.mount_choice_pending();
     for r in rt.plugins.take_p5_requests() {
+        // An official session mounts nothing locally: its line is in the chat. `off` and `list`
+        // change nothing on the server's side and stay.
+        if matches!(
+            r,
+            P5Request::Ride(RideCommand::Toggle | RideCommand::Mount(_))
+        ) && rt
+            .world
+            .as_mut()
+            .is_some_and(crate::net::World::refuse_local_mount)
+        {
+            continue;
+        }
         match r {
             P5Request::Ride(c) if hold_ride => {
                 if !rt.plugins.requeue_p5_request(P5Request::Ride(c)) {

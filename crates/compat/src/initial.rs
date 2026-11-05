@@ -934,7 +934,9 @@ impl Negotiation {
         self.server_config
     }
 
-    /// Where a queue-1 `0xF5` of the login connection stands (§9.3.8).
+    /// Where a queue-1 `0xF5` of the login connection stands (§9.3.8). Labelled
+    /// (`docs/m8-remediation.md` §28 fix 10): an `0xF5` with no `0xEC` is unsupported in every stage
+    /// here, as the named failure says, while the stage table's historical and queued rows skip it.
     #[must_use]
     pub const fn completion_step(&self) -> CompletionStep {
         if self.stages.f5_sent {
@@ -976,7 +978,9 @@ impl Negotiation {
         true
     }
 
-    /// Whether a `0x12F` now comes after `0xEC`, which is unsupported (§9.3.8).
+    /// Whether a `0x12F` now comes after `0xEC`, which is unsupported (§9.3.8). Labelled
+    /// (`docs/m8-remediation.md` §28 fix 10): in every stage, as the named failure says, while the
+    /// stage table's historical and queued rows skip it.
     #[must_use]
     pub const fn version_request_too_late(&self) -> bool {
         self.stages.ec_sent
@@ -986,7 +990,8 @@ impl Negotiation {
     /// the 30-second list wait and answers `true` (§9.3.8). Any other is counted with no clock
     /// change, because other traffic restarts nothing: a repeat, one during the queue's limit, and
     /// (engineering choice, §9.3.8 gives status 1 only on the historical path) an unsolicited one
-    /// during the `0xDD`, `0xF5` or list wait.
+    /// during the `0xDD`, `0xF5` or list wait. Labelled (`docs/m8-remediation.md` §28 fix 11): a repeat
+    /// does not restart the list clock, which the text gives only for a queued status.
     pub fn version_accepted(&mut self, now: f64) -> bool {
         if !matches!(self.phase, Phase::Historical(_)) {
             self.ignored();

@@ -97,7 +97,7 @@ fn assert_valid(command: &Command) {
         | Command::Disconnect
         | Command::QueryLocation
         | Command::LeaveWorld
-        | Command::WorldLoaded => {}
+        | Command::WorldLoaded { .. } => {}
         _ => panic!("unchecked command kind; extend assert_valid: {command:?}"),
     }
 }
@@ -125,7 +125,7 @@ impl Backend for Checked {
             | Command::Teleport { .. }
             | Command::QueryLocation
             | Command::LeaveWorld
-            | Command::WorldLoaded => {
+            | Command::WorldLoaded { .. } => {
                 assert!(self.in_world, "in-world command out of state: {command:?}");
             }
             _ => panic!("unchecked command kind; extend submit: {command:?}"),
@@ -302,7 +302,7 @@ fuzz_target!(|input: (Config, Vec<Op>)| {
                 destination: Destination::Named(name),
             }),
             Op::LeaveWorld => Some(Command::LeaveWorld),
-            Op::WorldLoaded => Some(Command::WorldLoaded),
+            Op::WorldLoaded => Some(Command::WorldLoaded { generation: None }),
             Op::Poll { advance_ms } => {
                 now += Duration::from_millis(u64::from(advance_ms));
                 session.poll_into(now, &mut events);

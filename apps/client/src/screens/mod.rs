@@ -34,7 +34,7 @@
 //! [`Action`]s ([`CharacterScreens::act`], or through [`ui::ScreenUi`]). When
 //! [`CharacterScreens::status`] is [`Status::Entered`] the world has been entered and the
 //! caller continues with the world (the events of that frame, `WorldEntered` included, were
-//! handed back); [`Status::Quit`] and [`Status::Closed`] end the client.
+//! handed back); [`Status::Quit`], [`Status::Cancelled`] and [`Status::Closed`] end the screens.
 //!
 //! # Creation choices in the settings
 //!

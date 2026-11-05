@@ -78,7 +78,7 @@ fn plain_sandbox_creates_selects_and_enters() {
     let m = d.screens.model();
     assert_eq!(m.stage(), Stage::Select);
     assert_eq!(m.selected(), Some(0));
-    assert_eq!(m.slots(), (1, 64));
+    assert_eq!(m.slots(), (1, Some(64)));
     assert!(m.new_button().is_enabled());
     assert_eq!(
         m.delete_button(),
@@ -804,13 +804,13 @@ fn an_official_selection_shows_a_line_and_can_be_left() {
     m.apply(Action::Quit, now);
     assert_eq!(m.status(), &Status::Quit);
     assert_eq!(m.entering_line(), None);
-    // Its Cancel control does the same.
+    // Its Cancel control ends the entry too, for the account form (`official-entry.md` §4.6).
     let (mut m, now) = official_model();
     assert_eq!(m.back_button(), ButtonRule::Hidden);
     m.apply(Action::Enter, now);
     assert!(m.back_button().is_enabled());
     m.apply(Action::Back, now);
-    assert_eq!(m.status(), &Status::Quit);
+    assert_eq!(m.status(), &Status::Cancelled);
 
     let (mut sandbox, now) = select_model();
     sandbox.apply(Action::Enter, now);

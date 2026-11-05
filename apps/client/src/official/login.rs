@@ -202,13 +202,12 @@ pub fn disconnect_message(reason: &DisconnectReason) -> Option<Message> {
 }
 
 /// The one text table entry for a `ServiceUnavailable` refusal that a `TimedOut` or `TransportFailed`
-/// follows: their one panel's words (§8.6; labelled, `docs/m8-remediation.md` §27 fix 12). Any other
-/// end keeps the refusal's own panel.
+/// follows: their one panel's words (§8.6). Any other end keeps the refusal's own panel.
 #[must_use]
 pub const fn service_unavailable_words(reason: &DisconnectReason) -> Option<&'static str> {
     match reason {
         DisconnectReason::TimedOut => Some("official.error.no_answer"),
-        DisconnectReason::TransportFailed(_) => Some("official.error.service_unavailable"),
+        DisconnectReason::TransportFailed(_) => Some("official.error.transport"),
         _ => None,
     }
 }
@@ -651,7 +650,8 @@ pub const fn ends_at_start_screen(reason: &DisconnectReason) -> bool {
 }
 
 /// The end of a login after `LoginRefused` (§8.6). `detail` is the service's words, shown as "The
-/// service said: ⟨text⟩".
+/// service said: ⟨text⟩". Labelled (`docs/m8-remediation.md` §28 fix 13): a pair's one panel takes
+/// this row's target, so `ClientNotAccepted` with `ServerClosed` goes to the start screen.
 #[must_use]
 pub fn refusal_end(reason: LoginRefusal, retry: Option<u32>, detail: Option<&str>) -> LoginEnd {
     let (id, target) = match reason {

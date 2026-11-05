@@ -6187,6 +6187,59 @@ impl PropertyTableUpdate {
             properties: EncodedPropertyTable::decode(reader, schema)?,
         })
     }
+
+    /// The entries of a `0x52` body read to exact exhaustion, each as its property ID and its
+    /// original encoded bytes (`official-session.md` §9.3.9: the pending store merges by property
+    /// and keeps encoded updates). Null entries carry nothing to merge and are left out.
+    ///
+    /// # Errors
+    ///
+    /// Returns a framing or schema error, trailing bytes among them.
+    pub fn entry_spans<'a>(
+        body: &'a [u8],
+        schema: &dyn PropertySchemaLookup,
+    ) -> Result<Vec<(u32, &'a [u8])>, WorldError> {
+        let mut reader = WireReader::new(body);
+        reader.read_base_flags()?;
+        let count = reader.read_vle3()? as usize;
+        reader.ensure_count(count, 2)?;
+        let mut spans = Vec::with_capacity(count.min(MAX_PREALLOC_ENTRIES));
+        for _ in 0..count {
+            let start = reader.position();
+            let entry = EncodedPropertyEntry::decode(&mut reader, schema)?;
+            if entry.pid != 0 {
+                let span = body
+                    .get(start..reader.position())
+                    .ok_or(WorldError::UnexpectedEof {
+                        needed: 1,
+                        remaining: 0,
+                    })?;
+                spans.push((entry.pid, span));
+            }
+        }
+        reader.finish()?;
+        Ok(spans)
+    }
+
+    /// A complete entity body of the encoded entries `entries`: the one shared byte, the count and
+    /// the entries as they came ([`Self::entry_spans`]).
+    ///
+    /// # Errors
+    ///
+    /// [`WorldError`] when the count has no wire form.
+    pub fn body_of_entries(entries: &[&[u8]]) -> Result<Vec<u8>, WorldError> {
+        let count = u32::try_from(entries.len()).map_err(|_| WorldError::CountOverflow {
+            count: entries.len(),
+        })?;
+        let mut writer = WireWriter::new();
+        writer.write_base_flags();
+        writer.write_vle3(count)?;
+        let mut body = writer.into_vec();
+        for entry in entries {
+            body.extend_from_slice(entry);
+        }
+        Ok(body)
+    }
 }
 
 /// Events `0x88` / `0x92` (entity) and `0xB0` / `0x149` (session): one `(CompactPID, value)`

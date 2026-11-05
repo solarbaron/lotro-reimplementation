@@ -8,7 +8,7 @@ use super::service_support::{
     ObservedMessage, observed_buffers, observed_raw_datagram, observed_world_stream,
 };
 use super::*;
-use crate::connector::pending_world::{MAX_PENDING_ENTITIES, withheld_summary};
+use crate::connector::pending_world::{DEFAULT_RECIPIENT, MAX_PENDING_ENTITIES, withheld_summary};
 use crate::world::{EncodedPropertyTable, EntityCreate, PlayerSessionReady};
 use tessera_net::WorldEntryStage;
 
@@ -123,10 +123,10 @@ fn the_observed_world_stream_reads_to_the_pending_placement_and_the_readiness_wa
     assert!(p.session_started && p.placed && !p.loaded);
     assert_eq!((p.batches, p.sub_events), (1, 2));
     assert_eq!(p.creations, 2, "the `0x98` and its paired `0x52`");
-    assert_eq!(p.appearances, 1, "for the announced entity");
+    assert_eq!(p.appearances, 2, "the announced entity's, and key 2's");
     assert_eq!(
         p.default_target, 2,
-        "the first `0x89` and the default-recipient `0x40` have no target"
+        "the first `0x89`, kept under key 2, and the default-recipient `0x40`, skipped"
     );
     assert_eq!(
         p.actions, 1,
@@ -136,7 +136,11 @@ fn the_observed_world_stream_reads_to_the_pending_placement_and_the_readiness_wa
     assert_eq!(p.readiness_seen, 2, "`0x5E` and `0x7C`: seen, not acted on");
     assert_eq!(p.unsupported_batches, 1);
     assert_eq!(p.unread, 3, "the opaque 0x88 and the two opaque 0x92");
-    assert_eq!(d.pending_sizes().0, 2, "the player and the other entity");
+    assert_eq!(
+        d.pending_sizes().0,
+        3,
+        "the player, the other entity and the raw key 2"
+    );
     let events = d.take_events();
     assert_eq!(
         progress_stages(&events),
@@ -172,9 +176,21 @@ fn a_production_entry_stops_at_the_readiness_wait_and_withholds_every_unsourced_
         let at = service_support::player_position();
         world.deliver(server.event(0xCE, &at), WORLD_SERVER);
         d.step(2.1, true, &go);
-        d.command(&Command::WorldLoaded, 2.2).expect("loaded");
+        d.command(
+            &Command::WorldLoaded {
+                generation: Some(1),
+            },
+            2.2,
+        )
+        .expect("loaded");
         assert!(d.entry_progress().loaded);
-        d.command(&Command::WorldLoaded, 2.3).expect("no effect");
+        d.command(
+            &Command::WorldLoaded {
+                generation: Some(1),
+            },
+            2.3,
+        )
+        .expect_err("a duplicate is refused");
         assert_eq!(d.counters().stray_loaded, 1);
         // A server message cannot set the gate here: no source (OPEN-WORLD-9).
         world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
@@ -285,7 +301,13 @@ fn an_out_of_range_placement_is_no_placement() {
     d.step(2.2, true, &go);
     assert!(d.entry_progress().placed);
     let _ = d.take_events();
-    d.command(&Command::WorldLoaded, 2.3).expect("loaded");
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.3,
+    )
+    .expect("loaded");
     world.deliver(server.event(0xCE, &far), WORLD_SERVER);
     d.step(2.4, true, &go);
     assert_eq!(d.entry_progress().unread, 2);
@@ -390,7 +412,13 @@ fn a_chat_server_route_fails_locally_in_the_specified_words() {
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);
-    d.command(&Command::WorldLoaded, 2.1).expect("loaded");
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.1,
+    )
+    .expect("loaded");
     world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
     d.step(2.2, true, &go);
     assert!(d.in_world());
@@ -483,6 +511,11 @@ fn the_retiring_login_connection_concerns_the_session_no_more() {
         progress_stages(&d.take_events()),
         [WorldEntryStage::WorldHandshake]
     );
+    assert_eq!(
+        d.connection_states().0,
+        None,
+        "retired at the world's State 5"
+    );
     world.take_sent();
     world.deliver(
         login.event(
@@ -505,8 +538,7 @@ fn the_retiring_login_connection_concerns_the_session_no_more() {
     d.step(1.4, true, &go);
     assert!(!d.ended());
     assert_eq!(d.pending_sizes().0, 0);
-    assert_eq!(d.counters().retired_messages, 3);
-    assert_eq!(d.counters().stray_referrals, 1);
+    assert_eq!(d.counters().stray_referrals, 0, "no connection takes it");
     assert!(!d.take_events().iter().any(|e| matches!(
         e,
         Event::EnterWorldFailed { .. } | Event::Disconnected { .. }
@@ -531,10 +563,15 @@ fn the_retiring_login_connection_concerns_the_session_no_more() {
     assert!(!d.ended());
 }
 
-/// §9.3.9's bound: past 256 entities the entry is unsupported, and one Disconnect goes out.
+/// §9.3.9's bound: past 256 target keys a new key is counted and skipped, and the entry goes on: an
+/// overflow never ends a healthy entry, sends nothing and keeps the local identity and placement.
 #[test]
-fn the_pending_state_is_bounded() {
-    let (world, mut d, mut server) = at_session_start(production());
+fn a_full_pending_store_counts_and_skips_and_the_entry_goes_on() {
+    let (world, mut d, mut server) = at_session_start(scripted());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    d.step(1.4, true, &go);
+    let _ = d.take_events();
+    world.take_sent();
     for i in 0..=MAX_PENDING_ENTITIES as u64 {
         let create = EntityCreate {
             template_did: 1,
@@ -543,24 +580,39 @@ fn the_pending_state_is_bounded() {
         .to_bytes()
         .expect("0x98");
         world.deliver(server.event(0x98, &create), WORLD_SERVER);
-        d.step(1.4, true, &go);
+        d.step(1.5, true, &go);
     }
-    assert!(d.ended());
-    assert!(d.take_events().iter().any(|e| matches!(
-        e,
-        Event::Disconnected {
-            reason: DisconnectReason::Unsupported
-        }
-    )));
-    assert_eq!(
-        world
+    assert!(!d.ended());
+    assert_eq!(d.pending_sizes().0, MAX_PENDING_ENTITIES);
+    assert_eq!(d.entry_progress().target_cap_hits, 1);
+    assert!(d.take_events().is_empty(), "no terminal result");
+    assert!(
+        !world
             .take_sent()
             .iter()
             .filter_map(|(p, _)| decode_client_datagram(p, false).ok())
-            .filter(|p| p.opt_headers.disconnect)
-            .count(),
-        1
+            .any(|p| p.opt_headers.disconnect)
     );
+    // The player's placement has no room in the store, and still reaches the client.
+    world.deliver(
+        server.event(0xCE, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(1.6, true, &go);
+    assert!(
+        d.take_events()
+            .iter()
+            .any(|e| matches!(e, Event::WorldPlacementPending { generation: 1, .. }))
+    );
+    assert_eq!(d.entry_progress().target_cap_hits, 2);
+    // It ends at the readiness wait like any other.
+    d.step(32.0, false, &go);
+    assert!(d.take_events().iter().any(|e| matches!(
+        e,
+        Event::Disconnected {
+            reason: DisconnectReason::UnsupportedTimeout
+        }
+    )));
 }
 
 /// A test's stand-in for the server gate (OPEN-WORLD-9), to the end of the order: the one `0xF4` in
@@ -605,7 +657,13 @@ fn both_gates_make_one_ready_message_then_world_entered_then_the_release() {
     assert!(!d.in_world());
     assert!(!sent_opcodes(&world).contains(&0xF4));
     // And the client's: the entry ends here, in this order.
-    d.command(&Command::WorldLoaded, 2.2).expect("loaded");
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.2,
+    )
+    .expect("loaded");
     d.step(2.3, true, &go);
     assert!(d.in_world());
     let sent = world.take_sent();
@@ -643,7 +701,12 @@ fn both_gates_make_one_ready_message_then_world_entered_then_the_release() {
         "{events:?}"
     );
     // A later `WorldLoaded` ends no portal space: there is none, and no second `0xF4` follows.
-    let _ = d.command(&Command::WorldLoaded, 2.4);
+    let _ = d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.4,
+    );
     d.step(2.5, true, &go);
     assert!(!sent_opcodes(&world).contains(&0xF4));
 }
@@ -704,7 +767,13 @@ fn a_later_position_does_not_ask_for_another_load() {
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);
-    d.command(&Command::WorldLoaded, 2.1).expect("loaded");
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.1,
+    )
+    .expect("loaded");
     world.deliver(
         server.event(
             0xCE,
@@ -748,8 +817,17 @@ fn no_production_message_is_the_exact_placement() {
     assert_eq!(progress_stages(&events), [WorldEntryStage::Identity]);
     let p = d.entry_progress();
     assert!(p.session_started && !p.placed);
-    assert_eq!(p.positions, 1, "the player's own position is kept");
-    d.command(&Command::WorldLoaded, 2.1).expect("no effect");
+    assert_eq!(
+        p.positions, 2,
+        "both of the player's own positions are kept"
+    );
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.1,
+    )
+    .expect_err("before any placement");
     assert!(!d.entry_progress().loaded);
     assert_eq!(d.counters().stray_loaded, 1);
     // Its deadline is the readiness wait's, with Tessera's own reason.
@@ -785,7 +863,7 @@ fn a_pending_despawn_removes_the_entity_and_nothing_brings_it_back() {
     assert_eq!(d.pending_sizes().0, 2);
     world.deliver(server.event_to(0x40, OTHER, &[0x00]), WORLD_SERVER);
     d.step(2.1, true, &go);
-    assert_eq!(d.pending_sizes().0, 1);
+    assert_eq!(d.pending_sizes().0, 2, "its record stays");
     assert_eq!(d.entry_progress().despawns, 1);
     let events = d.take_events();
     assert!(
@@ -794,7 +872,7 @@ fn a_pending_despawn_removes_the_entity_and_nothing_brings_it_back() {
             .any(|e| matches!(e, Event::EntityDespawned { .. })),
         "{events:?}"
     );
-    // A later update of it finds no target.
+    // A later update of it is refused by the record.
     let positions = d.entry_progress().positions;
     world.deliver(
         server.event(
@@ -805,11 +883,18 @@ fn a_pending_despawn_removes_the_entity_and_nothing_brings_it_back() {
     );
     world.deliver(server.event_to(0x40, OTHER, &[0x00]), WORLD_SERVER);
     d.step(2.2, true, &go);
-    assert_eq!(d.pending_sizes().0, 1, "no resurrection");
+    assert_eq!(d.pending_sizes().0, 2, "no resurrection");
     assert_eq!(d.entry_progress().positions, positions, "nothing kept");
     assert_eq!(d.entry_progress().despawns, 1, "nothing left to remove");
+    assert_eq!(d.entry_progress().despawn_blocked, 2);
 
-    d.command(&Command::WorldLoaded, 2.3).expect("loaded");
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.3,
+    )
+    .expect("loaded");
     world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
     d.step(2.4, true, &go);
     assert!(d.in_world());
@@ -836,7 +921,7 @@ fn server_rpcs_before_the_world_are_counted_and_discarded() {
     }
     d.step(2.1, true, &go);
     assert_eq!(d.entry_progress().other, 3);
-    assert_eq!(d.pending_sizes(), (1, 0));
+    assert_eq!(d.pending_sizes(), (0, 0));
     assert!(
         !sent_opcodes(&world)
             .iter()
@@ -855,7 +940,13 @@ fn the_ready_message_is_kept_and_sent_again_on_a_nak() {
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);
-    d.command(&Command::WorldLoaded, 2.1).expect("loaded");
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.1,
+    )
+    .expect("loaded");
     let _ = world.take_sent();
     world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
     d.step(2.2, true, &go);
@@ -900,7 +991,13 @@ fn a_move_in_the_world_is_held() {
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);
-    d.command(&Command::WorldLoaded, 2.1).expect("loaded");
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.1,
+    )
+    .expect("loaded");
     world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
     d.step(2.2, true, &go);
     assert!(d.in_world());
@@ -920,7 +1017,7 @@ fn a_move_in_the_world_is_held() {
             },
             2.3 + f64::from(i) / 10.0,
         )
-        .expect("held, not refused");
+        .expect_err("held: a local `InvalidCommand`");
         d.step(2.3 + f64::from(i) / 10.0, true, &go);
     }
     assert_eq!(d.counters().moves_held, 3);
@@ -1006,7 +1103,13 @@ fn the_evidence_lines_say_what_ran_and_nothing_private() {
         );
         d.step(2.0, true, &go);
         d.step(7.5, true, &go);
-        d.command(&Command::WorldLoaded, 8.0).expect("loaded");
+        d.command(
+            &Command::WorldLoaded {
+                generation: Some(1),
+            },
+            8.0,
+        )
+        .expect("loaded");
         d.step(8.1, true, &go);
         d.step(32.5, false, &go);
     });
@@ -1270,7 +1373,13 @@ fn a_hostile_run_stays_within_the_documented_filter_bound() {
                 WORLD_SERVER,
             );
             d.step(2.0, true, &go);
-            d.command(&Command::WorldLoaded, 2.1).expect("loaded");
+            d.command(
+                &Command::WorldLoaded {
+                    generation: Some(1),
+                },
+                2.1,
+            )
+            .expect("loaded");
             world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
             d.step(2.2, true, &go);
             assert!(d.in_world());
@@ -1357,7 +1466,7 @@ fn a_user_close_at_the_pending_placement_says_one_disconnect_and_is_done() {
 }
 
 /// §9.3.9's first-screen contract: an invalid name, a repeated ID or name, or a list over its cap
-/// fails the whole list; a valid name with a control character is cleaned; an empty list is valid.
+/// fails the whole list; no name is cleaned into a valid one; an empty list is valid.
 #[test]
 fn the_first_list_is_all_valid_or_unsupported() {
     let list_of = character_list_of;
@@ -1370,7 +1479,7 @@ fn the_first_list_is_all_valid_or_unsupported() {
         (&[(1, "\u{7}\u{7}")][..], false),
         (&[(1, "Aldo"), (1, "Bera")][..], false),
         (&[(1, "Aldo"), (2, "Aldo")][..], false),
-        (&[(1, "Al\u{7}do")][..], true),
+        (&[(1, "Al\u{7}do")][..], false),
     ] {
         let (world, mut d, mut login) = super::initial_negotiation::connected();
         world.deliver(login.event(0x6C, &list_of(entries)), LOGIN_SERVER);
@@ -1448,10 +1557,10 @@ fn the_first_list_is_all_valid_or_unsupported() {
     );
 }
 
-/// §9.3.9: a later list that fails is counted and the last valid one stays; a valid one replaces it
-/// at the idle list, and while selecting it is counted.
+/// §9.3.9: every later `0x6C` is counted and skipped in every phase, valid or not, and the first list
+/// and its IDs stay.
 #[test]
-fn a_later_list_replaces_only_while_idle() {
+fn every_later_list_is_counted_and_skipped() {
     let (world, mut d, mut login) = driver_at_characters(production(), 0);
     world.deliver(login.event(0x6C, &[0x00, 0x01]), LOGIN_SERVER);
     d.step(0.5, true, &go);
@@ -1463,19 +1572,11 @@ fn a_later_list_replaces_only_while_idle() {
         LOGIN_SERVER,
     );
     d.step(0.6, true, &go);
-    assert!(d.take_events().iter().any(|e| matches!(
-        e,
-        Event::Character(CharacterEvent::CharacterInfo {
-            name,
-            body: None,
-            class: None,
-            level: None,
-            look: None
-        }) if name == "Cora"
-    )));
+    assert_eq!(d.counters().later_lists_skipped, 2);
+    assert!(d.take_events().is_empty());
     d.command(
         &Command::EnterWorld {
-            character: "Cora".to_owned(),
+            character: "Aldo".to_owned(),
         },
         0.7,
     )
@@ -1486,7 +1587,8 @@ fn a_later_list_replaces_only_while_idle() {
         LOGIN_SERVER,
     );
     d.step(0.9, true, &go);
-    assert_eq!(d.counters().later_lists_skipped, 2);
+    assert_eq!(d.counters().later_lists_skipped, 3);
+    assert!(!d.ended());
 }
 
 /// §9.3.9's notices: in every phase plain text, and past 256 bytes dropped, not cut.
@@ -1587,4 +1689,437 @@ fn at_session_start_with_schema() -> (World, SessionDriver<FakeNet>, Server) {
 /// A valid complete message of `opcode`.
 fn checked_message(opcode: u32) -> Vec<u8> {
     super::world_entry::checked_message(opcode)
+}
+
+/// How many Disconnects each of `to` got, oldest first.
+fn disconnects(world: &World, to: &[std::net::SocketAddrV4]) -> Vec<usize> {
+    let sent = world.take_sent();
+    to.iter()
+        .map(|peer| {
+            sent.iter()
+                .filter(|(bytes, dst)| {
+                    dst == peer
+                        && decode_client_datagram(bytes, false)
+                            .is_ok_and(|p| p.opt_headers.disconnect)
+                })
+                .count()
+        })
+        .collect()
+}
+
+/// A selection with its referral taken, the world connection in its handshake.
+fn at_referral(service: Service) -> (World, SessionDriver<FakeNet>) {
+    let (world, mut d, login) = driver_at_characters(service, 0);
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    d.step(1.1, true, &go);
+    world.deliver(
+        login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+        LOGIN_SERVER,
+    );
+    d.step(1.2, true, &go);
+    assert!(d.entry_progress().referred);
+    world.take_sent();
+    let _ = d.take_events();
+    (world, d)
+}
+
+/// §9.3.9 "Referral endpoint validity": a zero address or port for the pending selection is required
+/// progress: one close on the login connection, no world connection and nothing sent to it. With no
+/// selection pending it is one more stray referral.
+#[test]
+fn a_referral_with_no_endpoint_is_one_close_and_no_world_connection() {
+    let zero_port = std::net::SocketAddrV4::new(*WORLD_SERVER.ip(), 0);
+    let zero_ip = std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, WORLD_SERVER.port());
+    for target in [zero_port, zero_ip] {
+        let (world, mut d, login) = driver_at_characters(production(), 0);
+        d.command(
+            &Command::EnterWorld {
+                character: "Aldo".to_owned(),
+            },
+            1.0,
+        )
+        .expect("enter");
+        d.step(1.1, true, &go);
+        world.take_sent();
+        world.deliver(login.referral(7, target), LOGIN_SERVER);
+        d.step(1.2, true, &go);
+        assert!(d.ended());
+        assert!(d.take_events().iter().any(|e| matches!(
+            e,
+            Event::Disconnected {
+                reason: DisconnectReason::Unsupported
+            }
+        )));
+        assert_eq!(d.connection_states().1, None, "no world connection");
+        let sent = world.take_sent();
+        assert!(sent.iter().all(|(_, dst)| *dst == LOGIN_SERVER), "{sent:?}");
+        assert_eq!(
+            sent.iter()
+                .filter(|(b, _)| decode_client_datagram(b, false)
+                    .is_ok_and(|p| p.opt_headers.disconnect))
+                .count(),
+            1
+        );
+        // No selection pending: counted.
+        let (world, mut d, login) = driver_at_characters(production(), 0);
+        world.deliver(login.referral(7, target), LOGIN_SERVER);
+        d.step(0.5, true, &go);
+        assert!(!d.ended());
+        assert_eq!(d.counters().stray_referrals, 1);
+    }
+}
+
+/// §9.3.9's close rows: an established connection's silence sends exactly one Disconnect.
+#[test]
+fn established_silence_sends_exactly_one_disconnect() {
+    let (world, mut d, _login) = driver_at_characters(production(), 0);
+    world.take_sent();
+    d.step(61.5, true, &go);
+    d.step(61.6, true, &go);
+    assert!(d.take_events().iter().any(|e| matches!(
+        e,
+        Event::Disconnected {
+            reason: DisconnectReason::TimedOut
+        }
+    )));
+    assert_eq!(disconnects(&world, &[LOGIN_SERVER]), [1]);
+}
+
+/// §9.3.9: only the primary connection gets a Disconnect: a local terminal end while the world is in
+/// its handshake sends none at all, to the retiring login connection or the world.
+#[test]
+fn a_terminal_end_in_the_world_handshake_says_nothing() {
+    let (world, mut d) = at_referral(production());
+    d.step(21.5, true, &go);
+    d.step(21.6, true, &go);
+    assert!(d.take_events().iter().any(|e| matches!(
+        e,
+        Event::Disconnected {
+            reason: DisconnectReason::TimedOut
+        }
+    )));
+    assert_eq!(disconnects(&world, &[LOGIN_SERVER, WORLD_SERVER]), [0, 0]);
+}
+
+/// §9.3.9's Cancel row: one on the established login connection, none on the world's, and its auth
+/// retries end.
+#[test]
+fn a_user_close_in_the_world_handshake_says_one_on_login_and_none_on_world() {
+    let (world, mut d) = at_referral(production());
+    d.begin_shutdown(1.3);
+    assert!(!d.shutdown_step(1.4), "no drain");
+    assert_eq!(disconnects(&world, &[LOGIN_SERVER, WORLD_SERVER]), [1, 0]);
+    let mut t = 2.0;
+    while t < 30.0 {
+        d.shutdown_step(t);
+        t += 0.5;
+    }
+    assert!(world.take_sent().is_empty(), "no auth retry");
+}
+
+/// §9.3.9: past the world's State 5 the login connection is retired: a user's close says one on the
+/// world and none on login.
+#[test]
+fn a_user_close_after_the_world_state_5_says_one_on_world_only() {
+    let (world, mut d, _server) = at_session_start(production());
+    d.begin_shutdown(1.4);
+    assert_eq!(disconnects(&world, &[LOGIN_SERVER, WORLD_SERVER]), [0, 1]);
+}
+
+/// §9.3.9: a typed logout is the same close: `ClientRequested`, one Disconnect, no RPC and no drain.
+#[test]
+fn a_typed_logout_closes_with_one_disconnect_and_no_rpc() {
+    let (world, mut d, mut server) = at_session_start(gated());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(
+        server.event(0xCE, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.1,
+    )
+    .expect("loaded");
+    world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+    d.step(2.2, true, &go);
+    assert!(d.in_world());
+    let _ = d.take_events();
+    world.take_sent();
+    d.command(&Command::LeaveWorld, 2.3).expect("closes");
+    assert!(d.ended());
+    assert!(d.take_events().iter().any(|e| matches!(
+        e,
+        Event::Disconnected {
+            reason: DisconnectReason::ClientRequested
+        }
+    )));
+    let sent = world.take_sent();
+    assert!(
+        !sent
+            .iter()
+            .filter_map(|(p, _)| decode_client_datagram(p, false).ok())
+            .flat_map(|p| p.fragments)
+            .any(|f| f.header.blob_header_word == Some(0x30)),
+        "no logout RPC"
+    );
+    assert_eq!(
+        sent.iter()
+            .filter(
+                |(p, _)| decode_client_datagram(p, false).is_ok_and(|p| p.opt_headers.disconnect)
+            )
+            .count(),
+        1
+    );
+    // At the list there is nothing to log out of.
+    let (_world, mut d, _login) = driver_at_characters(production(), 0);
+    assert!(matches!(
+        d.command(&Command::LeaveWorld, 0.5),
+        Err(tessera_net::NetError::InvalidCommand(_))
+    ));
+    assert!(!d.ended());
+}
+
+/// §9.3.11: the first `0x90`'s ID may be neither zero nor logical 2, either is required progress.
+#[test]
+fn a_first_session_start_with_no_id_is_unsupported() {
+    for id in [0u64, DEFAULT_RECIPIENT] {
+        let (world, mut d, mut server) = at_session_start(production());
+        world.deliver(server.event(0x90, &ready_of(id)), WORLD_SERVER);
+        d.step(2.0, true, &go);
+        assert!(d.ended(), "{id}");
+        assert!(d.take_events().iter().any(|e| matches!(
+            e,
+            Event::Disconnected {
+                reason: DisconnectReason::Unsupported
+            }
+        )));
+        assert_eq!(disconnects(&world, &[WORLD_SERVER]), [1]);
+    }
+}
+
+/// §9.3.11: an exact repeat counts and skips, a later different ID is unsupported, no silent rebinding,
+/// and a later one with the same ID and another table leaves the first (labelled, §28 fix 20).
+#[test]
+fn a_later_session_start_repeats_or_ends_the_entry() {
+    let (world, mut d, mut server) = at_session_start(production());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    d.step(2.0, true, &go);
+    let _ = d.take_events();
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    d.step(2.1, true, &go);
+    assert!(!d.ended());
+    assert_eq!(d.counters().session_starts_repeated, 1);
+    assert!(d.take_events().is_empty(), "no second stage");
+    for other in [PLAYER + 1, 0, DEFAULT_RECIPIENT] {
+        let (world, mut d, mut server) = at_session_start(production());
+        world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+        d.step(2.0, true, &go);
+        world.deliver(server.event(0x90, &ready_of(other)), WORLD_SERVER);
+        d.step(2.1, true, &go);
+        assert!(d.ended(), "{other}");
+        assert!(d.take_events().iter().any(|e| matches!(
+            e,
+            Event::Disconnected {
+                reason: DisconnectReason::Unsupported
+            }
+        )));
+    }
+}
+
+/// `official-session.md` §9.3.11's scripted-backend case, with the local gate first. A test's backend
+/// stands in for the authoritative placement and the readiness: this tests the interface, not an
+/// official receive trigger.
+#[test]
+fn the_scripted_entry_runs_in_the_specified_order() {
+    let loaded = |g| Command::WorldLoaded {
+        generation: Some(g),
+    };
+    let (world, mut d, mut server) = at_session_start(gated());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    d.step(2.0, true, &go);
+    // A `0x90` is identity only.
+    let events = d.take_events();
+    assert_eq!(progress_stages(&events), [WorldEntryStage::Identity]);
+    assert!(!events.iter().any(|e| matches!(
+        e,
+        Event::WorldPlacementPending { .. } | Event::WorldEntered { .. }
+    )));
+    // Before the placement: refused.
+    assert!(d.command(&loaded(1), 2.05).is_err());
+    // The placement: generation 1, and the session stays entering.
+    let at = service_support::player_position();
+    world.deliver(server.event(0xCE, &at), WORLD_SERVER);
+    d.step(2.1, true, &go);
+    assert!(
+        d.take_events()
+            .iter()
+            .any(|e| matches!(e, Event::WorldPlacementPending { generation: 1, .. }))
+    );
+    assert!(!d.in_world());
+    // The same placement's motion makes no generation.
+    world.deliver(server.event(0xCE, &at), WORLD_SERVER);
+    d.step(2.15, true, &go);
+    assert!(
+        !d.take_events()
+            .iter()
+            .any(|e| matches!(e, Event::WorldPlacementPending { .. }))
+    );
+    // A later sourced placement invalidates a load of the old one.
+    d.command(&loaded(1), 2.2).expect("loaded");
+    let (location, yaw) = (
+        tessera_net::Location::new(tessera_net::RegionId(1), 5.0, 6.0, 7.0),
+        0.25,
+    );
+    d.scripted_new_placement_for_tests(location, yaw, 2.3);
+    assert!(
+        d.take_events()
+            .iter()
+            .any(|e| matches!(e, Event::WorldPlacementPending { generation: 2, .. }))
+    );
+    assert!(!d.entry_progress().loaded, "the old completion is gone");
+    assert!(d.command(&loaded(1), 2.31).is_err(), "stale");
+    assert!(
+        d.command(&Command::WorldLoaded { generation: None }, 2.32)
+            .is_err()
+    );
+    d.command(&loaded(2), 2.33).expect("the new generation");
+    assert!(d.command(&loaded(2), 2.34).is_err(), "duplicate");
+    assert!(!d.in_world(), "the local gate alone does not enter");
+    assert!(!sent_opcodes(&world).contains(&0xF4));
+    // Server readiness: one retained `0xF4`, then `WorldEntered`, then the release.
+    world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+    d.step(2.4, true, &go);
+    assert!(d.in_world());
+    assert_eq!(
+        sent_opcodes(&world).iter().filter(|o| **o == 0xF4).count(),
+        1
+    );
+    assert!(
+        d.take_events()
+            .iter()
+            .any(|e| matches!(e, Event::WorldEntered { .. }))
+    );
+}
+
+/// The same with the server's gate first: the result does not depend on the gates' order, and no
+/// `WorldEntered` comes before the client's load.
+#[test]
+fn the_scripted_entry_takes_the_gates_in_either_order() {
+    let (world, mut d, mut server) = at_session_start(gated());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+    world.deliver(
+        server.event(0xCE, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    assert!(!d.in_world(), "the server gate alone does not enter");
+    assert!(!sent_opcodes(&world).contains(&0xF4));
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.1,
+    )
+    .expect("loaded");
+    d.step(2.2, true, &go);
+    assert!(d.in_world());
+    assert_eq!(
+        sent_opcodes(&world).iter().filter(|o| **o == 0xF4).count(),
+        1
+    );
+}
+
+/// §9.3.9 (labelled, §28 fix 28): an inbound `OutOfOrderAck` names the server's own sequences, so one
+/// whose number happens to be the `0xF4`'s does not end its retention.
+#[test]
+fn a_colliding_inbound_out_of_order_ack_keeps_the_ready_message() {
+    let (world, mut d, mut server) = at_session_start(gated());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(
+        server.event(0xCE, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.1,
+    )
+    .expect("loaded");
+    world.take_sent();
+    world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+    d.step(2.2, true, &go);
+    let ready = world
+        .take_sent()
+        .into_iter()
+        .find_map(|(bytes, _)| {
+            let packet = decode_client_datagram(&bytes, false).ok()?;
+            packet
+                .fragments
+                .iter()
+                .any(|f| f.header.blob_header_word == Some(0xF4))
+                .then_some((bytes, packet.header.seq_num))
+        })
+        .expect("the one 0xF4");
+    world.deliver(
+        server.control(OptionalHeaders {
+            out_of_order_ack: Some(vec![ready.1]),
+            ..OptionalHeaders::default()
+        }),
+        WORLD_SERVER,
+    );
+    d.step(2.25, true, &go);
+    world.deliver(
+        server.control(OptionalHeaders {
+            sequence_nak: Some(vec![ready.1]),
+            ..OptionalHeaders::default()
+        }),
+        WORLD_SERVER,
+    );
+    d.step(2.3, true, &go);
+    assert_eq!(
+        world
+            .take_sent()
+            .into_iter()
+            .filter(|(bytes, _)| *bytes == ready.0)
+            .count(),
+        1,
+        "the same bytes"
+    );
+}
+
+/// OE-T20's lone surrogate: the first list fails whole. The reader refuses the name, so nothing can
+/// clean it into a valid one.
+#[test]
+fn a_lone_surrogate_in_the_first_list_fails_it_whole() {
+    let mut list = character_list_of(&[(1, "Aldo"), (2, "Bera")]);
+    let name: Vec<u8> = "Aldo".encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let at = list
+        .windows(name.len())
+        .position(|w| w == name)
+        .expect("the name");
+    list.splice(at + 2..at + 4, [0x00, 0xD8]);
+    let (world, mut d, mut login) = super::initial_negotiation::connected();
+    world.deliver(login.event(0x6C, &list), LOGIN_SERVER);
+    d.step(0.5, true, &go);
+    let events = d.take_events();
+    assert!(d.ended());
+    assert!(!events.iter().any(|e| matches!(e, Event::Connected { .. })));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        Event::Disconnected {
+            reason: DisconnectReason::Unsupported
+        }
+    )));
 }

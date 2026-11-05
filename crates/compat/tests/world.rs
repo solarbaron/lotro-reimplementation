@@ -154,6 +154,39 @@ fn vector_4_encoded_property_table_wire_form() {
     assert_eq!(EncodedPropertyTable::new().to_bytes().unwrap(), [0x00]);
 }
 
+/// `official-session.md` §9.3.9: the pending store merges a `0x52` by property and keeps its encoded
+/// updates: each entry's own bytes, null entries left out, and a body made from any of them reads back.
+#[test]
+fn a_table_body_splits_into_its_encoded_entries_and_back() {
+    let mut inner = EncodedPropertyTable::new();
+    inner.push(0x1000_0CCC, EncodedPropertyValue::Boolean(true));
+    let mut table = EncodedPropertyTable::new();
+    table.push(0x1000_0BBB, EncodedPropertyValue::Int(7));
+    table.push_null();
+    table.push(0x1000_0AAA, EncodedPropertyValue::Struct(inner.clone()));
+    let mut body = vec![0x00];
+    body.extend(table.to_bytes().unwrap());
+    let spans = PropertyTableUpdate::entry_spans(&body, &schema()).unwrap();
+    let pids: Vec<u32> = spans.iter().map(|(p, _)| *p).collect();
+    assert_eq!(pids, [0x1000_0BBB, 0x1000_0AAA]);
+    assert_eq!(spans[0].1, [0x4B, 0xBB, 0x07]);
+    let entries: Vec<&[u8]> = spans.iter().map(|(_, e)| *e).collect();
+    let rebuilt = PropertyTableUpdate::body_of_entries(&entries).unwrap();
+    let mut want = EncodedPropertyTable::new();
+    want.push(0x1000_0BBB, EncodedPropertyValue::Int(7));
+    want.push(0x1000_0AAA, EncodedPropertyValue::Struct(inner));
+    let mut r = WireReader::new(&rebuilt);
+    let decoded = PropertyTableUpdate::decode(&mut r, 0x52, &schema()).unwrap();
+    r.finish().unwrap();
+    assert_eq!(decoded.properties, want);
+    // Trailing bytes, a short entry and a wrong shared byte are refused.
+    let mut trailing = body.clone();
+    trailing.push(0);
+    assert!(PropertyTableUpdate::entry_spans(&trailing, &schema()).is_err());
+    assert!(PropertyTableUpdate::entry_spans(&body[..body.len() - 1], &schema()).is_err());
+    assert!(PropertyTableUpdate::entry_spans(&[1, 0], &schema()).is_err());
+}
+
 #[test]
 fn vector_5_wire_and_stored_position() {
     let pos = WirePosition::from_components(

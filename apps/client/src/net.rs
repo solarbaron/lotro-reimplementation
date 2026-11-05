@@ -300,13 +300,23 @@ impl crate::walker::WalkerSession for World {
         World::player_location(self)
     }
 
-    /// An official selection has no player to move while it enters or while its character screens
-    /// are open: a placement loads behind them (`official-entry.md` §8.7), and normal input starts
-    /// in the world. Offline sessions (the sandbox, a scenario, `--server`) pass through
+    /// A handed-over official session has no player to move from the hand-over until it is in the
+    /// world, or while its character screens are open: a placement loads behind them
+    /// (`official-entry.md` §8.7), and normal input starts in the world. That covers the frames before
+    /// the screens open too, so no frame of free input falls between. Offline sessions (the sandbox,
+    /// a scenario, `--server`) pass through
     /// `EnteringWorld` too, for as long as their data takes, and never hold: a `--autorun` of the
     /// command line must outlast it.
     fn holds_input(&self, screens_open: bool) -> bool {
-        self.is_handed_over() && (screens_open || self.state() == SessionState::EnteringWorld)
+        self.is_handed_over() && (screens_open || self.state() != SessionState::InWorld)
+    }
+
+    fn is_official_session(&self) -> bool {
+        self.is_handed_over()
+    }
+
+    fn refuse_local_mount(&mut self) -> bool {
+        World::refuse_local_mount(self)
     }
 
     fn send_move(
@@ -405,12 +415,20 @@ struct LoadWait {
     target: Option<u64>,
     /// The walker has placed `target` (in an earlier frame).
     placed: bool,
+    /// The generation of the pending placement this answers while entering
+    /// (`official-session.md` §9.3.11); `None` for a placement in the world.
+    generation: Option<u64>,
 }
+
+/// The system line of Ctrl+M or `/ride` on an official session.
+const MOUNT_NOT_SUPPORTED: &str = "Not supported by this version of Tessera yet";
 
 /// The client's view of the world source.
 #[derive(Debug)]
 pub struct World {
     session: Session,
+    /// The session was in the world when its `Disconnected` came ([`World::ended_in_world`]).
+    ended_in_world: bool,
     events: Vec<Event>,
     entities: BTreeMap<EntityId, EntityView>,
     player: Option<EntityId>,
@@ -788,6 +806,7 @@ impl World {
             returned: false,
             load: LoadWait::default(),
             loaded_sent: 0,
+            ended_in_world: false,
             handed: false,
             last_disconnect: None,
             left_world: false,
@@ -860,7 +879,8 @@ impl World {
         }
         self.load.pending = false;
         self.loaded_sent += 1;
-        if let Err(e) = self.session.send(now, Command::WorldLoaded) {
+        let generation = self.load.generation.take();
+        if let Err(e) = self.session.send(now, Command::WorldLoaded { generation }) {
             tracing::debug!("net: world-loaded signal not sent: {e}");
         }
     }
@@ -875,6 +895,29 @@ impl World {
     /// drops its placement, so the next entry places the player afresh.
     pub fn take_left_world(&mut self) -> bool {
         std::mem::take(&mut self.left_world)
+    }
+
+    /// [`crate::walker::WalkerSession::is_official_session`], for this file's tests.
+    #[cfg(test)]
+    fn is_official_session_for_tests(&self) -> bool {
+        crate::walker::WalkerSession::is_official_session(self)
+    }
+
+    /// Whether the session was in the world when it ended (`official-entry.md` §8.6: the two
+    /// `UnsupportedTimeout` texts).
+    #[must_use]
+    pub const fn ended_in_world(&self) -> bool {
+        self.ended_in_world
+    }
+
+    /// Whether this session has no local mounts: an official session's server decides them, and
+    /// no sourced send exists (`official-session.md` §9.3.9). A local system line says so.
+    pub fn refuse_local_mount(&mut self) -> bool {
+        if !self.is_handed_over() {
+            return false;
+        }
+        self.push_chat(ChatLine::system(MOUNT_NOT_SUPPORTED));
+        true
     }
 
     /// Why the session ended, once it has (its `Disconnected`).
@@ -1669,7 +1712,10 @@ impl World {
             if let Some(input) = &mut self.scenario_input {
                 input.observe(ev);
             }
-            disconnected |= matches!(ev, Event::Disconnected { .. });
+            if matches!(ev, Event::Disconnected { .. }) {
+                disconnected = true;
+                self.ended_in_world = self.player.is_some();
+            }
             self.apply(now, ev);
         }
         self.events = events;
@@ -1869,7 +1915,12 @@ impl World {
             }
             // `official-entry.md` §8.7: the scene starts loading behind the character screen. The
             // walker places the location like any other; `walker_frame` sends the one signal.
-            Event::WorldPlacementPending { position, yaw, .. } => {
+            Event::WorldPlacementPending {
+                position,
+                yaw,
+                generation,
+                ..
+            } => {
                 tracing::info!("net: world placement pending");
                 self.location_seq += 1;
                 self.location = Some(PlayerLocation {
@@ -1882,6 +1933,7 @@ impl World {
                     pending: true,
                     target: Some(self.location_seq),
                     placed: false,
+                    generation: Some(*generation),
                 };
             }
             Event::WorldEntered {
@@ -1898,6 +1950,7 @@ impl World {
                     pending: true,
                     target: None,
                     placed: false,
+                    generation: None,
                 };
                 self.last_entered = Some(name.clone());
                 self.player = Some(*player);
@@ -2016,6 +2069,7 @@ impl World {
                             pending: true,
                             target: Some(self.location_seq),
                             placed: false,
+                            generation: None,
                         };
                     }
                 }
@@ -2317,7 +2371,10 @@ mod tests {
         let mut world = handed_sandbox(now);
         assert_eq!(world.state(), SessionState::Connected);
         assert!(world.holds_input(true), "at the list");
-        assert!(!world.holds_input(false), "no screens and not entering");
+        assert!(
+            world.holds_input(false),
+            "handed over, its screens not open yet: no frame of free input"
+        );
         world
             .session_mut()
             .send(
@@ -2378,6 +2435,30 @@ mod tests {
         settle(&mut world, &mut now, 30);
         check(&world, &mut seen);
         assert_eq!(world.state(), SessionState::InWorld);
+    }
+
+    /// Ctrl+M and `/ride`: an official session mounts nothing locally and says so; offline sessions
+    /// go on as they did.
+    #[test]
+    fn only_an_official_session_refuses_a_local_mount() {
+        let now = Instant::now();
+        let mut world = handed_sandbox(now);
+        assert!(world.refuse_local_mount());
+        assert!(world.is_official_session_for_tests());
+        let mut lines = Vec::new();
+        world.drain_hud_chat(&mut lines);
+        assert!(
+            lines.iter().any(|l| l
+                .text
+                .contains("Not supported by this version of Tessera yet")),
+            "{lines:?}"
+        );
+        let mut sandbox = World::sandbox(now).expect("sandbox");
+        assert!(!sandbox.refuse_local_mount());
+        assert!(!sandbox.is_official_session_for_tests());
+        let mut lines = Vec::new();
+        sandbox.drain_hud_chat(&mut lines);
+        assert!(lines.is_empty(), "{lines:?}");
     }
 
     #[test]

@@ -25,10 +25,17 @@
 //! `Disconnected` of its own. A Tessera limit ends in `Disconnected { Unsupported }` or `{
 //! UnsupportedTimeout }`, which carry no text: the client has fixed words for them
 //! (`official-entry.md` §8.6) and the local cause goes to the log. The one exception is a valid
-//! `0x6D` while selecting, before the referral: `EnterWorldFailed` and back to the list. A local end
-//! sends one standalone Disconnect when the connection is established, closes with no flush wait
-//! and sends the ticket no more; a server's closing header gets no reply. The user's Cancel, Back,
-//! Escape, window close and "Leave queue" do the same, with `Disconnected { ClientRequested }`.
+//! `0x6D` while selecting, before the referral: `EnterWorldFailed` and back to the list.
+//!
+//! The close counts are §9.3.9's rows, and only the primary active connection gets a Disconnect: the
+//! world connection once a referral made one, else the login connection. A local end, and an
+//! established connection's silence, send exactly one when it is established and none in its handshake,
+//! and close with no flush wait and no more ticket; a server's closing header and an I/O failure get
+//! none. A retired or retiring login connection gets none on any outcome. The
+//! user's Cancel, Back, Escape, window close, typed logout and "Leave queue" do the same, with
+//! `Disconnected { ClientRequested }`; the one exception is a user's close while the world connection
+//! is in its handshake: one on the login connection and none on the world's
+//! (`SessionDriver::begin_shutdown`).
 //! Required progress is only the preflight, the session's codec, the bodies of `0x12C` and `0x6F`,
 //! the first `0x6C` and the first `0x90`; any other complete message that fails is counted and
 //! skipped.
@@ -53,9 +60,10 @@
 //! `SessionDriver::exact_placement`, answers nothing on a production path: only a test's scripted
 //! network ([`ConnectorNet::placement_scripted`]) reaches this road, and there the placement is a
 //! `0xCE` naming the `0x90`'s ID or a `0xCC` whose explicit recipient it is, never the default
-//! recipient 2. An entry has one placement: later `0xCE` and `0xCC` go on being kept but do not ask
-//! for another load, so `WorldEntered` needs no second signal (labelled, `docs/m8-remediation.md`
-//! §27 fix 6; the event's field types are provisional for the same reason).
+//! recipient 2. Its generation starts at 1 (§9.3.11), and `Command::WorldLoaded` must name it: a
+//! stale, duplicate or early one is a local `InvalidCommand`. Later `0xCE` and `0xCC` go on being kept
+//! but make no new generation; only a sourced new placement would, and none exists, so production has
+//! none and only a test's scripted backend reaches another (`scripted_new_placement_for_tests`).
 //!
 //! `WorldEntered` needs the server gate as well, then the one `0xF4`, and then the pending state is
 //! released and normal input starts. OPEN-WORLD-9 leaves the server gate and the `0xF4` target
@@ -68,8 +76,9 @@
 //!
 //! Decision 0046 items 5 and 10 hold `0x13D`, `0x19E`, every world `0x30` before `WorldEntered`,
 //! `0x30000035`, `0x24` and `0x19A` ([`super::pending_world::WITHHELD_BEFORE_F4`]). `0x24` stays held
-//! in the world too until OPEN-WORLD-9 settles its body: a `Command::Move` is counted and not sent,
-//! not even in its historical 38-byte form ([`DriverCounters::moves_held`], §27 fix 5).
+//! in the world too until OPEN-WORLD-9 settles its body: a `Command::Move` is a local
+//! `InvalidCommand` and nothing is sent, not even the historical 38-byte form
+//! ([`DriverCounters::moves_held`], §9.3.9 "World send inventory").
 //!
 //! `0x154`, `0xDC`, `0x7A` and `0xD1` are withheld (§9.3.8): those commands fail locally. A re-entry
 //! after a teardown has no settled recipient, queue or body (OPEN-SESSION-16), so it is a local
@@ -114,12 +123,14 @@
 //!
 //! # Leaving the world
 //!
-//! `Command::LeaveWorld` sends the logout request (`official-messages-play.md` §7.2 item 1).
+//! `Command::LeaveWorld` is the typed logout of §9.3.9: `ClientRequested`, exactly one Disconnect,
+//! a local close and no drain, and no logout RPC (the historical path is held, `ARCHITECTURE.md`
+//! §19; labelled, `docs/m8-remediation.md` §28 fix 18: its command and target screen are the writer's).
 //! A world teardown (§7.2 item 3) keeps the session: the client unloads the world on the
 //! notice, so the driver goes back to character selection at once with
-//! `Event::ReturnedToCharacterSelect` and the latest list it has. A valid `0x6C` at the idle list
-//! replaces the list whole; its changes surface as `CharacterInfo` (new names, attributes unknown)
-//! and `CharacterRemoved` (names gone). Entering the world again after a teardown is not supported
+//! `Event::ReturnedToCharacterSelect` and the first list. Every later `0x6C` is counted and skipped,
+//! in every phase, and the list and its private IDs stay as they are (§9.3.9). Entering the world
+//! again after a teardown is not supported
 //! (OPEN-SESSION-16): a local `InvalidCommand`, nothing is sent, and the session goes on.
 //! Moves and chat lines that reach the driver
 //! after the teardown (sent before the client saw the return) are refused and counted
@@ -179,8 +190,8 @@
 //! # Ending the session
 //!
 //! [`SessionDriver::begin_shutdown`] is the user's close (§9.3.9): exactly one standalone Disconnect
-//! on an established connection, no application flush, no 20-second drain, and each connection
-//! closes locally at once. A connection still in its handshake (`SessionAuthSent`,
+//! on the established primary connection, no application flush, no 20-second drain, and each
+//! connection closes locally at once. A connection still in its handshake (`SessionAuthSent`,
 //! `ChallengeAcceptSent`) sends nothing more (no retransmitted `SessionAuthHeader` or
 //! `ReferralAuthHeader`, so no ticket), and a challenge that arrives for it afterwards finds no
 //! connection and is not answered. [`SessionDriver::abandon`] ends everything without sending, for
@@ -211,10 +222,9 @@ use std::sync::mpsc;
 use tessera_net::account::{
     AccountCommand, AccountEvent, LoginRefusal, LoginStage, MAX_ACCOUNT_DETAIL_LEN,
 };
-use tessera_net::model::MAX_NAME_LEN;
 use tessera_net::{
-    CharacterEvent, CharacterSummary, ChatChannel, Command, DisconnectReason, EntityId, Event,
-    Location, NoticeLevel, Transform, WorldEntryStage,
+    CharacterSummary, ChatChannel, Command, DisconnectReason, EntityId, Event, Location,
+    NoticeLevel, Transform, WorldEntryStage,
 };
 
 use crate::chat_session::state::INITIAL_CONNECT_POLICY;
@@ -228,13 +238,13 @@ use crate::login::{
     HttpResponse, LoginError, NetPreferences, RefreshOutcome, SessionHandoff, TicketRefresher,
     VersionInfo, zeroize_vec,
 };
+use crate::play::OutgoingEvent;
 use crate::play::adapter::{
     PlayAdapter, PlayCounters, PlaySignal, placement_location, position_location, velocity_or_zero,
 };
 use crate::play::chat::TextResolver;
 use crate::play::inbound::{PlayMessage, decode_play_message};
 use crate::play::movement::{MoveStep, PredictedState, wire_heading};
-use crate::play::{OutgoingEvent, clean_display_name};
 use crate::session::{
     BindPlan, BindPorts, ClientVersionMessage, CodecUuids, ConnectionState, ControlMessage,
     DEFAULT_MAX_CONTAINER_DEPTH, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
@@ -266,7 +276,9 @@ use super::entities::{
 };
 use super::login_phase::PlainSteps;
 use super::net::{ConnectorNet, SendHttpClient};
-use super::pending_world::{DEFAULT_RECIPIENT, PendingWorld, Stored, withheld_summary};
+use super::pending_world::{
+    DEFAULT_RECIPIENT, DEFAULT_RECIPIENT_DESPAWN_APPLIES, PendingWorld, Stored, withheld_summary,
+};
 
 /// `0x0000019E` (`ClientPlatformIdMessage`, `official-session.md` §5.6.2).
 pub const OPCODE_CLIENT_PLATFORM_ID: u32 = 0x0000_019E;
@@ -373,6 +385,9 @@ pub const ENTRY_REENTRY_NOT_SUPPORTED: &str =
 pub const CHAT_UNAVAILABLE: &str =
     "Chat server connection is not supported by this version of Tessera yet.";
 
+/// The local answer to a `Command::Move` while `0x24` is held (§9.3.9 "World send inventory").
+pub const MOVE_HELD: &str = "movement is not supported by this version of Tessera yet";
+
 /// Most characters in one character list (§9.3.9): a longer list fails whole, never cut.
 pub const MAX_CHARACTERS: usize = 256;
 
@@ -390,16 +405,6 @@ const ENTRY_COUNTS_LOG_SEC: f64 = 5.0;
 /// The two wire values of `TransportErrorHeader` that mean "connection refused /
 /// authentication rejected during login" (`official-session.md` §6.7).
 pub const LOGIN_REFUSAL_CODES: [u32; 2] = [0x00A7_E948, 0x7DC4_1B4A];
-
-/// Whether the referral starts a graceful disconnect of the retiring login connection (§6.5 step 2).
-/// The one place of this choice (labelled, `docs/m8-remediation.md` §27 fix 14): the record shows
-/// none observed, so expect this to change, and nothing builds on it.
-const RETIRING_LOGIN_DISCONNECTS: bool = true;
-
-/// Whether a silence or a handshake expiry closes with a Disconnect, and whether an I/O failure
-/// does. Labelled (`docs/m8-remediation.md` §27 fix 14): §9.3.9 gives no count for these rows yet.
-const SILENCE_CLOSE_SENDS_DISCONNECT: bool = false;
-const IO_CLOSE_SENDS_DISCONNECT: bool = true;
 
 /// Each wait on the road into the world (§9.3.8: Tessera policy, on the monotonic clock).
 pub const ENTER_WORLD_TIMEOUT_SEC: f64 = 30.0;
@@ -683,12 +688,6 @@ impl Link {
         )
     }
 
-    fn disconnect(&mut self, now: f64) {
-        if let Some(c) = self.mux.connection_mut(self.conn) {
-            c.request_disconnect(now);
-        }
-    }
-
     /// Whether the connection is still in its handshake (`SessionAuthSent`,
     /// `ChallengeAcceptSent`).
     fn in_handshake(&self) -> bool {
@@ -707,16 +706,6 @@ impl Link {
             while let Some(mut d) = c.pop_outbound_datagram() {
                 zeroize_vec(&mut d);
             }
-        }
-    }
-
-    /// The end of the session for this connection: the graceful disconnect when it is
-    /// connected, a local close when it is still in its handshake.
-    fn end_session(&mut self, now: f64) {
-        if self.in_handshake() {
-            self.close_quietly();
-        } else {
-            self.disconnect(now);
         }
     }
 
@@ -855,19 +844,28 @@ pub struct EntryProgress {
     pub positions: u64,
     /// `0xCC` kept.
     pub placements: u64,
+    /// The generation of the placement last given to the client (§9.3.11).
+    pub placement_generation: u64,
     /// `0x89` kept.
     pub appearances: u64,
-    /// `0x40` that removed a kept entity.
+    /// `0x40` that left a despawn record (§9.3.9).
     pub despawns: u64,
+    /// Checked messages refused by a despawn record: no resurrection.
+    pub despawn_blocked: u64,
+    /// New keys counted and skipped at the pending store's key cap (§9.3.9), never a terminal result.
+    pub target_cap_hits: u64,
+    /// Data counted and skipped at the pending store's byte cap.
+    pub bytes_cap_hits: u64,
     /// `0x7C`, `0xC7`, `0x5E` or `0x153`: seen, not acted on (OPEN-WORLD-9).
     pub readiness_seen: u64,
     /// `0x0D`: counted, no current path (OPEN-WORLD-9).
     pub unsupported_batches: u64,
     /// `0xA8`: counted until its action variant is rechecked (§9.3.9).
     pub actions: u64,
-    /// Checked messages whose target was the logical default 2: whose entity is OPEN-WORLD-9.
+    /// Checked messages whose target was the logical default 2: whose entity is OPEN-WORLD-9. They
+    /// are kept under that key within the bounds and discarded at the release.
     pub default_target: u64,
-    /// Checked messages for an ID nothing announced.
+    /// Checked messages for an ID nothing has announced yet, kept under that raw key.
     pub no_target: u64,
     /// Other messages of the world connection before `WorldEntered`.
     pub other: u64,
@@ -1034,8 +1032,12 @@ pub struct DriverCounters {
     pub outside_world: u64,
     /// `Command::Move`s not sent while `0x24` is held (decision 0046 item 10).
     pub moves_held: u64,
-    /// `WorldLoaded` signals outside the world and without a pending placement, ignored.
+    /// `WorldLoaded` signals outside the world and without a pending placement of their generation,
+    /// refused.
     pub stray_loaded: u64,
+    /// Valid `0x90`s that repeated the entry's ID: counted, the first table kept (§9.3.11; labelled,
+    /// `docs/m8-remediation.md` §28 fix 20 for a repeat with another table).
+    pub session_starts_repeated: u64,
     /// Envelopes whose routing header named a `routingField0` other than the fragment's
     /// `recipientId`; they keep `recipientId` (module docs "Entities").
     pub routed_envelopes: u64,
@@ -1125,8 +1127,13 @@ pub struct SessionDriver<N: ConnectorNet> {
     entry_firsts: EntryFirsts,
     /// What the world connection sent before `WorldEntered` (§9.3.9).
     pending: PendingWorld,
+    /// The first valid `0x90`'s ID on this entry (§9.3.11): a repeat is counted and a different ID
+    /// is unsupported. No silent rebinding.
+    world_identity: Option<u64>,
     /// The exact placement of the local player last given to the client.
     placement: Option<(Location, f32)>,
+    /// That placement's generation, `0` before the first (§9.3.11).
+    placement_generation: u64,
     /// The client's `WorldLoaded` answered [`Self::placement`].
     local_ready: bool,
     /// The server gate of the entry (never set on a production path).
@@ -1215,10 +1222,12 @@ fn unix_seconds() -> u32 {
         .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX))
 }
 
-/// A list's names as the session offers them, in server order (§9.3.9's first-screen contract):
-/// each name cleaned of control characters, with its ID kept for the selection. `None` when the
-/// whole list fails: more than [`MAX_CHARACTERS`] entries, a name that is empty, longer than 64
-/// UTF-8 bytes or blank once cleaned, or a repeated ID or name. No entry is dropped or cut.
+/// A list's names as the session offers them, in server order (§9.3.9's first-screen contract), each
+/// with its ID kept for the selection. Each is validated as decoded, and a bad one is never cleaned
+/// into a good one: `None`, the whole list fails, for more than [`MAX_CHARACTERS`] entries, a name
+/// that is empty or whitespace only, holds a control character or is longer than 64 UTF-8 bytes, or
+/// a repeated ID or name, compared as decoded with no normalization. (A lone surrogate never gets
+/// here: the wire reader refuses it.) No entry is dropped or cut.
 fn listed_names<'a>(
     entries: impl ExactSizeIterator<Item = (u64, &'a str)>,
 ) -> Option<Vec<(u64, String)>> {
@@ -1226,20 +1235,14 @@ fn listed_names<'a>(
         return None;
     }
     let mut names: Vec<(u64, String)> = Vec::with_capacity(entries.len());
-    for (id, raw) in entries {
-        if raw.is_empty() || raw.len() > MAX_NAME_LEN {
-            return None;
-        }
-        let name = clean_display_name(raw, MAX_NAME_LEN);
-        // The test the session's `Connected` filter makes (labelled, `docs/m8-remediation.md` §27
-        // fix 11): what it would drop fails the whole list here, so no row disappears silently.
-        if name.is_empty()
-            || !tessera_net::model::is_valid_name(&name)
-            || names.iter().any(|(i, n)| *i == id || *n == name)
+    for (id, name) in entries {
+        if !tessera_net::model::is_valid_name(name)
+            || name.chars().all(char::is_whitespace)
+            || names.iter().any(|(i, n)| *i == id || n == name)
         {
             return None;
         }
-        names.push((id, name));
+        names.push((id, name.to_owned()));
     }
     Some(names)
 }
@@ -1411,7 +1414,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             entry_progress: EntryProgress::default(),
             entry_firsts: EntryFirsts::default(),
             pending: PendingWorld::default(),
+            world_identity: None,
             placement: None,
+            placement_generation: 0,
             local_ready: false,
             server_ready: false,
             login_referred: false,
@@ -1808,6 +1813,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             limit_ms = (ENTER_WORLD_TIMEOUT_SEC * 1000.0) as u64,
             server_gate,
             local_gate,
+            placement_generation = self.placement_generation,
             load_ms,
             "official evidence: entry deadline"
         );
@@ -1928,17 +1934,32 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.end_by_table(row, true, &reason, now);
     }
 
-    /// One standalone Disconnect on each established connection (none on a connection still in
-    /// its handshake), and every connection closes locally: no flush wait, no ticket resent
-    /// (§9.3.7).
+    /// A local terminal close (§9.3.9): exactly one standalone Disconnect on the primary active
+    /// connection when it is established, none in its handshake, none on a retired or retiring login
+    /// connection; then every connection closes locally, with no flush wait and no ticket resent.
     fn say_goodbye(&mut self, why: &str, now: f64) {
+        self.close_links(self.world.is_some(), why, now);
+    }
+
+    /// [`Self::say_goodbye`] with the one Disconnect's connection named. A connection in its handshake
+    /// sends nothing.
+    fn close_links(&mut self, on_world: bool, why: &str, now: f64) {
+        let target = if on_world {
+            self.world.as_mut()
+        } else {
+            Some(&mut self.login)
+        };
+        if let Some(l) = target
+            && !l.in_handshake()
+            && let Some(c) = l.mux.connection_mut(l.conn)
+        {
+            let _ = c.queue_standalone_disconnect(now);
+        }
+        // Its queue may hold the ticket.
         for l in self.links_mut() {
             if l.in_handshake() {
-                // Its queue may hold the ticket.
                 l.close_dump(why);
                 l.close_quietly();
-            } else if let Some(c) = l.mux.connection_mut(l.conn) {
-                let _ = c.queue_standalone_disconnect(now);
             }
         }
         self.flush(now);
@@ -2006,6 +2027,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
             placements = p.placements,
             appearances = p.appearances,
             despawns = p.despawns,
+            despawn_blocked = p.despawn_blocked,
+            pending_target_cap_hit = p.target_cap_hits,
+            pending_bytes_cap_hit = p.bytes_cap_hits,
+            placement_generation = p.placement_generation,
             readiness_seen = p.readiness_seen,
             unsupported_batches = p.unsupported_batches,
             actions = p.actions,
@@ -2369,6 +2394,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
         match event {
             SessionEvent::Connected { .. } => {
                 tracing::info!(world, "official session: connection established");
+                if world {
+                    self.retire_login(now);
+                }
                 if world
                     && let Stage::Entering { wait, since, .. } = &mut self.stage
                     && *wait == EntryWait::WorldConnection
@@ -2474,6 +2502,24 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
+    /// The new world connection reached State 5 (§9.3.9): the referred login connection, whose bounded
+    /// Ack, clock and flow transport has run until now, is retired silently, with no Disconnect.
+    fn retire_login(&mut self, now: f64) {
+        if !self.login_referred || !self.login.live() {
+            return;
+        }
+        let (stage, since) = self.evidence_stage;
+        tracing::info!(
+            target: EVIDENCE_TARGET,
+            stage,
+            stage_ms = ((now - since).max(0.0) * 1000.0) as u64,
+            "official evidence: login connection retired"
+        );
+        self.login
+            .close_dump("retired at the world connection's State 5");
+        self.login.close_quietly();
+    }
+
     /// §9.3.9: a fresh queue-2 identity is delivered when it completes, and an ordering word that
     /// repeats, goes back or skips ahead is an anomaly count only. The first completed one of each
     /// connection is the comparison baseline.
@@ -2529,8 +2575,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if let Some(l) = l {
             l.close_dump(&format!("{reason:?}"));
         }
-        // After the referral the login connection is not needed any more: it was
-        // disconnected on the referral (`official-session.md` §6.5 step 2).
+        // §9.3.9: nothing the retiring login connection does decides the session's end.
         if !world && (self.world.is_some() || self.login_referred) {
             return;
         }
@@ -2539,9 +2584,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 self.end(DisconnectReason::ClientRequested);
                 return;
             }
-            LinkEnd::HandshakeTimeout | LinkEnd::SilenceTimeout => {
-                (TableRow::Silence, SILENCE_CLOSE_SENDS_DISCONNECT)
-            }
+            // The session layer sent the one Disconnect already, if it was established; the close
+            // row has it flushed. A handshake expiry had nothing to send.
+            LinkEnd::HandshakeTimeout | LinkEnd::SilenceTimeout => (TableRow::Silence, true),
             LinkEnd::ServerDisconnect => (TableRow::ServerRefused, false),
             LinkEnd::TransportError {
                 fatal, error_code, ..
@@ -2557,7 +2602,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             // The session layer sent the one Disconnect already.
             LinkEnd::UnsupportedTraffic => (TableRow::Unsupported, true),
             LinkEnd::GapDeadline => (TableRow::Deadline, true),
-            LinkEnd::OutboundWindowOverflow => (TableRow::Io, IO_CLOSE_SENDS_DISCONNECT),
+            // Labelled (`docs/m8-remediation.md` §28 fixes 14, 15): the Io row until the writer gives
+            // this its own, so no Disconnect (§9.3.9's I/O row).
+            LinkEnd::OutboundWindowOverflow => (TableRow::Io, false),
         };
         self.end_by_table(row, goodbye, reason.label(), now);
     }
@@ -2565,8 +2612,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// A `WorldReferralHeader` (`official-session.md` §6.5): a new world connection on the same
     /// socket, in a multiplexer of its own (module docs). §9.3.9: only the login connection's first,
     /// for a pending selection; any other is counted and skipped, with no connection made and no
-    /// clock replaced. The referral also starts the graceful disconnect of the login connection
-    /// (§6.5 step 2), whose later events no longer concern the session.
+    /// clock replaced. A zero address or port for that selection is unsupported required progress: one
+    /// close, and no bind or send to it. The login connection sends no Disconnect at a valid referral:
+    /// it retires, and its later events no longer concern the session ([`Self::retire_login`]).
     fn referral(&mut self, cookie: [u8; 8], addr: SocketAddrV4, world: bool, now: f64) {
         let awaited = matches!(
             self.stage,
@@ -2578,6 +2626,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if world || !awaited {
             self.counters.stray_referrals += 1;
             tracing::debug!("official session: referral with no pending selection ignored");
+            return;
+        }
+        if addr.ip().is_unspecified() || addr.port() == 0 {
+            self.end_by_table(
+                TableRow::Unsupported,
+                true,
+                "referral with no endpoint",
+                now,
+            );
             return;
         }
         let form = if addr.ip() == self.login.peer.ip() {
@@ -2610,11 +2667,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     return;
                 }
                 self.world = Some(link);
-                // §6.5 step 2: the old login connection starts its graceful disconnect
-                // (State 6, then 7) while both connections stay on the socket.
+                // §9.3.9: zero Disconnect. The login connection's applications retire now, while its
+                // bounded transport goes on until the world's State 5, on the shared socket.
                 self.login_referred = true;
-                if RETIRING_LOGIN_DISCONNECTS && self.login.live() && !self.login.flushing() {
-                    self.login.end_session(now);
+                if let Some(c) = self.login.mux.connection_mut(self.login.conn) {
+                    c.retire();
                 }
                 tracing::info!("official session: referred to the world server");
                 self.entry_progress.referred = true;
@@ -2705,16 +2762,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.play(opcode, recipient, data, world);
     }
 
-    /// Whether a `0x90` of this connection is the session start the entry waits for (§9.3.9): only
-    /// the world connection's, during its own wait, which that connection's State 5 starts. Another
-    /// `0x90` stops no wait and starts none: on the login connection it goes to the bounded skips,
-    /// and on the world connection it is counted like other pending traffic. A network with
+    /// Whether a `0x90` of this connection is judged as a session start (§9.3.9, §9.3.11): only the
+    /// world connection's, from that connection's State 5 on, so a later one is compared with the
+    /// first. On the login connection it goes to the bounded skips. A network with
     /// [`ConnectorNet::readiness_specified`] is a test's synthetic script, which may carry the world
     /// on the login connection (module docs).
     fn session_start_due(&self, world: bool) -> bool {
         match &self.stage {
             Stage::Entering { wait, .. } if !self.readiness_specified => {
-                world && *wait == EntryWait::SessionStart
+                world && matches!(*wait, EntryWait::SessionStart | EntryWait::Readiness)
             }
             Stage::Entering { .. } | Stage::InWorld { .. } => true,
             Stage::Login | Stage::Characters => false,
@@ -2754,6 +2810,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         match blob.blob_header_word {
             PlayerSessionReady::EVENT_ID
                 if matches!(self.stage, Stage::Entering { .. })
+                    && self.world_identity.is_none()
                     && self.session_start_due(world) =>
             {
                 return self.end_by_table(
@@ -3045,17 +3102,19 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// The character list (§9.3.9): the count straight after the one flags byte, every entry and
+    /// The first character list (§9.3.9): the count straight after the one flags byte, every entry and
     /// the account table to exact exhaustion, and then the first-screen contract ([`listed_names`]).
-    /// The first one that fails ends the attempt, with no forward scan, no partial list and no
-    /// character invented, and so does a compressed or routed one; an unknown appearance form
-    /// (OPEN-WORLD-9) is such a failure. Any other list that fails is counted and skipped, and the
-    /// last valid one stays. A valid later one replaces it at the idle list and is counted while
-    /// selecting and in the world. `Connected` carries names only: no attribute is guessed.
-    /// `0x13D` and `0x19E` are not emitted (decision 0046 item 5). The account table belongs to this
-    /// list's character-screen state and triggers nothing.
+    /// One that fails ends the attempt, with no forward scan, no partial list and no character
+    /// invented, and so does a compressed or routed one; an unknown appearance form (OPEN-WORLD-9) is
+    /// such a failure. Every later list is counted and skipped in every phase: the list and its
+    /// private IDs stay as they are. `Connected` carries names only: no attribute is guessed. `0x13D`
+    /// and `0x19E` are not emitted (decision 0046 item 5). The account table belongs to this list's
+    /// character-screen state and triggers nothing.
     fn character_list(&mut self, m: &Inbound, now: f64) {
-        let first = self.stage == Stage::Login;
+        if self.stage != Stage::Login {
+            self.counters.later_lists_skipped = self.counters.later_lists_skipped.saturating_add(1);
+            return;
+        }
         let list = if m.envelope_flags == 0 {
             CharacterListResponse::from_envelope_body(&m.body, &self.schema)
                 .map_err(|e| {
@@ -3078,64 +3137,24 @@ impl<N: ConnectorNet> SessionDriver<N> {
             Ok(names) => names,
             Err(why) => {
                 self.counters.decode_errors += 1;
-                if first {
-                    self.refuse_unsupported(why, now);
-                } else {
-                    self.counters.later_lists_skipped =
-                        self.counters.later_lists_skipped.saturating_add(1);
-                }
+                self.refuse_unsupported(why, now);
                 return;
             }
         };
-        match self.stage {
-            Stage::Login => {
-                self.characters = names;
-                self.initial.list_received();
-                self.initial_step("character list", now);
-                self.stage = Stage::Characters;
-                let characters = self
-                    .characters
-                    .iter()
-                    .map(|(_, name)| CharacterSummary { name: name.clone() })
-                    .collect();
-                tracing::info!(
-                    count = self.characters.len(),
-                    "official session: characters listed"
-                );
-                self.events.push_back(Event::Connected { characters });
-            }
-            Stage::Characters => {
-                let old = std::mem::replace(&mut self.characters, names);
-                for (_, name) in &old {
-                    if !self.characters.iter().any(|(_, n)| n == name) {
-                        self.events
-                            .push_back(Event::Character(CharacterEvent::CharacterRemoved {
-                                name: name.clone(),
-                            }));
-                    }
-                }
-                for (_, name) in &self.characters {
-                    if !old.iter().any(|(_, n)| n == name) {
-                        self.events
-                            .push_back(Event::Character(CharacterEvent::CharacterInfo {
-                                name: name.clone(),
-                                body: None,
-                                class: None,
-                                level: None,
-                                look: None,
-                            }));
-                    }
-                }
-                tracing::debug!(
-                    count = self.characters.len(),
-                    "official session: characters listed again"
-                );
-            }
-            Stage::Entering { .. } | Stage::InWorld { .. } => {
-                self.counters.later_lists_skipped =
-                    self.counters.later_lists_skipped.saturating_add(1);
-            }
-        }
+        self.characters = names;
+        self.initial.list_received();
+        self.initial_step("character list", now);
+        self.stage = Stage::Characters;
+        let characters = self
+            .characters
+            .iter()
+            .map(|(_, name)| CharacterSummary { name: name.clone() })
+            .collect();
+        tracing::info!(
+            count = self.characters.len(),
+            "official session: characters listed"
+        );
+        self.events.push_back(Event::Connected { characters });
     }
 
     /// `0x6D` (§9.3.9, Vector 15): exactly the shared byte and the `u32` reason. For a pending
@@ -3181,10 +3200,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// `0x90` (§9.3.9, Vector 15): the ID straight after the one shared flags byte, then the
-    /// property table to exact exhaustion. A compressed or routed one or one that fails is the
-    /// unsupported row; the ID is never shifted by a guessed second byte. It starts the readiness
-    /// wait and is not `WorldEntered` by itself: its identity is kept pending (module docs).
+    /// `0x90` (§9.3.9, §9.3.11, Vector 15): the ID straight after the one shared flags byte, then the
+    /// property table to exact exhaustion. The first of an entry must read, uncompressed and unrouted,
+    /// with an ID other than zero and the logical default 2, or that is the unsupported row; the ID is
+    /// never shifted by a guessed second byte. It starts the readiness wait and is not `WorldEntered` by
+    /// itself: its identity is kept pending (module docs). A later valid one repeating the ID is counted
+    /// and skipped, with the first table kept (labelled, `docs/m8-remediation.md` §28 fix 20), a later
+    /// valid one with another ID is unsupported (no silent rebinding), and a later one that does not
+    /// read is counted.
     fn session_ready(&mut self, m: &Inbound, now: f64) {
         let decoded = if m.envelope_flags == 0 {
             PlayerSessionReady::from_envelope_body(&m.body, &self.schema).ok()
@@ -3194,11 +3217,25 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let Some(ready) = decoded else {
             self.counters.decode_errors += 1;
             tracing::debug!("official session: session start refused");
-            if matches!(self.stage, Stage::Entering { .. }) {
+            if self.world_identity.is_none() && matches!(self.stage, Stage::Entering { .. }) {
                 self.end_by_table(TableRow::Unsupported, true, "session start unreadable", now);
             }
             return;
         };
+        if let Some(first) = self.world_identity {
+            if first == ready.player_id {
+                self.counters.session_starts_repeated =
+                    self.counters.session_starts_repeated.saturating_add(1);
+            } else {
+                self.end_by_table(
+                    TableRow::Unsupported,
+                    true,
+                    "session start with another ID",
+                    now,
+                );
+            }
+            return;
+        }
         let Stage::Entering {
             name, wait, since, ..
         } = &mut self.stage
@@ -3206,32 +3243,27 @@ impl<N: ConnectorNet> SessionDriver<N> {
             tracing::debug!("official session: session start outside world entry");
             return;
         };
-        let name = name.clone();
-        let first = !matches!(*wait, EntryWait::Readiness);
-        if first {
-            *wait = EntryWait::Readiness;
-            *since = now;
-            self.entry_progress.session_started = true;
-            tracing::info!(stage = wait.label(), "official world entry: next stage");
-            self.entry_counts_at = now;
-            self.note_stage(EntryWait::Readiness.label(), now);
+        if ready.player_id == 0 || ready.player_id == DEFAULT_RECIPIENT {
+            self.end_by_table(TableRow::Unsupported, true, "session start with no ID", now);
+            return;
         }
+        let name = name.clone();
+        *wait = EntryWait::Readiness;
+        *since = now;
+        self.entry_progress.session_started = true;
+        tracing::info!(stage = wait.label(), "official world entry: next stage");
+        self.world_identity = Some(ready.player_id);
+        self.entry_counts_at = now;
+        self.note_stage(EntryWait::Readiness.label(), now);
         if self.readiness_specified {
             return self.enter_at_session_start(ready.player_id, name);
-        }
-        if !first {
-            return;
         }
         self.events.push_back(Event::WorldEntryProgress {
             stage: WorldEntryStage::Identity,
         });
-        match self.pending.set_player(ready.player_id) {
-            Ok(kept) => {
-                if let Some((at, yaw)) = self.exact_placement(ready.player_id, kept) {
-                    self.local_placement(at, yaw, now);
-                }
-            }
-            Err(_) => self.end_by_table(TableRow::Unsupported, true, "pending world state", now),
+        let kept = self.pending.set_player(ready.player_id);
+        if let Some((at, yaw)) = self.exact_placement(ready.player_id, kept) {
+            self.local_placement(at, yaw, now);
         }
     }
 
@@ -3264,39 +3296,59 @@ impl<N: ConnectorNet> SessionDriver<N> {
         at
     }
 
-    /// The exact placement of the local player while entering (§9.3.9): the client starts loading.
-    /// An entry has one (labelled, §27 fix 6): later `0xCE` and `0xCC` updates are kept but do not
-    /// ask for another load and do not clear the local gate, so `WorldEntered` needs no second
-    /// signal.
+    /// The exact placement of the local player while entering (§9.3.9, §9.3.11): generation 1, and
+    /// the client starts loading. A repeated update of the same placement is kept but makes no new
+    /// generation and does not clear the local gate.
     fn local_placement(&mut self, at: Location, yaw: f32, now: f64) {
-        if self.placement.is_some() {
-            return;
+        if self.placement.is_none() {
+            self.new_placement(at, yaw, now);
         }
+    }
+
+    /// One sourced placement: its generation, the old load invalidated, and the one pending event.
+    fn new_placement(&mut self, at: Location, yaw: f32, now: f64) {
         let Stage::Entering { name, .. } = &self.stage else {
             return;
         };
         let character = name.clone();
         self.entry_progress.placed = true;
+        self.placement_generation = self.placement_generation.saturating_add(1);
+        self.entry_progress.placement_generation = self.placement_generation;
+        self.local_ready = false;
+        self.entry_progress.loaded = false;
+        self.loaded_at = None;
         self.events.push_back(Event::WorldEntryProgress {
             stage: WorldEntryStage::Placement,
         });
         self.placement = Some((at, yaw));
-        tracing::info!("official world entry: placement pending");
+        tracing::info!(
+            generation = self.placement_generation,
+            "official world entry: placement pending"
+        );
         self.placed_at = Some(now);
         self.events.push_back(Event::WorldPlacementPending {
             character,
             position: at,
             yaw,
+            generation: self.placement_generation,
         });
+    }
+
+    /// Synthetic tests only: a later sourced placement (§9.3.11's scripted case). Nothing on a
+    /// production path names one, so nothing else makes a new generation.
+    #[cfg(test)]
+    pub fn scripted_new_placement_for_tests(&mut self, at: Location, yaw: f32, now: f64) {
+        self.new_placement(at, yaw, now);
     }
 
     /// What a message of the world connection is on the way to `WorldEntered` (§9.3.9). `data` has
     /// its one shared byte, and each embedded slice its own. A checked message is kept only when it
     /// decodes to exact exhaustion; a child of a batch that does not is counted without touching its
     /// siblings. The rest is counted and skipped: no unknown RPC runs and nothing is read as
-    /// readiness, except that a test's [`ConnectorNet::server_gate`] stands in for its source.
+    /// readiness, except that a test's [`ConnectorNet::server_gate`] stands in for its source. A full
+    /// store counts and skips: it never ends the entry ([`Self::note_stored`]).
     fn pending_message(&mut self, opcode: u32, target: u64, data: &[u8], depth: usize, now: f64) {
-        let stored = match opcode {
+        let (key, stored) = match opcode {
             SubEventBatch::EVENT_ID_SUB_EVENT => {
                 self.pending_batch(opcode, target, data, depth, now);
                 return;
@@ -3306,21 +3358,16 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     let stored = self.pending.create(c.entity_id, data);
                     self.entry_progress.creations += u64::from(stored == Stored::Kept);
                     self.note_entry_first(EntryFirst::Creation, stored, depth, now);
-                    stored
+                    (c.entity_id, stored)
                 }
                 Err(_) => return self.pending_unread(),
             },
             PropertyTableUpdate::EVENT_ID_ENTITY => {
-                let mut r = WireReader::new(data);
-                match PropertyTableUpdate::decode(&mut r, opcode, &self.schema)
-                    .and_then(|u| r.finish().map(|()| u))
-                {
-                    Ok(u) => {
-                        let properties: Vec<u32> =
-                            u.properties.entries.iter().map(|e| e.pid).collect();
-                        let stored = self.pending.table(target, &properties, data);
+                match PropertyTableUpdate::entry_spans(data, &self.schema) {
+                    Ok(entries) => {
+                        let stored = self.pending.table(target, &entries);
                         self.entry_progress.creations += u64::from(stored == Stored::Kept);
-                        stored
+                        (target, stored)
                     }
                     Err(_) => return self.pending_unread(),
                 }
@@ -3333,7 +3380,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     Ok(u) => {
                         let stored = self.pending.single(target, op, u.entry.pid, data);
                         self.entry_progress.properties += u64::from(stored == Stored::Kept);
-                        stored
+                        (target, stored)
                     }
                     Err(_) => return self.pending_unread(),
                 }
@@ -3342,7 +3389,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 Ok(_) => {
                     let stored = self.pending.appearance(target, data);
                     self.entry_progress.appearances += u64::from(stored == Stored::Kept);
-                    stored
+                    (target, stored)
                 }
                 Err(_) => return self.pending_unread(),
             },
@@ -3355,12 +3402,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     let stored = self.pending.position(u.entity_id, data, at);
                     self.entry_progress.positions += u64::from(stored == Stored::Kept);
                     self.note_entry_first(EntryFirst::Position, stored, depth, now);
-                    if stored == Stored::Kept
+                    // The placement is required state: a full store does not lose it.
+                    if stored != Stored::Despawned
                         && let Some((l, h)) = self.exact_placement(u.entity_id, at)
                     {
                         self.local_placement(l, h, now);
                     }
-                    stored
+                    (u.entity_id, stored)
                 }
                 Err(_) => return self.pending_unread(),
             },
@@ -3375,39 +3423,40 @@ impl<N: ConnectorNet> SessionDriver<N> {
                         let stored = self.pending.sync(target, data, at);
                         self.entry_progress.placements += u64::from(stored == Stored::Kept);
                         self.note_entry_first(EntryFirst::Placement, stored, depth, now);
-                        if stored == Stored::Kept
+                        if stored != Stored::Despawned
                             && let Some((l, h)) = self.exact_placement(target, at)
                         {
                             self.local_placement(l, h, now);
                         }
-                        stored
+                        (target, stored)
                     }
                     Err(_) => return self.pending_unread(),
                 }
             }
-            // §9.3.9, `docs/m8-remediation.md` §27 fix 16: nothing is published before `WorldEntered`.
-            // The entity goes from the store; Vector 18's "dispatch normally" does not hold here.
+            // §9.3.9: nothing is published before `WorldEntered`: a record stays in the store, and no
+            // later update of the key brings it back.
             EntityDespawn::EVENT_ID => {
                 // Vector 18's top-level form is the one zero byte the envelope has taken already;
                 // a batch's child keeps its own.
                 if !data.is_empty() && EntityDespawn::from_bytes(data).is_err() {
                     return self.pending_unread();
                 }
-                if self.pending.despawn(target) {
-                    self.entry_progress.despawns = self.entry_progress.despawns.saturating_add(1);
-                } else if target == DEFAULT_RECIPIENT {
+                if target == DEFAULT_RECIPIENT && !DEFAULT_RECIPIENT_DESPAWN_APPLIES {
                     self.entry_progress.default_target =
                         self.entry_progress.default_target.saturating_add(1);
-                } else {
-                    self.entry_progress.no_target = self.entry_progress.no_target.saturating_add(1);
+                    return;
                 }
-                return;
+                let stored = self.pending.despawn(target);
+                self.entry_progress.despawns += u64::from(stored == Stored::Kept);
+                (target, stored)
             }
             SubEventBatch::EVENT_ID_AOI_ENTER => {
                 self.entry_progress.unsupported_batches =
                     self.entry_progress.unsupported_batches.saturating_add(1);
                 return;
             }
+            // Labelled (`docs/m8-remediation.md` §28 fix 23): `0xA8` cannot pass "validate before
+            // retention" until its variants are settled, so it is counted and skipped, kept nowhere.
             0xA8 => {
                 self.entry_progress.actions = self.entry_progress.actions.saturating_add(1);
                 return;
@@ -3420,26 +3469,35 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
                 return;
             }
-            // Every server `0x30`, `0x60` and `0x19A` before `WorldEntered` too: counted and discarded,
-            // no RPC runs and nothing is kept for later (labelled, `docs/m8-remediation.md` §27 fix
-            // 16).
+            // Every server `0x30`, `0x60` and `0x19A` before `WorldEntered` too: counted and discarded
+            // (§9.3.9), no RPC runs and nothing is kept for later.
             _ => {
                 self.entry_progress.other = self.entry_progress.other.saturating_add(1);
                 return;
             }
         };
+        self.note_stored(opcode, key, stored);
+    }
+
+    /// The counts of what the store did: never a terminal result, whatever it answered (§9.3.9).
+    fn note_stored(&mut self, opcode: u32, key: u64, stored: Stored) {
+        let p = &mut self.entry_progress;
         match stored {
+            Stored::Kept if opcode == EntityDespawn::EVENT_ID => {}
+            Stored::Kept if key == DEFAULT_RECIPIENT => {
+                p.default_target = p.default_target.saturating_add(1);
+            }
+            Stored::Kept if !self.pending.resolved(key) => {
+                p.no_target = p.no_target.saturating_add(1);
+            }
             Stored::Kept => {}
-            Stored::NoTarget if target == DEFAULT_RECIPIENT => {
-                self.entry_progress.default_target =
-                    self.entry_progress.default_target.saturating_add(1);
+            Stored::NoTarget if key == DEFAULT_RECIPIENT => {
+                p.default_target = p.default_target.saturating_add(1);
             }
-            Stored::NoTarget => {
-                self.entry_progress.no_target = self.entry_progress.no_target.saturating_add(1);
-            }
-            Stored::Overflow => {
-                self.end_by_table(TableRow::Unsupported, true, "pending world state", now);
-            }
+            Stored::NoTarget => p.no_target = p.no_target.saturating_add(1),
+            Stored::Despawned => p.despawn_blocked = p.despawn_blocked.saturating_add(1),
+            Stored::KeyCap => p.target_cap_hits = p.target_cap_hits.saturating_add(1),
+            Stored::ByteCap => p.bytes_cap_hits = p.bytes_cap_hits.saturating_add(1),
         }
     }
 
@@ -3929,9 +3987,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// `0xF4` on queue 1 in its default-recipient form (§9.3.9, Vector 18), kept until acknowledged
-    /// and sent again on a NAK. Labelled (`docs/m8-remediation.md` §27 fix 7): the text gives no rule,
-    /// and answering `OutOfOrderAck` could lose the one message that ends the entry.
+    /// `0xF4` on queue 1 in its default-recipient form (§9.3.9, Vector 18), kept until a cumulative
+    /// Ack or the close and sent again on a NAK. Labelled (`docs/m8-remediation.md` §28 fix 28): an
+    /// inbound `OutOfOrderAck` names the server's own sequences, so its number ends no retention here,
+    /// though the text's clause says so; that clause is expected to go.
     fn send_ready(link: &mut Link, codecs: &ChatCodecs, env: &[u8], now: f64) -> bool {
         let Some(c) = link.mux.connection_mut(link.conn) else {
             return false;
@@ -4326,7 +4385,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     return Ok(());
                 }
                 self.pending.discard();
+                self.world_identity = None;
                 self.placement = None;
+                self.placement_generation = 0;
                 self.local_ready = false;
                 self.server_ready = false;
                 self.entry_progress = EntryProgress::default();
@@ -4343,33 +4404,39 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 };
                 Ok(())
             }
+            // §9.3.9: typed logout closes with one Disconnect, no RPC and no drain, including during
+            // a pending placement. Labelled (`docs/m8-remediation.md` §28 fix 18): the command and the
+            // screen the client lands on are the writer's to name.
             Command::LeaveWorld => {
-                if !matches!(self.stage, Stage::InWorld { .. }) {
+                if !matches!(self.stage, Stage::Entering { .. } | Stage::InWorld { .. }) {
                     return Err(NetError::InvalidCommand("not in the world"));
                 }
-                // §7.2 item 1: `0x851E002F`, unless a countdown already runs (its answer
-                // comes as system lines, then the teardown).
-                match self.adapter.request_logout() {
-                    Ok(Some(ev)) => self.pending_out.push_back(ev),
-                    Ok(None) => {
-                        tracing::debug!("official session: a logout countdown already runs");
-                    }
-                    Err(_) => return Err(NetError::InvalidCommand("not in the world")),
+                tracing::info!("official session: typed logout closes the session");
+                self.log_entry_end("typed logout");
+                self.pending.discard();
+                self.pending_out.clear();
+                self.user_close("typed logout", now);
+                if let Some(chat) = self.chat.as_mut() {
+                    chat.close(now);
                 }
+                self.end(DisconnectReason::ClientRequested);
                 Ok(())
             }
-            Command::WorldLoaded => {
+            Command::WorldLoaded { generation } => {
                 match &self.stage {
                     // §4.5 item 4: the client's loading for its latest placement is done. It is
                     // kept with that placement's stamp, also outside portal space: a `0x5E`
-                    // may follow its placement (item 2; module docs).
+                    // may follow its placement (item 2; module docs). The in-world signal names no
+                    // generation (labelled, `docs/m8-remediation.md` §28 fix 27).
                     Stage::InWorld { .. } => {
                         let t = self.adapter.teleport();
                         self.loaded = Some(t.stamp_known().then(|| t.stamp()));
                     }
-                    // §9.3.9: the local gate of the pending placement; no server readiness.
+                    // §9.3.11: the local gate of the pending placement it names; no server readiness.
                     Stage::Entering { since, .. }
-                        if self.placement.is_some() && !self.local_ready =>
+                        if self.placement.is_some()
+                            && !self.local_ready
+                            && *generation == Some(self.placement_generation) =>
                     {
                         let waited = now - *since;
                         self.local_ready = true;
@@ -4379,6 +4446,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                         // The load time against the readiness clock (§27 "Builder").
                         tracing::info!(
                             target: EVIDENCE_TARGET,
+                            world_loaded_generation = self.placement_generation,
                             load_ms = self
                                 .placed_at
                                 .map_or(0, |placed| ((now - placed).max(0.0) * 1000.0) as u64),
@@ -4387,9 +4455,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
                             "official evidence: client loading done"
                         );
                     }
+                    // §9.3.11: stale, duplicate or before the placement.
                     _ => {
                         self.counters.stray_loaded += 1;
                         tracing::debug!("official session: loading signal with no placement");
+                        return Err(NetError::InvalidCommand(
+                            "no pending placement of that generation",
+                        ));
                     }
                 }
                 Ok(())
@@ -4425,12 +4497,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 velocity,
                 on_ground,
             } => {
-                // §9.3.9, decision 0046 item 10: `0x24` is held until OPEN-WORLD-9 settles its body.
-                // The historical 38-byte form is not sent in its place, and no history is kept for
-                // a reconciliation that cannot come. A test's in-world fixture still reaches it.
+                // §9.3.9, decision 0046 item 10: `0x24` is held until OPEN-WORLD-9 settles its body,
+                // so a move is a local `InvalidCommand`. The historical 38-byte form is not sent in
+                // its place, and no history is kept for a reconciliation that cannot come. A test's
+                // in-world fixture still reaches it.
                 if !self.readiness_specified {
                     self.counters.moves_held = self.counters.moves_held.saturating_add(1);
-                    return Ok(());
+                    return Err(NetError::InvalidCommand(MOVE_HELD));
                 }
                 // `official-messages-play.md` §8 row `0x24`: the axes and both headings.
                 // The jump bit while the controller is off the ground and rising is
@@ -4525,10 +4598,18 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// The user's close (§9.3.9; module docs "Ending the session"): exactly one standalone
-    /// Disconnect on an established connection, no application flush, no drain and a local close at
-    /// once; nothing on a connection still in its handshake. No ticket refresh starts after this,
-    /// and a running one is stopped.
+    /// A user's close (§9.3.9): one Disconnect on the established primary connection. While the world
+    /// connection is in its handshake the one Disconnect is the login connection's, and the world's
+    /// auth retries end with none. That row names Cancel; Quit, Escape and window close take the same
+    /// here (labelled, `docs/m8-remediation.md` §28 fix 15).
+    fn user_close(&mut self, why: &str, now: f64) {
+        let on_world = self.world.as_ref().is_some_and(|w| !w.in_handshake());
+        self.close_links(on_world, why, now);
+    }
+
+    /// The user's close (§9.3.9; module docs "Ending the session"): one Disconnect by its rows, no
+    /// application flush, no drain and a local close at once; nothing on a connection still in its
+    /// handshake. No ticket refresh starts after this, and a running one is stopped.
     pub fn begin_shutdown(&mut self, now: f64) {
         self.log_login_end("cancelled", now);
         self.log_entry_end("cancelled");
@@ -4541,7 +4622,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.pending.discard();
         self.stop_refresh();
         self.log_abandoned_handshakes("cancelled", now);
-        self.say_goodbye("the user closed the session", now);
+        self.user_close("the user closed the session", now);
         if let Some(chat) = self.chat.as_mut() {
             chat.close(now);
         }
@@ -4807,9 +4888,8 @@ mod list_tests {
         listed_names(entries.iter().copied())
     }
 
-    /// §9.3.9's first-screen contract and `docs/m8-remediation.md` §27 fix 11: every row either
-    /// passes the test the session's `Connected` filter makes or fails the whole list, so no row
-    /// disappears silently, and the order is the server's.
+    /// §9.3.9's first-screen contract: every row either passes as decoded or fails the whole list, so
+    /// no row disappears silently and none is cleaned, and the order is the server's.
     #[test]
     fn a_list_passes_whole_or_fails_whole() {
         let ok = names(&[(2, "Zeta"), (1, "Alpha")]).expect("valid");
@@ -4825,9 +4905,21 @@ mod list_tests {
         ] {
             assert_eq!(names(&bad), None, "{bad:?}");
         }
-        // A control character inside a name is sanitised to what the filter takes.
-        let cleaned = names(&[(1, "Go\u{7}od")]).expect("sanitised");
-        assert!(tessera_net::model::is_valid_name(&cleaned[0].1));
+        // §9.3.9, OE-T20: nothing is cleaned into a valid name, and names compare as decoded.
+        assert_eq!(names(&[(1, "Go\u{7}od")]), None);
+        assert_eq!(names(&[(1, "Good"), (2, "Ba\u{85}d")]), None);
+        assert_eq!(names(&[(1, "\u{3000}\u{a0}")]), None, "only whitespace");
+        assert!(
+            names(&[(1, "Good"), (2, "good")]).is_some(),
+            "case-sensitive"
+        );
+        assert!(
+            names(&[(1, "\u{e9}"), (2, "e\u{301}")]).is_some(),
+            "no normalization"
+        );
+        let exactly = "x".repeat(64);
+        assert!(names(&[(1, exactly.as_str())]).is_some(), "64 bytes");
+        assert_eq!(names(&[(1, &"\u{e9}".repeat(33))]), None, "66 UTF-8 bytes");
         // Exactly the bound passes, one more fails.
         let many: Vec<(u64, String)> = (0..=MAX_CHARACTERS as u64)
             .map(|i| (i + 1, format!("N{i}")))

@@ -531,7 +531,7 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   and the rest after `0x90`, every 5 s during the readiness wait and again at its end, with the kept
   `0x90` table's size (`session_table_bytes`) and the world connection's queue counts so far
   (`queue3_groups_over`, `queue3_older`, `queue3_equal`, `queue3_ambiguous`, `duplicates`,
-  `tombstones_evicted`).
+  `tombstones_evicted`), and the sends the socket refused for now (`send_failures`).
 - `official evidence: session table released`: the first `0x90`'s table at `WorldEntered`, as a size
   and a count of properties. A production run stops before this line.
 - `official evidence: client loading done` and `official evidence: entry deadline`: the load time

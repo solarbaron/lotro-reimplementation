@@ -2099,6 +2099,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             despawn_blocked = p.despawn_blocked,
             pending_target_cap_hit = p.target_cap_hits,
             pending_bytes_cap_hit = p.bytes_cap_hits,
+            send_failures = self.counters.send_failures,
             placement_generation = p.placement_generation,
             readiness_seen = p.readiness_seen,
             unsupported_batches = p.unsupported_batches,

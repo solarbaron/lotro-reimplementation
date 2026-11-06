@@ -176,12 +176,13 @@ fn a_flagged_fragment_with_a_count_below_two_is_a_bad_count() {
             num_frags: 1,
         })
     );
-    // 0x10 + 0x80 is no empty control either.
+    // 0x10 + 0x80 is no empty control either: an invalid omitted-chunk combination, dropped first
+    // (§9.3.9, §10.2 Vector 24).
     assert_eq!(
         BlobFragmentHeader::decode(&[0x01, 0xD0, 0x01, 0x00, 0x00, 0x01]),
-        Err(SessionError::InvalidFragmentBounds {
-            frag_index: 0,
-            num_frags: 1,
+        Err(SessionError::InvalidOmittedControl {
+            queue_id: 1,
+            blob_flags: 0xD0,
         })
     );
     // The same check holds a fragment that did not come through the header decoder.
@@ -449,19 +450,23 @@ fn an_unmasked_part_does_not_complete_a_masked_blob() {
         link.mux
             .receive_from_peer(&dgram, SERVER, 1.1, WireCodecs::NONE)
             .err(),
-        Some(SessionError::UnmaskedMultiPartFragment { queue_id: 1 })
+        Some(SessionError::UnmaskedFragment { queue_id: 1 })
     );
     assert!(link.delivered().is_empty());
     link.send(&real[1..], 2.0).expect("part 1, masked");
     let delivered = link.delivered();
     assert_eq!(delivered.len(), 1);
     assert_eq!(delivered[0].payload, long_body(1));
-    // An unfragmented queue-1 message has no table entry, and stays as it was.
+    // §9.3.9, §10.2 Vector 24: an unmasked unfragmented queue-1 message drops too, so no keyless
+    // datagram injects a queue-1 message.
     let dgram = unmasked(&link, &[plain(0xF4, &[0])]);
-    link.mux
-        .receive_from_peer(&dgram, SERVER, 3.0, WireCodecs::NONE)
-        .expect("unfragmented");
-    assert_eq!(link.delivered().len(), 1);
+    assert_eq!(
+        link.mux
+            .receive_from_peer(&dgram, SERVER, 3.0, WireCodecs::NONE)
+            .err(),
+        Some(SessionError::UnmaskedFragment { queue_id: 1 })
+    );
+    assert!(link.delivered().is_empty());
 }
 
 /// Unmasked parts cannot fill the table against masked traffic: a masked multi-part datagram still
@@ -552,11 +557,14 @@ fn a_refused_datagram_leaves_the_table_as_it_was() {
     assert!(r.ingest(1, open[1].clone(), 0.0).unwrap().is_some());
 }
 
-/// W2-EVICT-TABLE-FULL: a sibling that completes a new identity at the tombstone cap does not take
-/// away the tombstone of a repeat later in the same datagram, in either order. Eviction waits for
-/// the datagram's end.
+/// W2-EVICT-TABLE-FULL under §9.3.9 P10-10J: the oldest tombstone is evicted at the moment the cap
+/// overflows, not at the datagram's end, so siblings see the eviction in order. A repeat before the
+/// new completion is still a duplicate; after it, the evicted identity's part is new and, at a full
+/// incomplete table, drops the whole datagram with nothing applied.
+///
+/// Labelled until the writer answers whether end-of-datagram trimming is allowed.
 #[test]
-fn a_sibling_does_not_evict_a_tombstone_its_datagram_relies_on() {
+fn a_sibling_evicts_at_the_moment_of_overflow() {
     for repeat_first in [false, true] {
         let mut r = BlobReassembler::default();
         // Sixty-four tombstones, identity 1000 the oldest.
@@ -577,6 +585,7 @@ fn a_sibling_does_not_evict_a_tombstone_its_datagram_relies_on() {
                 .unwrap();
         }
         assert_eq!(r.incomplete_len(), 64);
+        let before = r.clone();
         let new = parts(4, 500, 500, 3, &[3])[0].clone();
         let repeat = oldest[0].clone();
         let datagram = if repeat_first {
@@ -584,13 +593,22 @@ fn a_sibling_does_not_evict_a_tombstone_its_datagram_relies_on() {
         } else {
             [new, repeat]
         };
-        assert_eq!(r.check_packet(1, &datagram, 1.0), Ok(()), "{repeat_first}");
-        let blobs = r.ingest_packet(1, &datagram, 1.0).expect("taken whole");
-        assert_eq!(blobs.len(), 1);
-        assert_eq!(r.counts().duplicates, 1);
-        // The cap holds again at the datagram's end.
-        assert_eq!(r.tombstone_sizes().0, MAX_BLOB_TOMBSTONES);
-        assert_eq!(r.counts().tombstones_evicted, 1);
+        if repeat_first {
+            assert_eq!(r.check_packet(1, &datagram, 1.0), Ok(()));
+            let blobs = r.ingest_packet(1, &datagram, 1.0).expect("taken whole");
+            assert_eq!(blobs.len(), 1);
+            assert_eq!(r.counts().duplicates, 1);
+            assert_eq!(r.tombstone_sizes().0, MAX_BLOB_TOMBSTONES);
+            assert_eq!(r.counts().tombstones_evicted, 1);
+        } else {
+            let full = Err(SessionError::ReassemblyTableFull { max_concurrent: 64 });
+            assert_eq!(r.check_packet(1, &datagram, 1.0).map(|()| 0), full);
+            assert_eq!(r.ingest_packet(1, &datagram, 1.0).map(|b| b.len()), full);
+            assert!(
+                r.same_state(&before),
+                "nothing applied, the eviction undone"
+            );
+        }
         assert_eq!(r.incomplete_len(), 64);
     }
 }
@@ -1041,8 +1059,9 @@ fn the_oldest_tombstone_goes_past_the_cap_and_is_counted() {
         assert!(r.ingest(1, frag_for(i), 0.0).unwrap().is_some(), "{i}");
     }
     assert_eq!(r.counts().tombstones_evicted, 0);
-    // Identity 1 is still remembered, and identity 0 is what goes next.
-    assert_eq!(r.ingest(1, frag_for(1), 0.0).unwrap(), None);
+    // Identity 2 (queue 4) is still remembered, and identity 0 is what goes next. (A queue-3 repeat
+    // here would be an older word, discarded before its tombstone is compared, §9.3.9.)
+    assert_eq!(r.ingest(1, frag_for(2), 0.0).unwrap(), None);
     assert_eq!(r.counts().duplicates, 1);
     assert!(
         r.ingest(1, frag_for(MAX_BLOB_TOMBSTONES as u16), 0.0)

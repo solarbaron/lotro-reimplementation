@@ -151,6 +151,12 @@ impl Server {
 
     /// A packet that delivers one small queue-1 blob.
     fn blob(&mut self) -> Vec<u8> {
+        self.blob_with(&OptionalHeaders::default())
+    }
+
+    /// A packet with `opt` that delivers one small queue-1 blob: eligible for a flow report
+    /// (§9.3.12).
+    fn blob_with(&mut self, opt: &OptionalHeaders) -> Vec<u8> {
         let blob = BlobFragment {
             header: BlobFragmentHeader {
                 queue_id: 1,
@@ -168,7 +174,7 @@ impl Server {
             },
             payload: vec![0xA5; 4],
         };
-        self.packet_with(&OptionalHeaders::default(), &[blob])
+        self.packet_with(opt, &[blob])
     }
 
     /// A packet that delivers one small queue-3 blob of `group`, with word `order`.
@@ -297,12 +303,13 @@ fn the_accumulator_is_on_every_line() {
         // One report goes first, and it empties the accumulator.
         conn.tick(0.3).expect("the first report");
         while conn.pop_outbound_datagram().is_some() {}
-        // Sequence 3 asked for, and never sent: an out-of-order Ack with bytes held.
+        // Sequence 3 asked for, and never sent: an out-of-order Ack with bytes held. The NAK rides
+        // with an application blob, so its bytes make a report due (§9.3.12).
         let nak = OptionalHeaders {
             sequence_nak: Some(vec![9_000]),
             ..OptionalHeaders::default()
         };
-        let packet = server.packet(&nak);
+        let packet = server.blob_with(&nak);
         let held = packet.len();
         conn.receive_datagram(&packet, PEER, 0.4, WireCodecs::NONE)
             .expect("the NAK");
@@ -337,13 +344,8 @@ fn the_accumulator_is_on_every_line() {
         let (mut conn, mut server) = connected();
         conn.tick(0.3).expect("the first report");
         // Bytes to report, attached to the next reliable blob.
-        conn.receive_datagram(
-            &server.packet(&OptionalHeaders::default()),
-            PEER,
-            0.4,
-            WireCodecs::NONE,
-        )
-        .expect("bytes");
+        conn.receive_datagram(&server.blob(), PEER, 0.4, WireCodecs::NONE)
+            .expect("bytes");
         let seqs = conn.send_blob(2, 0, 0x6F, &[0], 0.5, None).expect("a blob");
         while conn.pop_outbound_datagram().is_some() {}
         let nak = OptionalHeaders {
@@ -654,8 +656,8 @@ fn a_crowded_entrys_queue_skips_can_be_read() {
         format!("queue3_plain_delivered={MAX_ORDER_GROUPS}"),
         format!("queue3_groups_over={SKIPPED}"),
         format!("queue3_older={OLDER}"),
-        "queue3_equal=0".to_owned(),
         "queue3_ambiguous=0".to_owned(),
+        "reused_identities=0".to_owned(),
     ] {
         assert!(totals[0].contains(&field), "{field}: {}", totals[0]);
     }

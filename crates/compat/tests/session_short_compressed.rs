@@ -11,7 +11,7 @@ use tessera_compat::session::{
     ConnectionState, DatagramHeader, IsaacCipher, MAX_DATAGRAM_BUF, MAX_GAP_AGE_SEC,
     MIN_COMPRESSED_DATAGRAM_BYTES, MIN_DATAGRAM_BYTES, OptionalHeaders, SessionAuthHeader,
     SessionError, SessionMultiplexer, WireCodecs, decode_datagram, encode_datagram,
-    guid_fields_swapped, raw_length_admitted,
+    guid_fields_swapped, raw_length_admitted, split_blob,
 };
 
 const SERVER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 40), 9000);
@@ -115,6 +115,27 @@ impl Link {
         d
     }
 
+    /// The next sequenced datagram, compressed, carrying one small queue-1 blob: eligible traffic
+    /// for a flow report (§9.3.12).
+    fn next_blob(&mut self) -> Vec<u8> {
+        self.seq += 1;
+        let mask = self.isaac.next_mask();
+        let codec: &dyn BitTreeCodec = &self.dictionary;
+        let frags = split_blob(1, 0, 0, 0, None, 0x55, &[1]).expect("split");
+        encode_datagram(
+            DatagramHeader {
+                rec_id: ASSIGNED,
+                seq_num: self.seq,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders::default(),
+            &frags,
+            Some(mask),
+            Some(codec),
+        )
+        .expect("packet")
+    }
+
     fn receive(&mut self, d: &[u8], t: f64) -> Result<u16, SessionError> {
         let codecs = WireCodecs {
             incoming: Some(&self.dictionary),
@@ -197,7 +218,8 @@ fn a_short_compressed_sequenced_datagram_commits_with_no_gap() {
 }
 
 /// §5.5's flow report counts what came over the wire: a short datagram's raw bytes, not its
-/// decompressed size.
+/// decompressed size. Short datagrams without a blob make no report due (§9.3.12); their bytes are
+/// held for the report the next eligible datagram makes due.
 #[test]
 fn the_flow_report_counts_a_short_datagrams_raw_bytes() {
     let mut link = Link::new();
@@ -206,10 +228,23 @@ fn the_flow_report_counts_a_short_datagrams_raw_bytes() {
     let (a, b) = (link.next_short(), link.next_short());
     link.receive(&a, 0.3).expect("taken");
     link.receive(&b, 0.4).expect("taken");
+    for t in [1.5, 2.5, 4.0] {
+        link.mux.tick(t).expect("tick");
+        let conn = link.mux.connection_mut(link.id).expect("conn");
+        while let Some(d) = conn.pop_outbound_datagram() {
+            let pkt = decode_datagram(&d, false, None, false).expect("unencoded without a codec");
+            assert!(
+                pkt.opt_headers.flow_control.is_none(),
+                "no report due at {t}"
+            );
+        }
+    }
+    let c = link.next_blob();
+    link.receive(&c, 4.1).expect("taken");
 
     let mut reported = None;
-    let mut t = 0.5;
-    while reported.is_none() && t < 10.0 {
+    let mut t = 4.2;
+    while reported.is_none() && t < 14.0 {
         link.mux.tick(t).expect("tick");
         let conn = link.mux.connection_mut(link.id).expect("conn");
         while let Some(d) = conn.pop_outbound_datagram() {
@@ -221,7 +256,7 @@ fn the_flow_report_counts_a_short_datagrams_raw_bytes() {
     let report = reported.expect("a flow report");
     assert_eq!(
         usize::try_from(report.bytes_received_delta).expect("small"),
-        a.len() + b.len()
+        a.len() + b.len() + c.len()
     );
 }
 

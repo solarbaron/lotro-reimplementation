@@ -860,6 +860,21 @@ fn observed_world_answer(st: &mut State, datagram: &[u8]) {
                 st.deliver_world(d);
             }
         }
+        // A scripted network stands in for the controlled-target resolver that has no source
+        // (WORLD-9): the stream's own `0xCE`s go to the default recipient, which is never the player
+        // (`official-session.md` §9.3.9, §9.3.12 Question 1), so it addresses the player's placement
+        // to the player explicitly.
+        if st.placement {
+            let scripted = [observed(
+                1,
+                PositionUpdate::EVENT_ID,
+                placement(),
+                ObservedForm::To(PLAYER),
+            )];
+            if let Some(d) = server.observed_datagram(&scripted) {
+                st.deliver_world(d);
+            }
+        }
     }
     for f in pkt.fragments {
         if let Some(op) = f.header.blob_header_word {

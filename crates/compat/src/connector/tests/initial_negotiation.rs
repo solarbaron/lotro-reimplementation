@@ -1782,7 +1782,7 @@ fn a_compressed_request_is_measured_after_it_is_inflated() {
 }
 
 /// §9.3.7: a later valid `0xDD` updates only the opaque word and is counted; an invalid later one
-/// ends the attempt.
+/// ends the attempt before `Connected` (§9.3.9 stage table).
 #[test]
 fn a_later_request_updates_the_word_or_ends_the_attempt() {
     let (world, mut d, mut login) = connected();
@@ -1801,12 +1801,9 @@ fn a_later_request_updates_the_word_or_ends_the_attempt() {
     assert_eq!(d.initial_stages().ignored, 1);
     assert!(!d.ended());
 
-    // §9.3.9: a later malformed one is counted; only flags `02..FF` still fail.
+    // §9.3.9: a later malformed one fails in every stage before `Connected`.
     world.deliver(queue1(&mut login, 0xDD, &[0x00, 0x01]), LOGIN_SERVER);
     d.step(0.25, true, &go);
-    assert!(!d.ended());
-    world.deliver(queue1(&mut login, 0xDD, &[0x07, 0x01]), LOGIN_SERVER);
-    d.step(0.3, true, &go);
     assert_refused(&mut d, UnsupportedNegotiation::MalformedRequest);
     assert_no_ticket_after(&world, &mut d, 0.4);
 }

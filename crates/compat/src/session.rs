@@ -207,22 +207,20 @@ pub const CUMULATIVE_ACK_INTERVAL_SEC: f64 = 2.0;
 /// Interval of `SequenceNakHeader` in State `5` while gaps exist: `0.6` s (§5.3).
 pub const SEQUENCE_NAK_INTERVAL_SEC: f64 = 0.6;
 
-/// Report tick period of the later FlowControl-only packets in State `5`: `1.0` s.
+/// The cap on later FlowControl-only packets in State `5`: at most one per `1.0` s per connection.
 ///
-/// Tessera's value, an engineering choice within the §5.5 interim policy (P10-22-POLICY)
-/// pending the spec writer's answer to `OPEN-SESSION-13`; not an observed official
-/// period. The first FlowControl-only packet still goes out on the first tick after
-/// State `5`. After it, a tick sends a FlowControl-only packet for newly received
-/// datagrams only once this long has passed since the previous FlowControl-only packet,
-/// so at most one goes out per second per connection; until then the unreported bytes
-/// accumulate and ride on the next other outgoing sequenced packet, if one goes out first.
-/// Without this period every acknowledgement the server sends for a sequenced packet
-/// would be answered with a new sequenced packet, a loop at the round-trip time. With it
-/// the exchange is bounded, not ended: a peer that acknowledges every sequenced packet also
-/// acknowledges each FlowControl-only packet, that acknowledgement is a newly received
-/// datagram, and so one FlowControl-only packet still goes out per period each way for as
-/// long as the peer keeps acknowledging. Whether a datagram that only acknowledges should
-/// count as newly received for this schedule is part of `OPEN-SESSION-13`.
+/// §9.3.12 P10-10J (Tessera scheduling policy, not an observed native period; native production is
+/// `OPEN-SESSION-13`): the first report goes out once after State `5`. Afterwards a standalone
+/// report goes out at most once per this period, and only when newly accepted application-fragment
+/// or clock traffic arrived since the last report. Pure Ack/NAK/OutOfOrderAck/flow-only traffic
+/// alone never makes a report due, so a peer that acknowledges each report starts no
+/// self-sustaining exchange: with no eligible traffic there is no periodic report. Until a report
+/// is due the accepted bytes accumulate and ride on the next report, standalone or attached to an
+/// outgoing sequenced packet.
+///
+/// Labelled until the writer answers (`OPEN-SESSION-13`): the eligibility list, pure-Ack bytes in
+/// the accumulator, the cap being per connection, attached reports being uncapped, no standalone
+/// packet for a due ClockSync (`OPEN-SESSION-9`) and `intervalMs` wrapping past 65,535 ms.
 pub const FLOW_REPORT_ONLY_PERIOD_SEC: f64 = 1.0;
 
 /// Silence timeout of State `5`: the connection closes once `now - lastRecvTime` exceeds
@@ -525,21 +523,25 @@ pub enum SessionError {
         /// The bound.
         limit: usize,
     },
-    /// An unmasked packet carries a fragment on queues 2–4: its checksum has no key, so it is
-    /// dropped and counted and changes no identity (engineering choice, see
-    /// [`SessionConnection::receive_datagram`]).
-    #[error("an unmasked packet with a fragment on queue {queue_id}")]
-    UnmaskedReliableFragment {
-        /// The fragment's `queueId`.
+    /// An unmasked datagram has the fragment marker (`0x00000004`) set, on any queue (§9.3.9
+    /// closed transport action table, §10.2 Vector 24): its checksum has no key, so the whole
+    /// datagram is dropped and counted before any Ack, baseline, terminal result or other state
+    /// commit. Standalone unmasked controls and handshakes without fragments keep their own rules.
+    #[error("an unmasked datagram with the fragment marker set (first queue {queue_id})")]
+    UnmaskedFragment {
+        /// The first fragment's `queueId`, or `0` when the marker came with no fragment.
         queue_id: u8,
     },
-    /// An unmasked packet carries a part of a multi-part blob, on any queue: its checksum has no
-    /// key, so it is dropped and counted and cannot touch the reassembly table (engineering choice,
-    /// see [`SessionConnection::receive_datagram`]).
-    #[error("an unmasked packet with a part of a multi-part blob on queue {queue_id}")]
-    UnmaskedMultiPartFragment {
+    /// An `OmitChunkInfo` (`0x80`) fragment together with fragmentation `0x10`, control bit `0x02`,
+    /// encryption `0x08` or the undefined `0x20` (§9.3.9 closed transport action table, §10.2
+    /// Vector 24): an invalid omitted-chunk combination. The whole datagram is dropped and
+    /// counted before any terminal inference; it is never read as a known-layout `0x02`.
+    #[error("invalid omitted-chunk control on queue {queue_id} (blobFlags {blob_flags:#04x})")]
+    InvalidOmittedControl {
         /// The fragment's `queueId`.
         queue_id: u8,
+        /// The fragment's `blobFlags`.
+        blob_flags: u8,
     },
     /// A `ConnectChallengeHeader` whose datagram header `recId` or payload bytes `18..19`
     /// (the incoming and outgoing recipients, §6.3) are zero: Tessera adopts only non-zero
@@ -592,8 +594,8 @@ pub enum SessionError {
         max_concurrent: usize,
     },
     /// A `FragmentedBlob` had `EncryptedFragmentedBlob` (`blobFlags` bit 3, `0x08`) set. No
-    /// session key is ever provisioned, so such a blob is always rejected (§7.1,
-    /// `OPEN-SESSION-6`).
+    /// session key is ever provisioned, so the WHOLE containing datagram drops and is counted
+    /// before reassembly, with no committed state or Ack (§7.1, §9.3.9, `OPEN-SESSION-6`).
     #[error("encrypted FragmentedBlob rejected (no session cipher key is provisioned)")]
     EncryptedBlobRejected,
     /// 3DES-CBC ciphertext length is empty or not a multiple of 8 bytes (§7.1).
@@ -3897,12 +3899,29 @@ pub const fn check_fragment_slice(
     }
 }
 
-/// §9.3.9: `blobFlags` `0x02` on queues `2..=4`, with complete known framing. Once the packet's
-/// checksum held this is the whole transport-level terminal unsupported class, without an Ack
-/// (`OPEN-SESSION-14`).
+/// §9.3.9: `blobFlags` `0x02` on queues `2..=4` on an ordinary opcode blob with complete known
+/// framing. Once the packet's checksum held this is the whole transport-level terminal unsupported
+/// class, without an Ack (`OPEN-SESSION-14`). An omitted-chunk form with `0x02` is not this class:
+/// it is an invalid control and drops first ([`invalid_omitted_control`]).
 #[must_use]
 pub const fn unsupported_control_bit(header: &BlobFragmentHeader) -> bool {
-    header.blob_flags & BLOB_FLAG_CONTROL_02 != 0 && matches!(header.queue_id, 2..=4)
+    header.blob_flags & BLOB_FLAG_CONTROL_02 != 0
+        && header.blob_flags & BLOB_FLAG_OMIT_CHUNK_INFO == 0
+        && matches!(header.queue_id, 2..=4)
+}
+
+/// The `blobFlags` bits an empty control must have clear (§9.3.9): fragmentation `0x10`, control
+/// bit `0x02`, encryption `0x08` and the undefined `0x20`.
+pub const OMITTED_CONTROL_FORBIDDEN_FLAGS: u8 =
+    BLOB_FLAG_IS_FRAGMENTED | BLOB_FLAG_CONTROL_02 | BLOB_FLAG_ENCRYPTED | UNDEFINED_BLOB_FLAGS;
+
+/// §9.3.9's invalid omitted-chunk combination: `OmitChunkInfo` (`0x80`) together with any of
+/// [`OMITTED_CONTROL_FORBIDDEN_FLAGS`]. Its whole datagram drops before the known-layout `0x02`
+/// terminal test (§10.2 Vector 24: `01 D0 ...` and `02 82 ...` both drop).
+#[must_use]
+pub const fn invalid_omitted_control(header: &BlobFragmentHeader) -> bool {
+    header.blob_flags & BLOB_FLAG_OMIT_CHUNK_INFO != 0
+        && header.blob_flags & OMITTED_CONTROL_FORBIDDEN_FLAGS != 0
 }
 
 /// Whether a fragment of queue `queue_id` carries `orderNum` (field 3b, §5.6.3): queues
@@ -4070,6 +4089,16 @@ impl BlobFragmentHeader {
         }
         if !(1..=MAX_RECEIVE_QUEUE_ID).contains(&queue_id) {
             return Err(SessionError::InvalidQueueId { queue_id });
+        }
+        // §9.3.9 precedence: an invalid omitted-chunk combination drops its whole datagram first,
+        // before its other fields are judged and before any terminal inference.
+        if blob_flags & BLOB_FLAG_OMIT_CHUNK_INFO != 0
+            && blob_flags & OMITTED_CONTROL_FORBIDDEN_FLAGS != 0
+        {
+            return Err(SessionError::InvalidOmittedControl {
+                queue_id,
+                blob_flags,
+            });
         }
 
         let mut cursor = 2usize;
@@ -4450,13 +4479,14 @@ impl IncompleteBlob {
     }
 }
 
-/// §9.3.9: how long a completed identity is remembered.
+/// §9.3.9: how long a completed identity is remembered (30 seconds from completion).
 ///
-/// Labelled (`docs/m8-remediation.md` §27 fix 2): keeping the whole body of a completed identity,
-/// and what past the caps goes first, are this choice's; the writer may change them.
+/// Labelled until the writer answers: the boundary is inclusive, a tombstone, baseline or
+/// incomplete entry exactly this old is still live ([`BlobReassembler::purge_expired`]).
 pub const BLOB_TOMBSTONE_SEC: f64 = 30.0;
-/// §9.3.9's cap on full-body tombstones of queues `2..=4` per connection and direction. Each
-/// delivered body has its own, so a repeat of a conflicting second body deduplicates too.
+/// §9.3.9's cap on full-body tombstones of fragmented queue 1 and queues `2..=4`, shared per
+/// connection and direction. Each delivered body has its own, so a repeat of a conflicting second
+/// body deduplicates too.
 pub const MAX_BLOB_TOMBSTONES: usize = 64;
 /// §9.3.9: a queue-3 baseline expires this long after the last delivered blob of its key, and the
 /// key may then take a new first value.
@@ -4467,9 +4497,9 @@ pub const QUEUE3_BASELINE_SEC: f64 = 30.0;
 /// the writer is asked whether it may stay (`docs/m8-remediation.md` §28).
 pub const MAX_TOMBSTONE_BYTES: usize = 8 * 1024 * 1024;
 
-/// A completed identity on queues `2..=4` (§9.3.9): its full body, opcode and count, compared
-/// exactly and never by a digest. The body is shared, so a datagram's transaction can keep the list
-/// as it was without copying a byte ([`PacketTransaction`]).
+/// A completed identity of fragmented queue 1 or queues `2..=4` (§9.3.9): its full body, opcode
+/// and count, compared exactly and never by a digest. The body is shared, so a datagram's
+/// transaction can keep the list as it was without copying a byte ([`PacketTransaction`]).
 #[derive(Debug, Clone, PartialEq)]
 struct BlobTombstone {
     key: BlobKey,
@@ -4532,16 +4562,16 @@ struct PacketTransaction {
 pub struct ReassemblyCounts {
     /// Exact retransmissions of a remembered identity, ignored.
     pub duplicates: u64,
-    /// Reused identities with a different complete body: delivered once, as an anomaly.
+    /// Reused identities delivered once with a reuse count (§9.3.9): a different complete body
+    /// under a remembered identity, or a queue-3 word at distance zero with no exact tombstone.
     pub reused_identities: u64,
     /// Datagrams dropped whole for a fragment conflicting with an identity in progress.
     pub conflicts_dropped: u64,
-    /// Remembered identities evicted before their time.
+    /// Remembered identities evicted at the cap before their time: an ordinary bounded-memory
+    /// count, not an anomaly (§9.3.9).
     pub tombstones_evicted: u64,
     /// Completed queue-3 blobs older than the latest accepted of their key, discarded.
     pub queue3_older: u64,
-    /// Fresh completed queue-3 blobs whose word equals the latest accepted one, delivered.
-    pub queue3_equal: u64,
     /// Completed queue-3 blobs at distance 32,768, delivered once without replacing the baseline.
     pub queue3_ambiguous: u64,
     /// Completed queue-3 blobs of a new key at a full [`MAX_ORDER_GROUPS`] map: skipped, their
@@ -4587,6 +4617,11 @@ pub struct QueueDecision {
     pub baseline_present: bool,
 }
 
+/// The identity of `hdr` ([`BlobKey`]).
+///
+/// Labelled until the writer restores the definition (`docs/m8-remediation.md`, pass 10j): the
+/// queue-3 identity keeps the ordering word, as §5.6.4 rule 3 keys queue-3 reassembly, so its
+/// tombstones are per word while its baseline key (sender, recipient, group) is not.
 fn blob_key(sender_rec_id: u16, hdr: &BlobFragmentHeader) -> BlobKey {
     if hdr.queue_id == 3 {
         (
@@ -4607,24 +4642,32 @@ fn blob_key(sender_rec_id: u16, hdr: &BlobFragmentHeader) -> BlobKey {
     }
 }
 
-/// An `OmitChunkInfo` control with no chunk fields: opcode and length are zero, and it has no
-/// application dispatch (§9.3.9, `OPEN-SESSION-14` keeps its meaning).
-///
-/// Labelled (`docs/m8-remediation.md` §28 fix 7): `0x90`, with a fragment count and no length, is
-/// not read as a control here; the writer has been asked for one row per form.
+/// An empty control (§9.3.9): exactly `OmitChunkInfo` with fragmentation `0x10`, `0x02`, `0x08` and
+/// `0x20` all clear. Its opcode and length are zero and it has no application dispatch
+/// (`OPEN-SESSION-14` keeps its meaning); `0x01`, `0x04`, the default recipient and a known
+/// extension attachment add no application data. Any other omitted-chunk combination is an
+/// invalid control, dropped with its datagram before this is asked ([`invalid_omitted_control`]).
 const fn is_empty_control(hdr: &BlobFragmentHeader) -> bool {
-    hdr.blob_flags & BLOB_FLAG_OMIT_CHUNK_INFO != 0 && hdr.num_frags == 1
+    hdr.blob_flags & BLOB_FLAG_OMIT_CHUNK_INFO != 0
+        && hdr.blob_flags & OMITTED_CONTROL_FORBIDDEN_FLAGS == 0
 }
 
 /// Whether a fragment is one of a blob with an identity (§9.3.9: an unfragmented queue-1 message has
 /// none). Its decoded blob ID 0 is no blob ID, so it can neither repeat nor conflict with a
 /// fragmented queue-1 blob whose ID is 0.
 ///
-/// Labelled (`docs/m8-remediation.md` §28 fix 4): the text no longer limits the identity to queues
-/// 2 to 4, and :1742 names only 2, 3 and 4. A fragmented queue-1 blob keeps this reassembly identity
-/// and takes no tombstone ([`BlobReassembler::completed`]).
+/// A fragmented queue-1 blob has this identity and, with queues 2–4, takes a completed tombstone
+/// from the shared budget ([`takes_tombstone`]).
 const fn has_identity(hdr: &BlobFragmentHeader) -> bool {
-    hdr.queue_id != 1 || hdr.num_frags > 1
+    takes_tombstone(hdr.queue_id, hdr.num_frags)
+}
+
+/// Whether a completed blob of `queue_id` with `num_frags` parts is remembered as a tombstone
+/// (§9.3.9 queue comparison, P10-10J): fragmented queue 1 and queues 2–4 share one 64-tombstone
+/// budget per connection and direction; an unfragmented queue-1 blob (ID zero) has no dedup
+/// identity (§10.2 Vectors 22 and 24).
+const fn takes_tombstone(queue_id: u8, num_frags: u32) -> bool {
+    matches!(queue_id, 2..=4) || (queue_id == 1 && num_frags > 1)
 }
 
 /// Whether a fragment can join the identity in progress `entry` (§9.3.9: conflicting in-progress
@@ -4655,7 +4698,7 @@ pub struct BlobReassembler {
     max_concurrent_blobs: usize,
     max_blob_bytes: usize,
     superseded: u64,
-    /// Completed identities on queues `2..=4`, oldest first (§9.3.9).
+    /// Completed identities of fragmented queue 1 and queues `2..=4`, oldest first (§9.3.9).
     tombstones: VecDeque<BlobTombstone>,
     /// The bytes of [`Self::tombstones`]' bodies.
     tombstone_bytes: usize,
@@ -4730,18 +4773,20 @@ impl BlobReassembler {
         self.tombstones.iter().filter(move |t| t.key == *key)
     }
 
-    /// Remembers a delivered body as its own tombstone (§9.3.9: "each successive delivered
-    /// opcode/body/count"). What this leaves over the caps goes at the datagram's end
-    /// ([`Self::trim_tombstones`]), so whether one fragment repeats a completed identity does not
-    /// depend on where its siblings stand in the datagram.
+    /// Remembers a delivered body as its own tombstone (§9.3.9: "keep each delivered
+    /// opcode/body/count as its OWN full tombstone") and evicts the oldest completion at the moment
+    /// the cap overflows, an ordinary bounded-memory count, not an anomaly (§9.3.9). So a later
+    /// sibling of the same datagram already sees the eviction.
     fn remember(&mut self, tombstone: BlobTombstone, tx: &mut PacketTransaction) {
         tx.tombstones
             .get_or_insert_with(|| (self.tombstones.clone(), self.tombstone_bytes));
         self.tombstone_bytes = self.tombstone_bytes.saturating_add(tombstone.body.len());
         self.tombstones.push_back(tombstone);
+        self.trim_tombstones();
     }
 
-    /// Past [`MAX_BLOB_TOMBSTONES`] or [`MAX_TOMBSTONE_BYTES`] the oldest go, counted (§9.3.9).
+    /// Past [`MAX_BLOB_TOMBSTONES`] or [`MAX_TOMBSTONE_BYTES`] the oldest completion goes, counted
+    /// as ordinary bounded memory (§9.3.9).
     fn trim_tombstones(&mut self) {
         while self.tombstones.len() > MAX_BLOB_TOMBSTONES
             || (self.tombstone_bytes > MAX_TOMBSTONE_BYTES && self.tombstones.len() > 1)
@@ -4784,7 +4829,8 @@ impl BlobReassembler {
     /// takes Vector 22's skip: no eviction, no baseline, no tombstone and nothing superseded, while
     /// the datagram stays accepted and acknowledged and its siblings deliver. §10.1's wording for
     /// this may still move. Fix 4: distance 0 with no tombstone delivers once with an anomaly and
-    /// does not advance, as does any fresh body at distance 0.
+    /// does not advance, as does any fresh body at distance 0 (counted as a reuse by
+    /// [`Self::completed`]).
     fn queue3_gate(
         &mut self,
         sender_rec_id: u16,
@@ -4827,7 +4873,8 @@ impl BlobReassembler {
                 delivered("newer")
             }
             OrderBand::Equal => {
-                self.counts.queue3_equal = self.counts.queue3_equal.saturating_add(1);
+                // §9.3.9: delivered once with a reuse count ([`Self::completed`]); the baseline's
+                // last-delivery time is refreshed, its word unchanged.
                 self.set_baseline(slot, latest.word, now_sec, tx);
                 delivered("equal")
             }
@@ -4837,6 +4884,7 @@ impl BlobReassembler {
                 delivered("ambiguous")
             }
             OrderBand::Older => {
+                // [`Self::completed`] discards the older band before this gate; kept for safety.
                 self.counts.queue3_older = self.counts.queue3_older.saturating_add(1);
                 Queue3Verdict {
                     deliver: false,
@@ -4848,14 +4896,19 @@ impl BlobReassembler {
         }
     }
 
-    /// A blob completed under `key` (§9.3.9): an exact repeat of a body remembered there is ignored
-    /// at any distance, a different complete body is delivered once with an anomaly count and its
-    /// own tombstone, and on queue 3 the ordering gate decides. Queue 1 has no identity to remember.
+    /// A blob completed under `key` (§9.3.9 queue comparison, P10-10J): an exact repeat of a body
+    /// remembered there is ignored at any distance, a different complete body is delivered once
+    /// with a reuse count and its own tombstone, and on queue 3 the ordering gate decides.
+    /// Fragmented queue 1 and queues 2–4 share the tombstone budget; an unfragmented queue-1 blob
+    /// (ID zero) has no dedup identity ([`takes_tombstone`]).
     ///
-    /// Labelled (`docs/m8-remediation.md` §28 fix 4): the tombstone comes before the distance, so
-    /// an exact repeat at a newer distance deduplicates; a complete blob with an opcode and zero
-    /// bytes is an ordinary blob here, which sets or advances a baseline, since only an omitted-chunk
-    /// control is skipped ([`is_empty_control`]).
+    /// On queue 3 with a live baseline, a candidate in the older band (distance 32,769..65,535)
+    /// ALWAYS discards before any tombstone is compared; otherwise an exact tombstone match
+    /// deduplicates at every distance, newer, equal and half-range included, with no delivery or
+    /// baseline advance. Distance zero without an exact match delivers once with a reuse count
+    /// whether the old body is known different or no longer retained. A complete blob with an
+    /// opcode and zero bytes is an ordinary blob here; only an empty control is skipped
+    /// ([`is_empty_control`]).
     fn completed(
         &mut self,
         key: BlobKey,
@@ -4882,8 +4935,19 @@ impl BlobReassembler {
             distance,
             baseline_present,
         };
+        // Queue 3: expiry ran first (`ingest_packet`); the older band discards before tombstones.
+        if queue_id == 3
+            && let Some(latest) = self.queue3_latest.get(&(key.0, recipient_id, seq_group))
+            && order_band(order_num, latest.word) == OrderBand::Older
+        {
+            self.counts.queue3_older = self.counts.queue3_older.saturating_add(1);
+            self.decisions
+                .push(decision("older-discard", "older", true));
+            return None;
+        }
+        let tombstoned = takes_tombstone(queue_id, num_frags);
         let mut reused = false;
-        if matches!(queue_id, 2..=4) {
+        if tombstoned {
             let mut exact = false;
             for t in self.tombstones_of(&key) {
                 reused = true;
@@ -4909,13 +4973,15 @@ impl BlobReassembler {
             if !verdict.deliver {
                 return None;
             }
+            // Distance zero without an exact retained match is a reuse (§9.3.9).
+            reused |= verdict.distance == "equal";
         } else {
             self.decisions.push(decision("deliver", "none", false));
         }
         if reused {
             self.counts.reused_identities = self.counts.reused_identities.saturating_add(1);
         }
-        if matches!(queue_id, 2..=4) {
+        if tombstoned {
             self.remember(
                 BlobTombstone {
                     key,
@@ -4999,6 +5065,9 @@ impl BlobReassembler {
     /// Purges incomplete blobs older than `30.0` seconds (§5.6.4), tombstones past
     /// [`BLOB_TOMBSTONE_SEC`] and queue-3 baselines [`QUEUE3_BASELINE_SEC`] after their key's last
     /// delivery (§9.3.9), which frees their slots and lets those keys take a new first value.
+    ///
+    /// Labelled until the writer answers: the 30-second boundary is inclusive (`<=` keeps an entry
+    /// exactly 30 s old).
     pub fn purge_expired(&mut self, now_sec: f64) {
         self.incomplete
             .retain(|_, entry| now_sec - entry.created_at_sec <= BLOB_REASSEMBLY_EXPIRY_SEC);
@@ -5018,6 +5087,15 @@ impl BlobReassembler {
     /// §10.1 rule 8).
     fn check_fragment(&self, frag: &BlobFragment) -> Result<(), SessionError> {
         let hdr = &frag.header;
+        // §9.3.9 precedence: an invalid omitted-chunk combination drops first, before any other
+        // fragment rule and before any terminal inference.
+        if invalid_omitted_control(hdr) {
+            return Err(SessionError::InvalidOmittedControl {
+                queue_id: hdr.queue_id,
+                blob_flags: hdr.blob_flags,
+            });
+        }
+        // §7.1 (SESSION-6): an encrypted blob drops its whole datagram before reassembly.
         if (hdr.blob_flags & BLOB_FLAG_ENCRYPTED) != 0 {
             tracing::debug!(blob_id = hdr.blob_id, "encrypted FragmentedBlob rejected");
             return Err(SessionError::EncryptedBlobRejected);
@@ -5091,10 +5169,7 @@ impl BlobReassembler {
         self.decisions.clear();
         let mut tx = self.begin_packet();
         match self.take_fragments(sender_rec_id, fragments, now_sec, &mut tx) {
-            Ok(blobs) => {
-                self.trim_tombstones();
-                Ok(blobs)
-            }
+            Ok(blobs) => Ok(blobs),
             Err(err) => {
                 self.roll_back(tx);
                 Err(err)
@@ -6524,8 +6599,8 @@ impl Evidence {
             queue3_plain_delivered = self.queue3_plain_delivered,
             queue3_groups_over = self.reassembly.queue3_groups_over,
             queue3_older = self.reassembly.queue3_older,
-            queue3_equal = self.reassembly.queue3_equal,
             queue3_ambiguous = self.reassembly.queue3_ambiguous,
+            reused_identities = self.reassembly.reused_identities,
             duplicates = self.reassembly.duplicates,
             tombstones_evicted = self.reassembly.tombstones_evicted,
             lines_not_shown = self.not_shown,
@@ -6540,15 +6615,21 @@ impl Drop for Evidence {
     }
 }
 
-/// The interim flow-report counters of §5.5 (P10-22-POLICY, `OPEN-SESSION-13`).
+/// The interim flow-report counters of §5.5 and the P10-10J schedule of §9.3.12 (`OPEN-SESSION-13`).
+///
+/// Byte counting and report eligibility are separate: every accepted datagram adds its bytes to
+/// the accumulator, but only eligible traffic ([`FlowReport::count`]) makes a later report due.
+/// Pure Ack/NAK/OutOfOrderAck/flow-only traffic alone never does (§9.3.12), so a server that only
+/// acknowledges gets one first report and nothing more, and its bytes wait for the next report
+/// that eligible traffic makes due.
 #[derive(Debug, Clone, Copy)]
 struct FlowReport {
-    /// UDP payload bytes of this connection's valid peer datagrams since `since_sec`.
+    /// UDP payload bytes of this connection's accepted peer datagrams since `since_sec`.
     bytes: u32,
     /// The initial auth transmission, or the last report sent.
     since_sec: f64,
-    /// Valid peer datagrams arrived since the last report.
-    pending: bool,
+    /// Eligible traffic ([`FlowReport::count`]) arrived since the last report.
+    eligible: bool,
     /// The first FlowControl-only packet after State `5` went out.
     initial_sent: bool,
     /// When the last FlowControl-only packet went out (meaningful once `initial_sent`).
@@ -6560,25 +6641,35 @@ impl FlowReport {
         Self {
             bytes: 0,
             since_sec: now_sec,
-            pending: false,
+            eligible: false,
             initial_sent: false,
             last_flow_only_sec: now_sec,
         }
     }
 
-    /// When a tick in State `5` sends a FlowControl-only packet (§5.5 P10-22-POLICY,
-    /// [`FLOW_REPORT_ONLY_PERIOD_SEC`], `OPEN-SESSION-13`): at once for the first one, then
-    /// for newly received datagrams no other packet reported, but not before one report
-    /// tick period after the previous FlowControl-only packet. `None` when nothing waits.
-    /// The tick and [`SessionConnection::next_deadline`] both read this, so they agree.
+    /// When a tick in State `5` sends a FlowControl-only packet (§9.3.12 P10-10J,
+    /// [`FLOW_REPORT_ONLY_PERIOD_SEC`], `OPEN-SESSION-13`): at once for the first one, then only
+    /// once eligible traffic arrived that no other packet reported, and not before one report
+    /// period after the previous FlowControl-only packet. `None` when nothing is due. The tick
+    /// and [`SessionConnection::next_deadline`] both read this, so they agree.
     fn flow_only_due_at(&self) -> Option<f64> {
         if !self.initial_sent {
             Some(f64::NEG_INFINITY)
-        } else if self.pending {
+        } else if self.eligible {
             Some(self.last_flow_only_sec + FLOW_REPORT_ONLY_PERIOD_SEC)
         } else {
             None
         }
+    }
+
+    /// Whether a report rides on an outgoing sequenced packet now (§9.3.12: "piggyback on real
+    /// outgoing application traffic when due"): after the first report, and only with eligible
+    /// traffic unreported.
+    ///
+    /// Labelled (`OPEN-SESSION-13`, question for the writer): an attached report is not held to the
+    /// one-second cap of the standalone report; the cap is per connection.
+    const fn attach_due(&self) -> bool {
+        self.initial_sent && self.eligible
     }
 
     /// A FlowControl-only packet went out at `now_sec`.
@@ -6588,16 +6679,25 @@ impl FlowReport {
         self.last_flow_only_sec = now_sec;
     }
 
-    /// Counts one valid peer datagram of `len` bytes.
-    fn count(&mut self, len: usize) {
+    /// Counts one accepted peer datagram of `len` bytes; `eligible` when it makes a report due.
+    ///
+    /// Labelled (`OPEN-SESSION-13`, questions for the writer): eligible is a datagram with at least
+    /// one accepted application fragment that is not an empty control, or one with a
+    /// `ClockSyncHeader` (the "clock/state traffic" of §9.3.12); every other accepted datagram,
+    /// pure Ack/NAK/OutOfOrderAck/flow-only traffic included, still adds its bytes to the
+    /// accumulator for the next eligible report (§9.3.12 allows this).
+    fn count(&mut self, len: usize, eligible: bool) {
         self.bytes = self
             .bytes
             .saturating_add(u32::try_from(len).unwrap_or(u32::MAX));
-        self.pending = true;
+        self.eligible |= eligible;
     }
 
     /// The report for `now_sec`: the bytes counted and the elapsed milliseconds (floor,
     /// modulo 65,536, §5.5).
+    ///
+    /// Labelled (`OPEN-SESSION-13`, question for the writer): `intervalMs` past 65,535 ms wraps as
+    /// §5.5's table says ("reduced modulo 65,536"); it does not saturate.
     fn header(&self, now_sec: f64) -> FlowControlHeader {
         let elapsed_ms = ((now_sec - self.since_sec).max(0.0) * 1000.0).floor();
         FlowControlHeader {
@@ -6610,7 +6710,7 @@ impl FlowReport {
     fn reset(&mut self, now_sec: f64) {
         self.bytes = 0;
         self.since_sec = now_sec;
-        self.pending = false;
+        self.eligible = false;
     }
 }
 
@@ -7151,10 +7251,11 @@ impl SessionConnection {
     /// with `outgoing_codec` (the client-to-server dictionary) once the codecs are
     /// negotiated (§4.1.2, §7.3).
     ///
-    /// The interim flow-report policy of §5.5 (P10-22-POLICY) applies: in State `5` the
+    /// The interim flow-report policy of §5.5 and §9.3.12 (P10-10J) applies: in State `5` the
     /// first sequenced packet is always the FlowControl-only one (it is sent first when it
-    /// has not gone out yet), and a report of newly received datagrams is attached to the
-    /// packet when `opt_headers` carries none. A `ClockSyncHeader` is attached once
+    /// has not gone out yet), and a report is attached to the packet when `opt_headers` carries
+    /// none and eligible traffic arrived since the last report (pure acknowledgements alone
+    /// make none due). A `ClockSyncHeader` is attached once
     /// `30.0` s have passed since State `5` or the last one (§8.1): Tessera sends ClockSync
     /// only on sequenced packets (`OPEN-SESSION-9`), so its timer is no deadline.
     ///
@@ -7190,9 +7291,9 @@ impl SessionConnection {
         )
     }
 
-    /// Sends one FlowControl-only sequenced packet with the counters of §5.5
-    /// (P10-22-POLICY): the first one after State `5` (§6.4.1) and later ones when newly
-    /// received datagrams found no other packet to ride on.
+    /// Sends one FlowControl-only sequenced packet with the counters of §5.5: the first one after
+    /// State `5` (§6.4.1) and later ones when eligible traffic found no other packet to ride on
+    /// (§9.3.12 P10-10J).
     fn send_flow_only(
         &mut self,
         now_sec: f64,
@@ -7231,8 +7332,7 @@ impl SessionConnection {
         now_sec: f64,
         outgoing_codec: Option<&dyn BitTreeCodec>,
     ) -> Result<u32, SessionError> {
-        let attach_flow =
-            self.flow.initial_sent && self.flow.pending && opt_headers.flow_control.is_none();
+        let attach_flow = self.flow.attach_due() && opt_headers.flow_control.is_none();
         if attach_flow {
             opt_headers.flow_control = Some(self.flow.header(now_sec));
         }
@@ -7581,9 +7681,12 @@ impl SessionConnection {
     }
 
     /// This login connection was referred away (§9.3.9): from now on no outcome of its own sends a
-    /// Disconnect, while its Ack, clock and flow transport goes on until the world's State 5. Labelled
-    /// (`docs/m8-remediation.md` §28 fix 14): its NAKs go on with them, as §9.3.9's gap rule says
-    /// and the login retirement row does not.
+    /// Disconnect, while its Ack, NAK, clock and flow transport goes on until the world's State 5
+    /// (§9.3.12: "eligible NAKs accompany Ack/clock/flow handling"), when the driver retires it
+    /// silently.
+    ///
+    /// Labelled, a known and NOT accepted lifetime difference (§9.3.12 "Login retirement
+    /// relationship"): the official client keeps its login transport past world State 5.
     pub fn retire(&mut self) {
         self.retiring = true;
     }
@@ -7692,6 +7795,17 @@ impl SessionConnection {
             .map_err(|err| self.refused(err))?;
         let hdr = pkt.header;
 
+        // §9.3.9 closed transport action table, first row, and §10.2 Vector 24: an UNMASKED datagram
+        // with the fragment marker set drops whole on ANY queue, before any Ack, baseline, terminal
+        // Unsupported or other state commit, even when its keyless checksum is valid. Standalone
+        // unmasked controls and handshakes without fragments keep their own rules below.
+        if hdr.flags & FLAG_MASKED_CHECKSUM == 0
+            && (hdr.flags & FLAG_HAS_FRAGMENTED_BLOBS != 0 || !pkt.fragments.is_empty())
+        {
+            let queue_id = pkt.fragments.first().map_or(0, |f| f.header.queue_id);
+            return Err(self.refused(SessionError::UnmaskedFragment { queue_id }));
+        }
+
         // §6.3: the incoming recipient is the challenge datagram header's recId and the outgoing
         // one payload bytes 18..19; Tessera adopts only non-zero IDs. §9.3.9: a zero recipient is
         // unsupported at once, every auth retry cancelled and no reply, once its datagram has passed
@@ -7766,44 +7880,16 @@ impl SessionConnection {
         };
 
         // §9.3.9: `blobFlags` `0x02` on queues 2–4 is judged here, with the checksum verified and
-        // nothing committed: one terminal result, no Ack.
-        //
-        // Engineering choice, one rule for an unmasked packet (spec silent; question for the next
-        // spec pass: is a keyless checksum "valid" for §9.3.9's row of `0x02`?): its checksum has no
-        // key, so it proves nothing about the sender. Such a packet never ends a session, and its
-        // fragments on queues `2..=4` are dropped and counted, so they cannot leave an identity
-        // behind that would make a later masked blob look reused. Its parts of a multi-part blob are
-        // dropped on queue 1 too, so that only a masked datagram touches the reassembly table: an
-        // unmasked part could complete a masked blob with bytes the server never sent, or fill the
-        // table against masked traffic. Every server blob form the spec gives is masked (§6.4.1,
-        // Vector 19), and an unfragmented queue-1 message has no identity and no table entry. The
-        // same question for the writer covers this: may an unmasked packet carry a blob at all?
-        let masked = (hdr.flags & FLAG_MASKED_CHECKSUM) != 0;
+        // nothing committed: one terminal result, no Ack. Only a masked datagram reaches it: an
+        // unmasked one with the fragment marker was dropped above.
         let bit = pkt
             .fragments
             .iter()
             .find(|f| unsupported_control_bit(&f.header));
-        if !masked && bit.is_none() {
-            if let Some(f) = pkt
-                .fragments
-                .iter()
-                .find(|f| matches!(f.header.queue_id, 2..=4))
-            {
-                let queue_id = f.header.queue_id;
-                return Err(self.refused(SessionError::UnmaskedReliableFragment { queue_id }));
-            }
-            if let Some(f) = pkt.fragments.iter().find(|f| f.header.num_frags > 1) {
-                let queue_id = f.header.queue_id;
-                return Err(self.refused(SessionError::UnmaskedMultiPartFragment { queue_id }));
-            }
-        }
         let unsupported = bit.map(|f| SessionError::UnsupportedFragment {
             queue_id: f.header.queue_id,
             blob_flags: f.header.blob_flags,
         });
-        if let (false, Some(err)) = (masked, &unsupported) {
-            return Err(self.refused(err.clone()));
-        }
 
         // §9.3.9: the whole datagram goes through the reassembler before the commit below, so no
         // refusal can come after it: a conflict or a full table drops the datagram with nothing
@@ -7869,8 +7955,11 @@ impl SessionConnection {
 
         // Valid packet accepted: update the receive timestamp, and count its UDP payload
         // bytes (wire prefix and compressed bytes included) for the next flow report (§5.5).
+        // Only eligible traffic makes a report due (§9.3.12 P10-10J, [`FlowReport::count`]).
         self.last_recv_time_sec = now_sec;
-        self.flow.count(datagram.len());
+        let eligible = pkt.opt_headers.clock_sync.is_some()
+            || pkt.fragments.iter().any(|f| !is_empty_control(&f.header));
+        self.flow.count(datagram.len(), eligible);
 
         // State 2 -> State 5 (§6.4.1): this packet came from the adopted peer and passed the
         // framing, directional decompression, checksum and sequence checks above. A
@@ -8157,7 +8246,11 @@ impl SessionConnection {
         // SequenceNakHeader (0x00001000, §5.3)
         if let Some(nak_seqs) = &opt.sequence_nak {
             if let Some(&first_nak) = nak_seqs.first() {
-                // Implicitly acknowledge all sent packets strictly before nak_seqs[0] (§5.3)
+                // Implicitly acknowledge all sent packets strictly before nak_seqs[0] (§5.3).
+                //
+                // Labelled until the writer answers: this frees a retained `0xF4` record too. §9.3.9's
+                // F4 retention names only a cumulative Ack or the connection's close as its end; an
+                // inbound OutOfOrderAck never ends it (below).
                 self.retransmit_table
                     .retain(|&seq, _| (seq.wrapping_sub(first_nak) as i32) >= 0);
             }
@@ -8211,7 +8304,9 @@ impl SessionConnection {
 
         // OutOfOrderAckHeader (0x00002000, §5.4): the listed sequence numbers will never
         // arrive. `recv_seq_expected` is already the highest sequence received, so dropping
-        // the gaps is all that is needed for acknowledgements to resume.
+        // the gaps is all that is needed for acknowledgements to resume. It names the SERVER's
+        // sequence space: it never touches the outbound retransmit table, so a retained `0xF4`
+        // stays even when a number collides (§9.3.9 F4 retention, §10.2 Vector 24).
         if let Some(dropped_seqs) = &opt.out_of_order_ack {
             for &s in dropped_seqs {
                 self.missing_gaps.remove(&s);
@@ -8292,9 +8387,9 @@ impl SessionConnection {
     /// - State `5`: checks the `60.0` s / `300.0` s silence timeout, flushes
     ///   `OutOfOrderAckHeader` (no standalone ClockSync: the header rides on a sequenced
     ///   packet once its `30.0` s are up, [`Self::send_sequenced_packet`], `OPEN-SESSION-9`),
-    ///   sends the FlowControl-only packets of the §5.5 interim policy (P10-22-POLICY: the
-    ///   first tick after State `5`, then a tick after newly received datagrams that no
-    ///   other packet reported, at most once per [`FLOW_REPORT_ONLY_PERIOD_SEC`]), and
+    ///   sends the FlowControl-only packets of the §9.3.12 P10-10J policy (the first tick
+    ///   after State `5`, then a tick after eligible traffic that no other packet reported, at
+    ///   most once per [`FLOW_REPORT_ONLY_PERIOD_SEC`]; pure acknowledgements make none due), and
     ///   sends `SequenceNakHeader` every `0.6` s when gaps exist, or `CumulativeAckHeader`
     ///   every `2.0` s when none exist.
     /// - State `6` / `7`: flushes outbound reliable packets, then retransmits
@@ -8420,9 +8515,9 @@ impl SessionConnection {
                     self.note_control(SendKind::OutOfOrderAck, now_sec);
                 }
 
-                // §5.5 P10-22-POLICY: the first FlowControl-only packet, then one for
-                // newly received datagrams no other packet reported, at most once per
-                // report tick period (FLOW_REPORT_ONLY_PERIOD_SEC, OPEN-SESSION-13).
+                // §9.3.12 P10-10J: the first FlowControl-only packet, then one for eligible
+                // traffic no other packet reported, at most once per period
+                // (FLOW_REPORT_ONLY_PERIOD_SEC, OPEN-SESSION-13).
                 if self.flow.flow_only_due_at().is_some_and(|t| now_sec >= t) {
                     self.send_flow_only(now_sec, outgoing_codec)?;
                 }
@@ -8495,7 +8590,7 @@ impl SessionConnection {
     /// multiplexer's cleanup has work on this connection: the handshake retransmits and
     /// timeouts (§6.1), the out-of-order acknowledgements waiting (§5.4, due at once), the
     /// first FlowControl-only packet (§5.5, due at once) and a later one for unreported
-    /// datagrams ([`FLOW_REPORT_ONLY_PERIOD_SEC`] after the previous), the
+    /// eligible traffic ([`FLOW_REPORT_ONLY_PERIOD_SEC`] after the previous, §9.3.12), the
     /// `SequenceNakHeader` or `CumulativeAckHeader` (§5.2, §5.3), the silence timeout
     /// (§8.2), the disconnect's flush, retransmit and end (§6.1, §8.2), the cleanup after
     /// [`CLOSING_CLEANUP_SEC`] in State `8` (§6.1) and the expiry of an incomplete blob

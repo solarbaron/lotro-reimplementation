@@ -260,10 +260,10 @@ use crate::session::{
 use crate::world::{
     AccountEvictionNotice, CharacterEnterWorldRequest, CharacterListResponse,
     CharacterOperationError, EncodedPropertyTable, EncodedPropertyValue, EntityCreate,
-    EntityDespawn, PlayerSessionReady, PortalPositionSync, PortalReadyAck, PositionUpdate,
-    PropertyRemoval, PropertyScope, PropertyTableUpdate, ServerShutdownText, SinglePropertyUpdate,
-    SubEventBatch, SubEventFrame, VisualDescriptionUpdate, WireReader, WorldError, active_target,
-    encode_event_envelope, one_shared_prefix, rebuild_shared_prefix,
+    EntityDespawn, EntityPlacement, PlayerSessionReady, PortalPositionSync, PortalReadyAck,
+    PositionUpdate, PropertyRemoval, PropertyScope, PropertyTableUpdate, ServerShutdownText,
+    SinglePropertyUpdate, SubEventBatch, SubEventFrame, VisualDescriptionUpdate, WireReader,
+    WorldError, active_target, encode_event_envelope, one_shared_prefix, rebuild_shared_prefix,
 };
 
 use super::data::{SchemaView, chat_categories, prepare_advertisement};
@@ -1539,7 +1539,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     sum.tombstones_evicted.saturating_add(r.tombstones_evicted);
                 sum.empty_controls = sum.empty_controls.saturating_add(r.empty_controls);
                 sum.queue3_older = sum.queue3_older.saturating_add(r.queue3_older);
-                sum.queue3_equal = sum.queue3_equal.saturating_add(r.queue3_equal);
                 sum.queue3_ambiguous = sum.queue3_ambiguous.saturating_add(r.queue3_ambiguous);
                 sum.queue3_groups_over =
                     sum.queue3_groups_over.saturating_add(r.queue3_groups_over);
@@ -2125,8 +2124,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             session_table_bytes = self.pending.session_table_bytes(),
             queue3_groups_over = queues.queue3_groups_over,
             queue3_older = queues.queue3_older,
-            queue3_equal = queues.queue3_equal,
             queue3_ambiguous = queues.queue3_ambiguous,
+            reused_identities = queues.reused_identities,
             duplicates = queues.duplicates,
             tombstones_evicted = queues.tombstones_evicted,
             "official evidence: counts after the session start"
@@ -2596,6 +2595,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     /// The new world connection reached State 5 (§9.3.9): the referred login connection, whose bounded
     /// Ack, clock and flow transport has run until now, is retired silently, with no Disconnect.
+    ///
+    /// Labelled, a known and NOT accepted lifetime difference (§9.3.12 "Login retirement
+    /// relationship"): the official client's login transport outlasts world State 5 in the longer
+    /// capture, while Tessera follows §9.3.9's rule and stops it here. Whether the service reacts to
+    /// that silence is untested; it waits for the writer and the owner.
     fn retire_login(&mut self, now: f64) {
         if !self.login_referred || !self.login.live() {
             return;
@@ -2720,6 +2724,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             tracing::debug!("official session: referral with no pending selection ignored");
             return;
         }
+        // A named required-progress failure (§9.3.9): `end_by_table` gives the LoginRefused
+        // UnsupportedStep then Disconnected Unsupported pair before `Connected` and Disconnected
+        // Unsupported after it, which is where a selection's referral always comes.
         if addr.ip().is_unspecified() || addr.port() == 0 {
             self.end_by_table(
                 TableRow::Unsupported,
@@ -2872,7 +2879,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// Whether `m` is passed over on the login connection (§9.3.9's application dispatch scope):
     /// before `WorldEntered` everything without its own handling is bounded (reassembled already),
     /// counted per opcode, not dispatched, not answered and no decode error. That includes the
-    /// server `0x30`s before a referral, never buffered for later replay.
+    /// server `0x30`s before a referral, never buffered for later replay, and `0xB0` on the primary
+    /// login connection (§9.3.12 "B0 on primary login"): counted and skipped, with no reply, list
+    /// change, stage transition or stage-clock reset; only its verified datagram resets the
+    /// independent silence clock, in the session layer.
     fn login_window_skips(&mut self, m: &Inbound) -> bool {
         if m.world || matches!(self.stage, Stage::InWorld { .. }) {
             return false;
@@ -2927,13 +2937,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return;
         }
         let why = match blob.blob_header_word {
-            // §9.3.9: an active-stage `0xDD` with flags `02..FF` always fails; an initial one that
-            // does not read fails; a later one with a readable flags byte is counted.
-            OPCODE_INSTALL_REQUEST
-                if blob.queue_id == QUEUE_UNRELIABLE
-                    && (self.initial.wants_request()
-                        || blob.payload.first().is_none_or(|f| *f >= 2)) =>
-            {
+            // §9.3.9 stage table: before `Connected` (this is the login stage) a queue-1 `0xDD` that
+            // does not read, or with flags `02..FF`, is unsupported in every stage.
+            OPCODE_INSTALL_REQUEST if blob.queue_id == QUEUE_UNRELIABLE => {
                 UnsupportedNegotiation::MalformedRequest
             }
             OPCODE_INSTALL_REQUEST => return self.initial.ignored(),
@@ -2956,8 +2962,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// which must have an empty array. A later well-formed one, its array empty or not, only updates
     /// the opaque word and is counted: nothing is sent, no wait starts again and the install is not
     /// looked at again. One on another queue or connection, or after `Connected`, is counted and
-    /// skipped. An initial malformed one fails, and so does flags `02..FF` during the stage; a later
-    /// one that does not read is counted.
+    /// skipped. Before `Connected` a malformed one fails in every stage, and so does flags `02..FF`
+    /// (§9.3.9 stage table, DD column).
     fn install_request(&mut self, m: &Inbound, now: f64) {
         let on_primary =
             !m.world && m.queue == QUEUE_UNRELIABLE && m.top_level && self.stage == Stage::Login;
@@ -2973,11 +2979,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             Ok(r) => r,
             Err(e) => {
                 tracing::debug!(kind = %error_kind(&e), "official session: install request refused");
-                if self.initial.wants_request() {
-                    self.refuse_unsupported(UnsupportedNegotiation::MalformedRequest, now);
-                } else {
-                    self.initial.ignored();
-                }
+                self.refuse_unsupported(UnsupportedNegotiation::MalformedRequest, now);
                 return;
             }
         };
@@ -3300,7 +3302,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// repeating the ID is counted and skipped, the first table staying as it is (labelled,
     /// `docs/m8-remediation.md` §28 fix 20), a later
     /// valid one with another ID is unsupported (no silent rebinding), and a later one that does not
-    /// read is counted.
+    /// read is counted (labelled until the writer answers: a later invalid or undecodable `0x90`).
     fn session_ready(&mut self, m: &Inbound, now: f64) {
         let decoded = if m.envelope_flags == 0 {
             PlayerSessionReady::from_envelope_body(&m.body, &self.schema).ok()
@@ -3320,6 +3322,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 self.counters.session_starts_repeated =
                     self.counters.session_starts_repeated.saturating_add(1);
             } else {
+                // The named "later conflicting 90" failure (§9.3.9): the table's Unsupported pair
+                // before `Connected`, Disconnected Unsupported after it ([`Self::end_by_table`]).
                 self.end_by_table(
                     TableRow::Unsupported,
                     true,
@@ -3490,22 +3494,31 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
                 Err(_) => return self.pending_unread(),
             },
+            // §9.3.9, §9.3.12 Question 1: the pending key is the RAW logical recipient until the
+            // controlled-target resolver is sourced; the leading eight-byte word is never the key, and
+            // the conditional selector (the attachment form's eight-byte word) is metadata only.
             PositionUpdate::EVENT_ID => match PositionUpdate::from_bytes(data) {
                 Ok(u) => {
                     let at = placement_location(&u.placement).map(|(l, _, h)| (l, h));
                     if at.is_some_and(|(l, h)| !usable_placement(&l, h)) {
                         return self.pending_unread();
                     }
-                    let stored = self.pending.position(u.entity_id, data, at);
+                    let selector = match u.placement {
+                        EntityPlacement::Attachment { parent_id, .. } if parent_id != 0 => {
+                            Some(parent_id)
+                        }
+                        _ => None,
+                    };
+                    let stored = self.pending.position(target, data, at, selector);
                     self.entry_progress.positions += u64::from(stored == Stored::Kept);
                     self.note_entry_first(EntryFirst::Position, stored, depth, now);
                     // The placement is required state: a full store does not lose it.
                     if stored != Stored::Despawned
-                        && let Some((l, h)) = self.exact_placement(u.entity_id, at)
+                        && let Some((l, h)) = self.exact_placement(target, at)
                     {
                         self.local_placement(l, h, now);
                     }
-                    (u.entity_id, stored)
+                    (target, stored)
                 }
                 Err(_) => return self.pending_unread(),
             },
@@ -3541,6 +3554,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 if target == DEFAULT_RECIPIENT && !DEFAULT_RECIPIENT_DESPAWN_APPLIES {
                     self.entry_progress.default_target =
                         self.entry_progress.default_target.saturating_add(1);
+                    return;
+                }
+                // §9.3.9: only an explicit, resolved target deletes. Labelled until the writer
+                // answers: an unresolved ID or the `0x90`'s own ID is counted and skipped.
+                if !self.pending.despawn_applies(target) {
+                    self.entry_progress.no_target = self.entry_progress.no_target.saturating_add(1);
                     return;
                 }
                 let stored = self.pending.despawn(target);

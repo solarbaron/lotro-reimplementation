@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The FlowControl-only packets of `docs/specs/official-session.md` §5.5 (P10-22-POLICY,
-//! `OPEN-SESSION-13`) on a virtual clock: the first one on the first tick after State 5, later
-//! ones at most once per report tick period ([`FLOW_REPORT_ONLY_PERIOD_SEC`], Tessera's value),
-//! so a server that acknowledges every sequenced packet at once cannot start a loop at the
-//! round-trip time. Every byte here is synthetic; nothing leaves the process.
+//! The FlowControl-only packets of `docs/specs/official-session.md` §5.5 under the P10-10J schedule
+//! of §9.3.12 (`OPEN-SESSION-13`) on a virtual clock: the first one on the first tick after State 5;
+//! later ones only after newly accepted application-fragment or clock traffic, and at most once per
+//! [`FLOW_REPORT_ONLY_PERIOD_SEC`] (Tessera's cap). Pure acknowledgements never make a report due,
+//! so a server that only acknowledges gets exactly one report, and its bytes wait for the next
+//! eligible one. Every byte here is synthetic; nothing leaves the process.
 
 use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 use tessera_compat::session::{
-    AuthConnection, CodecUuids, ConnectChallengeHeader, ConnectionState, DatagramHeader,
-    FLAG_MASKED_CHECKSUM, FLOW_REPORT_ONLY_PERIOD_SEC, IsaacCipher, OptionalHeaders,
-    SessionAuthHeader, SessionMultiplexer, WireCodecs, decode_datagram, encode_datagram,
-    guid_fields_swapped, split_blob,
+    AuthConnection, BlobFragment, CodecUuids, ConnectChallengeHeader, ConnectionState,
+    DatagramHeader, FLAG_MASKED_CHECKSUM, FLOW_REPORT_ONLY_PERIOD_SEC, IsaacCipher,
+    OptionalHeaders, SessionAuthHeader, SessionMultiplexer, WireCodecs, decode_datagram,
+    encode_datagram, guid_fields_swapped, split_blob,
 };
 
 const SERVER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 70), 9000);
@@ -68,10 +69,15 @@ impl Server {
         }
     }
 
-    /// The next sequenced packet, carrying a one-byte blob.
+    /// The next sequenced packet, carrying a one-byte blob: eligible traffic (§9.3.12).
     fn packet(&mut self) -> Vec<u8> {
         let frags =
             split_blob(2, ((self.seq + 1) & 0xFFFF) as u16, 1, 0, None, 0x10, b"x").expect("split");
+        self.sequenced(&OptionalHeaders::default(), &frags)
+    }
+
+    /// The next sequenced packet with `opt` and `frags`.
+    fn sequenced(&mut self, opt: &OptionalHeaders, frags: &[BlobFragment]) -> Vec<u8> {
         self.seq += 1;
         let mask = self.isaac.next_mask();
         encode_datagram(
@@ -80,8 +86,8 @@ impl Server {
                 seq_num: self.seq,
                 ..DatagramHeader::default()
             },
-            &OptionalHeaders::default(),
-            &frags,
+            opt,
+            frags,
             Some(mask),
             None,
         )
@@ -211,11 +217,11 @@ fn the_first_report_comes_on_the_first_tick() {
 }
 
 /// A server that acknowledges every sequenced packet at once, one round trip later, while a
-/// reliable client blob is in flight: no loop at the round-trip time. The client ticks every
-/// 5 ms and after every arrival, harder than the connector does. The exchange is bounded,
-/// not ended: the server acknowledges each FlowControl-only packet too, so one goes out per
-/// [`FLOW_REPORT_ONLY_PERIOD_SEC`] (0.1, 1.1, ... 5.1 s, the whole budget of 6) for as long
-/// as it keeps acknowledging (`OPEN-SESSION-13`).
+/// reliable client blob is in flight: pure acknowledgements never make a report due (§9.3.12
+/// P10-10J), so exactly one FlowControl-only packet goes out, the first, and the blob carries no
+/// report. The client ticks every 5 ms and after every arrival, harder than the connector does.
+/// The acknowledgements' bytes are held, and go out on the report that the next eligible datagram
+/// makes due.
 #[test]
 fn an_acknowledging_server_starts_no_report_loop() {
     let mut server = Server::new();
@@ -257,32 +263,110 @@ fn an_acknowledging_server_starts_no_report_loop() {
             arrivals.push_back((t + RTT, s));
         }
     }
-    assert!(sent.attached >= 1, "the blob carried the pending report");
-    assert!(
-        sent.flow_only.len() <= 6,
-        "{} FlowControl-only packets in 5 s: {:?}",
-        sent.flow_only.len(),
-        sent.flow_only
+    assert_eq!(
+        sent.flow_only,
+        vec![0.1],
+        "exactly one FlowControl-only packet, the first"
     );
-    assert_spaced(&sent.flow_only);
+    assert_eq!(sent.attached, 0, "acknowledgements make no report due");
     assert_eq!(sent.flow_only_with_nothing, 0);
 
-    // The acknowledgements stop; the bytes still held go out on the next report, so nothing
-    // received is lost to the period.
-    let quiet = end + 2.0 * FLOW_REPORT_ONLY_PERIOD_SEC;
+    // The acknowledgements stop: still no report is due, however long the client waits.
     while let Some((at, seq)) = arrivals.pop_front() {
         let ack = server.ack(seq);
         received += ack.len() as u64;
         mux.receive_from_peer(&ack, SERVER, at, WireCodecs::NONE)
             .expect("the last acks");
     }
-    let due = mux
-        .next_deadline(end)
-        .expect("the held report is a deadline");
-    assert!(due <= quiet, "{due}");
+    let quiet = end + 3.0 * FLOW_REPORT_ONLY_PERIOD_SEC;
     mux.tick(quiet).expect("tick");
     collect(&mut mux, id, quiet, &mut sent);
+    assert_eq!(sent.flow_only.len(), 1, "no report for held pure-Ack bytes");
+
+    // An eligible datagram arrives: the next report carries every held byte with its own.
+    let p = server.packet();
+    received += p.len() as u64;
+    let at = quiet + 0.1;
+    mux.receive_from_peer(&p, SERVER, at, WireCodecs::NONE)
+        .expect("a blob");
+    let due = mux.next_deadline(at).expect("the report is a deadline");
+    assert!(due <= at + EPS, "due at once, the cap long past: {due}");
+    mux.tick(at).expect("tick");
+    collect(&mut mux, id, at, &mut sent);
+    assert_eq!(sent.flow_only.len(), 2);
+    assert_eq!(sent.reported_bytes, received, "nothing received is lost");
+}
+
+/// Eligible traffic rides on the next outgoing sequenced packet when one goes out first; the bytes
+/// held from pure acknowledgements go with it (§9.3.12 "piggyback on real outgoing application
+/// traffic when due").
+#[test]
+fn an_eligible_report_rides_on_outgoing_traffic() {
+    let mut server = Server::new();
+    let (mut mux, id, mut received) = connected(&mut server);
+    let mut sent = Sent::default();
+    mux.tick(0.1).expect("tick");
+    collect(&mut mux, id, 0.1, &mut sent);
+    let held = server.ack(2);
+    received += held.len() as u64;
+    mux.receive_from_peer(&held, SERVER, 0.2, WireCodecs::NONE)
+        .expect("ack");
+    // A pure acknowledgement: an outgoing blob carries no report.
+    let conn = mux.connection_mut(id).expect("conn");
+    conn.send_blob(2, 0, 0x6F, &[1], 0.25, None).expect("blob");
+    collect(&mut mux, id, 0.25, &mut sent);
+    assert_eq!(sent.attached, 0);
+    // Eligible: the next outgoing blob carries the report, at once, inside the standalone cap.
+    let p = server.packet();
+    received += p.len() as u64;
+    mux.receive_from_peer(&p, SERVER, 0.3, WireCodecs::NONE)
+        .expect("blob");
+    let conn = mux.connection_mut(id).expect("conn");
+    conn.send_blob(2, 0, 0x6F, &[2], 0.35, None).expect("blob");
+    collect(&mut mux, id, 0.35, &mut sent);
+    assert_eq!(sent.attached, 1);
+    assert_eq!(sent.flow_only.len(), 1, "only the first standalone report");
     assert_eq!(sent.reported_bytes, received);
+    // Nothing more is due.
+    mux.tick(5.0).expect("tick");
+    collect(&mut mux, id, 5.0, &mut sent);
+    assert_eq!(sent.flow_only.len(), 1);
+}
+
+/// Labelled eligibility (`OPEN-SESSION-13`): a datagram whose only content is a ClockSyncHeader makes
+/// a report due; one whose only fragment is an empty control does not.
+#[test]
+fn clock_traffic_is_eligible_and_an_empty_control_is_not() {
+    let mut server = Server::new();
+    let (mut mux, id, _) = connected(&mut server);
+    let mut sent = Sent::default();
+    mux.tick(0.1).expect("tick");
+    collect(&mut mux, id, 0.1, &mut sent);
+    let (control, _) = BlobFragment::decode(&[0x01, 0xC0]).expect("an empty control");
+    let d = server.sequenced(&OptionalHeaders::default(), &[control]);
+    mux.receive_from_peer(&d, SERVER, 0.2, WireCodecs::NONE)
+        .expect("empty control");
+    mux.tick(2.0).expect("tick");
+    collect(&mut mux, id, 2.0, &mut sent);
+    assert_eq!(
+        sent.flow_only.len(),
+        1,
+        "an empty control makes nothing due"
+    );
+    let clock = OptionalHeaders {
+        clock_sync: Some(1000.0),
+        ..OptionalHeaders::default()
+    };
+    let d = server.sequenced(&clock, &[]);
+    mux.receive_from_peer(&d, SERVER, 2.1, WireCodecs::NONE)
+        .expect("clock");
+    mux.tick(2.1).expect("tick");
+    collect(&mut mux, id, 2.1, &mut sent);
+    assert_eq!(
+        sent.flow_only,
+        vec![0.1, 2.1],
+        "clock traffic makes a report due"
+    );
 }
 
 /// A long quiet stretch with periodic server datagrams: at most one FlowControl-only packet a

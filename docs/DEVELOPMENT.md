@@ -530,7 +530,7 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
 - `official evidence: counts after the session start`: batches, creations, positions, placements
   and the rest after `0x90`, every 5 s during the readiness wait and again at its end, with the kept
   `0x90` table's size (`session_table_bytes`) and the world connection's queue counts so far
-  (`queue3_groups_over`, `queue3_older`, `queue3_equal`, `queue3_ambiguous`, `duplicates`,
+  (`queue3_groups_over`, `queue3_older`, `queue3_ambiguous`, `reused_identities`, `duplicates`,
   `tombstones_evicted`), and the sends the socket refused for now (`send_failures`).
 - `official evidence: session table released`: the first `0x90`'s table at `WorldEntered`, as a size
   and a count of properties. A production run stops before this line.
@@ -565,7 +565,7 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   go, and the last of the session layer's lines for that connection: what reaches it after its close has no line and no count
   (`sends`, `resends`, `controls`, `handshakes`, `handshake_resends`, `disconnects`,
   `queued_not_sent`, `datagrams`, `blobs`, and what the queue rules did with blobs:
-  `queue3_plain_delivered`, `queue3_groups_over`, `queue3_older`, `queue3_equal`, `queue3_ambiguous`,
+  `queue3_plain_delivered`, `queue3_groups_over`, `queue3_older`, `queue3_ambiguous`, `reused_identities`,
   `duplicates`, `tombstones_evicted`), with `lines_not_shown` for what passed both the line budget
   and the tail. Closing the window waits up to 2 s for the session's Disconnect and these lines; a
   thread stuck past that loses them.

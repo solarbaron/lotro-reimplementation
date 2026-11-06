@@ -869,8 +869,9 @@ pub struct Negotiation {
     /// When the login first queued: the base of its one absolute limit, kept for the whole attempt
     /// so that no later `0x130` can restart it (§9.3.8).
     queued_since: Option<f64>,
-    /// A ready `0x130` already started its list wait: a later one changes no clock.
-    queue_ready_taken: bool,
+    /// A `0x12D` status `1` or a ready `0x130` already started its list wait: a later one of
+    /// either changes no clock (§9.3.9 status rule: only the first starts the list clock).
+    list_ready_taken: bool,
     /// An actual `0x12F` arrived before `0xEC`: `0xEC` is suppressed (§9.3.8).
     historical: bool,
 }
@@ -911,7 +912,7 @@ impl Negotiation {
                 ignored: 0,
             },
             queued_since: None,
-            queue_ready_taken: false,
+            list_ready_taken: false,
             historical: false,
         }
     }
@@ -934,17 +935,22 @@ impl Negotiation {
         self.server_config
     }
 
-    /// Where a queue-1 `0xF5` of the login connection stands (§9.3.8). Labelled
-    /// (`docs/m8-remediation.md` §28 fix 10): an `0xF5` with no `0xEC` is unsupported in every stage
-    /// here, as the named failure says, while the stage table's historical and queued rows skip it.
+    /// Where a queue-1 `0xF5` of the login connection stands (§9.3.9 initial stage × event table,
+    /// with the EC-sent and F5-replied history kept across stages): after the one reply, any repeat
+    /// skips in every stage; in the `0xEC` completion window, or in a list wait with `0xEC` sent and
+    /// no reply yet, the first exact `00` gets its one reply; otherwise (before `0xEC`, or in the
+    /// historical-result or queued stage without a reply) it is unsupported.
     #[must_use]
     pub const fn completion_step(&self) -> CompletionStep {
         if self.stages.f5_sent {
             CompletionStep::Repeat
-        } else if matches!(self.phase, Phase::AwaitingCompletion(_)) {
-            CompletionStep::Guarded
-        } else if self.stages.ec_sent {
-            // `0xEC` went and a queue status replaced the wait: still the guard window.
+        } else if matches!(self.phase, Phase::AwaitingCompletion(_))
+            || (self.stages.ec_sent
+                && matches!(
+                    self.phase,
+                    Phase::AwaitingList(_) | Phase::HistoricalList(_)
+                ))
+        {
             CompletionStep::Guarded
         } else {
             CompletionStep::Unsupported
@@ -952,10 +958,11 @@ impl Negotiation {
     }
 
     /// Whether a valid `0xDD` on queue 1 of the primary connection triggers `0xEC` now: only the
-    /// first, and never on the historical path (§9.3.8).
+    /// first, only in the `AwaitDD` stage and never on the historical path (§9.3.9 stage table:
+    /// every other stage stores and skips a valid one).
     #[must_use]
     pub const fn wants_request(&self) -> bool {
-        !self.stages.dd_seen && !self.historical && !matches!(self.phase, Phase::Finished)
+        !self.stages.dd_seen && !self.historical && matches!(self.phase, Phase::AwaitingRequest(_))
     }
 
     /// The login connection first reached State 5 at `now`.
@@ -965,11 +972,16 @@ impl Negotiation {
         }
     }
 
-    /// An actual `0x12F` arrived at `now`. The first before `0xEC` switches to the historical
-    /// path and answers `true` (one `0x12C`). A repeat answers `false` and changes no timer.
-    /// After `0xEC` the driver reports it unsupported ([`Self::version_request_too_late`]).
+    /// An actual `0x12F` arrived at `now` (§9.3.9 stage table). Only in the `AwaitDD` stage with
+    /// `0xEC` not sent does it switch to the historical path and answer `true` (one `0x12C`). In
+    /// every other stage without `0xEC` (list wait, historical result, queued) it skips: counted,
+    /// no resend and no clock change. With `0xEC` sent the driver reports it unsupported first
+    /// ([`Self::version_request_too_late`]).
     pub fn version_requested(&mut self, now: f64) -> bool {
-        if self.historical {
+        if self.historical
+            || self.stages.ec_sent
+            || !matches!(self.phase, Phase::AwaitingRequest(_))
+        {
             self.ignored();
             return false;
         }
@@ -978,32 +990,28 @@ impl Negotiation {
         true
     }
 
-    /// Whether a `0x12F` now comes after `0xEC`, which is unsupported (§9.3.8). Labelled
-    /// (`docs/m8-remediation.md` §28 fix 10): in every stage, as the named failure says, while the
-    /// stage table's historical and queued rows skip it.
+    /// Whether a `0x12F` now comes after `0xEC`, which is unsupported in every stage before
+    /// `Connected` (§9.3.9 stage table: `AwaitF5` row, and "EC-sent: Unsupported" in the list,
+    /// historical-result and queued rows).
     #[must_use]
     pub const fn version_request_too_late(&self) -> bool {
         self.stages.ec_sent
     }
 
-    /// `0x12D` status `1` at `now`. The first, while an actual `0x12F`'s response wait runs, starts
-    /// the 30-second list wait and answers `true` (§9.3.8). Any other is counted with no clock
-    /// change, because other traffic restarts nothing: a repeat, one during the queue's limit, and
-    /// (engineering choice, §9.3.8 gives status 1 only on the historical path) an unsolicited one
-    /// during the `0xDD`, `0xF5` or list wait. Labelled (`docs/m8-remediation.md` §28 fix 11): a repeat
-    /// does not restart the list clock, which the text gives only for a queued status.
+    /// `0x12D` status `1` at `now`: the §9.3.9 status rule. Only the FIRST status `1` or ready
+    /// `0x130` of the attempt, in a stage with no list wait yet, enters the list wait and starts its
+    /// 30-second clock (answers `true`); any other is counted and changes no clock.
     pub fn version_accepted(&mut self, now: f64) -> bool {
-        if !matches!(self.phase, Phase::Historical(_)) {
-            self.ignored();
-            return false;
-        }
-        self.phase = Phase::HistoricalList(now);
-        true
+        self.list_ready(now)
     }
 
-    /// A queued `0x130` at `now` replaces the running wait by one absolute limit from the first
-    /// queued status of this attempt, which no other `0x130` extends (§9.3.8), a ready one between
-    /// them included. Answers whether this was the first.
+    /// A queued `0x130` at `now` cancels the running non-queue wait and installs one absolute limit
+    /// from the FIRST queued status of this login attempt, which no later `0x130` extends (§9.3.9).
+    /// Answers whether this was the first.
+    ///
+    /// Labelled until the writer answers (the queued, ready, queued case): the five-minute limit is
+    /// anchored once per login attempt, so a queued status after a ready one returns to the same
+    /// absolute limit, and a later ready one cannot start a second list wait.
     pub fn queued(&mut self, now: f64) -> bool {
         let first = self.queued_since.is_none();
         let since = *self.queued_since.get_or_insert(now);
@@ -1011,21 +1019,26 @@ impl Negotiation {
         first
     }
 
-    /// A ready `0x130` at `now`. The first, on the historical path or in the queue, starts the
-    /// 30-second list wait and answers `true` (§9.3.8). Any other is counted with no clock change:
-    /// a repeat, so that queued and ready cannot alternate past the queue's limit, and (engineering
-    /// choice, as for [`Self::version_accepted`]) an unsolicited one during the `0xDD`, `0xF5` or
-    /// list wait.
+    /// A ready `0x130` at `now`: the same §9.3.9 status rule as [`Self::version_accepted`].
     pub fn queue_ready(&mut self, now: f64) -> bool {
-        let answers = matches!(
+        self.list_ready(now)
+    }
+
+    /// The §9.3.9 status rule for `0x12D` status `1` and a ready `0x130`, in every initial stage:
+    /// enter the list wait with the EC-sent and F5-replied history kept. Only the FIRST of either
+    /// cancels the prior non-list stage or queue clock and starts the 30-second list clock, and only
+    /// when no list wait runs yet; answers `true` then. A repeat, or one while a list wait already
+    /// runs (after the `0xF5` reply), is counted and changes no clock.
+    fn list_ready(&mut self, now: f64) -> bool {
+        let list_wait = matches!(
             self.phase,
-            Phase::Historical(_) | Phase::HistoricalList(_) | Phase::Queued(_)
+            Phase::AwaitingList(_) | Phase::HistoricalList(_) | Phase::Finished | Phase::Connecting
         );
-        if self.queue_ready_taken || !answers {
+        if self.list_ready_taken || list_wait {
             self.ignored();
             return false;
         }
-        self.queue_ready_taken = true;
+        self.list_ready_taken = true;
         self.phase = Phase::HistoricalList(now);
         true
     }
@@ -1054,10 +1067,17 @@ impl Negotiation {
         self.stages.f5_received = true;
     }
 
-    /// The client's one `0xF5` was allocated at `now`.
+    /// The client's one `0xF5` was allocated at `now`: from the completion window the list wait
+    /// starts; a reply inside a list wait that already runs does not extend its clock (§9.3.9
+    /// `AwaitList` row).
     pub fn completion_sent(&mut self, now: f64) {
         self.stages.f5_sent = true;
-        self.phase = Phase::AwaitingList(now);
+        if !matches!(
+            self.phase,
+            Phase::AwaitingList(_) | Phase::HistoricalList(_)
+        ) {
+            self.phase = Phase::AwaitingList(now);
+        }
     }
 
     /// The character list was decoded: every wait ends (§9.3.8).
@@ -1368,44 +1388,82 @@ mod tests {
         );
     }
 
-    /// §9.3.8: a repeated status 1 or ready result restarts no list wait, and neither replaces a
-    /// running `0xDD` or `0xF5` wait.
+    /// §9.3.9 status rule: only the FIRST `0x12D` status 1 or ready `0x130` starts the list clock;
+    /// a repeat of either, or one while a list wait runs, restarts nothing.
     #[test]
     fn a_repeat_or_unsolicited_status_changes_no_clock() {
-        // A repeat of status 1 and a ready result after it: one more start for the ready result,
-        // which §9.3 places after status 1, and then none.
         let mut h = Negotiation::new();
         h.connected(0.0);
         assert!(h.version_requested(1.0));
         assert!(h.version_accepted(2.0));
         for t in [10.0, 20.0, 31.0] {
             assert!(!h.version_accepted(t));
+            assert!(!h.queue_ready(t + 0.5));
             assert_eq!(h.deadline(), Some(32.0));
         }
-        assert!(h.queue_ready(31.5));
-        assert_eq!(h.deadline(), Some(61.5));
-        for t in [40.0, 60.0] {
-            assert!(!h.queue_ready(t));
-            assert!(!h.version_accepted(t));
-            assert_eq!(h.deadline(), Some(61.5));
-        }
         assert_eq!(
-            h.expired(61.5),
+            h.expired(32.0),
             Some(UnsupportedNegotiation::HistoricalListDeadline)
         );
 
-        // Unsolicited, during the initial waits: counted, and the wait goes on.
+        // In the `0xDD` wait: the first enters the list wait (cancelling the `0xDD` clock), and the
+        // next of either kind is a repeat.
         let mut n = Negotiation::new();
         n.connected(0.0);
-        assert!(!n.version_accepted(5.0));
+        assert!(n.version_accepted(5.0));
+        assert_eq!(n.deadline(), Some(5.0 + HISTORICAL_LIST_WAIT_SEC));
         assert!(!n.queue_ready(6.0));
-        assert_eq!(n.deadline(), Some(DD_WAIT_SEC));
+        assert_eq!(n.deadline(), Some(5.0 + HISTORICAL_LIST_WAIT_SEC));
+        assert!(
+            !n.wants_request(),
+            "a valid 0xDD in the list wait is stored and skipped"
+        );
+
+        // In the `0xF5` window: the list wait starts and the history is kept, so the first exact
+        // `00` still gets its reply, which does not extend the list clock.
+        let mut n = Negotiation::new();
+        n.connected(0.0);
         n.request_seen(1);
         n.advertisement_sent(10.0);
-        assert!(!n.version_accepted(11.0));
-        assert!(!n.queue_ready(12.0));
-        assert_eq!(n.deadline(), Some(10.0 + COMPLETION_WAIT_SEC));
-        assert_eq!(n.stages().ignored, 4);
+        assert!(n.queue_ready(12.0));
+        assert_eq!(n.deadline(), Some(12.0 + HISTORICAL_LIST_WAIT_SEC));
+        assert_eq!(n.completion_step(), CompletionStep::Guarded);
+        n.completion_sent(13.0);
+        assert_eq!(n.deadline(), Some(12.0 + HISTORICAL_LIST_WAIT_SEC));
+        assert_eq!(n.completion_step(), CompletionStep::Repeat);
+        assert!(!n.version_accepted(14.0));
+        assert_eq!(n.stages().ignored, 1);
+    }
+
+    /// §9.3.9 stage table: an `0xF5` with `0xEC` sent and no reply is unsupported in the queued and
+    /// historical-result stages; a `0x12F` starts the historical path only in the `0xDD` wait.
+    #[test]
+    fn the_completion_and_version_request_cells() {
+        let mut n = Negotiation::new();
+        n.connected(0.0);
+        n.request_seen(1);
+        n.advertisement_sent(1.0);
+        assert!(n.queued(2.0));
+        assert_eq!(n.completion_step(), CompletionStep::Unsupported);
+        assert!(n.version_request_too_late());
+
+        // Queued before any `0xDD` or `0x12F`: a `0x12F` skips, with no `0x12C`.
+        let mut n = Negotiation::new();
+        n.connected(0.0);
+        assert!(n.queued(1.0));
+        assert!(!n.version_request_too_late());
+        assert!(!n.version_requested(2.0));
+        assert_eq!(n.deadline(), Some(1.0 + QUEUE_WAIT_SEC));
+        assert_eq!(n.completion_step(), CompletionStep::Unsupported);
+        assert!(!n.wants_request());
+
+        // The historical result: no `0xEC`, so an `0xF5` is unsupported and a repeated `0x12F` skips.
+        let mut n = Negotiation::new();
+        n.connected(0.0);
+        assert!(n.version_requested(1.0));
+        assert!(!n.version_requested(2.0));
+        assert_eq!(n.completion_step(), CompletionStep::Unsupported);
+        assert_eq!(n.deadline(), Some(1.0 + VERSION_PATH_WAIT_SEC));
     }
 
     /// §9.3.8: the queue's limit keeps its base across the initial steps too.

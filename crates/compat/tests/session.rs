@@ -701,31 +701,37 @@ fn a_zero_recipient_challenge_is_judged_with_its_siblings() {
         dgram[2..22].copy_from_slice(&parsed.header.to_wire_bytes());
         dgram
     };
+    // §9.3.9 precedence and §10.2 Vector 24: a challenge datagram is unmasked, so any fragment in
+    // it drops the whole datagram first, a good one too; no zero-recipient terminal is inferred.
     let cases: Vec<(Vec<BlobFragment>, SessionError)> = vec![
         (
             vec![queue_1_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD)],
-            SessionError::UnmaskedMultiPartFragment { queue_id: 1 },
+            SessionError::UnmaskedFragment { queue_id: 1 },
         ),
         (
             vec![multi_frag(0, 1, 16)],
-            SessionError::UnmaskedReliableFragment { queue_id: 2 },
+            SessionError::UnmaskedFragment { queue_id: 2 },
         ),
         (
             vec![control_bit()],
-            SessionError::UnsupportedFragment {
-                queue_id: 2,
-                blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT | BLOB_FLAG_CONTROL_02,
-            },
+            SessionError::UnmaskedFragment { queue_id: 2 },
         ),
-        (vec![encrypted()], SessionError::EncryptedBlobRejected),
-        // The bad one behind a good one.
+        (
+            vec![encrypted()],
+            SessionError::UnmaskedFragment { queue_id: 1 },
+        ),
         (
             vec![small(), encrypted()],
-            SessionError::EncryptedBlobRejected,
+            SessionError::UnmaskedFragment { queue_id: 1 },
         ),
         (
             vec![small(), queue_1_frag(0, 2, MAX_BLOB_FRAG_PAYLOAD)],
-            SessionError::UnmaskedMultiPartFragment { queue_id: 1 },
+            SessionError::UnmaskedFragment { queue_id: 1 },
+        ),
+        // An unfragmented queue-1 sibling that would pass in a masked datagram drops too.
+        (
+            vec![small()],
+            SessionError::UnmaskedFragment { queue_id: 1 },
         ),
     ];
     for (header_rec_id, outgoing) in [(0u16, 0x0304u16), (0x0102, 0)] {
@@ -750,9 +756,8 @@ fn a_zero_recipient_challenge_is_judged_with_its_siblings() {
         conn.tick(2.5).unwrap();
         assert!(conn.pop_outbound_datagram().is_some(), "the auth again");
 
-        // With a sibling that passes, the zero recipient is what ends the attempt, and the sibling
-        // is not delivered.
-        let dgram = datagram(header_rec_id, outgoing, &[small()]);
+        // Without a fragment, the zero recipient is what ends the attempt.
+        let dgram = datagram(header_rec_id, outgoing, &[]);
         assert_eq!(
             conn.receive_datagram(&dgram, server, 3.0, WireCodecs::NONE),
             Err(SessionError::InvalidChallengeRecipient)
@@ -805,7 +810,7 @@ fn a_zero_recipient_challenge_in_state_2_is_judged_with_its_siblings() {
                 0.1,
                 WireCodecs::NONE
             ),
-            Err(SessionError::UnmaskedMultiPartFragment { queue_id: 1 })
+            Err(SessionError::UnmaskedFragment { queue_id: 1 })
         );
         assert_eq!(
             conn.receive_datagram(&datagram(&[]), peer, 0.1, WireCodecs::NONE),
@@ -2698,15 +2703,21 @@ fn reassembly_table_capacity_is_checked_before_commit() {
 fn flow_control_interval_keeps_the_low_16_bits() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 35), 9000);
     let mut conn = challenged_connection(peer, 0x0100, 4);
-    // Receive at least 1,400 bytes (unsequenced packets with single-fragment blobs).
+    // Receive at least 1,400 bytes (masked packets with single-fragment blobs: eligible traffic,
+    // §9.3.12).
+    let mut isaac = IsaacCipher::from_seed(4);
     for i in 0..4u16 {
         let mut frag = queue_1_frag(0, 1, 400);
         frag.header.blob_id = i;
         let dgram = encode_datagram(
-            DatagramHeader::default(),
+            DatagramHeader {
+                rec_id: 0x0100,
+                seq_num: u32::from(i) + 2,
+                ..DatagramHeader::default()
+            },
             &OptionalHeaders::default(),
             &[frag],
-            None,
+            Some(isaac.next_mask()),
             None,
         )
         .unwrap();
@@ -2894,7 +2905,7 @@ fn a_challenge_beside_an_unmasked_part_is_refused_with_its_datagram() {
     .unwrap();
     assert_eq!(
         conn.receive_datagram(&early, peer, 0.1, WireCodecs::NONE),
-        Err(SessionError::UnmaskedMultiPartFragment { queue_id: 1 })
+        Err(SessionError::UnmaskedFragment { queue_id: 1 })
     );
     // The challenge in such a datagram is not acted on: a whole datagram goes or stays.
     let opening = encode_datagram(
@@ -2914,7 +2925,7 @@ fn a_challenge_beside_an_unmasked_part_is_refused_with_its_datagram() {
     .unwrap();
     assert_eq!(
         conn.receive_datagram(&opening, peer, 0.2, WireCodecs::NONE),
-        Err(SessionError::UnmaskedMultiPartFragment { queue_id: 1 })
+        Err(SessionError::UnmaskedFragment { queue_id: 1 })
     );
     assert_eq!(conn.server_rec_id(), 0);
     assert_eq!(conn.state(), ConnectionState::SessionAuthSent);
@@ -3518,19 +3529,32 @@ fn flagged_fragment(queue: u8, extra_flags: u8) -> BlobFragment {
 }
 
 /// A server datagram carrying `frag` with its raw header bytes as `header_bytes` (so
-/// flags the encoder clears reach the wire): unsequenced, to `rec_id`, checksummed per
-/// buffer (§4.4.2).
+/// flags the encoder clears reach the wire): the first sequenced packet (sequence 2) of a
+/// connection challenged with incoming seed 1, masked with its first word, to `rec_id`,
+/// checksummed per buffer (§4.4.2).
 fn raw_fragment_datagram(rec_id: u16, header_bytes: &[u8], data: &[u8]) -> Vec<u8> {
+    raw_fragment_datagram_masked(rec_id, header_bytes, data, true)
+}
+
+/// [`raw_fragment_datagram`], or unsequenced and unmasked when `masked` is false.
+fn raw_fragment_datagram_masked(
+    rec_id: u16,
+    header_bytes: &[u8],
+    data: &[u8],
+    masked: bool,
+) -> Vec<u8> {
     let mut payload = header_bytes.to_vec();
     payload.extend_from_slice(data);
     let mut hdr = DatagramHeader {
         rec_id,
-        flags: FLAG_HAS_FRAGMENTED_BLOBS,
+        flags: FLAG_HAS_FRAGMENTED_BLOBS | if masked { FLAG_MASKED_CHECKSUM } else { 0 },
+        seq_num: if masked { 2 } else { 0 },
         pak_size: u16::try_from(payload.len()).unwrap(),
         ..DatagramHeader::default()
     };
+    let mask = masked.then(|| IsaacCipher::from_seed(1).next_mask());
     let sum = compute_datagram_checksum(header_bytes).wrapping_add(compute_datagram_checksum(data));
-    hdr.checksum = combine_packet_checksum(hdr, sum, None).unwrap();
+    hdr.checksum = combine_packet_checksum(hdr, sum, mask).unwrap();
     let mut dgram = vec![0u8, 0];
     dgram.extend_from_slice(&hdr.to_wire_bytes());
     dgram.extend_from_slice(&payload);
@@ -3577,11 +3601,20 @@ fn blob_flags_receive_policy_and_attachments() {
                 .any(|e| matches!(e, SessionEvent::BlobReceived(b) if b.payload == [1, 2, 3]))
         );
     }
-    // Bit 0x02 on queues 2, 3 and 4 in an unmasked packet: dropped and counted, nothing ends.
+    // Bit 0x02 on queues 2, 3 and 4 in an unmasked packet: the unmasked fragment drops first,
+    // whole, and nothing ends (§9.3.9, §10.2 Vector 24). Masked, it is the terminal class.
     for queue in [2u8, 3, 4] {
         let mut conn = challenged_connection(peer, 0x0150, 1);
         let frag = flagged_fragment(queue, 0);
         let flags = frag.header.blob_flags | 0x02;
+        let dgram =
+            raw_fragment_datagram_masked(0x0150, &wire_of(&frag, flags), &frag.payload, false);
+        assert_eq!(
+            conn.receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE),
+            Err(SessionError::UnmaskedFragment { queue_id: queue })
+        );
+        assert_eq!(conn.handshake_counts().unsupported_fragment_drops, 0);
+        assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
         let dgram = raw_fragment_datagram(0x0150, &wire_of(&frag, flags), &frag.payload);
         assert_eq!(
             conn.receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE),
@@ -3591,7 +3624,7 @@ fn blob_flags_receive_policy_and_attachments() {
             })
         );
         assert_eq!(conn.handshake_counts().unsupported_fragment_drops, 1);
-        assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
+        assert_eq!(conn.state(), ConnectionState::Closing);
     }
     // An attachment: selected by the extension word, opaque, and it adds no flag.
     let mut conn = challenged_connection(peer, 0x0150, 1);

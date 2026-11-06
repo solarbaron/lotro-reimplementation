@@ -546,8 +546,8 @@ fn out_of_order_acknowledgements_waiting_are_due_at_once() {
     mux.tick(6.0).expect("tick");
     assert_eq!(
         drain(&mut mux, id),
-        2,
-        "the OutOfOrderAckHeader and the report of the datagram that asked (§5.5)"
+        1,
+        "the OutOfOrderAckHeader alone: a pure NAK makes no flow report due (§9.3.12)"
     );
     // Flushed: no longer due, so the loop does not stay at its shortest wait.
     assert!(mux.next_deadline(6.0).is_some_and(|d| d > 6.5));

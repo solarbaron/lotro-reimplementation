@@ -468,7 +468,7 @@ fn another_recipient_is_another_identity() {
         let counts = d.counters().reassembly;
         assert_eq!(counts.duplicates, 0);
         assert_eq!(
-            counts.queue3_equal, 0,
+            counts.reused_identities, 0,
             "each recipient has its own baseline"
         );
         // An exact repeat for B is ignored.
@@ -488,10 +488,8 @@ fn another_recipient_is_another_identity() {
         assert!(!d.ended(), "queue {queue}");
         assert_eq!(d.entry_progress().other, 3, "delivered, queue {queue}");
         let counts = d.counters().reassembly;
+        // On queue 3 the equal word of a different body is that same one reuse count (§9.3.9).
         assert_eq!(counts.reused_identities, 1, "queue {queue}");
-        if queue == 3 {
-            assert_eq!(counts.queue3_equal, 1, "the equal word of a different body");
-        }
         // The same body again is the exact repeat of what was delivered.
         world.deliver(
             server.on_queue(queue, 77, 9, Some(A), 0x149, &body(3)),
@@ -714,12 +712,18 @@ fn historical_repeats_have_one_clock() {
         "{events:?}"
     );
 
-    // An unsolicited status 1 replaces no running `0xDD` wait.
+    // §9.3.9 status rule: a status 1 in the `0xDD` wait enters the list wait, cancelling the `0xDD`
+    // clock and starting the 30-second list clock; a repeat changes nothing.
     let (world, mut d, mut login) = connected();
     world.deliver(login.blob(0x12D, &status(1)), LOGIN_SERVER);
     d.step(29.0, true, &go);
+    assert!(progress(&d.take_events()), "the real stage change");
+    world.deliver(login.blob(0x12D, &status(1)), LOGIN_SERVER);
+    d.step(40.0, true, &go);
     assert!(!progress(&d.take_events()));
-    d.step(31.0, false, &go);
+    d.step(58.9, false, &go);
+    assert!(!d.ended(), "the list clock, not the 0xDD clock");
+    d.step(59.1, false, &go);
     assert!(d.take_events().iter().any(|e| matches!(
         e,
         Event::Disconnected {
@@ -1132,14 +1136,14 @@ mod initial_transitions {
         assert!(opcodes(&sent_packets(&world)).is_empty());
         assert_eq!(d.initial_stages().ignored, 1);
 
-        // §9.3.9: a later `0xDD` that does not read is counted; flags `02..FF` still fail.
-        let (world, mut d, mut login) = at_advertisement();
-        world.deliver(queue1(&mut login, 0xDD, &[0x00, 1, 2]), LOGIN_SERVER);
-        d.step(0.2, true, &go);
-        assert!(!d.ended());
-        world.deliver(queue1(&mut login, 0xDD, &[0x04, 1, 2]), LOGIN_SERVER);
-        d.step(0.3, true, &go);
-        assert!(refused_with(&mut d, U::MalformedRequest));
+        // §9.3.9 stage table: before `Connected` a later `0xDD` that does not read fails in every
+        // stage, as does flags `02..FF`.
+        for dd in [[0x00u8, 1, 2], [0x04, 1, 2]] {
+            let (world, mut d, mut login) = at_advertisement();
+            world.deliver(queue1(&mut login, 0xDD, &dd), LOGIN_SERVER);
+            d.step(0.2, true, &go);
+            assert!(refused_with(&mut d, U::MalformedRequest), "{dd:x?}");
+        }
 
         let (world, mut d, mut login) = connected();
         world.deliver(

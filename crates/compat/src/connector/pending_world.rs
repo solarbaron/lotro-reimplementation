@@ -34,9 +34,17 @@
 //! or as the validated `0x90`'s own ID. What is still unresolved at the release is discarded, not
 //! guessed into a player.
 //!
-//! Labelled (`docs/m8-remediation.md` §28 fixes 1, 21, 23): `0xCE`'s key is the ID in its body, the
-//! `0x90`'s own ID counts as resolved with no `0x98`, a despawn has no public event at the release,
-//! and a `0x40` to the default recipient is counted and skipped ([`DEFAULT_RECIPIENT_DESPAWN_APPLIES`]).
+//! `0xCE`'s key is its RAW logical recipient, like every other message's, until its
+//! controlled-target resolver is sourced (§9.3.9, §9.3.12 Question 1): its leading eight-byte word is
+//! never the key, and a parsed conditional selector is kept as metadata only ([`PendingWorld::position`]).
+//! A despawn has no public event at the release, and only an explicit `0x40` to a resolved target
+//! deletes: a `0x40` to the default recipient is counted and skipped and deletes nothing
+//! ([`DEFAULT_RECIPIENT_DESPAWN_APPLIES`]).
+//!
+//! Labelled until the writer answers (§9.3.9, WORLD-9): the `0x90`'s own ID counts as resolved with no
+//! `0x98`, so its kept state is released at `WorldEntered`; an explicit `0x40` to an unresolved ID, or
+//! to the `0x90`'s ID, is counted and skipped and deletes nothing ([`PendingWorld::despawn_applies`]);
+//! a later `0x90` that does not read is counted and skipped.
 //!
 //! # What is not sent
 //!
@@ -161,6 +169,9 @@ struct PendingEntity {
     despawned: bool,
     /// The latest exact placement of this key, kept with its motion.
     placed: Option<(Location, f32)>,
+    /// The conditional selector of the latest kept `0xCE`, when its form has one: metadata only,
+    /// never a key and never a guessed parent or player ID (§9.3.9, §9.3.12 Question 1).
+    selector: Option<u64>,
     /// The next arrival number of a property of this key.
     next_arrival: u64,
 }
@@ -268,6 +279,24 @@ impl PendingWorld {
                 .entities
                 .get(&id)
                 .is_some_and(|e| e.announced && !e.despawned)
+    }
+
+    /// Whether a `0x40` to `target` deletes (§9.3.9): only an explicit target that is resolved. The
+    /// default recipient never is; labelled until the writer answers: an unresolved ID or the
+    /// `0x90`'s own ID deletes nothing either (module docs).
+    #[must_use]
+    /// A key with a despawn record answers `true` too, so a repeat reaches the record and is counted
+    /// as blocked ([`Stored::Despawned`]), deleting nothing more.
+    pub fn despawn_applies(&self, target: u64) -> bool {
+        target != DEFAULT_RECIPIENT
+            && self.player != Some(target)
+            && (self.resolved(target) || self.despawned(target))
+    }
+
+    /// The conditional selector kept with `key`'s latest `0xCE`, if any (metadata only).
+    #[must_use]
+    pub fn selector(&self, key: u64) -> Option<u64> {
+        self.entities.get(&key).and_then(|e| e.selector)
     }
 
     /// Whether `key` has a despawn record.
@@ -438,14 +467,23 @@ impl PendingWorld {
         )
     }
 
-    /// A validated `0xCE` for `entity`, with its exact placement when it has one.
-    pub fn position(&mut self, entity: u64, body: &[u8], at: Option<(Location, f32)>) -> Stored {
+    /// A validated `0xCE` under its RAW logical recipient `key`, with its exact placement when it has
+    /// one and its parsed conditional `selector` as metadata (§9.3.9: never the leading eight-byte
+    /// word, never a guessed parent or player ID).
+    pub fn position(
+        &mut self,
+        key: u64,
+        body: &[u8],
+        at: Option<(Location, f32)>,
+        selector: Option<u64>,
+    ) -> Stored {
         self.store(
-            entity,
+            key,
             body,
             |e| held(&e.position),
             |e, b| {
                 e.position = Some(b);
+                e.selector = selector;
                 if at.is_some() {
                     e.placed = at;
                 }
@@ -619,7 +657,7 @@ mod tests {
     fn the_player_is_required_state_and_its_kept_placement_is_answered() {
         let mut p = PendingWorld::default();
         assert_eq!(p.create(9, &[0]), Stored::Kept);
-        assert_eq!(p.position(9, &[0, 1], Some(at(4.0))), Stored::Kept);
+        assert_eq!(p.position(9, &[0, 1], Some(at(4.0)), None), Stored::Kept);
         assert_eq!(p.set_player(9), Some(at(4.0)));
         assert_eq!(p.player(), Some(9));
         let mut q = PendingWorld::default();
@@ -705,8 +743,11 @@ mod tests {
         assert_eq!(p.single(7, 0x88, 0, &vec![0; room + 3]), Stored::Kept);
         assert_eq!(p.bytes(), MAX_PENDING_BYTES);
         // The kept placement stays with a refused body.
-        assert_eq!(p.position(7, &[], Some(at(1.0))), Stored::Kept);
-        assert_eq!(p.position(7, &[0; 16], Some(at(2.0))), Stored::ByteCap);
+        assert_eq!(p.position(7, &[], Some(at(1.0)), None), Stored::Kept);
+        assert_eq!(
+            p.position(7, &[0; 16], Some(at(2.0)), None),
+            Stored::ByteCap
+        );
         assert_eq!(p.set_player(7), Some(at(1.0)));
     }
 
@@ -716,7 +757,7 @@ mod tests {
         assert_eq!(p.create(7, &[1]), Stored::Kept);
         assert_eq!(p.create(8, &[2]), Stored::Kept);
         assert_eq!(p.sync(7, &[3], None), Stored::Kept);
-        assert_eq!(p.position(7, &[4], None), Stored::Kept);
+        assert_eq!(p.position(7, &[4], None, None), Stored::Kept);
         assert_eq!(p.appearance(7, &[5],), Stored::Kept);
         assert_eq!(p.single(7, 0x92, 9, &[6]), Stored::Kept);
         assert_eq!(p.table(7, &[(1, &[7])]), Stored::Kept);
@@ -792,7 +833,7 @@ mod tests {
             p.table(7, &[(1, &[0])]),
             p.single(7, 0x88, 1, &[0]),
             p.appearance(7, &[0]),
-            p.position(7, &[0], Some(at(1.0))),
+            p.position(7, &[0], Some(at(1.0)), None),
             p.sync(7, &[0], Some(at(1.0))),
         ] {
             assert_eq!(stored, Stored::Despawned);
@@ -830,7 +871,10 @@ mod tests {
         assert_eq!(p.create(7, &[0; 64]), Stored::ByteCap);
         assert_eq!((p.entities(), p.bytes()), (entities, bytes), "no change");
         assert_eq!(p.appearance(7, &[0; 2]), Stored::Despawned);
-        assert_eq!(p.position(7, &[0; 2], Some(at(1.0))), Stored::Despawned);
+        assert_eq!(
+            p.position(7, &[0; 2], Some(at(1.0)), None),
+            Stored::Despawned
+        );
         assert_eq!(p.single(7, 0x88, 1, &[0; 2]), Stored::Despawned);
         assert_eq!(p.create(7, &[0; 4]), Stored::Kept, "one that fits");
         assert_eq!(p.bytes(), bytes + 4, "nothing of the refused updates");
@@ -896,5 +940,47 @@ mod tests {
         for send in &WITHHELD_BEFORE_F4[..3] {
             assert!(send.held_by.contains("decision 0046 item 5"), "{send:?}");
         }
+    }
+
+    /// §9.3.9: only an explicit 0x40 to a resolved target deletes. Labelled until the writer answers:
+    /// an unresolved ID and the `0x90`'s own ID delete nothing; a despawn record answers so a repeat
+    /// is counted as blocked.
+    #[test]
+    fn only_an_explicit_resolved_target_despawns() {
+        let mut p = PendingWorld::default();
+        p.set_player(7);
+        assert!(!p.despawn_applies(DEFAULT_RECIPIENT));
+        assert!(!p.despawn_applies(7), "the 0x90's ID");
+        assert_eq!(p.appearance(9, &[0, 1]), Stored::Kept);
+        assert!(!p.despawn_applies(9), "unresolved");
+        assert_eq!(p.create(9, &[0, 2]), Stored::Kept);
+        assert!(p.despawn_applies(9));
+        assert_eq!(p.despawn(9), Stored::Kept);
+        assert!(p.despawn_applies(9), "the record answers");
+        assert_eq!(p.despawn(9), Stored::Despawned);
+    }
+
+    /// §9.3.9, §9.3.12 Question 1: a `0xCE` is kept under its raw key with its selector as metadata
+    /// only; the selector names no key.
+    #[test]
+    fn a_position_keeps_its_raw_key_and_selector_metadata() {
+        let mut p = PendingWorld::default();
+        p.set_player(7);
+        assert_eq!(
+            p.position(DEFAULT_RECIPIENT, &[0, 1], Some(at(1.0)), Some(7)),
+            Stored::Kept
+        );
+        assert_eq!(p.selector(DEFAULT_RECIPIENT), Some(7));
+        assert_eq!(p.entities(), 1, "no key for the selector");
+        assert_eq!(
+            p.set_player(7),
+            None,
+            "the selector does not place the player"
+        );
+        let (spawns, states) = p.take_snapshots();
+        assert!(
+            spawns.is_empty() && states.is_empty(),
+            "raw key 2 is discarded"
+        );
     }
 }

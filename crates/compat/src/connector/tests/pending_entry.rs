@@ -106,7 +106,9 @@ fn datagram(server: &mut Server, messages: &[ObservedMessage]) -> Vec<u8> {
 }
 
 /// The observed world stream: every once-unresolved form verifies and is taken, `0x19A`'s attachment
-/// and siblings too; the player's own `0xCE` starts the scene; nothing is read as readiness.
+/// and siblings too; nothing is read as readiness. Its `0xCE`s go to the default recipient, so they
+/// are kept under the raw key 2 and none is the player's placement (§9.3.9, §9.3.12 Question 1); a
+/// scripted `0xCE` addressed to the player is what starts the scene.
 #[test]
 fn the_observed_world_stream_reads_to_the_pending_placement_and_the_readiness_wait() {
     let (world, mut d, mut server) = at_session_start(scripted());
@@ -123,32 +125,43 @@ fn the_observed_world_stream_reads_to_the_pending_placement_and_the_readiness_wa
     );
     assert_eq!(d.counters().reassembly.empty_controls, 1);
     let p = d.entry_progress();
-    assert!(p.session_started && p.placed && !p.loaded);
+    assert!(p.session_started && !p.placed && !p.loaded);
     assert_eq!((p.batches, p.sub_events), (1, 2));
     assert_eq!(p.creations, 2, "the `0x98` and its paired `0x52`");
     assert_eq!(p.appearances, 2, "the announced entity's, and key 2's");
     assert_eq!(
-        p.default_target, 2,
-        "the first `0x89`, kept under key 2, and the default-recipient `0x40`, skipped"
+        p.default_target, 5,
+        "the first `0x89` and the three `0xCE`s, kept under key 2, and the default-recipient \
+         `0x40`, skipped"
     );
     assert_eq!(
         p.actions, 1,
         "`0xA8` is counted until its variant is rechecked"
     );
-    assert_eq!(p.positions, 3, "the other entity's, the player's twice");
+    assert_eq!(p.positions, 3, "all three under the raw key 2");
     assert_eq!(p.readiness_seen, 2, "`0x5E` and `0x7C`: seen, not acted on");
     assert_eq!(p.unsupported_batches, 1);
     assert_eq!(p.unread, 3, "the opaque 0x88 and the two opaque 0x92");
-    assert_eq!(
-        d.pending_sizes().0,
-        3,
-        "the player, the other entity and the raw key 2"
+    assert_eq!(d.pending_sizes().0, 2, "the other entity and the raw key 2");
+    assert!(
+        !d.take_events()
+            .iter()
+            .any(|e| matches!(e, Event::WorldPlacementPending { .. })),
+        "a default-recipient 0xCE is not the player's"
     );
+    world.deliver(
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(t, true, &go);
+    world.deliver(
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(t + 0.01, true, &go);
+    assert!(d.entry_progress().placed);
     let events = d.take_events();
-    assert_eq!(
-        progress_stages(&events),
-        [WorldEntryStage::Identity, WorldEntryStage::Placement]
-    );
+    assert_eq!(progress_stages(&events), [WorldEntryStage::Placement]);
     let placed: Vec<&Event> = events
         .iter()
         .filter(|e| matches!(e, Event::WorldPlacementPending { .. }))
@@ -177,7 +190,7 @@ fn a_production_entry_stops_at_the_readiness_wait_and_withholds_every_unsourced_
         world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
         d.step(2.0, true, &go);
         let at = service_support::player_position();
-        world.deliver(server.event(0xCE, &at), WORLD_SERVER);
+        world.deliver(server.event_to(0xCE, PLAYER, &at), WORLD_SERVER);
         d.step(2.1, true, &go);
         d.command(
             &Command::WorldLoaded {
@@ -298,7 +311,7 @@ fn an_out_of_range_placement_is_no_placement() {
     )));
     // A valid one, answered: the same message after it changes nothing.
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     d.step(2.2, true, &go);
@@ -411,7 +424,7 @@ fn a_chat_server_route_fails_locally_in_the_specified_words() {
     });
     world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);
@@ -598,7 +611,7 @@ fn a_full_pending_store_counts_and_skips_and_the_entry_goes_on() {
     );
     // The player's placement has no room in the store, and still reaches the client.
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     d.step(1.6, true, &go);
@@ -633,16 +646,16 @@ fn both_gates_make_one_ready_message_then_world_entered_then_the_release() {
     .to_bytes()
     .expect("0x98");
     world.deliver(
-        server.event(0xCE, &service_support::observed_npc_position()),
+        server.event_to(0xCE, npc, &service_support::observed_npc_position()),
         WORLD_SERVER,
     );
     world.deliver(server.event(0x98, &create), WORLD_SERVER);
     world.deliver(
-        server.event(0xCE, &service_support::observed_npc_position()),
+        server.event_to(0xCE, npc, &service_support::observed_npc_position()),
         WORLD_SERVER,
     );
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);
@@ -766,7 +779,7 @@ fn a_later_position_does_not_ask_for_another_load() {
     let (world, mut d, mut server) = at_session_start(gated());
     world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);
@@ -778,8 +791,9 @@ fn a_later_position_does_not_ask_for_another_load() {
     )
     .expect("loaded");
     world.deliver(
-        server.event(
+        server.event_to(
             0xCE,
+            PLAYER,
             &service_support::position(PLAYER, [9.0, 9.0, 9.0], 0, [0.0; 3]),
         ),
         WORLD_SERVER,
@@ -852,7 +866,7 @@ fn a_pending_despawn_removes_the_entity_and_nothing_brings_it_back() {
     let (world, mut d, mut server) = at_session_start(gated());
     world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     let create = EntityCreate {
@@ -878,8 +892,9 @@ fn a_pending_despawn_removes_the_entity_and_nothing_brings_it_back() {
     // A later update of it is refused by the record.
     let positions = d.entry_progress().positions;
     world.deliver(
-        server.event(
+        server.event_to(
             0xCE,
+            OTHER,
             &service_support::position(OTHER, [1.0; 3], 0, [0.0; 3]),
         ),
         WORLD_SERVER,
@@ -939,7 +954,7 @@ fn the_ready_message_is_kept_and_sent_again_on_a_nak() {
     let (world, mut d, mut server) = at_session_start(gated());
     world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);
@@ -990,7 +1005,7 @@ fn a_move_in_the_world_is_held() {
     let (world, mut d, mut server) = at_session_start(gated());
     world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);
@@ -1101,7 +1116,7 @@ fn the_evidence_lines_say_what_ran_and_nothing_private() {
         let (world, mut d, mut server) = at_session_start(scripted());
         world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
         world.deliver(
-            server.event(0xCE, &service_support::player_position()),
+            server.event_to(0xCE, PLAYER, &service_support::player_position()),
             WORLD_SERVER,
         );
         d.step(2.0, true, &go);
@@ -1372,7 +1387,7 @@ fn a_hostile_run_stays_within_the_documented_filter_bound() {
             let (world, mut d, mut server) = at_session_start(gated());
             world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
             world.deliver(
-                server.event(0xCE, &service_support::player_position()),
+                server.event_to(0xCE, PLAYER, &service_support::player_position()),
                 WORLD_SERVER,
             );
             d.step(2.0, true, &go);
@@ -1441,7 +1456,7 @@ fn a_user_close_at_the_pending_placement_says_one_disconnect_and_is_done() {
     let (world, mut d, mut server) = at_session_start(production());
     world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);
@@ -1841,7 +1856,7 @@ fn a_typed_logout_closes_with_one_disconnect_and_no_rpc() {
     let (world, mut d, mut server) = at_session_start(gated());
     world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);
@@ -1960,7 +1975,7 @@ fn the_scripted_entry_runs_in_the_specified_order() {
     assert!(d.command(&loaded(1), 2.05).is_err());
     // The placement: generation 1, and the session stays entering.
     let at = service_support::player_position();
-    world.deliver(server.event(0xCE, &at), WORLD_SERVER);
+    world.deliver(server.event_to(0xCE, PLAYER, &at), WORLD_SERVER);
     d.step(2.1, true, &go);
     assert!(
         d.take_events()
@@ -1969,7 +1984,7 @@ fn the_scripted_entry_runs_in_the_specified_order() {
     );
     assert!(!d.in_world());
     // The same placement's motion makes no generation.
-    world.deliver(server.event(0xCE, &at), WORLD_SERVER);
+    world.deliver(server.event_to(0xCE, PLAYER, &at), WORLD_SERVER);
     d.step(2.15, true, &go);
     assert!(
         !d.take_events()
@@ -2071,7 +2086,7 @@ fn the_first_session_table_stays_pending_until_the_release() {
         WORLD_SERVER,
     );
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     d.step(2.1, true, &go);
@@ -2277,7 +2292,7 @@ fn the_scripted_entry_takes_the_gates_in_either_order() {
     world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
     world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);
@@ -2305,7 +2320,7 @@ fn a_colliding_inbound_out_of_order_ack_keeps_the_ready_message() {
     let (world, mut d, mut server) = at_session_start(gated());
     world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
     world.deliver(
-        server.event(0xCE, &service_support::player_position()),
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
         WORLD_SERVER,
     );
     d.step(2.0, true, &go);

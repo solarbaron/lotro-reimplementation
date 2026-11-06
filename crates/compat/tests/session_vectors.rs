@@ -2385,7 +2385,6 @@ fn vector_22_equal_word_bodies_each_keep_a_tombstone() {
         v22_take(&mut r, v22_blob(7, V22_B), 0.0),
         "once, an anomaly"
     );
-    assert_eq!(r.counts().queue3_equal, 1);
     assert_eq!(r.counts().reused_identities, 1);
     assert!(!v22_take(&mut r, v22_blob(7, V22_B), 0.0), "B again");
     assert!(!v22_take(&mut r, v22_blob(7, V22_A), 0.0), "A again");
@@ -2552,4 +2551,365 @@ fn vector_23_attachment_sums() {
     let (frag, used) = BlobFragment::decode(&zero_ext).unwrap();
     assert_eq!((used, frag.payload.as_slice()), (9, &[0x00][..]));
     assert_eq!(frag.header.attachment, None);
+}
+
+// ---------------------------------------------------------------------------
+// Vector 22, additional rows (§9.3.9 queue comparison, P10-10J)
+// ---------------------------------------------------------------------------
+
+/// One complete queue-2 blob of recipient 0x77 with blob ID `id`.
+fn v22_queue2(id: u16, body: &[u8]) -> BlobFragment {
+    split_blob(2, id, id, 0, Some(0x77), 0x40, body)
+        .expect("split")
+        .remove(0)
+}
+
+/// On queue 3 the older band discards BEFORE any tombstone is compared: an older exact repeat is an
+/// older-word discard, not a duplicate.
+#[test]
+fn vector_22_the_older_band_comes_before_the_tombstone() {
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(6, V22_A), 0.0));
+    assert!(v22_take(&mut r, v22_blob(7, V22_C), 0.0));
+    assert!(
+        !v22_take(&mut r, v22_blob(6, V22_A), 0.0),
+        "older exact repeat"
+    );
+    assert_eq!(r.counts().queue3_older, 1);
+    assert_eq!(r.counts().duplicates, 0);
+}
+
+/// Baseline 7, candidate 8/A already in a retained exact tombstone: deduplicates before the newer
+/// advance, and the baseline stays 7. The tombstone (8, A) is made while the baseline is elsewhere:
+/// 8 delivered at distance 32,768 leaves the baseline, then 7 is newer than it.
+#[test]
+fn vector_22_an_exact_tombstone_deduplicates_before_a_newer_advance() {
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(32_776, V22_C), 0.0), "first");
+    assert!(v22_take(&mut r, v22_blob(8, V22_A), 0.0), "32,768: once");
+    assert_eq!(r.counts().queue3_ambiguous, 1);
+    assert!(v22_take(&mut r, v22_blob(7, V22_B), 0.0), "32,767: newer");
+    // Baseline 7; 8/A is distance 1 with an exact tombstone.
+    assert!(!v22_take(&mut r, v22_blob(8, V22_A), 0.0), "deduplicated");
+    assert_eq!(r.counts().duplicates, 1);
+    // Still 7: a word 7 is equal (delivered, a reuse), not older.
+    let reused = r.counts().reused_identities;
+    assert!(
+        v22_take(&mut r, v22_blob(7, V22_C), 0.0),
+        "baseline stayed 7"
+    );
+    assert_eq!(r.counts().reused_identities, reused + 1);
+    assert_eq!(r.counts().queue3_older, 0);
+}
+
+/// A complete ordinary opcode blob with ZERO data on queue 3 establishes and advances a baseline,
+/// unlike an omitted-chunk control.
+#[test]
+fn vector_22_a_zero_length_opcode_blob_sets_a_baseline() {
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(5, &[]), 0.0), "first");
+    assert!(v22_take(&mut r, v22_blob(6, &[]), 0.0), "newer");
+    assert!(!v22_take(&mut r, v22_blob(5, V22_A), 0.0), "older than 6");
+    assert_eq!(r.counts().queue3_older, 1);
+}
+
+/// A fragmented queue-1 completed identity 9/A repeated deduplicates with the shared tombstone
+/// budget; an unfragmented queue-1 blob (ID 0) is never deduplicated.
+#[test]
+fn vector_22_fragmented_queue_1_takes_a_tombstone() {
+    let body: Vec<u8> = (0..437u16).map(|i| (i & 0xFF) as u8).collect();
+    let parts = split_blob(1, 0, 9, 0, None, 0x1234, &body).expect("split");
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0].header.blob_id, 9);
+    let mut r = BlobReassembler::default();
+    assert_eq!(r.ingest_packet(1, &parts, 0.0).expect("A").len(), 1);
+    assert_eq!(
+        r.tombstone_sizes().0,
+        1,
+        "one tombstone of the shared budget"
+    );
+    assert!(r.ingest_packet(1, &parts, 1.0).expect("again").is_empty());
+    assert_eq!(
+        r.counts().duplicates,
+        2,
+        "each old part is ignored and counted"
+    );
+    assert_eq!(r.incomplete_len(), 0, "no entry opened");
+    // Unfragmented queue 1 has no identity: delivered every time, no tombstone.
+    let plain = split_blob(1, 0, 0, 0, None, 0x55, V22_A).expect("split");
+    assert!(v22_take(&mut r, plain[0].clone(), 2.0));
+    assert!(v22_take(&mut r, plain[0].clone(), 2.0));
+    assert_eq!(r.tombstone_sizes().0, 1);
+    // The budget is shared: 64 queue-2 completions evict the queue-1 tombstone first.
+    for id in 0..64u16 {
+        assert!(v22_take(&mut r, v22_queue2(id, V22_A), 3.0));
+    }
+    assert_eq!(r.counts().tombstones_evicted, 1);
+    assert_eq!(r.ingest_packet(1, &parts, 4.0).expect("evicted").len(), 1);
+}
+
+/// Fill 64 same-direction tombstones, then a 65th distinct completion, then repeat the evicted body's
+/// identity and data while its queue-3 baseline is retained: the eviction is a bounded-memory count
+/// only, and the repeat at the equal word with no exact tombstone delivers with a reuse count. The
+/// same covers "baseline 7, equal 7/A, no retained tombstone".
+#[test]
+fn vector_22_an_evicted_tombstone_at_the_equal_word_is_a_reuse() {
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(7, V22_A), 0.0));
+    for id in 0..64u16 {
+        assert!(v22_take(&mut r, v22_queue2(id, V22_B), 1.0));
+    }
+    assert_eq!(r.counts().tombstones_evicted, 1);
+    assert_eq!(r.counts().reused_identities, 0, "eviction is no anomaly");
+    assert!(v22_take(&mut r, v22_blob(7, V22_A), 2.0), "delivered again");
+    assert_eq!(r.counts().reused_identities, 1);
+    assert_eq!(r.counts().duplicates, 0);
+    // The baseline's word did not change: 6 is still older.
+    assert!(!v22_take(&mut r, v22_blob(6, V22_C), 2.0));
+}
+
+/// Repeat a completion after its 30-second tombstone expiry while the baseline still lives through a
+/// later equal-word delivery: delivered with a reuse count, not an exact-duplicate claim.
+#[test]
+fn vector_22_a_repeat_after_the_tombstone_expired_is_a_reuse() {
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(7, V22_A), 0.0));
+    assert!(
+        v22_take(&mut r, v22_blob(7, V22_B), 20.0),
+        "equal word, refreshes"
+    );
+    let reused = r.counts().reused_identities;
+    assert!(
+        v22_take(&mut r, v22_blob(7, V22_A), 35.0),
+        "A's tombstone is gone"
+    );
+    assert_eq!(r.counts().reused_identities, reused + 1);
+    assert_eq!(r.counts().duplicates, 0);
+    assert!(
+        !v22_take(&mut r, v22_blob(7, V22_B), 36.0),
+        "B's tombstone lives"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Vector 24: old-part, mask and retention policies (§10.2)
+// ---------------------------------------------------------------------------
+
+/// The two parts of Vector 24's invented identity 9, opcode 0x1234, on `queue` (1, fragmented, or 2):
+/// `first` (436 bytes) then `last` (one byte).
+fn v24_parts(queue: u8, first: u8, last: u8) -> Vec<BlobFragment> {
+    let mut body = vec![first; 436];
+    body.push(last);
+    let parts = split_blob(queue, 3, 9, 0, None, 0x1234, &body).expect("split");
+    assert_eq!(parts.len(), 2);
+    parts
+}
+
+/// A reassembler holding the completed tombstone of (X, Y) on `queue`.
+fn v24_after_xy(queue: u8) -> BlobReassembler {
+    let mut r = BlobReassembler::default();
+    let xy = v24_parts(queue, 0x11, 0x22);
+    assert_eq!(r.ingest_packet(1, &xy, 0.0).expect("X, Y").len(), 1);
+    r
+}
+
+#[test]
+fn vector_24_old_parts_on_queues_1_and_2() {
+    for queue in [1u8, 2] {
+        let x = v24_parts(queue, 0x11, 0x22)[0].clone();
+        let y = v24_parts(queue, 0x11, 0x22)[1].clone();
+        let z = v24_parts(queue, 0x11, 0x33)[1].clone();
+        let p = v24_parts(queue, 0x44, 0x33)[0].clone();
+
+        // Old X, then new Z: X opens no entry; Z opens one with only index 1; no completion.
+        let mut r = v24_after_xy(queue);
+        assert_eq!(r.ingest(1, x.clone(), 1.0).unwrap(), None);
+        assert_eq!(r.incomplete_len(), 0, "queue {queue}: X opens nothing");
+        assert_eq!(r.ingest(1, z.clone(), 1.0).unwrap(), None);
+        assert_eq!(r.incomplete_len(), 1, "queue {queue}");
+
+        // New Z, then old X: X fills no slot, no fabricated (X, Z).
+        let mut r = v24_after_xy(queue);
+        assert_eq!(r.ingest(1, z.clone(), 1.0).unwrap(), None);
+        assert_eq!(r.ingest(1, x.clone(), 1.0).unwrap(), None, "queue {queue}");
+        assert_eq!(r.incomplete_len(), 1);
+        // Then new P fills index 0 and completes (P, Z) once.
+        let done = r.ingest(1, p.clone(), 1.0).unwrap().expect("(P, Z)");
+        let mut expected = vec![0x44; 436];
+        expected.push(0x33);
+        assert_eq!(done.payload, expected, "queue {queue}");
+        assert_eq!(r.incomplete_len(), 0);
+
+        // Repeated old Y while the new entry is open: ignored, no overwrite, no new entry.
+        let mut r = v24_after_xy(queue);
+        assert_eq!(r.ingest(1, p.clone(), 1.0).unwrap(), None);
+        let before = r.clone();
+        let dups = r.counts().duplicates;
+        assert_eq!(r.ingest(1, y.clone(), 1.0).unwrap(), None);
+        assert_eq!(r.counts().duplicates, dups + 1, "queue {queue}");
+        assert_eq!(r.incomplete_len(), 1);
+        // The open entry still takes its real last part.
+        assert!(r.ingest(1, z.clone(), 1.0).unwrap().is_some());
+        let mut r = before;
+
+        // A different non-old part for an already filled index: the whole datagram drops, the
+        // prior entry kept, no sibling delivered.
+        let other = v24_parts(queue, 0x55, 0x33)[0].clone();
+        let sibling = split_blob(4, 1, 1, 0, None, 0x77, &[1])
+            .expect("split")
+            .remove(0);
+        let snapshot = r.clone();
+        assert_eq!(
+            r.ingest_packet(1, &[sibling, other], 1.0),
+            Err(SessionError::ConflictingBlobIdentity),
+            "queue {queue}"
+        );
+        assert!(r.same_state(&snapshot));
+
+        // An exact repeat of the filled current non-old part: no change, accepted.
+        assert_eq!(r.ingest(1, p.clone(), 1.0).unwrap(), None);
+        assert_eq!(r.incomplete_len(), 1);
+    }
+}
+
+/// Vector 5's connection after its challenge: masked packets verify with the first incoming word.
+fn v24_challenged() -> SessionConnection {
+    let mut conn = started();
+    conn.receive_datagram(&hex(VECTOR_5_CHALLENGE), SERVER, 0.1, WireCodecs::NONE)
+        .expect("challenge");
+    while conn.pop_outbound_datagram().is_some() {}
+    conn
+}
+
+/// A server datagram to Vector 5's recipient with one raw fragment `header` then `data`: masked as
+/// sequence 2 with the first incoming word (Vector 7), or unmasked and unsequenced.
+fn v24_raw(header: &[u8], data: &[u8], masked: bool) -> Vec<u8> {
+    let mut payload = header.to_vec();
+    payload.extend_from_slice(data);
+    let mut hdr = DatagramHeader {
+        rec_id: 0x0102,
+        flags: FLAG_HAS_FRAGMENTED_BLOBS | if masked { 0x0000_0002 } else { 0 },
+        seq_num: if masked { 2 } else { 0 },
+        pak_size: u16::try_from(payload.len()).expect("small"),
+        ..DatagramHeader::default()
+    };
+    let sum = compute_datagram_checksum(header).wrapping_add(compute_datagram_checksum(data));
+    let mask = masked.then_some(0x828E_2147);
+    hdr.checksum = combine_packet_checksum(hdr, sum, mask).expect("checksum");
+    let mut d = vec![0u8, 0];
+    d.extend_from_slice(&hdr.to_wire_bytes());
+    d.extend_from_slice(&payload);
+    d
+}
+
+/// Nothing changed on the connection: no event, no reply, State 2 kept.
+fn v24_untouched(conn: &mut SessionConnection) {
+    assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
+    assert_eq!(conn.recv_seq_expected(), 1);
+    assert!(conn.pop_event().is_none());
+    assert!(conn.pop_outbound_datagram().is_none());
+}
+
+const VECTOR_24_UNMASKED: &str =
+    "00 00 12 34 00 09 00 00 00 04 00 00 00 02 D0 F3 BB 66 00 02 56 78 03 42 00 01 00 80 F4 01 00";
+
+/// The unmasked-fragment fixture: its keyless checksum is valid, and it still drops before any
+/// baseline, Ack or terminal state. The analogous unmasked queue-1 and ordinary queue-3 fragments
+/// drop too; masked queue-1 0x02 is accepted, masked known-layout queue-3 0x02 is terminal.
+#[test]
+fn vector_24_unmasked_fragments_drop_on_every_queue() {
+    let fixture = hex(VECTOR_24_UNMASKED);
+    let pkt = decode_datagram(&fixture, true, None, false).expect("the checksum is valid");
+    assert_eq!(pkt.header.checksum, 0xD0F3_BB66);
+    assert_eq!(pkt.fragments[0].header.queue_id, 3);
+    let mut conn = SessionConnection::new(SERVER, 0.0);
+    assert_eq!(
+        conn.receive_datagram(&fixture, SERVER, 0.1, WireCodecs::NONE),
+        Err(SessionError::UnmaskedFragment { queue_id: 3 })
+    );
+    let mut conn = v24_challenged();
+    assert_eq!(
+        conn.receive_datagram(&fixture, SERVER, 0.2, WireCodecs::NONE),
+        Err(SessionError::UnmaskedFragment { queue_id: 3 })
+    );
+    v24_untouched(&mut conn);
+
+    // The analogous unmasked queue-1 (ordinary, and with 0x02) and ordinary queue-3 fragments.
+    let q1 = [0x01, 0x40, 0x80, 0xF4, 0x01, 0x00];
+    let q1_02 = [0x01, 0x42, 0x80, 0xF4, 0x01, 0x00];
+    let q3 = [0x03, 0x40, 0x00, 0x01, 0x00, 0x80, 0xF4, 0x01];
+    for (header, queue) in [(&q1[..], 1u8), (&q1_02[..], 1), (&q3[..], 3)] {
+        let d = v24_raw(header, &[0x00], false);
+        assert_eq!(
+            conn.receive_datagram(&d, SERVER, 0.3, WireCodecs::NONE),
+            Err(SessionError::UnmaskedFragment { queue_id: queue })
+        );
+        v24_untouched(&mut conn);
+    }
+
+    // Masked queue-1 0x02: the normal accept row.
+    let d = v24_raw(&q1_02, &[0x00], true);
+    conn.receive_datagram(&d, SERVER, 0.4, WireCodecs::NONE)
+        .expect("accepted");
+    assert_eq!(conn.state(), ConnectionState::Connected);
+    // Masked known-layout ordinary queue-3 0x02: terminal.
+    let mut conn = v24_challenged();
+    let q3_02 = [0x03, 0x42, 0x00, 0x01, 0x00, 0x80, 0xF4, 0x01];
+    let d = v24_raw(&q3_02, &[0x00], true);
+    assert!(matches!(
+        conn.receive_datagram(&d, SERVER, 0.4, WireCodecs::NONE),
+        Err(SessionError::UnsupportedFragment { queue_id: 3, .. })
+    ));
+    assert_eq!(conn.state(), ConnectionState::Closing);
+}
+
+/// Empty controls: `01 C0` accepts with no dispatch, baseline or tombstone. Fragmentation, 0x02,
+/// encryption 0x08 or the undefined 0x20 with OmitChunkInfo is an invalid control: the whole datagram
+/// drops, and a 0x82 form never terminates.
+#[test]
+fn vector_24_empty_and_invalid_controls() {
+    let mut conn = v24_challenged();
+    let d = v24_raw(&[0x01, 0xC0], &[], true);
+    conn.receive_datagram(&d, SERVER, 0.2, WireCodecs::NONE)
+        .expect("an empty control is accepted");
+    assert_eq!(conn.state(), ConnectionState::Connected);
+    assert!(
+        !std::iter::from_fn(|| conn.pop_event())
+            .any(|e| matches!(e, SessionEvent::BlobReceived(_))),
+        "no dispatch"
+    );
+
+    let invalid: [(&[u8], u8, u8); 5] = [
+        (&[0x01, 0xD0, 0x01, 0x00, 0x00, 0x02], 1, 0xD0),
+        (
+            &[
+                0x02, 0x82, 0x01, 0x00, 0x01, 0x00, 0x77, 0, 0, 0, 0, 0, 0, 0x01,
+            ],
+            2,
+            0x82,
+        ),
+        (&[0x01, 0xC2], 1, 0xC2),
+        (&[0x01, 0xC8], 1, 0xC8),
+        (&[0x01, 0xE0], 1, 0xE0),
+    ];
+    for (header, queue_id, blob_flags) in invalid {
+        let expected = Err(SessionError::InvalidOmittedControl {
+            queue_id,
+            blob_flags,
+        });
+        assert_eq!(
+            BlobFragment::decode(header).map(|_| ()),
+            expected.clone(),
+            "{header:02X?}"
+        );
+        let mut conn = v24_challenged();
+        let d = v24_raw(header, &[], true);
+        assert_eq!(
+            conn.receive_datagram(&d, SERVER, 0.2, WireCodecs::NONE)
+                .map(|_| ()),
+            expected,
+            "{header:02X?}"
+        );
+        v24_untouched(&mut conn);
+    }
 }

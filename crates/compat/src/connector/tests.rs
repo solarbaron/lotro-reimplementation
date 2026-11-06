@@ -2650,6 +2650,8 @@ fn session_start(
         net: Default::default(),
         login_server_entry: Default::default(),
         dump: None,
+        // The tests read the evidence lines; production has the log off unless the user opts in.
+        evidence: true,
     }
 }
 

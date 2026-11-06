@@ -297,7 +297,10 @@ impl App {
     /// character screens close on it before the frame's own check sees it); the account form for
     /// the Cancel of a selection; else, at the decoded list and while entering, Quit, Escape and
     /// closing the window end the client (`official-entry.md` §4.6). In the world, which has no row
-    /// there, it stays the way back to the account form.
+    /// there, it stays the way back to the account form. The target of a close while entering is
+    /// labelled until the writer answers: `official-session.md` §9.3.9's user-close row says the
+    /// account form for every close, entry §4.6 and §8.6 say exit for Quit, Escape and window
+    /// close; Tessera follows entry §4.6 (the close counts are the same either way).
     fn left_or_session_end(&self) -> crate::official::flow::HandOverEnd {
         use crate::official::flow::HandOverEnd;
         let world = self.runtime.as_ref().and_then(|rt| rt.world.as_ref());
@@ -1144,6 +1147,9 @@ mod tests {
             "the first end"
         );
         app.shutdown();
+        // §4.5: the shutdown unloaded every apartment and dropped the plugin host with the runtime,
+        // before the start screen's window shows the account form.
+        assert!(app.runtime.is_none(), "the plugin host is stopped");
 
         // The session ended.
         let mut app = handed_app(dir.path());

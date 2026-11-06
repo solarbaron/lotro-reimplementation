@@ -333,6 +333,7 @@ fn placement(generation: u64) -> Event {
     Event::WorldPlacementPending {
         character: "Aldo".to_owned(),
         position: tessera_net::Location::new(tessera_net::RegionId(1), 1.0, 2.0, 3.0),
+        anchor: None,
         yaw: 0.5,
         generation,
     }
@@ -379,6 +380,34 @@ fn a_pending_placement_allows_one_world_loaded() {
     s.send(now, loaded(2)).expect("the second");
 }
 
+/// `docs/ARCHITECTURE.md` §19.1: a pending placement may name its interior owner, as a
+/// `LocationReport` does; the session keeps it as the player's anchor while the scene loads, and
+/// a refused entry drops it. One that does not own the position is dropped whole.
+#[test]
+fn a_pending_placement_may_name_its_anchor() {
+    let (mut s, b, now) = entering();
+    let block = tessera_net::Landblock::new(tessera_net::RegionId(1), 0, 0).expect("a block");
+    let anchor = tessera_net::Anchor::new(block, 0x0100);
+    let [x, y] = block.origin();
+    let position = tessera_net::Location::new(tessera_net::RegionId(1), x + 1.0, y + 2.0, 3.0);
+    b.push(Event::WorldPlacementPending {
+        character: "Aldo".to_owned(),
+        position,
+        anchor: Some(anchor),
+        yaw: 0.5,
+        generation: 1,
+    });
+    assert_eq!(s.poll(now).len(), 1);
+    assert_eq!(s.player_anchor(), Some(anchor));
+    s.send(now, loaded(1)).expect("answered");
+    b.push(Event::EnterWorldFailed {
+        character: "Aldo".to_owned(),
+        reason: "refused".to_owned(),
+    });
+    assert_eq!(s.poll(now).len(), 1);
+    assert_eq!(s.player_anchor(), None);
+}
+
 /// The entry's two events are accepted only while entering; a bad placement is dropped.
 #[test]
 fn entry_progress_and_placement_are_only_for_an_entry() {
@@ -394,16 +423,29 @@ fn entry_progress_and_placement_are_only_for_an_entry() {
     b.push(Event::WorldPlacementPending {
         character: "Aldo".to_owned(),
         position: tessera_net::Location::new(tessera_net::RegionId(1), f64::NAN, 2.0, 3.0),
+        anchor: None,
         yaw: 0.5,
         generation: 1,
     });
     b.push(Event::WorldPlacementPending {
         character: "Aldo".to_owned(),
         position: tessera_net::Location::new(tessera_net::RegionId(1), 1.0, 2.0, 3.0),
+        anchor: None,
         yaw: f32::INFINITY,
         generation: 1,
     });
     b.push(placement(0));
+    // An anchor that does not own the position (another region).
+    b.push(Event::WorldPlacementPending {
+        character: "Aldo".to_owned(),
+        position: tessera_net::Location::new(tessera_net::RegionId(1), 1.0, 2.0, 3.0),
+        anchor: Some(tessera_net::Anchor::new(
+            tessera_net::Landblock::new(tessera_net::RegionId(2), 0, 0).expect("a block"),
+            0x0100,
+        )),
+        yaw: 0.5,
+        generation: 1,
+    });
     assert!(s.poll(now).is_empty(), "invalid placements are dropped");
     assert!(matches!(
         s.send(now, loaded(1)),

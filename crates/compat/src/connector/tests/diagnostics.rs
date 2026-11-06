@@ -1263,7 +1263,9 @@ fn a_failed_queue_step_logs_its_class_only() {
 }
 
 /// EV-12: closing the window lets the session go at once. A wait at the exit sees the thread's end:
-/// the session's Disconnect and its connection totals are out by then.
+/// the session's Disconnect is out by then. The evidence log is a local opt-in, off by default
+/// (`official-session.md` §9.3.11 "Required live-log CONTENT"): this run did not opt in, so no
+/// evidence line was written, the connection totals included.
 #[test]
 fn an_exit_waits_for_the_session_it_just_let_go() {
     let ((), logs) = logs_of(|| {
@@ -1280,10 +1282,8 @@ fn an_exit_waits_for_the_session_it_just_let_go() {
             Duration::from_secs(10)
         ));
     });
-    assert!(
-        !lines_with(&logs, "official evidence: connection totals").is_empty(),
-        "{logs}"
-    );
+    assert!(!logs.contains("official evidence"), "{logs}");
+    assert!(!logs.contains("official_evidence"), "{logs}");
     assert!(
         logs.contains("official session closed"),
         "the thread's own end: {logs}"

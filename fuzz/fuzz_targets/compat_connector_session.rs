@@ -510,6 +510,8 @@ fn start(net: &mut Net, flags: u8) -> Option<SessionDriver<Net>> {
         login_server_entry: Default::default(),
         // The datagram dump writes files: never on in fuzzing.
         dump: None,
+        // Bit 7 of the first byte: the evidence log's local opt-in, so both paths run.
+        evidence: flags & 0x80 != 0,
     };
     SessionDriver::start(net, start, 0.0, &|| false).ok()
 }

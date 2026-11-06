@@ -59,6 +59,18 @@
 //! original client ever uses an entry after the first is a question for the spec writer
 //! (`docs/m8-remediation.md` §15, L §3.3); the value forms and the refusal are engineering
 //! choices.
+//!
+//! # The evidence log switch
+//!
+//! `official-session.md` §9.3.11 "Required live-log CONTENT": the evidence log of a live run
+//! (every line under [`crate::session::EVIDENCE_TARGET`], the connections' packet, datagram,
+//! blob and queue lines and the session's stage, entry and count lines) is a local opt-in,
+//! off by default, shipped builds included. [`EVIDENCE_ENV`] (`TESSERA_OFFICIAL_EVIDENCE`),
+//! read once when the connector's thread starts ([`evidence_from_env`]), turns it on with
+//! the value `1`; unset, it is off. Any other value is refused with a `warn` line that does
+//! not repeat it, and the log stays off. The log is private, capture-like evidence: it stays
+//! outside the repository and is never committed (`docs/DEVELOPMENT.md` "Reading a live
+//! official run"). The variable's name and its one value are engineering choices.
 
 use std::ffi::{OsStr, OsString};
 use std::net::Ipv4Addr;
@@ -71,6 +83,34 @@ use crate::session::{
 
 /// Every how many seconds a connection still in its handshake logs its counts (`debug`).
 pub const HANDSHAKE_REPORT_SEC: f64 = 5.0;
+
+/// The environment variable of the evidence log switch (module docs "The evidence log switch").
+pub const EVIDENCE_ENV: &str = "TESSERA_OFFICIAL_EVIDENCE";
+
+/// Whether the variable's value `value` (`None`: unset) turns the evidence log on: only `1`
+/// does. Any other value is refused with a `warn` line that does not repeat it.
+#[must_use]
+pub fn evidence_switch(value: Option<&OsStr>) -> bool {
+    match value {
+        None => false,
+        Some(v) if v == "1" => true,
+        Some(_) => {
+            tracing::warn!(
+                variable = EVIDENCE_ENV,
+                "official session: evidence log switch refused (only 1 turns it on); the log \
+                 stays off"
+            );
+            false
+        }
+    }
+}
+
+/// Whether [`EVIDENCE_ENV`] in the process environment turns the evidence log on; read once,
+/// when the connector's thread starts.
+#[must_use]
+pub fn evidence_from_env() -> bool {
+    evidence_switch(std::env::var_os(EVIDENCE_ENV).as_deref())
+}
 
 /// The environment variable of the login server switch (module docs).
 pub const LOGIN_SERVER_ENV: &str = "TESSERA_OFFICIAL_LOGIN_SERVER";

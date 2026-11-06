@@ -89,6 +89,13 @@
 //! a source: the primary session does not depend on it, and a user's chat-server request fails
 //! locally without disconnecting it.
 //!
+//! §9.3.12's held-command table has the one capability text [`HELD_COMMAND`]: a held command (a move,
+//! every chat route, the chat server's room commands, a name check, creation, deletion, a re-entry, a
+//! stale `WorldLoaded`) is a local `InvalidCommand` with it, and nothing is sent. A typed one also
+//! gets one plain system line with it (`Event::ServerNotice`, `SessionDriver::held_line`); a move
+//! and a `WorldLoaded`, which the client sends on its own, get none (labelled). The evidence log
+//! (only with its local opt-in, [`SessionStart::evidence`]) names the held opcode and its reason.
+//!
 //! # One multiplexer per connection
 //!
 //! The login connection and every world connection each get a multiplexer of their own,
@@ -126,9 +133,10 @@
 //!
 //! # Leaving the world
 //!
-//! `Command::LeaveWorld` is the typed logout of §9.3.9: `ClientRequested`, exactly one Disconnect,
-//! a local close and no drain, and no logout RPC (the historical path is held, `ARCHITECTURE.md`
-//! §19; labelled, `docs/m8-remediation.md` §28 fix 18: its command and target screen are the writer's).
+//! `Command::LeaveWorld` is the typed logout of §9.3.9 and `official-entry.md` §4.6, valid only in the
+//! world: `ClientRequested`, exactly one Disconnect on the active world connection, a local close and
+//! no drain, and no logout RPC (the historical path is held, `ARCHITECTURE.md` §19.1); the client goes
+//! to the account form. While entering it is a local `InvalidCommand`.
 //! A world teardown (§7.2 item 3) keeps the session: the client unloads the world on the
 //! notice, so the driver goes back to character selection at once with
 //! `Event::ReturnedToCharacterSelect` and the first list. Every later `0x6C` is counted and skipped,
@@ -285,6 +293,16 @@ use super::pending_world::{
     withheld_summary,
 };
 
+/// One line of the evidence log (`official-session.md` §9.3.11 "Required live-log CONTENT"), written
+/// only while `$on` (the local opt-in, off by default: [`SessionStart::evidence`]).
+macro_rules! evidence {
+    ($on:expr, $level:ident, $($rest:tt)*) => {
+        if $on {
+            tracing::$level!(target: EVIDENCE_TARGET, $($rest)*);
+        }
+    };
+}
+
 /// `0x0000019E` (`ClientPlatformIdMessage`, `official-session.md` §5.6.2).
 pub const OPCODE_CLIENT_PLATFORM_ID: u32 = 0x0000_019E;
 /// `0x0000006F` (`CharacterSelectMessage`, §5.6.2).
@@ -381,17 +399,22 @@ pub const NOT_SENT_OUTSIDE_WORLD: &str = "Your line was not sent: you are no lon
 /// The locally worded service refusal of a selection (§9.3.9: no number, no service text).
 pub const ENTRY_REFUSED: &str = "The official service refused this character's entry to the world.";
 
-/// The local answer to a selection after a return from the world (§9.3.9, OPEN-SESSION-16).
-pub const ENTRY_REENTRY_NOT_SUPPORTED: &str =
-    "entering the world again is not supported by this version of Tessera yet";
+/// The one unsupported-capability text of every held command (`official-session.md` §9.3.12
+/// "Winning current held-command policy"): the words of its local `InvalidCommand`, and the plain
+/// system line a typed command gets (`SessionDriver::held_line`). Nothing is sent for it.
+pub const HELD_COMMAND: &str = "Not supported by this version of Tessera yet";
 
-/// The local failure of a chat-server request (`official-messages-play.md`, P10-10H: the exact
-/// words of its `InvalidCommand`): the primary session is not touched.
-pub const CHAT_UNAVAILABLE: &str =
-    "Chat server connection is not supported by this version of Tessera yet.";
+/// The local answer to a selection after a return from the world (§9.3.9, OPEN-SESSION-16; the
+/// held-command table's "world re-entry" row): [`HELD_COMMAND`].
+pub const ENTRY_REENTRY_NOT_SUPPORTED: &str = HELD_COMMAND;
 
-/// The local answer to a `Command::Move` while `0x24` is held (§9.3.9 "World send inventory").
-pub const MOVE_HELD: &str = "movement is not supported by this version of Tessera yet";
+/// The local failure of a chat-server request (the held-command table's `JoinChannel`/`LeaveChannel`
+/// and ChatSession rows): [`HELD_COMMAND`]; the primary session is not touched.
+pub const CHAT_UNAVAILABLE: &str = HELD_COMMAND;
+
+/// The local answer to a `Command::Move` while `0x24` is held (§9.3.9 "World send inventory"; the
+/// held-command table's first row): [`HELD_COMMAND`].
+pub const MOVE_HELD: &str = HELD_COMMAND;
 
 /// Most characters in one character list (§9.3.9): a longer list fails whole, never cut.
 pub const MAX_CHARACTERS: usize = 256;
@@ -586,12 +609,6 @@ impl Link {
         if let Some(c) = mux.connection_mut(conn) {
             c.set_codec_uuids(uuids);
             c.set_max_recv_rate(max_recv_rate);
-            let role = if matches!(auth, AuthMode::Referral) {
-                "world"
-            } else {
-                "login"
-            };
-            c.enable_evidence(role, now);
         }
         Ok(Self {
             mux,
@@ -604,6 +621,19 @@ impl Link {
             initial: None,
             queue2_next: None,
         })
+    }
+
+    /// Turns on the connection's evidence log when `on` (§9.3.11 "Required live-log CONTENT": only
+    /// with the local opt-in, [`SessionStart::evidence`]).
+    fn evidence(&mut self, on: bool, now: f64) {
+        let role = if matches!(self.auth, AuthMode::Referral) {
+            "world"
+        } else {
+            "login"
+        };
+        if on && let Some(c) = self.mux.connection_mut(self.conn) {
+            c.enable_evidence(role, now);
+        }
     }
 
     /// Whether the dump still waits for this connection's first datagram.
@@ -654,6 +684,14 @@ impl Link {
     }
 
     /// Whether the connection closed from its handshake (States `1` and `2`).
+    /// Whether the connection closed while it still waited for its server's challenge (State `1`).
+    fn closed_before_challenge(&self) -> bool {
+        matches!(
+            self.mux.connection(self.conn).and_then(|c| c.closed_from()),
+            Some(ConnectionState::SessionAuthSent)
+        )
+    }
+
     fn closed_in_handshake(&self) -> bool {
         matches!(
             self.mux.connection(self.conn).and_then(|c| c.closed_from()),
@@ -964,6 +1002,10 @@ pub struct SessionStart {
     pub login_server_entry: LoginServerEntry,
     /// The datagram dump's directory ([`super::dump`]); `None`: off (the default).
     pub dump: Option<DumpDir>,
+    /// The evidence log (`official-session.md` §9.3.11 "Required live-log CONTENT"): a local
+    /// opt-in, `false` by default ([`super::diag::evidence_from_env`]). Off, no line goes to
+    /// [`EVIDENCE_TARGET`].
+    pub evidence: bool,
 }
 
 impl std::fmt::Debug for SessionStart {
@@ -1038,8 +1080,11 @@ pub struct DriverCounters {
     /// `Command::Move`s not sent while `0x24` is held (decision 0046 item 10).
     pub moves_held: u64,
     /// `WorldLoaded` signals outside the world and without a pending placement of their generation,
-    /// refused.
+    /// refused; in the world too while OPEN-WORLD-9 holds that path (ARCHITECTURE.md §19.1).
     pub stray_loaded: u64,
+    /// Typed commands of §9.3.12's held-command table refused in the session with the capability
+    /// text ([`HELD_COMMAND`]); nothing was sent for them.
+    pub commands_held: u64,
     /// Valid `0x90`s that repeated the entry's ID: counted, the first table stays pending (§9.3.11; labelled,
     /// `docs/m8-remediation.md` §28 fix 20 for a repeat with another table).
     pub session_starts_repeated: u64,
@@ -1106,6 +1151,11 @@ pub struct SessionDriver<N: ConnectorNet> {
     characters: Vec<(u64, String)>,
     /// [`ConnectorNet::placement_scripted`]: `false` on every production path (OPEN-WORLD-9).
     placement_scripted: bool,
+    /// The held opcodes that have had their evidence line ([`Self::held_evidence`]).
+    held_logged: std::collections::BTreeSet<u32>,
+    /// Whether the evidence log is on ([`SessionStart::evidence`]): the local opt-in of
+    /// `official-session.md` §9.3.11, off by default. Off, no line goes to [`EVIDENCE_TARGET`].
+    evidence_log: bool,
     /// The evidence log's current stage and when it started ([`Self::note_stage`]).
     evidence_stage: (&'static str, f64),
     /// When the attempt started, for the stage lines.
@@ -1394,6 +1444,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             now,
         )
         .map_err(|_| StartFailure::Bind)?;
+        login.evidence(start.evidence, now);
         login.initial = Some(InitialStages::default());
         if let Some(c) = login.mux.connection_mut(login.conn) {
             c.start_login(auth, now).map_err(|_| StartFailure::Ticket)?;
@@ -1412,6 +1463,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             stage: Stage::Login,
             characters: Vec::new(),
             placement_scripted: net.placement_scripted(),
+            held_logged: std::collections::BTreeSet::new(),
+            evidence_log: start.evidence,
             evidence_stage: ("handshake", now),
             evidence_start: now,
             placed_at: None,
@@ -1753,6 +1806,20 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 withheld = %withheld_summary(),
                 "official world entry: stopped"
             );
+            // §9.3.11 "Required live-log CONTENT": what was withheld, one line per family.
+            for w in super::pending_world::WITHHELD_BEFORE_F4 {
+                evidence!(
+                    self.evidence_log,
+                    info,
+                    direction = "send",
+                    event_kind = "withheld",
+                    action = "not sent",
+                    stage = wait.label(),
+                    held_opcode = w.family,
+                    withholding_reason = w.held_by,
+                    "official evidence: withheld before 0xF4"
+                );
+            }
         }
     }
 
@@ -1841,8 +1908,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let load_ms = self.placed_at.map_or(0, |placed| {
             ((self.loaded_at.unwrap_or(now) - placed).max(0.0) * 1000.0) as u64
         });
-        tracing::info!(
-            target: EVIDENCE_TARGET,
+        evidence!(
+            self.evidence_log,
+            info,
             stage = wait.label(),
             waited_ms = ((now - since).max(0.0) * 1000.0) as u64,
             limit_ms = (ENTER_WORLD_TIMEOUT_SEC * 1000.0) as u64,
@@ -1972,8 +2040,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }
             Err(_) => self.counters.decode_errors += 1,
         }
-        tracing::info!(
-            target: EVIDENCE_TARGET,
+        evidence!(
+            self.evidence_log,
+            info,
             bytes = table.len(),
             properties = self.session_properties.len(),
             "official evidence: session table released"
@@ -2056,8 +2125,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// connections' evidence lines count from here. Stage names are fixed words.
     fn note_stage(&mut self, stage: &'static str, now: f64) {
         let (previous, since) = self.evidence_stage;
-        tracing::info!(
-            target: EVIDENCE_TARGET,
+        evidence!(
+            self.evidence_log,
+            info,
             stage,
             previous,
             previous_ms = ((now - since).max(0.0) * 1000.0) as u64,
@@ -2097,8 +2167,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             .and_then(|l| l.mux.connection(l.conn))
             .map(|c| c.reassembly_counts())
             .unwrap_or_default();
-        tracing::info!(
-            target: EVIDENCE_TARGET,
+        evidence!(
+            self.evidence_log,
+            info,
             batches = p.batches,
             sub_events = p.sub_events,
             creations = p.creations,
@@ -2430,8 +2501,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     }
                     self.counters.refused_datagrams += 1;
                     if let Some(skipped) = self.refused_log.allow(now) {
-                        tracing::debug!(
-                            target: EVIDENCE_TARGET,
+                        evidence!(self.evidence_log, debug,
+                            direction = "recv",
                             kind = %error_kind(&e),
                             raw_len = datagram.len(),
                             prefix_zero = datagram.starts_with(&[0, 0]),
@@ -2563,8 +2634,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     Err(e) => {
                         self.counters.decode_errors += 1;
                         if let Some(skipped) = self.message_log.allow(now) {
-                            tracing::debug!(
-                                target: EVIDENCE_TARGET,
+                            evidence!(self.evidence_log, debug,
+                                direction = "recv",
                                 kind = %error_kind(&e),
                                 skipped,
                                 "official session: message refused"
@@ -2605,8 +2676,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return;
         }
         let (stage, since) = self.evidence_stage;
-        tracing::info!(
-            target: EVIDENCE_TARGET,
+        evidence!(
+            self.evidence_log,
+            info,
             stage,
             stage_ms = ((now - since).max(0.0) * 1000.0) as u64,
             "official evidence: login connection retired"
@@ -2648,8 +2720,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             "official session: connection closed"
         );
         let (stage, since) = self.evidence_stage;
-        tracing::info!(
-            target: EVIDENCE_TARGET,
+        evidence!(
+            self.evidence_log,
+            info,
             role = if world { "world" } else { "login" },
             reason = reason.label(),
             retiring = !world && self.login_referred,
@@ -2674,6 +2747,23 @@ impl<N: ConnectorNet> SessionDriver<N> {
         // §9.3.9: nothing the retiring login connection does decides the session's end.
         if !world && (self.world.is_some() || self.login_referred) {
             return;
+        }
+        // §9.3.12 "Old-install rejection": a listed refusal code before any challenge is the
+        // condition PreChallengeInstallRejected, a private diagnostic only: one local line with the
+        // advice to check that the install is up to date, never a claim that it is out of date and
+        // never a value. The `ClientNotAccepted` refusal and its panel below are unchanged. The
+        // trigger (the login connection, State 1, a code of [`LOGIN_REFUSAL_CODES`], fatal or not) is
+        // labelled until the writer names it.
+        if let LinkEnd::TransportError { error_code, .. } = &reason
+            && !world
+            && LOGIN_REFUSAL_CODES.contains(error_code)
+            && self.login.closed_before_challenge()
+        {
+            tracing::info!(
+                diagnostic = "PreChallengeInstallRejected",
+                "official session: the login service refused this client before its challenge; \
+                 check that the install is up to date"
+            );
         }
         let (row, goodbye) = match reason {
             LinkEnd::LocalDisconnect => {
@@ -2759,6 +2849,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             now,
         ) {
             Ok(mut link) => {
+                link.evidence(self.evidence_log, now);
                 if let Some(c) = link.mux.connection_mut(link.conn)
                     && let Err(e) = c.start_world_login(cookie, now)
                 {
@@ -2803,8 +2894,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     self.counters.malformed_control =
                         self.counters.malformed_control.saturating_add(1);
                     if let Some(skipped) = self.message_log.allow(now) {
-                        tracing::debug!(
-                            target: EVIDENCE_TARGET,
+                        evidence!(self.evidence_log, debug,
+                            direction = "recv",
                             opcode = format_args!("{opcode:#x}"),
                             kind = %error_kind(&e),
                             skipped,
@@ -3146,16 +3237,20 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 // §9.3.9: `LoginRefused { Other }`, closed with no reply. The number is for the
                 // debug log.
                 LogonOutcome::Refused(code) => {
-                    tracing::debug!(
-                        target: EVIDENCE_TARGET,
+                    evidence!(
+                        self.evidence_log,
+                        debug,
+                        direction = "recv",
                         logon_result = format_args!("{code:#010x}"),
                         "official session: the service refused the logon"
                     );
                     self.end_by_table(TableRow::ServerOther, false, "logon refused", now);
                 }
                 LogonOutcome::Unknown(code) => {
-                    tracing::debug!(
-                        target: EVIDENCE_TARGET,
+                    evidence!(
+                        self.evidence_log,
+                        debug,
+                        direction = "recv",
                         logon_result = format_args!("{code:#010x}"),
                         "official session: logon result with no meaning in the spec"
                     );
@@ -3270,8 +3365,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
         );
         match code {
             Some(code) if waiting && !m.world => {
-                tracing::debug!(
-                    target: EVIDENCE_TARGET,
+                evidence!(
+                    self.evidence_log,
+                    debug,
+                    direction = "recv",
                     code,
                     "official session: character operation refused"
                 );
@@ -3427,9 +3524,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
             "official world entry: placement pending"
         );
         self.placed_at = Some(now);
+        // ARCHITECTURE.md §19.1: the anchor is optional; no placement form of the session names an
+        // interior owner yet (OPEN-WORLD-9), so none is given.
         self.events.push_back(Event::WorldPlacementPending {
             character,
             position: at,
+            anchor: None,
             yaw,
             generation: self.placement_generation,
         });
@@ -3633,8 +3733,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if std::mem::replace(self.entry_firsts.of(what), true) {
             return;
         }
-        tracing::info!(
-            target: EVIDENCE_TARGET,
+        evidence!(
+            self.evidence_log,
+            info,
             first = what.label(),
             since_session_start_ms = ((now - *since).max(0.0) * 1000.0) as u64,
             in_batch = depth > 0,
@@ -3728,8 +3829,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let Some(reason) = reason else {
             return self.refusal_unread(now);
         };
-        tracing::debug!(
-            target: EVIDENCE_TARGET,
+        evidence!(
+            self.evidence_log,
+            debug,
+            direction = "recv",
             reason,
             "official session: the server ended the session"
         );
@@ -3883,8 +3986,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// never a value of it.
     fn log_message_refused(&mut self, opcode: u32, error: &impl std::fmt::Debug, what: &str) {
         if let Some(skipped) = self.message_log.allow(self.log_clock) {
-            tracing::debug!(
-                target: EVIDENCE_TARGET,
+            evidence!(self.evidence_log, debug,
+                direction = "recv",
                 what,
                 opcode = format_args!("{opcode:#x}"),
                 kind = %error_kind(error),
@@ -4533,11 +4636,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 };
                 Ok(())
             }
-            // §9.3.9: typed logout closes with one Disconnect, no RPC and no drain, including during
-            // a pending placement. Labelled (`docs/m8-remediation.md` §28 fix 18): the command and the
-            // screen the client lands on are the writer's to name.
+            // §9.3.9, `official-entry.md` §4.6 ("InWorld typed /logout"), ARCHITECTURE.md §19.1: valid
+            // only in the world. It closes `ClientRequested` with one Disconnect on the active world
+            // connection, no logout RPC and no drain; the client goes to the account form. While
+            // entering it is a local `InvalidCommand` (the entering screen's Cancel is the way out).
             Command::LeaveWorld => {
-                if !matches!(self.stage, Stage::Entering { .. } | Stage::InWorld { .. }) {
+                if !matches!(self.stage, Stage::InWorld { .. }) {
                     return Err(NetError::InvalidCommand("not in the world"));
                 }
                 tracing::info!("official session: typed logout closes the session");
@@ -4553,6 +4657,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }
             Command::WorldLoaded { generation } => {
                 match &self.stage {
+                    // ARCHITECTURE.md §19.1: while OPEN-WORLD-9 is open the official in-world
+                    // placement and `WorldLoaded` path is held: a local `InvalidCommand`, counted,
+                    // with no system line (labelled until the writer answers, `docs/m8-remediation.md`
+                    // §28 fix 18) and nothing sent. A test's synthetic in-world fixture still reaches
+                    // the arm below.
+                    Stage::InWorld { .. } if !self.readiness_specified => {
+                        self.counters.stray_loaded += 1;
+                        return Err(NetError::InvalidCommand(HELD_COMMAND));
+                    }
                     // §4.5 item 4: the client's loading for its latest placement is done. It is
                     // kept with that placement's stamp, also outside portal space: a `0x5E`
                     // may follow its placement (item 2; module docs). The in-world signal names no
@@ -4573,8 +4686,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                         self.loaded_at = Some(now);
                         tracing::info!("official world entry: the client loaded the placement");
                         // The load time against the readiness clock (§27 "Builder").
-                        tracing::info!(
-                            target: EVIDENCE_TARGET,
+                        evidence!(
+                            self.evidence_log,
+                            info,
                             world_loaded_generation = self.placement_generation,
                             load_ms = self
                                 .placed_at
@@ -4584,13 +4698,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
                             "official evidence: client loading done"
                         );
                     }
-                    // §9.3.11: stale, duplicate or before the placement.
+                    // §9.3.11, §9.3.12's held-command table: stale, duplicate or before the
+                    // placement. A local `InvalidCommand` with the capability text, counted, no gate
+                    // change and nothing sent; no system line (labelled until the writer answers,
+                    // `docs/m8-remediation.md` §28 fix 18: the client sends this signal itself).
                     _ => {
                         self.counters.stray_loaded += 1;
                         tracing::debug!("official session: loading signal with no placement");
-                        return Err(NetError::InvalidCommand(
-                            "no pending placement of that generation",
-                        ));
+                        return Err(NetError::InvalidCommand(HELD_COMMAND));
                     }
                 }
                 Ok(())
@@ -4632,6 +4747,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 // in-world fixture still reaches it.
                 if !self.readiness_specified {
                     self.counters.moves_held = self.counters.moves_held.saturating_add(1);
+                    self.held_evidence(OPCODE_MOVEMENT_STEP, "decision 0046 item 10, OPEN-WORLD-9");
                     return Err(NetError::InvalidCommand(MOVE_HELD));
                 }
                 // `official-messages-play.md` §8 row `0x24`: the axes and both headings.
@@ -4647,6 +4763,16 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 let out = self.adapter.move_step(step, now, Some(predicted));
                 self.pending_out.extend(out);
                 Ok(())
+            }
+            // §9.3.12's held-command table: every chat route (Say, Yell, Emote, the dual routes and
+            // their aliases) is held while the current `0x30` send prefix and source stay open
+            // (OPEN-SESSION-16), and the chat server is disabled: a local `InvalidCommand` with the
+            // capability text, one plain system line and nothing sent, never a fallback route. A
+            // test's synthetic in-world fixture (`ConnectorNet::readiness_specified`) still reaches
+            // the routes below.
+            Command::Chat { .. } | Command::Emote { .. } if !self.readiness_specified => {
+                self.held_line(cmd, OPCODE_ENTITY_METHOD_CALL, "OPEN-SESSION-16");
+                Err(NetError::InvalidCommand(HELD_COMMAND))
             }
             Command::Chat {
                 channel: ChatChannel::Fellowship,
@@ -4687,10 +4813,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 tessera_net::SocialCommand::JoinChannel { .. }
                 | tessera_net::SocialCommand::LeaveChannel { .. },
             ) => {
-                let chat = self
-                    .chat
-                    .as_mut()
-                    .ok_or(NetError::InvalidCommand(CHAT_UNAVAILABLE))?;
+                let Some(chat) = self.chat.as_mut() else {
+                    // §9.3.12's held-command table: no secondary connection, no room operation.
+                    self.held_line(cmd, 0, "ChatSession disabled");
+                    return Err(NetError::InvalidCommand(CHAT_UNAVAILABLE));
+                };
                 let sent = chat
                     .command(cmd, now)
                     .map_err(|_| NetError::InvalidCommand("chat-server command refused"));
@@ -4715,14 +4842,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 self.end(DisconnectReason::ClientRequested);
                 Ok(())
             }
+            // §9.3.12's held-command table: every other command (name check, creation, deletion,
+            // interaction and the rest) is held: the capability text and nothing sent.
             other => {
                 tracing::debug!(
                     command = other.name(),
                     "official session: command not carried"
                 );
-                Err(NetError::InvalidCommand(
-                    "this command is not supported on the official servers yet",
-                ))
+                Err(NetError::InvalidCommand(HELD_COMMAND))
             }
         }
     }
@@ -4731,6 +4858,46 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// connection is in its handshake the one Disconnect is the login connection's, and the world's
     /// auth retries end with none. That row names Cancel; Quit, Escape and window close take the same
     /// here (labelled, `docs/m8-remediation.md` §28 fix 15).
+    /// A typed command of §9.3.12's held-command table refused here: counted, one plain system line
+    /// with the capability text ([`HELD_COMMAND`], `official-entry.md` §8.7 "P10-10J display policy":
+    /// the client shows it in the chat window's System lines or its System overlay), none once the
+    /// driver holds its cap of events (module docs "Bounded events"), and nothing sent.
+    fn held_line(&mut self, cmd: &Command, opcode: u32, reason: &'static str) {
+        self.counters.commands_held = self.counters.commands_held.saturating_add(1);
+        tracing::debug!(
+            command = cmd.name(),
+            "official session: held command refused, not sent"
+        );
+        self.held_evidence(opcode, reason);
+        if self.events.len() < DRIVER_EVENT_CAP {
+            self.events.push_back(Event::ServerNotice {
+                level: NoticeLevel::Info,
+                seconds: 0,
+                text: HELD_COMMAND.to_owned(),
+            });
+        }
+    }
+
+    /// The evidence line of a held send (§9.3.11 "Required live-log CONTENT": `held_opcode`,
+    /// `withholding_reason`): the first of each opcode only, so moves at their rate add one line.
+    /// `opcode` 0 is a route with no opcode of its own (the disabled chat server).
+    fn held_evidence(&mut self, opcode: u32, reason: &'static str) {
+        if !self.evidence_log || !self.held_logged.insert(opcode) {
+            return;
+        }
+        evidence!(
+            self.evidence_log,
+            info,
+            direction = "send",
+            event_kind = "held",
+            action = "not sent",
+            held_opcode = format_args!("{opcode:#x}"),
+            first_of_opcode = true,
+            withholding_reason = reason,
+            "official evidence: held send"
+        );
+    }
+
     fn user_close(&mut self, why: &str, now: f64) {
         let on_world = self.world.as_ref().is_some_and(|w| !w.in_handshake());
         self.close_links(on_world, why, now);

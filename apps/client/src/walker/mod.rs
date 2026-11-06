@@ -73,6 +73,7 @@ pub(crate) mod places;
 pub(crate) mod resolver;
 pub(crate) mod source;
 pub mod stage;
+pub mod system_status;
 pub(crate) mod terrain;
 pub(crate) mod view;
 pub mod water;
@@ -955,6 +956,9 @@ pub struct Walker {
     interior_drawn: Option<usize>,
     /// Chat overlay and input (M7).
     chat: chat::ChatOverlay,
+    /// The System status overlay of an official session without a chat window
+    /// (`official-entry.md` §8.7 "P10-10J display policy").
+    system_status: system_status::SystemStatus,
     /// The HUD's network line (M7).
     net_line: Option<String>,
     /// The far view (`--far-view on`).
@@ -1312,6 +1316,7 @@ impl Walker {
             indoor: None,
             interior_drawn: None,
             chat: chat::ChatOverlay::default(),
+            system_status: system_status::SystemStatus::default(),
             net_line: None,
             far_view,
             scenario_line: None,
@@ -1383,6 +1388,22 @@ impl Walker {
     /// distances. A key that the keymap binds to an action is left to the keymap. The
     /// chat (M7) sees every event first; while its input is open the walker keys are off.
     pub fn input(&mut self, event: &RawEvent) {
+        // The System overlay's line is dismissed with Escape while the chat input is closed; that
+        // Escape goes no further (`system_status` module docs).
+        if !self.chat.is_open()
+            && self.system_status.line().is_some()
+            && matches!(
+                event,
+                RawEvent::Key {
+                    key: tessera_input::KeyCode::Escape,
+                    pressed: true,
+                    repeat: false,
+                }
+            )
+        {
+            self.system_status.dismiss();
+            return;
+        }
         // While the chat input is open, keys are typed text, not walker keys.
         if !self.chat.is_open() {
             self.world_key(event);
@@ -2471,8 +2492,20 @@ impl Walker {
         }
 
         let mut chat_in = Vec::new();
+        let mut official = false;
         if let Some(w) = world.as_deref_mut() {
             w.drain_chat(&mut chat_in);
+            official = w.is_official_session();
+        }
+        // `official-entry.md` §8.7 "P10-10J display policy": without a chat window the same line
+        // goes to the System overlay, and the HUD notice that repeats it is cleared.
+        if official && !self.controls.ui_attached() {
+            for line in chat_in.iter().filter(|l| system_status::is_system_line(l)) {
+                if self.notice.as_ref().is_some_and(|(t, _)| *t == line.text) {
+                    self.notice = None;
+                }
+                self.system_status.show(&line.text);
+            }
         }
         let notice = self.notice.as_ref().map(|(t, _)| t.as_str());
         if self.chat.receive(
@@ -2501,6 +2534,7 @@ impl Walker {
         }
         let scale = if self.viewport.1 >= 1000 { 2 } else { 1 };
         self.chat.refresh(renderer, now, scale, self.viewport.0);
+        self.system_status.refresh(renderer, scale);
         if let Some(w) = world {
             self.report_move(w, now);
         }
@@ -3826,6 +3860,10 @@ impl Walker {
         if (hud && !self.controls.ui_attached()) || self.chat.is_open() {
             self.chat.draw(overlay, 10.0, h as f32 - 10.0);
         }
+        // Shown whether or not the HUD is: it is the session's system-message area.
+        if !self.controls.ui_attached() {
+            self.system_status.draw(overlay, w as f32 / 2.0, 10.0);
+        }
         if let (true, Some(pos), Some(anchor)) = (
             self.config.hud && self.show_minimap,
             self.focus(),
@@ -4067,6 +4105,7 @@ impl Walker {
         self.clear_all(renderer);
         self.hud.release(renderer);
         self.chat.release(renderer);
+        self.system_status.release(renderer);
         if let Some(m) = self.avatar.take() {
             renderer.destroy_mesh(m);
         }

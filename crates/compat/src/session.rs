@@ -8350,15 +8350,24 @@ impl SessionConnection {
                 && self.state != ConnectionState::Closing
             {
                 // §9.3.8: the numbers are for the local debug log only. Under the evidence target, so
-                // the documented directive turns on this line and not the crate's other debug lines.
-                tracing::debug!(
-                    target: EVIDENCE_TARGET,
-                    role = self.evidence.as_ref().map_or("other", |e| e.role),
-                    fatal,
-                    error_code = format_args!("{:#010x}", ne.error_code),
-                    error_subcode = format_args!("{:#010x}", ne.error_subcode),
-                    "official evidence: transport error from server; closing the connection"
-                );
+                // the documented directive turns on this line and not the crate's other debug lines,
+                // and only with the evidence log's local opt-in (§9.3.11 "Required live-log
+                // CONTENT"); without it the line names no number.
+                match self.evidence.as_ref() {
+                    Some(e) => tracing::debug!(
+                        target: EVIDENCE_TARGET,
+                        role = e.role,
+                        direction = "recv",
+                        fatal,
+                        error_code = format_args!("{:#010x}", ne.error_code),
+                        error_subcode = format_args!("{:#010x}", ne.error_subcode),
+                        "official evidence: transport error from server; closing the connection"
+                    ),
+                    None => tracing::debug!(
+                        fatal,
+                        "official session: transport error from server; closing the connection"
+                    ),
+                }
                 self.close(
                     DisconnectReason::TransportError {
                         fatal,

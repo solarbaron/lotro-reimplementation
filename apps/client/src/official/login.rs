@@ -650,8 +650,9 @@ pub const fn ends_at_start_screen(reason: &DisconnectReason) -> bool {
 }
 
 /// The end of a login after `LoginRefused` (§8.6). `detail` is the service's words, shown as "The
-/// service said: ⟨text⟩". Labelled (`docs/m8-remediation.md` §28 fix 13): a pair's one panel takes
-/// this row's target, so `ClientNotAccepted` with `ServerClosed` goes to the start screen.
+/// service said: ⟨text⟩". §8.6: a pre-`Connected` pair's one panel takes this row's target, so
+/// `ClientNotAccepted` with `ServerClosed` goes to the start screen; only the named
+/// `ServiceUnavailable` timeout and transport texts override its words, never its target.
 #[must_use]
 pub fn refusal_end(reason: LoginRefusal, retry: Option<u32>, detail: Option<&str>) -> LoginEnd {
     let (id, target) = match reason {

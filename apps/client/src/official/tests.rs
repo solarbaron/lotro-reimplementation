@@ -4761,6 +4761,7 @@ fn a_pending_placement_loads_behind_the_screens_and_is_answered_once() {
     f.push(Event::WorldPlacementPending {
         character: "C".into(),
         position: tessera_net::Location::new(tessera_net::RegionId(1), 10.0, 20.0, 30.0),
+        anchor: None,
         yaw: 0.5,
         generation: 1,
     });
@@ -4819,7 +4820,9 @@ fn a_login_notice_is_a_line_and_nothing_else() {
 
 /// `docs/DEVELOPMENT.md` "Reading a live official run": the client logs to standard output, so the
 /// command redirects that (a redirect of standard error alone leaves the file empty), with the filter
-/// whose lines are bounded, and one grep takes all the lines the section tells the owner to paste.
+/// whose lines are bounded and the evidence log's local opt-in (off by default, `official-session.md`
+/// §9.3.11), the log is said to stay private, and one grep takes all the lines the section tells the
+/// owner to paste.
 #[test]
 fn the_documented_log_command_redirects_what_the_client_writes_to() {
     let doc = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/DEVELOPMENT.md");
@@ -4829,7 +4832,11 @@ fn the_documented_log_command_redirects_what_the_client_writes_to() {
         .expect("the section");
     let section = rest.split("\n### ").next().unwrap_or_default();
     for needle in [
-        "RUST_LOG=info,official_evidence=debug cargo run --release -p tessera-client -- --official",
+        "TESSERA_OFFICIAL_EVIDENCE=1 RUST_LOG=info,official_evidence=debug cargo run --release -p \
+         tessera-client -- --official",
+        tessera_compat::connector::diag::EVIDENCE_ENV,
+        "local opt-in, off by default",
+        "never commit it",
         "> official-run.log 2>&1",
         "grep -E 'official_evidence|official session:|official world entry:|official login:' \
          official-run.log",
@@ -4879,39 +4886,55 @@ fn oe_t14_a_deadline_in_the_world_has_its_own_words() {
 fn oe_t14_every_refusal_pair_is_one_panel() {
     use tessera_net::DisconnectReason as R;
     let t0 = Instant::now();
+    let form = || Target::AccountForm {
+        keep_account: false,
+    };
+    // §8.6: the panel's target follows the `LoginRefused` row, whatever the `Disconnected` reason.
     let rows = [
         (
             LoginRefusal::UnsupportedStep,
             R::Unsupported,
             "This version of Tessera does not support this step yet.",
+            Target::StartScreen,
         ),
         (
             LoginRefusal::UnsupportedStep,
             R::UnsupportedTimeout,
             "Tessera could not finish this step within its supported limits.",
+            Target::StartScreen,
         ),
         (
             LoginRefusal::ServiceUnavailable,
             R::TimedOut,
             "No answer from the official service.",
+            form(),
         ),
         (
             LoginRefusal::ServiceUnavailable,
             R::TransportFailed(String::new()),
             "The connection to the official service failed.",
+            form(),
         ),
         (
             LoginRefusal::ClientNotAccepted,
             R::ServerClosed(String::new()),
             "The official service did not accept this client.",
+            Target::StartScreen,
+        ),
+        (
+            LoginRefusal::ClientNotAccepted,
+            R::TransportFailed(String::new()),
+            "The official service did not accept this client.",
+            Target::StartScreen,
         ),
         (
             LoginRefusal::Other,
             R::ServerClosed(String::new()),
             "The login failed.",
+            form(),
         ),
     ];
-    for (refusal, end, words) in rows {
+    for (refusal, end, words, target) in rows {
         let mut p = LoginPresenter::new(t0, None);
         p.on_event(
             &Event::Account(AccountEvent::LoginRefused {
@@ -4925,11 +4948,14 @@ fn oe_t14_every_refusal_pair_is_one_panel() {
         let m = p.end().and_then(|e| e.message.as_ref()).expect("one panel");
         assert_eq!(m.text, words, "{refusal:?}");
         assert_eq!(m.detail, None, "{refusal:?}");
+        assert_eq!(p.end().map(|e| &e.target), Some(&target), "{refusal:?}");
     }
 }
 
 /// OE-T23's extension: Quit, Escape and closing the window at the decoded list or while entering end
-/// the client; the Cancel of a selection goes to the empty account form.
+/// the client; the Cancel of a selection goes to the empty account form; the idle list has no Cancel;
+/// a typed `/logout` in the world (`Command::LeaveWorld`, whose session ends `ClientRequested`) goes to
+/// the empty account form with no panel (§4.6, §8.6).
 #[test]
 fn oe_t23_leaving_the_list_exits_and_cancel_goes_to_the_form() {
     let mut f = handed_over_fixture();
@@ -4946,4 +4972,59 @@ fn oe_t23_leaving_the_list_exits_and_cancel_goes_to_the_form() {
     assert_eq!(f.flow.screen(), Screen::Form);
     assert_eq!(f.flow.form().map(AccountForm::account_text), Some(""));
     assert_eq!(f.flow.take_request(), None);
+
+    // §8.6: `Disconnected { ClientRequested }` after an in-world `LeaveWorld`: the empty form, no panel.
+    let mut f = handed_over_fixture();
+    f.flow
+        .characters_ended(HandOverEnd::SessionEnded(DisconnectReason::ClientRequested));
+    assert_eq!(f.flow.screen(), Screen::Form);
+    assert_eq!(f.flow.form().map(AccountForm::account_text), Some(""));
+    assert!(f.flow.notice().is_none());
+    assert_eq!(f.flow.take_request(), None);
+
+    // §4.6: the decoded list has no Cancel while nothing is entering; selecting shows one.
+    let data = Arc::new(crate::screens::ScreenData::default());
+    let mut model = crate::screens::model::ScreenModel::new(
+        data,
+        crate::screens::backend::BackendKind::Official,
+    );
+    model.handle_event(
+        &Event::Connected {
+            characters: vec![CharacterSummary { name: "C".into() }],
+        },
+        Instant::now(),
+    );
+    assert!(!model.back_button().is_enabled(), "no idle-list Cancel");
+    assert!(!model.cancels_entry());
+    model.apply(crate::screens::model::Action::Select(0), Instant::now());
+    assert!(
+        !model.back_button().is_enabled(),
+        "a selection alone is no entry"
+    );
+    model.apply(crate::screens::model::Action::Enter, Instant::now());
+    assert!(model.back_button().is_enabled(), "the Cancel of the entry");
+}
+
+/// `official-entry.md` §4.5, OE-T23: every return from the character screens to the account form
+/// unloads every plugin apartment and stops the host before the form (and its password field) shows.
+#[test]
+fn every_return_to_the_form_stops_the_plugin_host_first() {
+    use tessera_net::DisconnectReason as R;
+    for end in [
+        HandOverEnd::Left,
+        HandOverEnd::SessionEnded(R::ClientRequested),
+        HandOverEnd::SessionEnded(R::TimedOut),
+        HandOverEnd::SessionEnded(R::TransportFailed(String::new())),
+        HandOverEnd::SessionEnded(R::ServerClosed(String::new())),
+        HandOverEnd::Failed(super::flow::HandOverFailure::Run),
+    ] {
+        let mut f = handed_over_fixture();
+        // As if something had started the flow's host while the screens ran.
+        f.flow.plugin_host_mut_for_tests().start();
+        assert!(f.flow.plugin_host().is_running());
+        f.flow.characters_ended(end.clone());
+        assert_eq!(f.flow.screen(), Screen::Form, "{end:?}");
+        assert!(!f.flow.plugin_host().is_running(), "{end:?}");
+        assert_eq!(f.flow.plugin_host().apartments(), 0, "{end:?}");
+    }
 }

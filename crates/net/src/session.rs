@@ -209,20 +209,24 @@ pub enum Event {
         stage: WorldEntryStage,
     },
     /// The backend holds an exact placement of the local player while the world is being
-    /// entered (`official-entry.md` §8.7): the client starts loading the scene behind its
-    /// character screen and sends [`Command::WorldLoaded`] when it is loaded. No gameplay: the
-    /// player has not entered yet, and [`Event::WorldEntered`] still needs the backend's sourced
-    /// readiness. Accepted in [`SessionState::EnteringWorld`]; a later one is a new placement.
+    /// entered (`official-entry.md` §8.7, `docs/ARCHITECTURE.md` §19.1): the client starts loading
+    /// the scene behind its character screen and sends [`Command::WorldLoaded`] when it is loaded.
+    /// No gameplay: the player has not entered yet, and [`Event::WorldEntered`] still needs the
+    /// backend's sourced readiness. Accepted in [`SessionState::EnteringWorld`]; a later one is a
+    /// new placement. The official producer and resolver stay OPEN-WORLD-9.
     WorldPlacementPending {
         /// The character being entered.
         character: String,
         /// Where the scene is loaded.
         position: Location,
+        /// The landblock (and cell) that owns `position` when its coordinates alone do not say
+        /// (an interior), as in [`Event::LocationReport`]; `None` for an outdoor position. An
+        /// anchor that does not own `position` makes the event invalid.
+        anchor: Option<Anchor>,
         /// The character's heading there, in radians.
         yaw: f32,
         /// The placement's per-session token, from 1 (`official-session.md` §9.3.11):
-        /// [`Command::WorldLoaded`] names it. Labelled (`docs/m8-remediation.md` §28 fix 27): no
-        /// interior anchor here yet.
+        /// [`Command::WorldLoaded`] names it.
         generation: u64,
     },
     /// The replicated state of an entity or the player changed (`docs/ARCHITECTURE.md`
@@ -460,8 +464,11 @@ pub enum Command {
     /// [`Event::ReturnedToCharacterSelect`] once the world is left (a timed logout may come
     /// first, as system chat lines); one that cannot leave the world refuses the command
     /// with [`NetError::InvalidCommand`]. The session stays [`SessionState::InWorld`] until
-    /// the answer. The official backend has no return to the list: it closes the session
-    /// (`official-session.md` §9.3.9), and `Disconnected { ClientRequested }` is its answer.
+    /// the answer. The official backend has no return to the list (`docs/ARCHITECTURE.md` §19.1):
+    /// it takes the command only in the world, where it closes the session with one Disconnect on
+    /// the active world connection and no logout RPC (`official-session.md` §9.3.9), and
+    /// `Disconnected { ClientRequested }` is its answer (the client goes to the account form);
+    /// while entering it refuses it with [`NetError::InvalidCommand`].
     ///
     /// Only the player's own action sends it (a typed command or a menu choice, device
     /// input): never start-up lines, scripts, plugins or automation (decision 0034).
@@ -475,7 +482,9 @@ pub enum Command {
     /// player, once the client has placed the player at that location and its area is
     /// loaded. One signal per placement; a backend that waits for it (portal space) takes
     /// one signal per portal space and ignores the others. Backends that do not wait for
-    /// the client's loading accept and ignore it.
+    /// the client's loading accept and ignore it. The official backend holds the in-world path
+    /// while OPEN-WORLD-9 is open (`docs/ARCHITECTURE.md` §19.1): there an in-world signal is
+    /// [`NetError::InvalidCommand`] and changes nothing; the generation applies only while entering.
     WorldLoaded {
         /// The pending placement it answers while entering; `None` in the world. This shape is
         /// labelled: the in-world signal has no generation yet (`docs/m8-remediation.md` §28 fix 27).
@@ -999,6 +1008,7 @@ impl Session {
             Event::WorldPlacementPending {
                 character,
                 position,
+                anchor,
                 yaw,
                 generation,
             } => {
@@ -1006,10 +1016,13 @@ impl Session {
                     || !yaw.is_finite()
                     || !is_valid_name(character)
                     || *generation == 0
+                    || anchor.is_some_and(|a| !a.owns(position))
                 {
                     Verdict::Invalid("invalid pending placement")
                 } else if self.state == S::EnteringWorld {
                     self.placement_unanswered = Some(*generation);
+                    // The scene loads at this placement: its owner, if it names one.
+                    self.player_anchor = *anchor;
                     Verdict::Surface
                 } else if closing {
                     Verdict::Stale
@@ -1021,6 +1034,7 @@ impl Session {
                 S::EnteringWorld => {
                     self.state = S::Connected;
                     self.placement_unanswered = None;
+                    self.player_anchor = None;
                     Verdict::Surface
                 }
                 _ if closing => Verdict::Stale,

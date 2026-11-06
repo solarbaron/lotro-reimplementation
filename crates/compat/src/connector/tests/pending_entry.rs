@@ -9,6 +9,9 @@ use super::service_support::{
 };
 use super::*;
 use crate::connector::pending_world::{DEFAULT_RECIPIENT, MAX_PENDING_ENTITIES, withheld_summary};
+use crate::connector::session_phase::{
+    CHAT_UNAVAILABLE, ENTRY_REENTRY_NOT_SUPPORTED, HELD_COMMAND, MOVE_HELD,
+};
 use crate::world::{
     EncodedPropertyEntry, EncodedPropertyTable, EncodedPropertyValue, EntityCreate,
     PID_WORLD_TIME_OFFSET, PlayerSessionReady,
@@ -447,12 +450,26 @@ fn a_chat_server_route_fails_locally_in_the_specified_words() {
         matches!(
             refused,
             Err(tessera_net::NetError::InvalidCommand(
-                "Chat server connection is not supported by this version of Tessera yet."
+                "Not supported by this version of Tessera yet"
             ))
         ),
         "{refused:?}"
     );
     assert!(d.in_world() && !d.ended());
+    // §9.3.12: the one capability text as one plain system line, and nothing sent.
+    let lines: Vec<Event> = d.take_events();
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|e| matches!(
+                e,
+                Event::ServerNotice { text, .. } if text == "Not supported by this version of Tessera yet"
+            ))
+            .count(),
+        1,
+        "{lines:?}"
+    );
+    assert!(world.take_sent().is_empty());
 }
 
 /// A malformed `0x98` is a checked message that did not read, not a routing problem.
@@ -1904,6 +1921,136 @@ fn a_typed_logout_closes_with_one_disconnect_and_no_rpc() {
         Err(tessera_net::NetError::InvalidCommand(_))
     ));
     assert!(!d.ended());
+}
+
+/// `official-entry.md` §4.6, ARCHITECTURE.md §19.1: `LeaveWorld` is valid only in the world. While
+/// entering it is a local `InvalidCommand`: nothing is sent and the entry goes on.
+#[test]
+fn a_typed_logout_while_entering_is_refused_locally() {
+    let (world, mut d, mut server) = at_session_start(scripted());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    let _ = d.take_events();
+    world.take_sent();
+    assert!(matches!(
+        d.command(&Command::LeaveWorld, 2.1),
+        Err(tessera_net::NetError::InvalidCommand(_))
+    ));
+    assert!(!d.ended() && !d.in_world());
+    assert!(d.take_events().is_empty());
+    assert!(world.take_sent().is_empty());
+}
+
+/// §9.3.12's held-command table: on a production path every chat route in the world is held: the one
+/// capability text as a local `InvalidCommand`, one plain system line per command and no `0x30`; a stale
+/// `WorldLoaded` gets the same text with no line (labelled, writer fix 18).
+#[test]
+fn held_commands_say_one_text_and_send_nothing() {
+    let (world, mut d, mut server) = at_session_start(scripted());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.1,
+    )
+    .expect("loaded");
+    let _ = d.take_events();
+    world.take_sent();
+    for repeat in [
+        Command::WorldLoaded {
+            generation: Some(1),
+        },
+        Command::WorldLoaded {
+            generation: Some(2),
+        },
+    ] {
+        assert!(matches!(
+            d.command(&repeat, 2.2),
+            Err(tessera_net::NetError::InvalidCommand(HELD_COMMAND))
+        ));
+    }
+    assert!(
+        d.take_events().is_empty(),
+        "no line for the client's own signal"
+    );
+    assert_eq!(d.counters().stray_loaded, 2);
+    // The `Chat` arm of the held table, reached through the driver whatever the stage.
+    let chat = Command::Chat {
+        channel: tessera_net::ChatChannel::Say,
+        text: "hello".to_owned(),
+    };
+    let _ = d.command(&chat, 2.3);
+    assert!(world.take_sent().is_empty());
+    assert_eq!(HELD_COMMAND, "Not supported by this version of Tessera yet");
+    assert_eq!(MOVE_HELD, HELD_COMMAND);
+    assert_eq!(CHAT_UNAVAILABLE, HELD_COMMAND);
+    assert_eq!(ENTRY_REENTRY_NOT_SUPPORTED, HELD_COMMAND);
+}
+
+/// §9.3.11 "Required live-log CONTENT": the evidence log is a local opt-in, off by default. Without it
+/// a whole entry writes no line to the evidence target; with it, the stop names what was withheld by
+/// `held_opcode` and `withholding_reason`.
+#[test]
+fn the_evidence_log_is_off_unless_opted_in() {
+    let run = |evidence: bool| {
+        super::diagnostics::logs_of(|| {
+            let start = SessionStart {
+                evidence,
+                ..super::world_entry::with_schema()
+            };
+            let (world, mut d, login) = driver_at_characters_from(production(), start);
+            d.command(
+                &Command::EnterWorld {
+                    character: "Aldo".to_owned(),
+                },
+                1.0,
+            )
+            .expect("enter");
+            d.step(1.1, true, &go);
+            world.deliver(
+                login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+                LOGIN_SERVER,
+            );
+            d.step(1.2, true, &go);
+            let mut server = Server::new(0x0222, 0xBEEF_0002);
+            server.connect_to(&world, 0xBEEF_0002, WORLD_SERVER);
+            d.step(1.3, true, &go);
+            world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+            d.step(2.0, true, &go);
+            d.step(33.0, false, &go);
+        })
+        .1
+    };
+    let off = run(false);
+    assert!(!off.contains(crate::session::EVIDENCE_TARGET), "{off}");
+    assert!(!off.contains("official evidence"), "{off}");
+    assert!(off.contains("official world entry: stopped"), "{off}");
+    let on = run(true);
+    let withheld: Vec<&str> = on
+        .lines()
+        .filter(|l| l.contains("official evidence: withheld before 0xF4"))
+        .collect();
+    assert_eq!(withheld.len(), 8, "{on}");
+    assert!(
+        withheld
+            .iter()
+            .all(|l| l.contains("held_opcode=") && l.contains("withholding_reason=")),
+        "{on}"
+    );
+    assert!(
+        withheld.iter().any(|l| l.contains("held_opcode=\"0x24\"")),
+        "{on}"
+    );
 }
 
 /// §9.3.11: the first `0x90`'s ID may be neither zero nor logical 2, either is required progress.

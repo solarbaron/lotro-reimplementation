@@ -484,12 +484,24 @@ writes its log to standard output (with `--scenario-log -` to standard error), s
 do it from the start of the run:
 
 ```sh
-RUST_LOG=info,official_evidence=debug cargo run --release -p tessera-client -- --official \
+TESSERA_OFFICIAL_EVIDENCE=1 RUST_LOG=info,official_evidence=debug cargo run --release -p tessera-client -- --official \
   > official-run.log 2>&1
 ```
 
-A log that is no terminal has no colour codes, so the field forms below match it as they are. No extra
-option is needed: every official run writes these lines, bounded per connection (at most
+The evidence lines are a local opt-in, off by default, release builds included
+(`official-session.md` §9.3.11 "Required live-log CONTENT"): only `TESSERA_OFFICIAL_EVIDENCE=1`, read
+once when the login starts, turns them on for that run. Without it no line goes to the
+`official_evidence` target and no `official evidence:` line is written, whatever `RUST_LOG` says; any
+other value leaves them off, with one warning that does not repeat it. The `official session:`,
+`official world entry:` and `official login:` lines below that carry no `official evidence` are written
+either way.
+
+The log stays private. It is capture-like evidence of official traffic even without addresses: keep it
+outside the repository, never commit it or copy snippets of it into specs or checklists, and give it
+only to the readers named at the end of this section.
+
+A log that is no terminal has no colour codes, so the field forms below match it as they are. With the
+opt-in, these lines are bounded per connection (at most
 `MAX_EVIDENCE_LINES_PER_CONNECTION`, about 1,700, in `crates/compat/src/session.rs`). The `debug` part
 adds the server's codes and the refused datagrams and messages, also bounded; do not widen it to
 `tessera_compat=debug` for a run whose log you will paste, because the crate's other debug lines have
@@ -506,6 +518,11 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   and `since_start_ms`. How far the run got is the last of these. The stages run from `handshake`
   through `login connection established`, the initial steps and `waiting for the referral` to
   `waiting for world readiness`.
+- Field names: the specification's names are accepted in these older spellings, which the lines keep:
+  `dir` for `direction`, `opcode` for `raw_opcode`, `role`, `stage`, `ms`, `seq`, `word_before`,
+  `word_after`, `word_input`, `flow_event`, `flow_reported_bytes`, `flow_reported_ms`,
+  `flow_accumulated`, `group`, `order`, `blob_id` and `recipient_token`. Lines added later use
+  `direction`, `held_opcode`, `withholding_reason`, `error_code` and `error_subcode`.
 - `official evidence: packet` (`dir="send"`): each sent packet with `seq`, `word_before`,
   `word_after`, `word_input` (the labelled policy that made the word), `kind` (`new`, `resend`, `ack`,
   `nak`, `out-of-order-ack`, `auth`, `auth-resend`, `accept`, `accept-resend`, `disconnect`,
@@ -541,17 +558,28 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   limit, not a refusal. Decision 0046 item 10 holds later world `0x30`, `0x30000035`, `0x24` and
   `0x19A` back too, which no line can show the server's reaction to except by what it then did.
 - `official evidence: transport error from server` (`debug`), right before the close it causes: the
-  server's `fatal`, `error_code` and `error_subcode`.
+  server's `fatal`, `error_code` and `error_subcode`, with `direction="recv"`.
+- `official session: the login service refused this client before its challenge; check that the
+  install is up to date` (`info`, `diagnostic="PreChallengeInstallRejected"`, written without the
+  opt-in too): a listed refusal code before any challenge (`official-session.md` §9.3.12). It is a
+  private hint, not a finding that the install is out of date; the screen still says "The official
+  service did not accept this client."
 - `official session: datagram refused`, `official session: message refused` and
-  `official session: control message refused` (`debug`): why something was not taken, by the kind of
-  error and with `opcode` where one is known; at most one each 10 s, with `skipped` for the rest.
+  `official session: control message refused` (`debug`, under the evidence target, so only with the
+  opt-in): why something was not taken, by the kind of error and with `opcode` where one is known,
+  `direction="recv"`; at most one each 10 s, with `skipped` for the rest.
   `datagram refused` also has `raw_len` (the datagram's length on the wire) and `prefix_zero` (its
   wire prefix is zero; false when it is too short to have one).
   `official session: the server ended the session` and the logon and character-operation lines
   (`debug`) carry the server's number.
 - `official evidence: connection closed`: which connection closed, why and in which stage
   (`retiring=true` is the old login connection, which no longer decides the session's end).
-- `official world entry: stopped`: what an entry that stopped withheld (`withheld=`).
+- `official world entry: stopped`: what an entry that stopped withheld (`withheld=`), followed by one
+  `official evidence: withheld before 0xF4` line per withheld family with `held_opcode` and
+  `withholding_reason`.
+- `official evidence: held send`: the first command of each held kind the session refused with "Not
+  supported by this version of Tessera yet" (a move, a chat line, a chat-server request), with
+  `held_opcode`, `withholding_reason` and `first_of_opcode=true`; later ones are only counted.
 - `official evidence: packet` and `official evidence: blob`: also the ordering word, blob ID and
   `allocation_kind`, and `recipient_token` (an ordinal per connection, never the ID) with
   `target_resolution_kind`.

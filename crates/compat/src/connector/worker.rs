@@ -232,6 +232,9 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
     // server switch"; `super::dump` "The switch").
     let login_server = super::diag::login_server_from_env();
     let dump_value = super::dump::dump_dir_from_env();
+    // `official-session.md` §9.3.11: the evidence log is a local opt-in, off by default
+    // (`super::diag` "The evidence log switch").
+    let evidence = super::diag::evidence_from_env();
     out.progress(LoginStage::Authenticating);
     if let Some(locate) = locate {
         match locate() {
@@ -404,6 +407,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         net: local.net.clone(),
         login_server_entry: joined.login_server_entry,
         dump,
+        evidence,
     };
     let now = || clock.elapsed().as_secs_f64();
     let mut driver = match SessionDriver::start(&mut net, start, now(), &stop) {

@@ -429,6 +429,12 @@ impl Flow {
         self.plugins.as_ref()
     }
 
+    /// The plugin host, mutable (tests: a host something started before a return to the form).
+    #[cfg(test)]
+    pub(crate) fn plugin_host_mut_for_tests(&mut self) -> &mut dyn PluginHostControl {
+        self.plugins.as_mut()
+    }
+
     /// Whether the `--load-plugin` names were dropped because official play was chosen.
     #[must_use]
     pub fn plugin_loads_dropped(&self) -> bool {

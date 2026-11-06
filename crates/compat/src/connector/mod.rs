@@ -209,7 +209,14 @@ pub struct LiveConnector<F: NetFactory = LiveNetFactory> {
     running: Option<Running>,
     /// A `Disconnected` was handed out (nothing more is).
     ended: bool,
+    /// The system lines of held commands refused in [`Connector::submit`] (`official-session.md`
+    /// §9.3.12's held-command table), handed out by the next `poll`; at most [`MAX_HELD_LINES`].
+    held_lines: Vec<Event>,
 }
+
+/// Most system lines of refused held commands waiting for `poll` ([`LiveConnector`]); more are
+/// dropped (the refusal itself still reaches the caller). Engineering choice, spec silent.
+pub const MAX_HELD_LINES: usize = 16;
 
 impl<F: NetFactory> std::fmt::Debug for LiveConnector<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -238,7 +245,25 @@ impl<F: NetFactory> LiveConnector<F> {
             factory,
             running: None,
             ended: false,
+            held_lines: Vec::new(),
         }
+    }
+
+    /// A held command refused here: one plain system line with the capability text
+    /// ([`session_phase::HELD_COMMAND`]) for the next `poll`, and nothing sent.
+    fn held(&mut self, command: &Command) -> NetError {
+        tracing::debug!(
+            command = command.name(),
+            "official session: held command refused, not sent"
+        );
+        if self.held_lines.len() < MAX_HELD_LINES && !self.ended && self.running.is_some() {
+            self.held_lines.push(Event::ServerNotice {
+                level: tessera_net::NoticeLevel::Info,
+                seconds: 0,
+                text: session_phase::HELD_COMMAND.to_owned(),
+            });
+        }
+        NetError::InvalidCommand(session_phase::HELD_COMMAND)
     }
 
     /// Events sent by the thread and not yet taken by `poll` (diagnostics and tests).
@@ -250,10 +275,10 @@ impl<F: NetFactory> LiveConnector<F> {
 
 /// Whether the live session carries `command` at all (the rest is refused at once,
 /// `NetError::InvalidCommand`): the Account commands, `EnterWorld`, `LeaveWorld`,
-/// `WorldLoaded`, `Move`, `Chat` and the chat-server channel commands. Character creation
-/// and deletion, and the gameplay groups, wait for their specs. Labelled
-/// (`docs/m8-remediation.md` §28 fix 30): `Chat` still passes here, since no production path reaches
-/// the world, until the writer's table of held commands and their refusal strings.
+/// `WorldLoaded`, `Move`, `Chat` and the chat-server channel commands, which the session thread
+/// holds or carries by `official-session.md` §9.3.12's held-command table. Every other command
+/// (character name check, creation and deletion, emotes, the gameplay groups) is a held command of
+/// that table: the capability text, one system line and nothing sent.
 fn carried(command: &Command) -> bool {
     matches!(
         command,
@@ -328,9 +353,7 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
 
     fn submit(&mut self, _now: Instant, command: Command) -> Result<(), NetError> {
         if !carried(&command) {
-            return Err(NetError::InvalidCommand(
-                "this command is not supported on the official servers yet",
-            ));
+            return Err(self.held(&command));
         }
         let Some(r) = self.running.as_ref() else {
             return Err(NetError::InvalidCommand(
@@ -340,15 +363,15 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
         // §9.3.9, OPEN-SESSION-16: after a return from the world a selection fails here, so the
         // session stays at the list and no `0x6F` goes out.
         if matches!(command, Command::EnterWorld { .. }) && r.control.re_entry_blocked() {
-            return Err(NetError::InvalidCommand(
-                session_phase::ENTRY_REENTRY_NOT_SUPPORTED,
-            ));
+            return Err(self.held(&command));
         }
         let Some(tx) = r.commands.as_ref() else {
             return Ok(());
         };
         if matches!(command, Command::Move { .. }) {
             // §9.3.9: while `0x24` is held a move is refused here, and the thread is not woken.
+            // No system line: the walker sends moves on its own at its rate, not as a typed
+            // command (labelled, spec silent on a line per move).
             if !r.control.moves_carried() {
                 return Err(NetError::InvalidCommand(session_phase::MOVE_HELD));
             }
@@ -370,6 +393,7 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
         if self.ended {
             return;
         }
+        out.append(&mut self.held_lines);
         let Some(r) = self.running.as_ref() else {
             return;
         };

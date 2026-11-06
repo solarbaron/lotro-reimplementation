@@ -63,6 +63,18 @@ not only wire or observable facts.
     identifier or iteration value.
 12. **Counts in the checks.** The per-stream replay counts of the owner's two private sessions, and the older
     figures of that kind in `docs/m8-remediation.md` and the session spec, may stay as published.
+13. **Resource-set report (0x13D), owner 2026-11-06.** Any user past the warning and consent gate may
+    send 0x13D after the character list and before the selection, with the install's default resource
+    set as the only set in both the available and the loaded field. This is the candidate the spec writer
+    found equal to the official client's report in both of the owner's captures
+    (`official-session.md` "Resource-set report source boundary", OPEN-SESSION-20). It is a labelled,
+    revocable exception to item 2: the set's key comes from the user's own install data, never from a
+    capture, but the complete rule for when the official client counts a set as available or loaded is
+    not yet sourced, so the report may be wrong for an install with other sets mounted or missing. When
+    the default set cannot be resolved from the install by the spec's rules, or the install configures
+    more than one set, 0x13D stays omitted under item 5. Nothing else is filled in, and a rejected attempt
+    is not retried with other sets. The exception ends when the writer settles OPEN-SESSION-20, or earlier
+    if the owner withdraws it.
 
 ## Consequences
 

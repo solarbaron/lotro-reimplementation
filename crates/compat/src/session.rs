@@ -221,6 +221,13 @@ pub const SEQUENCE_NAK_INTERVAL_SEC: f64 = 0.6;
 /// Labelled until the writer answers (`OPEN-SESSION-13`): the eligibility list, pure-Ack bytes in
 /// the accumulator, the cap being per connection, attached reports being uncapped, no standalone
 /// packet for a due ClockSync (`OPEN-SESSION-9`) and `intervalMs` wrapping past 65,535 ms.
+///
+/// Labelled, OPEN for the writer (`OPEN-SESSION-13`): §5.5's interim P10-10J paragraph names a
+/// 500 ms standalone cap while §9.3.12, which §5.5 calls the authoritative scheduling refinement,
+/// says at most once per second. Tessera keeps §9.3.12's one second until the spec agrees with
+/// itself. Also open: whether a ClockSync on a datagram with no fragment (above all one sent in
+/// answer to a report) is eligible; it is counted as eligible here, so a peer that answers every
+/// report with one keeps a report exchange going, bounded by this cap.
 pub const FLOW_REPORT_ONLY_PERIOD_SEC: f64 = 1.0;
 
 /// Silence timeout of State `5`: the connection closes once `now - lastRecvTime` exceeds
@@ -5321,6 +5328,29 @@ impl BlobReassembler {
             return Ok(None);
         }
         let key = blob_key(sender_rec_id, hdr);
+
+        // §9.3.9 "Retained old parts" and §10.2 Vector 24: a part of a fragmented identity is
+        // compared with EVERY retained completed tombstone of its key first. An exact old part is
+        // ignored and counted, whether or not an entry of that identity is open and whether or not
+        // that entry already holds its index: it opens nothing, fills and overwrites no slot, and
+        // does not reject the accepted datagram, so its siblings still count. Only a differing
+        // NON-old part at an already filled index is a conflict (`agrees_with` below).
+        //
+        // Labelled, OPEN for the spec writer: a reused identity whose new body shares such a part
+        // cannot be told from a repeat, in either order of its parts. The part is ignored and, once
+        // acknowledged, does not come again, so the new body's entry expires under §5.6.4 instead of
+        // being delivered ("a complete differing body ... is delivered once" is not met for it). The
+        // other way would deliver a body the server never sent, so nothing is taken from the old
+        // body.
+        if hdr.num_frags > 1
+            && has_identity(hdr)
+            && self
+                .tombstones_of(&key)
+                .any(|t| t.holds_part(hdr, &frag.payload))
+        {
+            self.counts.duplicates = self.counts.duplicates.saturating_add(1);
+            return Ok(None);
+        }
         if has_identity(hdr)
             && let Some(entry) = self.incomplete.get(&key)
             && !agrees_with(entry, hdr, &frag.payload)
@@ -5340,29 +5370,6 @@ impl BlobReassembler {
                 num_frags: 1,
             };
             return Ok(self.completed(key, fields, frag.payload.clone(), tx, now_sec));
-        }
-
-        // §9.3.9: an exact repeat of a part of a completed identity is ignored: it opens nothing and
-        // fills no free slot, whether or not an entry of that identity is open, so an old part can
-        // never join a differing body ("never merge conflicting in-progress fragments").
-        //
-        // Labelled, OPEN for the spec writer: a reused identity whose new body shares such a part
-        // cannot be told from a repeat, in either order of its parts. The part is ignored and, once
-        // acknowledged, does not come again, so the new body's entry expires under §5.6.4 instead of
-        // being delivered ("a complete differing body ... is delivered once" is not met for it). The
-        // other way would deliver a body the server never sent, so nothing is taken from the old
-        // body. A taken slot is judged by `agrees_with` above.
-        let slot_taken = self
-            .incomplete
-            .get(&key)
-            .is_some_and(|entry| entry.has_part(hdr.frag_index));
-        if !slot_taken
-            && self
-                .tombstones_of(&key)
-                .any(|t| t.holds_part(hdr, &frag.payload))
-        {
-            self.counts.duplicates = self.counts.duplicates.saturating_add(1);
-            return Ok(None);
         }
 
         if !self.incomplete.contains_key(&key) {

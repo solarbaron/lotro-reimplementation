@@ -1984,17 +1984,114 @@ fn held_commands_say_one_text_and_send_nothing() {
         "no line for the client's own signal"
     );
     assert_eq!(d.counters().stray_loaded, 2);
-    // The `Chat` arm of the held table, reached through the driver whatever the stage.
+    // The `Chat` arm of the held table while entering: the capability text, exactly one plain line,
+    // nothing sent; not the outside-world text.
     let chat = Command::Chat {
         channel: tessera_net::ChatChannel::Say,
         text: "hello".to_owned(),
     };
-    let _ = d.command(&chat, 2.3);
+    assert!(matches!(
+        d.command(&chat, 2.3),
+        Err(tessera_net::NetError::InvalidCommand(HELD_COMMAND))
+    ));
+    assert_one_held_line(&d.take_events());
+    assert_eq!(d.counters().outside_world, 0);
     assert!(world.take_sent().is_empty());
     assert_eq!(HELD_COMMAND, "Not supported by this version of Tessera yet");
     assert_eq!(MOVE_HELD, HELD_COMMAND);
     assert_eq!(CHAT_UNAVAILABLE, HELD_COMMAND);
     assert_eq!(ENTRY_REENTRY_NOT_SUPPORTED, HELD_COMMAND);
+}
+
+/// Exactly one `ServerNotice` with the capability text.
+fn assert_one_held_line(events: &[Event]) {
+    assert!(
+        matches!(
+            events,
+            [Event::ServerNotice { level: tessera_net::NoticeLevel::Info, seconds: 0, text }]
+                if text == HELD_COMMAND
+        ),
+        "{events:?}"
+    );
+}
+
+/// §9.3.12's held-command table in the world on a gated fixture whose readiness is not specified:
+/// a repeated `WorldLoaded` takes the in-world hold (the capability text, counted, no line, no gate
+/// change), a chat line and an emote the capability text with one line each, a move the capability
+/// text with no line (labelled), and nothing is sent.
+#[test]
+fn held_commands_in_the_world_on_a_gated_fixture() {
+    let (world, mut d, mut server) = at_session_start(gated());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.1,
+    )
+    .expect("loaded");
+    world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+    d.step(2.2, true, &go);
+    assert!(d.in_world());
+    let _ = d.take_events();
+    world.take_sent();
+
+    let stray = d.counters().stray_loaded;
+    assert!(matches!(
+        d.command(
+            &Command::WorldLoaded {
+                generation: Some(1),
+            },
+            2.3,
+        ),
+        Err(tessera_net::NetError::InvalidCommand(HELD_COMMAND))
+    ));
+    assert_eq!(d.counters().stray_loaded, stray + 1);
+    assert!(
+        d.take_events().is_empty(),
+        "no line for the client's own signal"
+    );
+    assert!(d.in_world());
+
+    let chat = Command::Chat {
+        channel: tessera_net::ChatChannel::Say,
+        text: "hello".to_owned(),
+    };
+    assert!(matches!(
+        d.command(&chat, 2.4),
+        Err(tessera_net::NetError::InvalidCommand(HELD_COMMAND))
+    ));
+    assert_one_held_line(&d.take_events());
+
+    let mv = Command::Move {
+        location: tessera_net::Location::default(),
+        heading: 0.0,
+        velocity: tessera_net::Vec3::ZERO,
+        on_ground: true,
+    };
+    let moves = d.counters().moves_held;
+    assert!(matches!(
+        d.command(&mv, 2.5),
+        Err(tessera_net::NetError::InvalidCommand(MOVE_HELD))
+    ));
+    assert_eq!(d.counters().moves_held, moves + 1);
+    assert!(d.take_events().is_empty(), "no line per move (labelled)");
+    assert_eq!(d.counters().outside_world, 0);
+    d.step(2.6, true, &go);
+    let sent = world.take_sent();
+    assert!(
+        !sent
+            .iter()
+            .filter_map(|(p, _)| decode_client_datagram(p, false).ok())
+            .flat_map(|p| p.fragments)
+            .any(|f| matches!(f.header.blob_header_word, Some(0x24 | 0x30))),
+        "nothing sent"
+    );
 }
 
 /// §9.3.11 "Required live-log CONTENT": the evidence log is a local opt-in, off by default. Without it

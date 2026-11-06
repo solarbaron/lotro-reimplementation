@@ -1289,3 +1289,97 @@ fn an_exit_waits_for_the_session_it_just_let_go() {
         "the thread's own end: {logs}"
     );
 }
+
+/// One login refusal by a transport error with `code`, delivered before the challenge when
+/// `before_challenge`, else after it: the driver's events, whether it ended, the datagrams sent after
+/// the refusal (two more seconds of steps) and what it logged.
+fn login_refusal(code: u32, before_challenge: bool) -> ((Vec<Event>, bool, usize), String) {
+    logs_of(|| {
+        let (world, mut d) = driver_at_login(Service::default(), 0);
+        let login = Server::new(0x0111, 1);
+        if !before_challenge {
+            world.deliver(login.challenge(1), LOGIN_SERVER);
+            d.step(0.2, true, &go);
+        }
+        world.take_sent();
+        world.deliver(
+            login.control(OptionalHeaders {
+                transport_error: Some(crate::session::TransportErrorHeader {
+                    error_code: code,
+                    error_subcode: 0,
+                }),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(0.5, true, &go);
+        let events = d.take_events();
+        let ended = d.ended();
+        world.take_sent();
+        run_until(&mut d, 0.6, 3.0);
+        (events, ended, world.take_sent().len())
+    })
+}
+
+/// §9.3.12 "Old-install rejection": a listed refusal code on the login connection before any
+/// challenge writes the private diagnostic PreChallengeInstallRejected once, without the evidence
+/// opt-in, with no code value and no claim that the install is out of date; the `ClientNotAccepted`
+/// refusal follows as before and no auth is retried. The same code after the challenge, and a code
+/// that is not listed, write no such line.
+#[test]
+fn a_listed_refusal_before_the_challenge_writes_the_install_diagnostic_only() {
+    const LINE: &str = "PreChallengeInstallRejected";
+    for code in crate::connector::session_phase::LOGIN_REFUSAL_CODES {
+        let ((events, ended, resent), logs) = login_refusal(code, true);
+        assert!(ended, "{events:?}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Account(AccountEvent::LoginRefused {
+                    reason: LoginRefusal::ClientNotAccepted,
+                    ..
+                })
+            )),
+            "{events:?}"
+        );
+        assert_eq!(resent, 0, "no auth retry");
+        let lines: Vec<&str> = logs.lines().filter(|l| l.contains(LINE)).collect();
+        assert_eq!(lines.len(), 1, "{logs}");
+        let line = lines.first().copied().unwrap_or_default();
+        assert!(
+            line.contains("check that the install is up to date"),
+            "{line}"
+        );
+        assert!(!line.contains("out of date"), "{line}");
+        for value in [
+            format!("{code:#x}"),
+            format!("{code:#X}"),
+            format!("{code:x}"),
+            format!("{code:X}"),
+            code.to_string(),
+        ] {
+            assert!(!line.contains(&value), "no code value: {line}");
+        }
+        assert!(!line.contains("evidence"), "not an evidence line: {line}");
+
+        // After the challenge the same code is the same refusal with no diagnostic.
+        let ((events, ended, _), logs) = login_refusal(code, false);
+        assert!(ended, "{events:?}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Account(AccountEvent::LoginRefused {
+                    reason: LoginRefusal::ClientNotAccepted,
+                    ..
+                })
+            )),
+            "{events:?}"
+        );
+        assert!(!logs.contains(LINE), "{logs}");
+    }
+    // A code that is not listed, before the challenge: no diagnostic.
+    let unlisted = 0x0000_1234;
+    assert!(!crate::connector::session_phase::LOGIN_REFUSAL_CODES.contains(&unlisted));
+    let ((_, _, _), logs) = login_refusal(unlisted, true);
+    assert!(!logs.contains(LINE), "{logs}");
+}

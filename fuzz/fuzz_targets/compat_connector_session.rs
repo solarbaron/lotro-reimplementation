@@ -459,7 +459,7 @@ fn codecs(on: bool) -> (ChatCodecs, CodecUuids) {
     )
 }
 
-fn start(net: &mut Net, flags: u8) -> Option<SessionDriver<Net>> {
+fn start(net: &mut Net, flags: u8, evidence: bool) -> Option<SessionDriver<Net>> {
     let version = VersionInfo::new("9999", "00000000-0000-0000-0000-000000000000", 1).ok()?;
     let chat = if flags & 0x10 != 0 {
         "chat.example.invalid:9200"
@@ -510,8 +510,10 @@ fn start(net: &mut Net, flags: u8) -> Option<SessionDriver<Net>> {
         login_server_entry: Default::default(),
         // The datagram dump writes files: never on in fuzzing.
         dump: None,
-        // Bit 7 of the first byte: the evidence log's local opt-in, so both paths run.
-        evidence: flags & 0x80 != 0,
+        // The evidence log's local opt-in: bit 7 of the first byte XOR bit 7 of the second, so it is
+        // independent of bit 7 of the first byte (abandon or graceful shutdown) and all four
+        // combinations run.
+        evidence,
     };
     SessionDriver::start(net, start, 0.0, &|| false).ok()
 }
@@ -545,7 +547,7 @@ fuzz_target!(|data: &[u8]| {
         gate: (extra & 0x04 != 0).then_some(0x7C),
         placement: extra & 0x08 != 0,
     };
-    let Some(mut driver) = start(&mut net, flags) else {
+    let Some(mut driver) = start(&mut net, flags, (flags ^ extra) & 0x80 != 0) else {
         return;
     };
     let deliver = |q: &Arc<Mutex<Queues>>, d: Option<Vec<u8>>, src: SocketAddrV4| {

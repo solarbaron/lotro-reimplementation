@@ -731,7 +731,11 @@ impl Session {
             | Command::LeaveWorld => self.state == S::InWorld,
             Command::WorldLoaded { generation } => {
                 // `official-session.md` §9.3.11: while entering it answers the pending placement it
-                // names; a stale, duplicate or early one is refused here, locally.
+                // names; a stale, duplicate or early one is refused here, locally, before any
+                // backend sees it. This layer is backend-neutral, so its text is its own: the
+                // official connector's answer to such a signal (§9.3.12's capability text and its
+                // `stray_loaded` count) is reached only from the world, and the client shows
+                // neither text. Engineering choice, kept on purpose.
                 if self.state == S::EnteringWorld
                     && (generation.is_none() || *generation != self.placement_unanswered)
                 {

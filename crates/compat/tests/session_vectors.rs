@@ -2772,6 +2772,55 @@ fn vector_24_old_parts_on_queues_1_and_2() {
     }
 }
 
+/// Vector 24 row 4 with the entry opened by new Z, which holds index 1: old Y lands on a FILLED
+/// index and is still an exact old part, ignored and counted, never a conflict (§9.3.9 "Retained
+/// old parts": compare against every retained tombstone, "even if another body of that identity
+/// is open"). The mirror case, an entry opened by new P at index 0 then old X, is the same. A
+/// datagram carrying old Y with new P is accepted whole and completes (P, Z) once.
+#[test]
+fn vector_24_old_part_at_a_filled_index_is_ignored() {
+    for queue in [1u8, 2] {
+        let x = v24_parts(queue, 0x11, 0x22)[0].clone();
+        let y = v24_parts(queue, 0x11, 0x22)[1].clone();
+        let z = v24_parts(queue, 0x11, 0x33)[1].clone();
+        let p = v24_parts(queue, 0x44, 0x33)[0].clone();
+
+        // New Z opens index 1, then old Y at that filled index: ignored, no overwrite.
+        let mut r = v24_after_xy(queue);
+        assert_eq!(r.ingest(1, z.clone(), 1.0).unwrap(), None);
+        let dups = r.counts().duplicates;
+        assert_eq!(r.ingest(1, y.clone(), 1.1), Ok(None), "queue {queue}");
+        assert_eq!(r.counts().duplicates, dups + 1, "queue {queue}");
+        assert_eq!(r.incomplete_len(), 1);
+        // Z, not Y, stays in the slot: new P completes (P, Z).
+        let done = r.ingest(1, p.clone(), 1.2).unwrap().expect("(P, Z)");
+        let mut expected = vec![0x44; 436];
+        expected.push(0x33);
+        assert_eq!(done.payload, expected, "queue {queue}");
+
+        // Mirror: new P opens index 0, then old X at that filled index: ignored.
+        let mut r = v24_after_xy(queue);
+        assert_eq!(r.ingest(1, p.clone(), 1.0).unwrap(), None);
+        let dups = r.counts().duplicates;
+        assert_eq!(r.ingest(1, x.clone(), 1.1), Ok(None), "queue {queue}");
+        assert_eq!(r.counts().duplicates, dups + 1, "queue {queue}");
+        assert_eq!(r.incomplete_len(), 1);
+        let done = r.ingest(1, z.clone(), 1.2).unwrap().expect("(P, Z)");
+        assert_eq!(done.payload, expected, "queue {queue}");
+
+        // One datagram carrying old Y with new P after Z opened index 1: accepted whole, old Y
+        // ignored, P completes (P, Z) once.
+        let mut r = v24_after_xy(queue);
+        assert_eq!(r.ingest(1, z.clone(), 1.0).unwrap(), None);
+        let done = r
+            .ingest_packet(1, &[y.clone(), p.clone()], 1.1)
+            .expect("the datagram is accepted");
+        assert_eq!(done.len(), 1, "queue {queue}");
+        assert_eq!(done[0].payload, expected, "queue {queue}");
+        assert_eq!(r.incomplete_len(), 0);
+    }
+}
+
 /// Vector 5's connection after its challenge: masked packets verify with the first incoming word.
 fn v24_challenged() -> SessionConnection {
     let mut conn = started();

@@ -493,8 +493,10 @@ The evidence lines are a local opt-in, off by default, release builds included
 once when the login starts, turns them on for that run. Without it no line goes to the
 `official_evidence` target and no `official evidence:` line is written, whatever `RUST_LOG` says; any
 other value leaves them off, with one warning that does not repeat it. The `official session:`,
-`official world entry:` and `official login:` lines below that carry no `official evidence` are written
-either way.
+`official world entry:` and `official login:` lines below are written either way, except those the
+list marks "under the evidence target, so only with the opt-in" (the refused-datagram and
+refused-message lines, the server's end of the session and the logon and character-operation
+refusals): those carry the server's numbers and go to the `official_evidence` target.
 
 The log stays private. It is capture-like evidence of official traffic even without addresses: keep it
 outside the repository, never commit it or copy snippets of it into specs or checklists, and give it
@@ -570,16 +572,19 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   `direction="recv"`; at most one each 10 s, with `skipped` for the rest.
   `datagram refused` also has `raw_len` (the datagram's length on the wire) and `prefix_zero` (its
   wire prefix is zero; false when it is too short to have one).
-  `official session: the server ended the session` and the logon and character-operation lines
-  (`debug`) carry the server's number.
+  `official session: the server ended the session` and the logon and character-operation refusal
+  lines (`debug`, under the evidence target, so only with the opt-in) carry the server's number.
 - `official evidence: connection closed`: which connection closed, why and in which stage
   (`retiring=true` is the old login connection, which no longer decides the session's end).
 - `official world entry: stopped`: what an entry that stopped withheld (`withheld=`), followed by one
   `official evidence: withheld before 0xF4` line per withheld family with `held_opcode` and
   `withholding_reason`.
-- `official evidence: held send`: the first command of each held kind the session refused with "Not
-  supported by this version of Tessera yet" (a move, a chat line, a chat-server request), with
-  `held_opcode`, `withholding_reason` and `first_of_opcode=true`; later ones are only counted.
+- `official evidence: held send`: the first command of each held kind that reached the session and was
+  refused there with "Not supported by this version of Tessera yet", with `held_opcode`,
+  `withholding_reason` and `first_of_opcode=true`; later ones are only counted. A production run
+  normally writes none: no run gets into the world yet, and moves, chat lines and chat-server
+  requests made outside it are refused by the client before they reach the session, so the missing
+  line is expected, not a fault. What the entry held back is in the `withheld before 0xF4` lines.
 - `official evidence: packet` and `official evidence: blob`: also the ordering word, blob ID and
   `allocation_kind`, and `recipient_token` (an ordinal per connection, never the ID) with
   `target_resolution_kind`.

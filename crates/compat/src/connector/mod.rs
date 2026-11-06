@@ -371,7 +371,9 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
         if matches!(command, Command::Move { .. }) {
             // §9.3.9: while `0x24` is held a move is refused here, and the thread is not woken.
             // No system line: the walker sends moves on its own at its rate, not as a typed
-            // command (labelled, spec silent on a line per move).
+            // command. Labelled, conflict with §9.3.12's table ("every held command ... emits that
+            // bounded plain line", first row the move), OPEN for the writer: once per session, once
+            // per stage or never (`session_phase` module docs).
             if !r.control.moves_carried() {
                 return Err(NetError::InvalidCommand(session_phase::MOVE_HELD));
             }

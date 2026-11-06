@@ -1854,6 +1854,11 @@ impl World {
         if let Event::Combat(c) = ev {
             self.queue_combat_event(c);
         }
+        // `official-session.md` §9.3.11: the live log of an official session names no character and
+        // holds no received chat text or position. The default `info` log of a handed-over session
+        // therefore gets these lines without names, text or coordinates, at `debug`; the offline
+        // and test-server sessions keep them as they were.
+        let private = self.handed;
         match ev {
             Event::ReturnedToCharacterSelect { characters } => {
                 tracing::info!(
@@ -1898,7 +1903,11 @@ impl World {
             }
             Event::Connected { characters } => {
                 let names: Vec<&str> = characters.iter().map(|c| c.name.as_str()).collect();
-                tracing::info!(characters = %names.join(","), "net: connected");
+                if private {
+                    tracing::debug!(characters = names.len(), "net: connected");
+                } else {
+                    tracing::info!(characters = %names.join(","), "net: connected");
+                }
                 self.show_motd();
                 self.character_list.clone_from(characters);
                 self.character_list.truncate(MAX_LISTED_CHARACTERS);
@@ -1941,7 +1950,11 @@ impl World {
                 name,
                 transform,
             } => {
-                tracing::info!(player = player.0, %name, pos = ?transform.position, "net: world entered");
+                if private {
+                    tracing::debug!("net: world entered");
+                } else {
+                    tracing::info!(player = player.0, %name, pos = ?transform.position, "net: world entered");
+                }
                 self.show_motd();
                 self.entered_at = Some(now);
                 // A new placement waits for its loading signal: the first location report
@@ -1969,7 +1982,11 @@ impl World {
                 name,
                 transform,
             } => {
-                tracing::info!(id = id.0, ?kind, %name, pos = ?transform.position, "net: entity spawned");
+                if private {
+                    tracing::trace!(?kind, "net: entity spawned");
+                } else {
+                    tracing::info!(id = id.0, ?kind, %name, pos = ?transform.position, "net: entity spawned");
+                }
                 self.entities.insert(
                     *id,
                     EntityView {
@@ -1989,7 +2006,11 @@ impl World {
                 ..
             } => {
                 if tag.is_none() {
-                    tracing::info!(id = id.0, ?kind, %name, "net: character created");
+                    if private {
+                        tracing::trace!(?kind, "net: character created");
+                    } else {
+                        tracing::info!(id = id.0, ?kind, %name, "net: character created");
+                    }
                 } else {
                     tracing::trace!(id = id.0, ?kind, "net: placed figure created");
                     self.placed.insert(*id);
@@ -2029,11 +2050,15 @@ impl World {
                 text,
             } => {
                 // The line itself went to the chat through the social state (CT1, CT8).
-                tracing::info!(
-                    ?channel,
-                    sender = sender.as_deref().unwrap_or("-"),
-                    "net chat: {text}"
-                );
+                if private {
+                    tracing::trace!(?channel, "net chat: a line");
+                } else {
+                    tracing::info!(
+                        ?channel,
+                        sender = sender.as_deref().unwrap_or("-"),
+                        "net chat: {text}"
+                    );
+                }
             }
             Event::LocationReport {
                 id,
@@ -2043,14 +2068,18 @@ impl World {
                 ..
             } => {
                 if Some(*id) == self.player {
-                    tracing::info!(
-                        ?cause,
-                        region = location.region.0,
-                        x = location.x,
-                        y = location.y,
-                        z = location.z,
-                        "net: player location"
-                    );
+                    if private {
+                        tracing::debug!(?cause, "net: player location");
+                    } else {
+                        tracing::info!(
+                            ?cause,
+                            region = location.region.0,
+                            x = location.x,
+                            y = location.y,
+                            z = location.z,
+                            "net: player location"
+                        );
+                    }
                     self.location_seq += 1;
                     self.location = Some(PlayerLocation {
                         location: *location,

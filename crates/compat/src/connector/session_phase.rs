@@ -93,7 +93,11 @@
 //! every chat route, the chat server's room commands, a name check, creation, deletion, a re-entry, a
 //! stale `WorldLoaded`) is a local `InvalidCommand` with it, and nothing is sent. A typed one also
 //! gets one plain system line with it (`Event::ServerNotice`, `SessionDriver::held_line`); a move
-//! and a `WorldLoaded`, which the client sends on its own, get none (labelled). The evidence log
+//! and a `WorldLoaded`, which the client sends on its own, get none (labelled: this conflicts with
+//! the table's "every held command ... emits that bounded plain line", whose first row is the move;
+//! a line per move at 20 Hz would flood the System lines, so it is OPEN for the writer whether the
+//! line comes once per session, once per stage or never). The rule holds in every stage, so a chat
+//! line typed while entering or at the list gets the same text and line. The evidence log
 //! (only with its local opt-in, [`SessionStart::evidence`]) names the held opcode and its reason.
 //!
 //! # One multiplexer per connection
@@ -147,7 +151,10 @@
 //! after the teardown (sent before the client saw the return) are refused and counted
 //! ([`DriverCounters::outside_world`]), never sent; a refused move stays silent, a refused
 //! chat line also gives a system notice (`Event::Notice`), so the player sees that the line
-//! was not sent. `ReturnedToCharacterSelect` is Tessera's neutral addition (§8 maps the
+//! was not sent. That outside-world answer is only a test's in-world fixture's
+//! ([`ConnectorNet::readiness_specified`]); on every production path §9.3.12's held-command rule
+//! answers a move or chat line first, in every stage, with [`HELD_COMMAND`].
+//! `ReturnedToCharacterSelect` is Tessera's neutral addition (§8 maps the
 //! teardown to the later list; engineering choice pending a spec answer, listed in
 //! `docs/m8-remediation.md` §15).
 //!
@@ -683,7 +690,6 @@ impl Link {
             .map_or(0, |c| c.handshake_counts().challenges)
     }
 
-    /// Whether the connection closed from its handshake (States `1` and `2`).
     /// Whether the connection closed while it still waited for its server's challenge (State `1`).
     fn closed_before_challenge(&self) -> bool {
         matches!(
@@ -692,6 +698,7 @@ impl Link {
         )
     }
 
+    /// Whether the connection closed from its handshake (States `1` and `2`).
     fn closed_in_handshake(&self) -> bool {
         matches!(
             self.mux.connection(self.conn).and_then(|c| c.closed_from()),
@@ -4710,6 +4717,34 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
                 Ok(())
             }
+            // §9.3.12's held-command table ("all official phases"): while OPEN-WORLD-9 is open a
+            // move is held in every stage, before `0xF4` (decision 0046 item 10) and after it: a
+            // local `InvalidCommand` with the capability text, and nothing sent. The historical
+            // 38-byte form is not sent in its place, and no history is kept for a reconciliation
+            // that cannot come. A test's in-world fixture still reaches the arm below.
+            //
+            // Labelled, conflict with the table, OPEN for the writer: the table says every held
+            // command emits the plain line, and its first row is the move; the walker sends moves on
+            // its own at 20 Hz, so a line per move would flood the System lines. No line is given
+            // for a held move (nor for the client's own `WorldLoaded`) until the writer says whether
+            // it comes once per session, once per stage or never.
+            Command::Move { .. } if !self.readiness_specified => {
+                self.counters.moves_held = self.counters.moves_held.saturating_add(1);
+                self.held_evidence(OPCODE_MOVEMENT_STEP, "decision 0046 item 10, OPEN-WORLD-9");
+                Err(NetError::InvalidCommand(MOVE_HELD))
+            }
+            // §9.3.12's held-command table ("all official phases"): every chat route (Say, Yell,
+            // Emote, the dual routes and their aliases) is held while the current `0x30` send prefix
+            // and source stay open (OPEN-SESSION-16), and the chat server is disabled, whether the
+            // session is in the world, entering it or at the list: a local `InvalidCommand` with
+            // the capability text, one plain system line and nothing sent, never a fallback route.
+            // It comes before the outside-world arm below, so the text is the same in every stage.
+            // A test's synthetic in-world fixture (`ConnectorNet::readiness_specified`) still
+            // reaches the routes below.
+            Command::Chat { .. } | Command::Emote { .. } if !self.readiness_specified => {
+                self.held_line(cmd, OPCODE_ENTITY_METHOD_CALL, "OPEN-SESSION-16");
+                Err(NetError::InvalidCommand(HELD_COMMAND))
+            }
             Command::Move { .. } | Command::Chat { .. }
                 if !matches!(self.stage, Stage::InWorld { .. }) =>
             {
@@ -4741,15 +4776,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 velocity,
                 on_ground,
             } => {
-                // §9.3.9, decision 0046 item 10: `0x24` is held until OPEN-WORLD-9 settles its body,
-                // so a move is a local `InvalidCommand`. The historical 38-byte form is not sent in
-                // its place, and no history is kept for a reconciliation that cannot come. A test's
-                // in-world fixture still reaches it.
-                if !self.readiness_specified {
-                    self.counters.moves_held = self.counters.moves_held.saturating_add(1);
-                    self.held_evidence(OPCODE_MOVEMENT_STEP, "decision 0046 item 10, OPEN-WORLD-9");
-                    return Err(NetError::InvalidCommand(MOVE_HELD));
-                }
+                // Only a test's in-world fixture gets here (the held arm above).
                 // `official-messages-play.md` §8 row `0x24`: the axes and both headings.
                 // The jump bit while the controller is off the ground and rising is
                 // Tessera's reading: the spec is silent on its source (`MoveStep::from_move`,
@@ -4763,16 +4790,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 let out = self.adapter.move_step(step, now, Some(predicted));
                 self.pending_out.extend(out);
                 Ok(())
-            }
-            // §9.3.12's held-command table: every chat route (Say, Yell, Emote, the dual routes and
-            // their aliases) is held while the current `0x30` send prefix and source stay open
-            // (OPEN-SESSION-16), and the chat server is disabled: a local `InvalidCommand` with the
-            // capability text, one plain system line and nothing sent, never a fallback route. A
-            // test's synthetic in-world fixture (`ConnectorNet::readiness_specified`) still reaches
-            // the routes below.
-            Command::Chat { .. } | Command::Emote { .. } if !self.readiness_specified => {
-                self.held_line(cmd, OPCODE_ENTITY_METHOD_CALL, "OPEN-SESSION-16");
-                Err(NetError::InvalidCommand(HELD_COMMAND))
             }
             Command::Chat {
                 channel: ChatChannel::Fellowship,
@@ -4854,10 +4871,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// A user's close (§9.3.9): one Disconnect on the established primary connection. While the world
-    /// connection is in its handshake the one Disconnect is the login connection's, and the world's
-    /// auth retries end with none. That row names Cancel; Quit, Escape and window close take the same
-    /// here (labelled, `docs/m8-remediation.md` §28 fix 15).
     /// A typed command of §9.3.12's held-command table refused here: counted, one plain system line
     /// with the capability text ([`HELD_COMMAND`], `official-entry.md` §8.7 "P10-10J display policy":
     /// the client shows it in the chat window's System lines or its System overlay), none once the
@@ -4898,6 +4911,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
         );
     }
 
+    /// A user's close (§9.3.9): one Disconnect on the established primary connection. While the world
+    /// connection is in its handshake the one Disconnect is the login connection's, and the world's
+    /// auth retries end with none. That row names Cancel; Quit, Escape and window close take the same
+    /// here (labelled, `docs/m8-remediation.md` §28 fix 15).
     fn user_close(&mut self, why: &str, now: f64) {
         let on_world = self.world.as_ref().is_some_and(|w| !w.in_handshake());
         self.close_links(on_world, why, now);

@@ -573,6 +573,98 @@ fn an_unanswered_report_is_none_yet_at_the_close() {
     );
 }
 
+/// Remediation §31 fix 8: without the evidence opt-in no `report_*` field and no summary is
+/// written, for a sent report through its NAK, selection, covering Ack and referral, and for an
+/// omitted one at the close; the always-on decision line still is.
+#[test]
+fn the_report_evidence_stays_silent_without_the_opt_in() {
+    let silent = |logs: &str| {
+        for field in [
+            "report_decision",
+            "report_omission",
+            "report_sequence",
+            "report_ack_action",
+            "report_position",
+            "report_nak_resends",
+            "resource-set report summary",
+            "resource-set report before the selection",
+            "resource-set report transport",
+        ] {
+            assert!(!logs.contains(field), "{field}:\n{logs}");
+        }
+    };
+    let ((), logs) = logs_of(|| {
+        let mut start = session_start(0, None, Arc::default());
+        start.evidence = false;
+        start.schema = SchemaView(Arc::new(Reporting::eligible()));
+        let world = new_world(Service::default());
+        let mut net = FakeNet(world.clone());
+        let mut d = SessionDriver::start(&mut net, start, 0.0, &go).expect("start");
+        let mut login = Server::new(0x0111, 0xBEEF_0001);
+        world.deliver(login.challenge(0xBEEF_0001), LOGIN_SERVER);
+        world.deliver(
+            login.control(OptionalHeaders {
+                cumulative_ack: Some(0),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(0.0, true, &go);
+        let _ = world.take_sent();
+        world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
+        d.step(0.1, true, &go);
+        let (_, seq, _) = sent_raw(&world)
+            .into_iter()
+            .find(|(_, _, ops)| ops.contains(&0x13D))
+            .expect("the report");
+        world.deliver(
+            login.control(OptionalHeaders {
+                sequence_nak: Some(vec![seq]),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(0.2, true, &go);
+        enter(&mut d, 0.5);
+        d.step(0.5, true, &go);
+        world.deliver(
+            login.control(OptionalHeaders {
+                cumulative_ack: Some(seq),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(1.0, true, &go);
+        world.deliver(
+            login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+            LOGIN_SERVER,
+        );
+        d.step(1.1, true, &go);
+        assert_eq!(d.counters().resource_reports_sent, 1);
+    });
+    assert!(
+        logs.contains("official session: resource-set report sent"),
+        "{logs}"
+    );
+    silent(&logs);
+
+    let ((), logs) = logs_of(|| {
+        let mut start = session_start(0, None, Arc::default());
+        start.evidence = false;
+        start.schema = SchemaView(Arc::new(Reporting {
+            sets: Err(ReportOmission::NotRead),
+            ..Reporting::eligible()
+        }));
+        let (_world, mut d, _login) = driver_at_characters_from(Service::default(), start);
+        d.begin_shutdown(1.0);
+    });
+    assert!(
+        logs.contains("official session: resource-set report omitted"),
+        "{logs}"
+    );
+    silent(&logs);
+}
+
 /// A launch list and the omission it gives, `None` for a sent report.
 type LaunchCase = (
     Result<Option<String>, ReportOmission>,

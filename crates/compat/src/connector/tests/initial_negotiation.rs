@@ -2569,3 +2569,52 @@ fn a_ready_status_before_the_request_keeps_the_advertisement() {
     assert!(!opcodes(&sent_packets(&world)).contains(&0xEC));
     assert!(!d.ended());
 }
+
+/// Labelled C8 choice (remediation §31 fix 4): a valid `0xDD` that arrives while the login is
+/// queued is held, and the ready status (a ready `0x130` or a `0x12D` status 1) sends `0xEC` for
+/// it, once, to the recipient it named; a second `0xDD` afterwards sends nothing.
+#[test]
+fn a_request_while_queued_is_answered_at_the_ready_status() {
+    let status_1 = encode_event_envelope(
+        &VersionStatusMessage {
+            status: 1,
+            server_version_info: String::new(),
+        }
+        .encode()
+        .expect("encode"),
+    );
+    let (queued, ready) = queue_statuses();
+    for (opcode, data) in [(0x130, ready), (0x12D, status_1)] {
+        let (world, mut d, mut login) = connected();
+        world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
+        d.step(1.0, true, &go);
+        world.deliver(
+            queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+            LOGIN_SERVER,
+        );
+        d.step(2.0, true, &go);
+        assert!(
+            !d.initial_stages().ec_sent,
+            "{opcode:#x}: held while queued"
+        );
+        assert!(!opcodes(&sent_packets(&world)).contains(&0xEC));
+        world.deliver(queue1(&mut login, opcode, &data), LOGIN_SERVER);
+        d.step(20.0, true, &go);
+        assert!(d.initial_stages().dd_seen, "{opcode:#x}");
+        assert!(d.initial_stages().ec_sent, "{opcode:#x}");
+        assert!(
+            opcodes(&sent_packets(&world)).contains(&0xEC),
+            "{opcode:#x}"
+        );
+        world.deliver(
+            queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+            LOGIN_SERVER,
+        );
+        d.step(21.0, true, &go);
+        assert!(
+            !opcodes(&sent_packets(&world)).contains(&0xEC),
+            "{opcode:#x}"
+        );
+        assert!(!d.ended(), "{opcode:#x}");
+    }
+}

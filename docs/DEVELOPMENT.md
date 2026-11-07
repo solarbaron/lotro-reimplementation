@@ -589,7 +589,8 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
     `reason=`), or `undecided` when the session ended before the character list.
   - `report_sequence`: the private packet sequence of the report's first transmission on the login
     connection (`0` when it was not sent); the packet lines with the same `seq` are its datagrams.
-  - `report_ack_action`: what the login server did with it, latest first: `covered_by_cumulative_ack`
+  - `report_ack_action`: what the login server last did with it (one word, the latest action
+    only): `covered_by_cumulative_ack`
     (a cumulative Ack covered it, its retention ended), `nak_resend` (a NAK named it and its saved
     bytes went again; `report_nak_resends` counts them), `out_of_order_ack` (a NAK named it after its
     record was gone, at the referral for example; `report_out_of_order_acks` counts them), or
@@ -598,7 +599,8 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
     `earlier_datagram` (the rule), `no_6f_yet` (no selection sent), `not_sent` (omitted), or
     `same_datagram` / `later_datagram`, which must never appear and would be a Tessera fault.
 
-  The lines are: the decision line above (`report_decision`, `report_sequence`, `report_position`),
+  The lines are: the decision line above (a send carries `report_decision`, `report_sequence` and
+  `report_position`; an omission `report_decision`, `report_omission` and `report_position`),
   `official evidence: resource-set report transport` each time the server's Acks or NAKs change
   what became of it (rate-limited like the refusal lines, with `skipped`),
   `official evidence: resource-set report before the selection` at the first `0x6F`

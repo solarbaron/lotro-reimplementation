@@ -3161,12 +3161,28 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }
         };
         if !self.initial.wants_request() {
-            self.initial.later_request(request.server_config);
+            // A first one while queued is held for the ready status (labelled C8 choice,
+            // `Negotiation::ready_before_request`).
+            self.initial.request_not_wanted(request, m.recipient);
+            self.sync_initial();
             return;
         }
         self.initial.request_seen(request.server_config);
         self.initial_step("install request", now);
         if let Err(why) = self.send_advertisement(&request, m.recipient, now) {
+            self.refuse_unsupported(why, now);
+        }
+    }
+
+    /// After a ready status brought the stage back to `AwaitDD`: the `0xDD` held from the queue, if
+    /// any, is the first valid one now and sends `0xEC` once (labelled C8 choice,
+    /// `Negotiation::ready_before_request`).
+    fn release_held_request(&mut self, now: f64) {
+        let Some((request, recipient)) = self.initial.take_held_request() else {
+            return;
+        };
+        self.initial_step("install request (held from the queue)", now);
+        if let Err(why) = self.send_advertisement(&request, recipient, now) {
             self.refuse_unsupported(why, now);
         }
     }
@@ -3289,6 +3305,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     // §9.3.9: a real stage change only; a repeat is counted and changes no clock.
                     if self.initial.version_accepted(now) {
                         self.initial_step("version accepted", now);
+                        self.release_held_request(now);
                     } else {
                         self.sync_initial();
                     }
@@ -3321,6 +3338,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 LogonOutcome::Accepted => {
                     if self.initial.queue_ready(now) {
                         self.initial_step("queue ready", now);
+                        self.release_held_request(now);
                     } else {
                         self.sync_initial();
                     }

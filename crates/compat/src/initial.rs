@@ -871,6 +871,9 @@ pub struct Negotiation {
     queued_since: Option<f64>,
     /// An actual `0x12F` arrived before `0xEC`: `0xEC` is suppressed (§9.3.8).
     historical: bool,
+    /// The first valid `0xDD` that arrived while queued, with the recipient it named, held for the
+    /// ready status ([`Self::ready_before_request`]).
+    held_request: Option<(InstallRequest, u64)>,
 }
 
 impl Default for Negotiation {
@@ -910,6 +913,7 @@ impl Negotiation {
             },
             queued_since: None,
             historical: false,
+            held_request: None,
         }
     }
 
@@ -1046,6 +1050,12 @@ impl Negotiation {
     /// cancelled that clock, the `0xDD` wait starts again at `now`, and the queue's absolute limit
     /// keeps its first origin for a later queued status ([`Self::queued`]). Answers `true` for that
     /// return from the queue (a real stage change), `false` for a skip in `AwaitDD`.
+    ///
+    /// The same choice covers a valid `0xDD` that arrives while queued: the first one is held with
+    /// its recipient ([`Self::request_not_wanted`]) instead of being forgotten, and when a ready
+    /// status brings the stage back to `AwaitDD` the driver takes it ([`Self::take_held_request`])
+    /// and treats it as the first valid `0xDD` at that moment, so `0xEC` goes once for it. Later
+    /// ones while queued only update the opaque word, as any later `0xDD`.
     fn ready_before_request(&mut self, now: f64) -> bool {
         self.ignored();
         if matches!(self.phase, Phase::Queued(_)) {
@@ -1088,6 +1098,40 @@ impl Negotiation {
     pub fn later_request(&mut self, server_config: u32) {
         self.server_config = Some(server_config);
         self.ignored();
+    }
+
+    /// A valid `0xDD` that does not trigger `0xEC` now ([`Self::wants_request`] is `false`), from
+    /// `recipient`. In the queued stage before the first valid `0xDD`, the first one is held for
+    /// the ready status (labelled C8 choice, `Negotiation::ready_before_request`); its word is kept.
+    /// Any other one is a later `0xDD` ([`Self::later_request`]).
+    pub fn request_not_wanted(&mut self, request: InstallRequest, recipient: u64) {
+        if self.held_request.is_none()
+            && self.awaits_first_request()
+            && matches!(self.phase, Phase::Queued(_))
+        {
+            self.server_config = Some(request.server_config);
+            self.held_request = Some((request, recipient));
+            return;
+        }
+        self.later_request(request.server_config);
+    }
+
+    /// Whether a valid `0xDD` from the queue is held for the ready status.
+    #[must_use]
+    pub const fn holds_request(&self) -> bool {
+        self.held_request.is_some()
+    }
+
+    /// The `0xDD` held while queued, with its recipient, once the stage is back at `AwaitDD`
+    /// ([`Self::wants_request`]): it is then the first valid `0xDD` (`dd_seen` set), and the
+    /// latest opaque word is kept. `None` while still queued or when none is held.
+    pub fn take_held_request(&mut self) -> Option<(InstallRequest, u64)> {
+        if !self.wants_request() {
+            return None;
+        }
+        let held = self.held_request.take()?;
+        self.stages.dd_seen = true;
+        Some(held)
     }
 
     /// The last fragment of `0xEC` first went out at `now`: the guard window opens.
@@ -1499,6 +1543,53 @@ mod tests {
             assert!(n.queue_ready(42.0));
             assert_eq!(n.deadline(), Some(42.0 + HISTORICAL_LIST_WAIT_SEC));
         }
+    }
+
+    /// Labelled C8 choice (remediation §31 fix 4): a valid `0xDD` that arrives while queued is held,
+    /// and the ready status that brings back `AwaitDD` releases it as the first valid `0xDD`, once;
+    /// a later `0xDD` while queued only updates the word.
+    #[test]
+    fn a_request_while_queued_is_held_for_the_ready_status() {
+        let rules: [fn(&mut Negotiation, f64) -> bool; 2] =
+            [Negotiation::queue_ready, Negotiation::version_accepted];
+        let request = |word| InstallRequest {
+            server_config: word,
+            name_rule_key: 3,
+            trailing: Vec::new(),
+        };
+        for ready in rules {
+            let mut n = Negotiation::new();
+            n.connected(0.0);
+            assert!(n.queued(1.0));
+            assert!(!n.wants_request());
+            n.request_not_wanted(request(7), 2);
+            assert!(n.holds_request());
+            assert!(!n.stages().dd_seen);
+            assert_eq!(n.take_held_request(), None, "still queued");
+            n.request_not_wanted(request(8), 5);
+            assert_eq!(n.stages().ignored, 1, "a later one is counted");
+            assert_eq!(n.server_config(), Some(8));
+            assert!(ready(&mut n, 2.0));
+            let (held, recipient) = n.take_held_request().expect("released");
+            assert_eq!((held.server_config, recipient), (7, 2), "the first one");
+            assert_eq!(n.server_config(), Some(8), "the latest word is kept");
+            assert!(n.stages().dd_seen);
+            assert!(!n.wants_request());
+            assert_eq!(n.take_held_request(), None, "once");
+            n.advertisement_sent(2.0);
+            assert!(n.stages().ec_sent);
+        }
+        // Outside the queue a request that is not wanted is a later one, never held.
+        let mut n = Negotiation::new();
+        n.connected(0.0);
+        n.request_seen(1);
+        n.request_not_wanted(request(9), 2);
+        assert!(!n.holds_request());
+        let mut h = Negotiation::new();
+        h.connected(0.0);
+        assert!(h.version_requested(1.0));
+        h.request_not_wanted(request(9), 2);
+        assert!(!h.holds_request(), "historical path");
     }
 
     /// §9.3.9 status rule: only the FIRST `0x12D` status 1 or ready `0x130` starts the list clock;

@@ -577,8 +577,7 @@ fn a_session_start_on_the_login_connection_stops_no_wait() {
     world.deliver(server.event(0x90, &ready), WORLD_SERVER);
     d.step(23.0, true, &go);
     assert!(d.entry_progress().session_started);
-    // A second `0x90`, malformed or not, moves nothing: the readiness clock runs from the first.
-    world.deliver(server.event(0x90, &[0x00, 1, 2]), WORLD_SERVER);
+    // A later valid `0x90` with the same ID moves nothing: the readiness clock runs from the first.
     world.deliver(server.event(0x90, &ready), WORLD_SERVER);
     d.step(30.0, true, &go);
     assert!(!d.ended());
@@ -712,18 +711,17 @@ fn historical_repeats_have_one_clock() {
         "{events:?}"
     );
 
-    // §9.3.9 status rule: a status 1 in the `0xDD` wait enters the list wait, cancelling the `0xDD`
-    // clock and starting the 30-second list clock; a repeat changes nothing.
+    // §9.3.9 status rule and Vector 25: an unsolicited status 1 in the `0xDD` wait is counted and
+    // skipped, keeps the `0xDD` clock and starts no list wait.
     let (world, mut d, mut login) = connected();
     world.deliver(login.blob(0x12D, &status(1)), LOGIN_SERVER);
-    d.step(29.0, true, &go);
-    assert!(progress(&d.take_events()), "the real stage change");
-    world.deliver(login.blob(0x12D, &status(1)), LOGIN_SERVER);
-    d.step(40.0, true, &go);
-    assert!(!progress(&d.take_events()));
-    d.step(58.9, false, &go);
-    assert!(!d.ended(), "the list clock, not the 0xDD clock");
-    d.step(59.1, false, &go);
+    d.step(1.0, true, &go);
+    assert!(!progress(&d.take_events()), "no stage change");
+    assert!(opcodes(&sent_packets(&world)).is_empty(), "nothing sent");
+    d.step(29.0, false, &go);
+    assert!(!d.ended());
+    d.step(31.0, false, &go);
+    assert!(d.ended(), "the 0xDD clock, not a list clock");
     assert!(d.take_events().iter().any(|e| matches!(
         e,
         Event::Disconnected {

@@ -41,10 +41,12 @@
 //! deletes: a `0x40` to the default recipient is counted and skipped and deletes nothing
 //! ([`DEFAULT_RECIPIENT_DESPAWN_APPLIES`]).
 //!
-//! Labelled until the writer answers (§9.3.9, WORLD-9): the `0x90`'s own ID counts as resolved with no
-//! `0x98`, so its kept state is released at `WorldEntered`; an explicit `0x40` to an unresolved ID, or
-//! to the `0x90`'s ID, is counted and skipped and deletes nothing ([`PendingWorld::despawn_applies`]);
-//! a later `0x90` that does not read is counted and skipped.
+//! §9.3.9: the `0x90`'s own ID without a validated `0x98` emits no synthetic spawn and no update at
+//! the release: its latest merged properties and motion stay in a bounded priority local hold until a
+//! validated `0x98` for it permits spawn-before-update, or the close ([`PendingWorld::take_local_hold`]).
+//! An explicit `0x40` to an unannounced nonlocal ID is counted and skipped with no tombstone
+//! ([`PendingWorld::despawn_applies`]); one to the `0x90`'s ID is required-progress Unsupported, and
+//! every `0x90` from the current world peer must read (the driver, `session_phase`).
 //!
 //! # What is not sent
 //!
@@ -250,6 +252,9 @@ pub struct PendingWorld {
     player: Option<u64>,
     /// The first `0x90`'s encoded table: required local state (module docs).
     session_table: Option<Vec<u8>>,
+    /// The local player's merged properties and motion when no validated `0x98` announced it by the
+    /// release: held, never released, until a validated `0x98` for its ID or the close (§9.3.9).
+    local_hold: Option<EntitySnapshot>,
 }
 
 /// One entity's snapshot for its release at `WorldEntered`.
@@ -282,7 +287,8 @@ impl PendingWorld {
     }
 
     /// Keeps the first validated `0x90`'s encoded property table (§9.3.9) until the release. A later
-    /// one changes nothing: the first stays (labelled, `docs/m8-remediation.md` §28 fix 20).
+    /// one changes nothing: the first stays (§9.3.11: a later well-formed `0x90` with the same ID
+    /// keeps the FIRST table).
     pub fn keep_session_table(&mut self, table: &[u8]) {
         if self.session_table.is_none() {
             self.session_table = Some(table.to_vec());
@@ -306,26 +312,43 @@ impl PendingWorld {
         self.player
     }
 
-    /// Whether `id` is resolved at this point: a validated `0x98` announced it, or it is the
-    /// `0x90`'s own ID (labelled, module docs).
+    /// Whether `id` is resolved for release at this point: a validated `0x98` announced it. The
+    /// `0x90`'s own ID alone is not (§9.3.9: it emits no synthetic spawn or update); its data is held
+    /// apart ([`Self::take_local_hold`]).
     #[must_use]
     pub fn resolved(&self, id: u64) -> bool {
         if id == 0 || id == DEFAULT_RECIPIENT {
             return false;
         }
-        self.player == Some(id)
-            || self
-                .entities
-                .get(&id)
-                .is_some_and(|e| e.announced && !e.despawned)
+        self.entities
+            .get(&id)
+            .is_some_and(|e| e.announced && !e.despawned)
     }
 
-    /// Whether a `0x40` to `target` deletes (§9.3.9): only an explicit target that is resolved. The
-    /// default recipient never is; labelled until the writer answers: an unresolved ID or the
-    /// `0x90`'s own ID deletes nothing either (module docs).
+    /// Takes the local player's held snapshot when a validated `0x98` for `id` arrives in the world
+    /// (§9.3.9: spawn first, then its merged properties and motion). `None` for any other ID.
+    pub fn take_local_hold(&mut self, id: u64) -> Option<EntitySnapshot> {
+        if self.local_hold.as_ref().is_some_and(|h| h.entity == id) {
+            self.local_hold.take()
+        } else {
+            None
+        }
+    }
+
+    /// The local player's held snapshot, if any (tests and diagnostics).
     #[must_use]
+    pub const fn local_hold(&self) -> Option<&EntitySnapshot> {
+        self.local_hold.as_ref()
+    }
+
+    /// Whether a `0x40` to `target` deletes (§9.3.9): only an explicit nonlocal target that a
+    /// validated `0x98` announced. The default recipient never is, and an unannounced ID is counted
+    /// and skipped with no tombstone. The `0x90`'s own ID never deletes: the driver ends the session
+    /// Unsupported for it first (§9.3.9, Vector 24).
+    ///
     /// A key with a despawn record answers `true` too, so a repeat reaches the record and is counted
     /// as blocked ([`Stored::Despawned`]), deleting nothing more.
+    #[must_use]
     pub fn despawn_applies(&self, target: u64) -> bool {
         target != DEFAULT_RECIPIENT
             && self.player != Some(target)
@@ -547,7 +570,9 @@ impl PendingWorld {
 
     /// One latest snapshot per resolved entity, in the order their keys were first kept, every
     /// entity's spawn before any property or motion of another (§9.3.9). Unresolved keys and despawn
-    /// records are discarded with no event. The store is empty afterwards.
+    /// records are discarded with no event. The local player with no validated `0x98` is neither
+    /// spawned nor updated: its merged properties and motion move to the local hold
+    /// ([`Self::take_local_hold`]). The store is empty afterwards.
     pub fn take_snapshots(&mut self) -> (Vec<EntitySnapshot>, Vec<EntitySnapshot>) {
         let resolved: Vec<u64> = self
             .order
@@ -555,6 +580,7 @@ impl PendingWorld {
             .copied()
             .filter(|id| self.resolved(*id))
             .collect();
+        let player = self.player;
         let mut spawns = Vec::new();
         let mut states = Vec::new();
         let mut entities = std::mem::take(&mut self.entities);
@@ -562,47 +588,35 @@ impl PendingWorld {
         self.bytes = 0;
         self.player = None;
         self.session_table = None;
+        self.local_hold = None;
         for id in resolved {
-            let Some(e) = entities.remove(&id) else {
+            let Some(mut e) = entities.remove(&id) else {
                 continue;
             };
-            if let Some(body) = e.create {
+            if let Some(body) = e.create.take() {
                 spawns.push(EntitySnapshot {
                     entity: id,
                     messages: vec![(OPCODE_CREATE, body)],
                 });
             }
-            let mut messages = Vec::new();
-            let mut properties: Vec<KeptProperty> = e.properties.into_values().collect();
-            properties.sort_by_key(|p| p.arrival);
-            let table: Vec<&[u8]> = properties
-                .iter()
-                .filter(|p| p.opcode == OPCODE_TABLE)
-                .map(|p| p.encoded.as_slice())
-                .collect();
-            // Its entries read to exact exhaustion when they were kept, so the one body holds them.
-            if !table.is_empty()
-                && let Ok(body) = PropertyTableUpdate::body_of_entries(&table)
-            {
-                messages.push((OPCODE_TABLE, body));
-            }
-            messages.extend(
-                properties
-                    .into_iter()
-                    .filter(|p| p.opcode != OPCODE_TABLE)
-                    .map(|p| (p.opcode, p.encoded)),
-            );
-            if let Some(body) = e.appearance {
-                messages.push((OPCODE_APPEARANCE, body));
-            }
-            if let Some(body) = e.position {
-                messages.push((OPCODE_POSITION, body));
-            }
-            if let Some(body) = e.sync {
-                messages.push((OPCODE_SYNC, body));
-            }
+            let messages = state_messages(e);
             if !messages.is_empty() {
                 states.push(EntitySnapshot {
+                    entity: id,
+                    messages,
+                });
+            }
+        }
+        // §9.3.9: the announced `0x90` ID with no validated `0x98` emits no synthetic spawn and no
+        // update; its latest merged properties and motion stay held, in priority, until a validated
+        // `0x98` for it or the close.
+        if let Some(id) = player
+            && let Some(e) = entities.remove(&id)
+            && !e.despawned
+        {
+            let messages = state_messages(e);
+            if !messages.is_empty() {
+                self.local_hold = Some(EntitySnapshot {
                     entity: id,
                     messages,
                 });
@@ -611,10 +625,45 @@ impl PendingWorld {
         (spawns, states)
     }
 
-    /// Discards everything (a failure: §9.3.9).
+    /// Discards everything, the local hold included (a failure, or the connection's close).
     pub fn discard(&mut self) {
         *self = Self::default();
     }
+}
+
+/// One entity's kept properties and motion, in release order: the merged `0x52` table, the
+/// `0x88`/`0x92` singles in arrival order, then appearance and motion (§9.3.9).
+fn state_messages(e: PendingEntity) -> Vec<KeptMessage> {
+    let mut messages = Vec::new();
+    let mut properties: Vec<KeptProperty> = e.properties.into_values().collect();
+    properties.sort_by_key(|p| p.arrival);
+    let table: Vec<&[u8]> = properties
+        .iter()
+        .filter(|p| p.opcode == OPCODE_TABLE)
+        .map(|p| p.encoded.as_slice())
+        .collect();
+    // Its entries read to exact exhaustion when they were kept, so the one body holds them.
+    if !table.is_empty()
+        && let Ok(body) = PropertyTableUpdate::body_of_entries(&table)
+    {
+        messages.push((OPCODE_TABLE, body));
+    }
+    messages.extend(
+        properties
+            .into_iter()
+            .filter(|p| p.opcode != OPCODE_TABLE)
+            .map(|p| (p.opcode, p.encoded)),
+    );
+    if let Some(body) = e.appearance {
+        messages.push((OPCODE_APPEARANCE, body));
+    }
+    if let Some(body) = e.position {
+        messages.push((OPCODE_POSITION, body));
+    }
+    if let Some(body) = e.sync {
+        messages.push((OPCODE_SYNC, body));
+    }
+    messages
 }
 
 /// The store's byte count once `entries` are merged into `entity`: each property counts once, its
@@ -702,7 +751,47 @@ mod tests {
         let mut q = PendingWorld::default();
         assert_eq!(q.set_player(9), None);
         assert_eq!(q.sync(9, &[0], Some(at(5.0))), Stored::Kept);
-        assert!(q.resolved(9), "the 0x90's own ID");
+        assert!(!q.resolved(9), "the 0x90's own ID alone is not released");
+    }
+
+    /// §9.3.9 and Vector 24: the announced `0x90` ID with no validated `0x98` emits no spawn and no
+    /// update at the release; its merged properties and motion are held until a `0x98` for it.
+    #[test]
+    fn the_player_without_a_creation_is_held_not_released() {
+        let mut p = PendingWorld::default();
+        p.set_player(9);
+        assert_eq!(p.table(9, &[(1, &[0xA1])]), Stored::Kept);
+        assert_eq!(p.sync(9, &[3], Some(at(5.0))), Stored::Kept);
+        assert_eq!(p.create(7, &[1]), Stored::Kept);
+        let (spawns, states) = p.take_snapshots();
+        assert_eq!(spawns.iter().map(|s| s.entity).collect::<Vec<_>>(), [7]);
+        assert!(states.iter().all(|s| s.entity != 9), "no update for 9");
+        let hold = p.local_hold().expect("held");
+        assert_eq!(hold.entity, 9);
+        let ops: Vec<u32> = hold.messages.iter().map(|m| m.0).collect();
+        assert_eq!(ops, [0x52, 0xCC]);
+        assert_eq!(p.take_local_hold(7), None, "only the player's ID");
+        assert!(p.take_local_hold(9).is_some());
+        assert!(p.local_hold().is_none());
+
+        // With a validated `0x98` the player is released like any announced entity.
+        let mut q = PendingWorld::default();
+        q.set_player(9);
+        assert_eq!(q.create(9, &[2]), Stored::Kept);
+        assert_eq!(q.table(9, &[(1, &[0xA1])]), Stored::Kept);
+        let (spawns, states) = q.take_snapshots();
+        assert_eq!(spawns.iter().map(|s| s.entity).collect::<Vec<_>>(), [9]);
+        assert_eq!(states.iter().map(|s| s.entity).collect::<Vec<_>>(), [9]);
+        assert!(q.local_hold().is_none());
+
+        // The close discards the hold.
+        let mut r = PendingWorld::default();
+        r.set_player(9);
+        assert_eq!(r.sync(9, &[3], None), Stored::Kept);
+        let _ = r.take_snapshots();
+        assert!(r.local_hold().is_some());
+        r.discard();
+        assert!(r.local_hold().is_none());
     }
 
     #[test]
@@ -740,7 +829,7 @@ mod tests {
             "the local identity is not bounded"
         );
         assert_eq!(p.player(), Some(5_001));
-        assert!(p.resolved(5_001));
+        assert!(!p.resolved(5_001), "the 0x90's ID alone is not released");
 
         let mut q = PendingWorld::default();
         assert_eq!(q.create(7, &[0; 1024]), Stored::Kept);
@@ -1005,15 +1094,18 @@ mod tests {
         assert_eq!(omitted.len(), WITHHELD_BEFORE_F4.len());
     }
 
-    /// §9.3.9: only an explicit 0x40 to a resolved target deletes. Labelled until the writer answers:
-    /// an unresolved ID and the `0x90`'s own ID delete nothing; a despawn record answers so a repeat
-    /// is counted as blocked.
+    /// §9.3.9 and Vector 24: only an explicit 0x40 to an announced nonlocal target deletes; an
+    /// unannounced ID deletes nothing and leaves no tombstone, and the `0x90`'s own ID is the driver's
+    /// Unsupported, never a deletion here; a despawn record answers so a repeat is counted as blocked.
     #[test]
     fn only_an_explicit_resolved_target_despawns() {
         let mut p = PendingWorld::default();
         p.set_player(7);
         assert!(!p.despawn_applies(DEFAULT_RECIPIENT));
-        assert!(!p.despawn_applies(7), "the 0x90's ID");
+        assert!(
+            !p.despawn_applies(7),
+            "the 0x90's ID: the driver ends Unsupported instead"
+        );
         assert_eq!(p.appearance(9, &[0, 1]), Stored::Kept);
         assert!(!p.despawn_applies(9), "unresolved");
         assert_eq!(p.create(9, &[0, 2]), Stored::Kept);

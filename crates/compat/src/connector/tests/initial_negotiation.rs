@@ -1063,6 +1063,85 @@ fn a_queued_login_has_one_absolute_limit() {
     assert_refused(&mut d, UnsupportedNegotiation::QueueDeadline);
 }
 
+/// The queued and ready `0x130` bodies of Vector 25 (synthetic).
+fn queue_statuses() -> (Vec<u8>, Vec<u8>) {
+    let queued = LoginQueueStatusMessage {
+        login_result: crate::session::LOGON_RESULT_QUEUED,
+        detail_text: String::new(),
+        queue: Some(crate::session::LoginQueuePosition {
+            position: 3,
+            total: 9,
+        }),
+    };
+    let ready = LoginQueueStatusMessage {
+        login_result: crate::session::LOGON_RESULT_ACCEPTED,
+        detail_text: String::new(),
+        queue: None,
+    };
+    (
+        encode_event_envelope(&queued.encode().expect("encode")),
+        encode_event_envelope(&ready.encode().expect("encode")),
+    )
+}
+
+/// Vector 25: queued at 0, ready at 20 and queued at 40 restore the absolute queue deadline 300
+/// seconds from the FIRST queued report, not 340.
+#[test]
+fn vector_25_a_requeue_restores_the_first_queue_deadline() {
+    let (world, mut d, mut login) = connected();
+    let (queued, ready) = queue_statuses();
+    world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
+    d.step(1.0, true, &go);
+    slow_server(&world, &mut d, &mut login, 2.0, 20.0);
+    world.deliver(queue1(&mut login, 0x130, &ready), LOGIN_SERVER);
+    d.step(21.0, true, &go);
+    slow_server(&world, &mut d, &mut login, 22.0, 40.0);
+    world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
+    d.step(41.0, true, &go);
+    slow_server(&world, &mut d, &mut login, 42.0, 300.0);
+    assert!(!d.ended());
+    let _ = d.take_events();
+    d.step(1.0 + crate::initial::QUEUE_WAIT_SEC, false, &go);
+    assert_refused(&mut d, UnsupportedNegotiation::QueueDeadline);
+}
+
+/// Vector 25: another ready, then a queued status after the absolute queue deadline, gives
+/// UnsupportedTimeout at once; the queue window is never renewed and no queue panel update follows.
+#[test]
+fn vector_25_a_queued_status_after_the_deadline_fails_at_once() {
+    let (world, mut d, mut login) = connected();
+    let (queued, ready) = queue_statuses();
+    world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
+    d.step(1.0, true, &go);
+    slow_server(&world, &mut d, &mut login, 2.0, 290.0);
+    world.deliver(queue1(&mut login, 0x130, &ready), LOGIN_SERVER);
+    d.step(295.0, true, &go);
+    slow_server(&world, &mut d, &mut login, 296.0, 305.0);
+    assert!(!d.ended(), "the list wait runs past the queue deadline");
+    let _ = d.take_events();
+    world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
+    d.step(306.0, true, &go);
+    assert!(d.ended());
+    let events = d.take_events();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::Account(AccountEvent::LoginQueueChanged { .. }))),
+        "{events:?}"
+    );
+    let refusals = events
+        .iter()
+        .filter(|e| matches!(e, Event::Account(AccountEvent::LoginRefused { .. })))
+        .count();
+    assert_eq!(refusals, 1, "{events:?}");
+    assert!(events.iter().any(|e| matches!(
+        e,
+        Event::Disconnected {
+            reason: DisconnectReason::UnsupportedTimeout
+        }
+    )));
+}
+
 /// Valid unsequenced traffic only: it keeps the silence timeout (§8.2) from firing and carries
 /// no application message. Steps from `from` up to `to`, returning the times of the progress
 /// events seen on the way.
@@ -2108,9 +2187,14 @@ fn nothing_undocumented_is_emitted() {
     assert!(d.command(&delete, 0.6).is_err());
     d.step(0.7, true, &go);
     assert!(opcodes(&sent_packets(&world)).is_empty());
-    // The flow reports go on as the interim policy has them.
+    // The flow reports go on as the interim policy has them: the eligible traffic above is
+    // reported once the one-second cap of §9.3.12 is up.
+    d.step(1.5, true, &go);
+    let later = sent_packets(&world);
+    assert!(opcodes(&later).is_empty());
     let flow: Vec<FlowControlHeader> = sent
         .iter()
+        .chain(later.iter())
         .filter_map(|p| p.opt_headers.flow_control)
         .collect();
     assert!(!flow.is_empty());
@@ -2200,6 +2284,19 @@ fn a_refused_message_logs_its_kind_and_no_value() {
     ] {
         assert!(logs.contains(kind), "{kind} not logged:\n{logs}");
     }
+    // §9.3.11: the one property-key exception, the opt-in `skipped_property_id` line with the
+    // numeric key and its type category; never a value.
+    let (keyed, rest): (Vec<&str>, Vec<&str>) = logs
+        .lines()
+        .partition(|l| l.contains("skipped_property_id="));
+    assert!(
+        keyed
+            .iter()
+            .any(|l| l.contains("skipped_property_id=0x2bad")
+                && l.contains("skipped_property_type_category=\"not-in-schema\"")),
+        "{logs}"
+    );
+    let rest = rest.join("\n");
     for needle in [
         "11181",
         "2bad",
@@ -2210,7 +2307,7 @@ fn a_refused_message_logs_its_kind_and_no_value() {
         "0x84",
         "132",
     ] {
-        assert!(!logs.contains(needle), "{needle} logged:\n{logs}");
+        assert!(!rest.contains(needle), "{needle} logged:\n{rest}");
     }
 }
 

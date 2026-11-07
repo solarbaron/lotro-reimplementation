@@ -17,12 +17,13 @@ use tessera_compat::initial::{
 use tessera_compat::session::{
     AuthConnection, BLOB_FLAG_DEFAULT_RECIPIENT, BlobFragment, BlobFragmentHeader, BlobReassembler,
     CHAT_MAX_RECV_RATE, CodecUuids, ConnectionState, DatagramHeader, FLAG_CUMULATIVE_ACK,
-    FLAG_HAS_FRAGMENTED_BLOBS, FlowControlHeader, IsaacCipher, MAX_VARIABLE_U32, OptionalHeaders,
-    ReferralAuthHeader, SessionAuthHeader, SessionConnection, SessionError, SessionEvent,
-    WireCodecs, WorldReferralHeader, check_fragment_slice, combine_packet_checksum,
-    compute_datagram_checksum, decode_datagram, decode_message, decode_variable_u32,
-    encode_datagram, encode_variable_u32, guid_fields_swapped, max_recv_rate_for_speed,
-    parse_packet_payload, payload_checksum, split_blob, verify_packet_checksum,
+    FLAG_HAS_FRAGMENTED_BLOBS, FlowControlHeader, IsaacCipher, MAX_BLOB_TOMBSTONES,
+    MAX_VARIABLE_U32, OptionalHeaders, ReferralAuthHeader, SessionAuthHeader, SessionConnection,
+    SessionError, SessionEvent, WireCodecs, WorldReferralHeader, check_fragment_slice,
+    combine_packet_checksum, compute_datagram_checksum, decode_datagram, decode_message,
+    decode_variable_u32, encode_datagram, encode_variable_u32, guid_fields_swapped,
+    max_recv_rate_for_speed, parse_packet_payload, payload_checksum, split_blob,
+    verify_packet_checksum,
 };
 
 /// Parses a spec vector's hex text.
@@ -1583,6 +1584,9 @@ fn vector_15_one_prefix_boundaries() {
         .body;
     assert_eq!(AccountEvictionNotice::reason_of_envelope_body(&short), None);
     assert!(decode_message(0xB3, &hex("01 01 00 00 00"), 64).is_err());
+    // `0x13D` has no Vector 15 row: its complete native source stays OPEN-SESSION-20, and §9.3.12's
+    // structural codec fixtures and the owner-authorized item-13 candidate are tested with the report
+    // (`tests/resource_report.rs`, `world::ResourceSetReport`), not as a native-source vector.
 }
 
 // ---------------------------------------------------------------------------
@@ -2325,14 +2329,16 @@ fn vector_20_all_exercised_appearance_branches() {
 const V22_A: &[u8] = &[0x11];
 const V22_B: &[u8] = &[0x22];
 const V22_C: &[u8] = &[0x33];
+/// Vector 22's explicit synthetic recipient (§10.2).
+const V22_RECIPIENT: u64 = 0x0100_0000_0000_0042;
 
-/// One complete queue-3 blob of recipient 0x77, sequence group 5, on sender 1.
+/// One complete queue-3 blob of Vector 22's recipient, sequence group 0, on sender 1.
 fn v22_blob(order: u16, body: &[u8]) -> BlobFragment {
-    v22_keyed(0x77, order, body)
+    v22_keyed(V22_RECIPIENT, order, body)
 }
 
 fn v22_keyed(recipient: u64, order: u16, body: &[u8]) -> BlobFragment {
-    split_blob(3, order, 0, 5, Some(recipient), 0x40, body)
+    split_blob(3, order, 0, 0, Some(recipient), 0x40, body)
         .expect("split")
         .remove(0)
 }
@@ -2392,8 +2398,9 @@ fn vector_22_equal_word_bodies_each_keep_a_tombstone() {
     assert_eq!(r.tombstone_sizes().0, 2);
 }
 
-/// A 65th completion evicts the oldest and counts; its repeat is then a fresh delivery. A repeat after
-/// the 30 seconds likewise.
+/// A 65th completion evicts the oldest and counts; its repeat is then a fresh delivery. A repeat once
+/// the tombstone is 30 seconds old or older likewise (§9.3.9: expiry at age ≥ 30 s; the vectors use
+/// 31 s to stay off the boundary).
 #[test]
 fn vector_22_tombstones_are_bounded_and_expire() {
     let mut r = BlobReassembler::default();
@@ -2405,7 +2412,7 @@ fn vector_22_tombstones_are_bounded_and_expire() {
     // The evicted identity's word is now older than the baseline, so it is the distance's discard; on
     // queue 2 the same repeat has no gate and is delivered.
     let queue2 = |id: u16, body: &[u8]| {
-        split_blob(2, id, id, 0, Some(0x77), 0x40, body)
+        split_blob(2, id, id, 0, Some(V22_RECIPIENT), 0x40, body)
             .expect("split")
             .remove(0)
     };
@@ -2418,11 +2425,15 @@ fn vector_22_tombstones_are_bounded_and_expire() {
         "evicted: delivered"
     );
     assert!(!v22_take(&mut r, queue2(64, V22_A), 0.0), "still kept");
-    // Past its 30 seconds a repeat is delivered again; within them it is not.
+    // At 31 s a repeat is delivered again; within the 30 seconds it is not.
     let mut r = BlobReassembler::default();
     assert!(v22_take(&mut r, queue2(1, V22_A), 0.0));
-    assert!(!v22_take(&mut r, queue2(1, V22_A), 30.0), "at 30 s");
-    assert!(v22_take(&mut r, queue2(1, V22_A), 30.5), "past it");
+    assert!(!v22_take(&mut r, queue2(1, V22_A), 29.0), "inside");
+    assert!(v22_take(&mut r, queue2(1, V22_A), 31.0), "expired");
+    // The boundary itself: age exactly 30 s has expired (age ≥ 30 s).
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, queue2(1, V22_A), 0.0));
+    assert!(v22_take(&mut r, queue2(1, V22_A), 30.0), "at 30 s");
 }
 
 /// Queue 2 and queue 4 deliver with a repeated order word, and exact identities still deduplicate.
@@ -2430,7 +2441,7 @@ fn vector_22_tombstones_are_bounded_and_expire() {
 fn vector_22_queues_2_and_4_have_no_order_gate() {
     for queue in [2u8, 4] {
         let blob = |id: u16, body: &[u8]| {
-            split_blob(queue, 9, id, 0, Some(0x77), 0x40, body)
+            split_blob(queue, 9, id, 0, Some(V22_RECIPIENT), 0x40, body)
                 .expect("split")
                 .remove(0)
         };
@@ -2441,21 +2452,26 @@ fn vector_22_queues_2_and_4_have_no_order_gate() {
     }
 }
 
-/// A baseline expires 30 seconds after the last delivered blob of its key, and only a delivery
-/// refreshes it (§28 fix 8's row: baseline 100, then 40000 after 30 s).
+/// A baseline expires once 30 seconds or more have passed since the last delivered blob of its key,
+/// and only a delivery refreshes it (Vector 22: baseline 100, no delivery for 31 s, then 40000 is a
+/// new first value).
 #[test]
 fn vector_22_a_baseline_expires_after_the_last_delivery() {
     let mut r = BlobReassembler::default();
     assert!(v22_take(&mut r, v22_blob(100, V22_A), 0.0));
     assert!(!v22_take(&mut r, v22_blob(40_000, V22_B), 29.0), "older");
     assert!(
-        !v22_take(&mut r, v22_blob(40_000, V22_B), 30.0),
-        "a discard refreshes nothing, and 30 s is still inside"
+        !v22_take(&mut r, v22_blob(40_000, V22_B), 29.9),
+        "a discard refreshes nothing"
     );
     assert!(
-        v22_take(&mut r, v22_blob(40_000, V22_C), 30.5),
+        v22_take(&mut r, v22_blob(40_000, V22_C), 31.0),
         "a new first value"
     );
+    // Age exactly 30 s has expired too (§9.3.9: age ≥ 30 s).
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(100, V22_A), 0.0));
+    assert!(v22_take(&mut r, v22_blob(40_000, V22_C), 30.0), "at 30 s");
     // An equal-word delivery refreshes it.
     let mut r = BlobReassembler::default();
     assert!(v22_take(&mut r, v22_blob(100, V22_A), 0.0));
@@ -2557,9 +2573,9 @@ fn vector_23_attachment_sums() {
 // Vector 22, additional rows (§9.3.9 queue comparison, P10-10J)
 // ---------------------------------------------------------------------------
 
-/// One complete queue-2 blob of recipient 0x77 with blob ID `id`.
+/// One complete queue-2 blob of Vector 22's recipient with blob ID `id`.
 fn v22_queue2(id: u16, body: &[u8]) -> BlobFragment {
-    split_blob(2, id, id, 0, Some(0x77), 0x40, body)
+    split_blob(2, id, id, 0, Some(V22_RECIPIENT), 0x40, body)
         .expect("split")
         .remove(0)
 }
@@ -2688,6 +2704,77 @@ fn vector_22_a_repeat_after_the_tombstone_expired_is_a_reuse() {
     assert!(
         !v22_take(&mut r, v22_blob(7, V22_B), 36.0),
         "B's tombstone lives"
+    );
+}
+
+/// Vector 22: queue 3, same recipient and group: 0/A, 32768/A, 1/B, 32768/A again. The half-range A
+/// is delivered without advance; B advances to 1; the final exact A deduplicates before the newer
+/// advance it would otherwise be, and the baseline stays 1.
+#[test]
+fn vector_22_half_range_a_b_a() {
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(0, V22_A), 0.0), "first");
+    assert!(
+        v22_take(&mut r, v22_blob(32_768, V22_A), 0.001),
+        "half range"
+    );
+    assert_eq!(r.counts().queue3_ambiguous, 1);
+    assert!(v22_take(&mut r, v22_blob(1, V22_B), 0.002), "newer");
+    assert!(
+        !v22_take(&mut r, v22_blob(32_768, V22_A), 0.003),
+        "exact A deduplicates"
+    );
+    assert_eq!(r.counts().duplicates, 1);
+    // The baseline stayed 1: word 1 is equal (a reuse), word 0 older.
+    assert!(!v22_take(&mut r, v22_blob(0, V22_C), 0.004), "older than 1");
+    assert!(v22_take(&mut r, v22_blob(1, V22_C), 0.005), "equal to 1");
+}
+
+/// Vector 22: deliver 7/A, 7/B, then 7/A with both retained: the last A deduplicates, so BOTH
+/// tombstones survive.
+#[test]
+fn vector_22_both_equal_word_tombstones_survive() {
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(7, V22_A), 0.0));
+    assert!(v22_take(&mut r, v22_blob(7, V22_B), 0.001));
+    assert!(!v22_take(&mut r, v22_blob(7, V22_A), 0.002));
+    assert_eq!(r.counts().duplicates, 1);
+}
+
+/// Vector 22: distinct bodies A1..A64 at order 7, then A65, then A1 again. The 65th completion
+/// evicts the oldest A1 tombstone; the final equal-word A1 delivers with a reuse count and baseline
+/// 7 retained. All fill records share that one named identity.
+#[test]
+fn vector_22_a1_to_a65_at_one_word() {
+    let body = |i: u16| i.to_le_bytes().to_vec();
+    let mut r = BlobReassembler::default();
+    for i in 1..=64u16 {
+        let t = f64::from(i) * 0.001;
+        assert!(v22_take(&mut r, v22_blob(7, &body(i)), t), "A{i}");
+    }
+    assert_eq!(r.tombstone_sizes().0, MAX_BLOB_TOMBSTONES);
+    assert_eq!(r.counts().tombstones_evicted, 0);
+    assert!(v22_take(&mut r, v22_blob(7, &body(65)), 0.065), "A65");
+    assert_eq!(r.counts().tombstones_evicted, 1);
+    let reused = r.counts().reused_identities;
+    assert!(v22_take(&mut r, v22_blob(7, &body(1)), 0.066), "A1 again");
+    assert_eq!(r.counts().reused_identities, reused + 1);
+    assert_eq!(r.counts().duplicates, 0);
+    assert!(!v22_take(&mut r, v22_blob(6, V22_C), 0.067), "baseline 7");
+}
+
+/// Vector 22: A at word 5, B at 6, an identical A at 7 all deliver and advance to 7: identical
+/// bodies at DIFFERENT identities are not duplicates (§9.3.9).
+#[test]
+fn vector_22_equal_bodies_at_different_words_all_deliver() {
+    let mut r = BlobReassembler::default();
+    assert!(v22_take(&mut r, v22_blob(5, V22_A), 0.0));
+    assert!(v22_take(&mut r, v22_blob(6, V22_B), 0.001));
+    assert!(v22_take(&mut r, v22_blob(7, V22_A), 0.002));
+    assert_eq!(r.counts().duplicates, 0);
+    assert!(
+        !v22_take(&mut r, v22_blob(6, V22_C), 0.003),
+        "advanced to 7"
     );
 }
 

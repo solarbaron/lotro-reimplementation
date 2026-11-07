@@ -733,3 +733,51 @@ fn an_idle_loop_does_not_spin_and_its_timers_fire_on_time() {
     // 19.5 s at 50 ms, plus at most two passes per timer.
     assert!(passes <= 390 + 2 * sent_at.len() + 1, "{passes} passes");
 }
+
+/// Vector 25 (`official-session.md` §9.3.12): the standalone flow report is a deadline one second
+/// after the LAST report sent, standalone or attached. An attached report restarts the cap just
+/// like a standalone one, so eligible traffic after it is reported a second after the carrier.
+#[test]
+fn vector_25_the_flow_report_deadline_follows_the_last_report() {
+    let (mut mux, id) = connected_at(0.0);
+    let mut server = Server::new();
+    // Eligible traffic at 0.3: the report is due at 1.0, no earlier.
+    receive(&mut mux, &server.packet(0), 0.3);
+    assert!(
+        near(mux.next_deadline(0.3), 1.0),
+        "{:?}",
+        mux.next_deadline(0.3)
+    );
+    fires_at(&mut mux, id, 1.0);
+    // Eligible at 1.1; an application carrier at 2.0 takes the report with it.
+    receive(&mut mux, &server.packet(0), 1.1);
+    let conn = mux.connection_mut(id).expect("conn");
+    conn.send_blob(2, 0, 0x6F, &[1], 2.0, None)
+        .expect("carrier");
+    let carried = std::iter::from_fn(|| conn.pop_outbound_datagram())
+        .filter_map(|d| tessera_compat::session::decode_datagram(&d, false, None, false).ok())
+        .any(|p| !p.fragments.is_empty() && p.opt_headers.flow_control.is_some());
+    assert!(carried, "the carrier took the report");
+    mux.tick(2.0).expect("tick");
+    drain(&mut mux, id);
+    // Eligible at 2.1: the standalone report is due at 3.0, a second after the attached one.
+    receive(&mut mux, &server.packet(0), 2.1);
+    let due = mux.next_deadline(2.1).expect("a deadline");
+    assert!(due <= 3.0 + 1e-9, "due by 3.0, not {due}");
+    mux.tick(2.9).expect("tick");
+    let early = std::iter::from_fn(|| {
+        mux.connection_mut(id)
+            .and_then(|c| c.pop_outbound_datagram())
+    })
+    .filter_map(|d| tessera_compat::session::decode_datagram(&d, false, None, false).ok())
+    .any(|p| p.opt_headers.flow_control.is_some());
+    assert!(!early, "inside the cap");
+    mux.tick(3.0).expect("tick");
+    let reported = std::iter::from_fn(|| {
+        mux.connection_mut(id)
+            .and_then(|c| c.pop_outbound_datagram())
+    })
+    .filter_map(|d| tessera_compat::session::decode_datagram(&d, false, None, false).ok())
+    .any(|p| p.fragments.is_empty() && p.opt_headers.flow_control.is_some());
+    assert!(reported, "the standalone report at 3.0");
+}

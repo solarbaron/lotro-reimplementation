@@ -1966,7 +1966,7 @@ mod tests {
         });
         s.send(Instant::now(), Command::WorldLoaded { generation: None })
             .expect("loaded");
-        // `official-session.md` §9.3.9: a typed logout closes with one Disconnect and no RPC.
+        // `official-session.md` §9.3.12: a typed logout closes with one Disconnect and no RPC.
         s.send(Instant::now(), Command::LeaveWorld).expect("leave");
         wait(&mut s, "the close", |e| {
             matches!(

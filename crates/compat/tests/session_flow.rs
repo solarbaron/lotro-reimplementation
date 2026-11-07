@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The FlowControl-only packets of `docs/specs/official-session.md` §5.5 under the P10-10J schedule
-//! of §9.3.12 (`OPEN-SESSION-13`) on a virtual clock: the first one on the first tick after State 5;
-//! later ones only after newly accepted application-fragment or clock traffic, and at most once per
-//! [`FLOW_REPORT_ONLY_PERIOD_SEC`] (Tessera's cap). Pure acknowledgements never make a report due,
-//! so a server that only acknowledges gets exactly one report, and its bytes wait for the next
-//! eligible one. Every byte here is synthetic; nothing leaves the process.
+//! The flow reports of `docs/specs/official-session.md` §5.5 under the closed P10-10L policy of
+//! §9.3.12 on a virtual clock, with Vector 25: the first one on the first tick after State 5;
+//! later ones only after newly accepted application-fragment or clock traffic, and every report
+//! after the first, standalone or attached, at most once per [`FLOW_REPORT_ONLY_PERIOD_SEC`] since
+//! the last report sent. Pure acknowledgements never make a report due, so a server that only
+//! acknowledges gets exactly one report, and its bytes wait for the next eligible one. Every byte
+//! here is synthetic; nothing leaves the process.
 
 use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddrV4};
@@ -133,6 +134,11 @@ struct Sent {
 /// A multiplexer whose one connection is in State 5, the first tick not yet run, with the
 /// bytes it has received so far.
 fn connected(server: &mut Server) -> (SessionMultiplexer, u16, u64) {
+    connected_at(server, 0.1)
+}
+
+/// [`connected`] with the first server packet, and so State 5, at `t`.
+fn connected_at(server: &mut Server, t: f64) -> (SessionMultiplexer, u16, u64) {
     let mut mux = SessionMultiplexer::new();
     let id = mux.create_connection(SERVER, 0.0).expect("id");
     let conn = mux.connection_mut(id).expect("conn");
@@ -154,7 +160,7 @@ fn connected(server: &mut Server) -> (SessionMultiplexer, u16, u64) {
         .expect("challenge")
         .0;
     let p = server.packet();
-    mux.receive_from_peer(&p, SERVER, 0.1, WireCodecs::NONE)
+    mux.receive_from_peer(&p, SERVER, t, WireCodecs::NONE)
         .expect("the first server packet");
     let conn = mux.connection_mut(id).expect("conn");
     assert_eq!(conn.state(), ConnectionState::Connected);
@@ -297,9 +303,9 @@ fn an_acknowledging_server_starts_no_report_loop() {
     assert_eq!(sent.reported_bytes, received, "nothing received is lost");
 }
 
-/// Eligible traffic rides on the next outgoing sequenced packet when one goes out first; the bytes
-/// held from pure acknowledgements go with it (§9.3.12 "piggyback on real outgoing application
-/// traffic when due").
+/// Eligible traffic rides on the next outgoing sequenced packet once the one-second cap since the
+/// last report is up; the bytes held from pure acknowledgements go with it (§9.3.12 "piggyback on
+/// an ordinary outgoing application carrier only when eligible AND due").
 #[test]
 fn an_eligible_report_rides_on_outgoing_traffic() {
     let mut server = Server::new();
@@ -316,7 +322,7 @@ fn an_eligible_report_rides_on_outgoing_traffic() {
     conn.send_blob(2, 0, 0x6F, &[1], 0.25, None).expect("blob");
     collect(&mut mux, id, 0.25, &mut sent);
     assert_eq!(sent.attached, 0);
-    // Eligible: the next outgoing blob carries the report, at once, inside the standalone cap.
+    // Eligible, but inside the cap: the next outgoing blob carries no report yet.
     let p = server.packet();
     received += p.len() as u64;
     mux.receive_from_peer(&p, SERVER, 0.3, WireCodecs::NONE)
@@ -324,6 +330,11 @@ fn an_eligible_report_rides_on_outgoing_traffic() {
     let conn = mux.connection_mut(id).expect("conn");
     conn.send_blob(2, 0, 0x6F, &[2], 0.35, None).expect("blob");
     collect(&mut mux, id, 0.35, &mut sent);
+    assert_eq!(sent.attached, 0, "the cap holds attached reports too");
+    // The cap is up: the next carrier takes the report, and no standalone one follows.
+    let conn = mux.connection_mut(id).expect("conn");
+    conn.send_blob(2, 0, 0x6F, &[3], 1.1, None).expect("blob");
+    collect(&mut mux, id, 1.1, &mut sent);
     assert_eq!(sent.attached, 1);
     assert_eq!(sent.flow_only.len(), 1, "only the first standalone report");
     assert_eq!(sent.reported_bytes, received);
@@ -333,8 +344,155 @@ fn an_eligible_report_rides_on_outgoing_traffic() {
     assert_eq!(sent.flow_only.len(), 1);
 }
 
-/// Labelled eligibility (`OPEN-SESSION-13`): a datagram whose only content is a ClockSyncHeader makes
-/// a report due; one whose only fragment is an empty control does not.
+/// One report as Vector 25 reads it: when, whether attached, and its two fields.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Report {
+    at: f64,
+    attached: bool,
+    bytes: u32,
+    interval_ms: u16,
+}
+
+/// Pops what `id` queued at `t`; returns its reports and the number of sequenced packets.
+fn reports(mux: &mut SessionMultiplexer, id: u16, t: f64) -> (Vec<Report>, Vec<u32>) {
+    let conn = mux.connection_mut(id).expect("conn");
+    let mut out = Vec::new();
+    let mut seqs = Vec::new();
+    while let Some(d) = conn.pop_outbound_datagram() {
+        let p = decode_datagram(&d, false, None, false).expect("own datagram decodes");
+        if p.header.flags & FLAG_MASKED_CHECKSUM == 0 {
+            continue;
+        }
+        seqs.push(p.header.seq_num);
+        if let Some(flow) = p.opt_headers.flow_control {
+            out.push(Report {
+                at: t,
+                attached: !p.fragments.is_empty(),
+                bytes: flow.bytes_received_delta,
+                interval_ms: flow.interval_ms,
+            });
+        }
+    }
+    (out, seqs)
+}
+
+/// Vector 25 (`official-session.md` §10, flow rows), per connection, State 5 and the first report
+/// at time 0, no send failures.
+#[test]
+fn vector_25_flow_schedule() {
+    let mut server = Server::new();
+    let (mut mux, id, first_bytes) = connected_at(&mut server, 0.0);
+
+    // First report at 0: sent once, first-report exception to the cap.
+    mux.tick(0.0).expect("tick");
+    let (r, _) = reports(&mut mux, id, 0.0);
+    assert_eq!(r.len(), 1);
+    assert!(!r[0].attached);
+    assert_eq!(u64::from(r[0].bytes), first_bytes);
+
+    // Pure Ack at +0.2: counted, no eligibility, no report.
+    let ack = server.ack(2);
+    let mut held = ack.len() as u64;
+    mux.receive_from_peer(&ack, SERVER, 0.2, WireCodecs::NONE)
+        .expect("ack");
+    mux.tick(0.2).expect("tick");
+    assert!(reports(&mut mux, id, 0.2).0.is_empty());
+    assert_eq!(mux.next_deadline(0.2).map(|d| d >= 1.0), Some(true));
+
+    // New accepted ordinary fragment at +0.3: eligibility latches, no early report.
+    let p = server.packet();
+    held += p.len() as u64;
+    mux.receive_from_peer(&p, SERVER, 0.3, WireCodecs::NONE)
+        .expect("fragment");
+    mux.tick(0.3).expect("tick");
+    assert!(reports(&mut mux, id, 0.3).0.is_empty(), "no early report");
+    let due = mux.next_deadline(0.3).expect("a deadline");
+    assert!(due <= 1.0 + EPS, "the report is due at 1.0, not {due}");
+    mux.tick(0.999).expect("tick");
+    assert!(reports(&mut mux, id, 0.999).0.is_empty());
+
+    // Maintenance at +1.0: the report carries the Ack and fragment bytes since 0.
+    mux.tick(1.0).expect("tick");
+    let (r, _) = reports(&mut mux, id, 1.0);
+    assert_eq!(r.len(), 1);
+    assert!(!r[0].attached);
+    assert_eq!(u64::from(r[0].bytes), held);
+    assert_eq!(r[0].interval_ms, 1000);
+
+    // Fresh fragment at +1.1, carrier at +1.5: the carrier goes without a report.
+    let p = server.packet();
+    let mut held = p.len() as u64;
+    mux.receive_from_peer(&p, SERVER, 1.1, WireCodecs::NONE)
+        .expect("fragment");
+    let conn = mux.connection_mut(id).expect("conn");
+    conn.send_blob(2, 0, 0x6F, &[1], 1.5, None)
+        .expect("carrier");
+    let (r, seqs) = reports(&mut mux, id, 1.5);
+    assert!(r.is_empty(), "cap not due: {r:?}");
+    assert_eq!(seqs.len(), 1, "the carrier itself");
+    let mut client_seqs = seqs;
+
+    // Carrier at +2.0: the report rides on it and restarts the cap like a standalone one.
+    let conn = mux.connection_mut(id).expect("conn");
+    conn.send_blob(2, 0, 0x6F, &[2], 2.0, None)
+        .expect("carrier");
+    let (r, seqs) = reports(&mut mux, id, 2.0);
+    assert_eq!(r.len(), 1);
+    assert!(r[0].attached);
+    assert_eq!(u64::from(r[0].bytes), held);
+    assert_eq!(r[0].interval_ms, 1000);
+    client_seqs.extend(seqs);
+
+    // Only pure Acks for 31 s after +2.0: no FlowControl-only send, and the due 30-second
+    // ClockSync creates no carrier.
+    held = 0;
+    let mut t = 2.0;
+    while t < 33.0 {
+        t += 0.25;
+        let ack = server.ack(client_seqs.last().copied().unwrap_or(2));
+        held += ack.len() as u64;
+        mux.receive_from_peer(&ack, SERVER, t, WireCodecs::NONE)
+            .expect("ack");
+        mux.tick(t).expect("tick");
+        let (r, seqs) = reports(&mut mux, id, t);
+        assert!(r.is_empty(), "no report at {t}: {r:?}");
+        assert!(seqs.is_empty(), "no sequenced packet at {t}: {seqs:?}");
+    }
+
+    // Next eligible fragment at +33.1: the due report goes out, intervalMs 31100.
+    let p = server.packet();
+    held += p.len() as u64;
+    mux.receive_from_peer(&p, SERVER, 33.1, WireCodecs::NONE)
+        .expect("fragment");
+    mux.tick(33.1).expect("tick");
+    let (r, _) = reports(&mut mux, id, 33.1);
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].interval_ms, 31_100, "no saturation");
+    assert_eq!(u64::from(r[0].bytes), held);
+
+    // The next real eligible report 65,537 ms after the prior one: intervalMs 1, not 65,535.
+    // Pure Acks keep the connection inside its silence timeout meanwhile.
+    let next = 33.1 + 65.537;
+    let mut t = 33.1;
+    while t + 10.0 < next {
+        t += 10.0;
+        let ack = server.ack(client_seqs.last().copied().unwrap_or(2));
+        mux.receive_from_peer(&ack, SERVER, t, WireCodecs::NONE)
+            .expect("ack");
+        mux.tick(t).expect("tick");
+        assert!(reports(&mut mux, id, t).0.is_empty());
+    }
+    let p = server.packet();
+    mux.receive_from_peer(&p, SERVER, next, WireCodecs::NONE)
+        .expect("fragment");
+    mux.tick(next).expect("tick");
+    let (r, _) = reports(&mut mux, id, next);
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].interval_ms, 1, "modulo 65,536");
+}
+
+/// The closed eligibility list of §9.3.12: a datagram whose only content is a ClockSyncHeader makes
+/// a report due; one whose only fragment is an empty omitted-chunk control does not.
 #[test]
 fn clock_traffic_is_eligible_and_an_empty_control_is_not() {
     let mut server = Server::new();

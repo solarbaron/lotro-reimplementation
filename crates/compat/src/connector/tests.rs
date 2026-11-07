@@ -2760,9 +2760,10 @@ fn a_world_that_never_answers_the_entry_ends_with_a_named_deadline() {
     assert!(d.ended());
 }
 
-/// `official-session.md` §9.3.9: zero Disconnect to the login connection at a valid referral. It goes
-/// on with its bounded transport until the world's State 5, is then retired silently, and nothing it
-/// does decides the session's end.
+/// `official-session.md` §9.3.9: zero Disconnect to the login connection at a valid referral. Its
+/// transport-only Ack/NAK/clock/flow goes on while the world connection lives (§9.3.12 "Login
+/// transport lifetime"), with no application or credential send, and nothing it does decides the
+/// session's end.
 #[test]
 fn the_referral_retires_the_login_connection_with_no_disconnect() {
     let (world, mut d, login) = driver_at_characters(Service::default(), 0);
@@ -2803,7 +2804,11 @@ fn the_referral_retires_the_login_connection_with_no_disconnect() {
         Some(ConnectionState::Connected),
         "the world connection is up"
     );
-    assert_eq!(d.connection_states().0, None, "retired silently");
+    assert_eq!(
+        d.connection_states().0,
+        Some(ConnectionState::Connected),
+        "the login transport outlives the world's State 5"
+    );
     for t in [5.0, 10.0, 15.0, 20.0, 25.0] {
         world.deliver(
             ws.control(OptionalHeaders {
@@ -2813,9 +2818,29 @@ fn the_referral_retires_the_login_connection_with_no_disconnect() {
             WORLD_SERVER,
         );
         d.step(t, true, &go);
-        assert_eq!(disconnects_to(&world, LOGIN_SERVER), 0, "at {t}");
+        let to_login: Vec<_> = world
+            .take_sent()
+            .into_iter()
+            .filter(|(_, dst)| *dst == LOGIN_SERVER)
+            .filter_map(|(dg, _)| decode_client_datagram(&dg, false).ok())
+            .collect();
+        assert!(
+            to_login.iter().all(|p| !p.opt_headers.disconnect),
+            "no Disconnect at {t}"
+        );
+        assert!(
+            to_login.iter().all(|p| p.fragments.is_empty()
+                && p.opt_headers.session_auth.is_none()
+                && p.opt_headers.referral_auth.is_none()),
+            "transport only at {t}"
+        );
         assert!(!d.ended());
     }
+    assert_eq!(
+        d.connection_states().0,
+        Some(ConnectionState::Connected),
+        "still live while the world lives"
+    );
     // The world never answers the entry: the wait for its session start names the stage, with no
     // Disconnect to the retired login connection.
     d.step(31.5, true, &go);

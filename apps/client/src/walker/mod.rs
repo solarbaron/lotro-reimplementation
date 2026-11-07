@@ -250,6 +250,9 @@ pub trait WalkerSession {
 /// Most session combat events handled in one frame (the rest wait for the next frames).
 pub const MAX_COMBAT_EVENTS_PER_FRAME: usize = 1024;
 
+/// The System overlay's top edge, in pixels (`system_status`; drawn and hit-tested at the same place).
+const SYSTEM_STATUS_TOP: f32 = 10.0;
+
 /// Most session entity events applied in one frame (decision 0008: the store's change
 /// lists are unbounded, so the client bounds what it applies); the rest wait, in order, for
 /// the next frames.
@@ -1388,20 +1391,15 @@ impl Walker {
     /// distances. A key that the keymap binds to an action is left to the keymap. The
     /// chat (M7) sees every event first; while its input is open the walker keys are off.
     pub fn input(&mut self, event: &RawEvent) {
-        // The System overlay's line is dismissed with Escape while the chat input is closed; that
-        // Escape goes no further (`system_status` module docs).
+        // The System overlay's Dismiss button (`official-entry.md` §8.7): a click on it, or Tab then
+        // Enter or Space while the chat input is closed; an event it used goes no further. Escape is
+        // never used by it (`system_status` module docs).
         if !self.chat.is_open()
-            && self.system_status.line().is_some()
-            && matches!(
-                event,
-                RawEvent::Key {
-                    key: tessera_input::KeyCode::Escape,
-                    pressed: true,
-                    repeat: false,
-                }
-            )
+            && !self.controls.ui_attached()
+            && self
+                .system_status
+                .handle(event, self.viewport.0 as f32 / 2.0, SYSTEM_STATUS_TOP)
         {
-            self.system_status.dismiss();
             return;
         }
         // While the chat input is open, keys are typed text, not walker keys.
@@ -3862,7 +3860,8 @@ impl Walker {
         }
         // Shown whether or not the HUD is: it is the session's system-message area.
         if !self.controls.ui_attached() {
-            self.system_status.draw(overlay, w as f32 / 2.0, 10.0);
+            self.system_status
+                .draw(overlay, w as f32 / 2.0, SYSTEM_STATUS_TOP);
         }
         if let (true, Some(pos), Some(anchor)) = (
             self.config.hud && self.show_minimap,

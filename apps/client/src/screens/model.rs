@@ -950,11 +950,9 @@ impl ScreenModel {
     pub fn apply(&mut self, action: Action, now: Instant) {
         // An official selection can wait for up to four stages (`official-session.md` §9.3.8): the
         // player may leave meanwhile, which ends the session. The Cancel button goes to the account
-        // form and Quit, Escape and closing the window end the client (`official-entry.md` §4.6).
-        // Labelled until the writer answers: `official-session.md` §9.3.9's user-close row sends
-        // every close while entering to the account form, `official-entry.md` §4.6 and §8.6 exit on
-        // Quit, Escape and window close; Tessera follows entry §4.6. The close counts are the same
-        // either way (one Disconnect on the login connection, none on the world's).
+        // form and Quit, Escape and closing the window end the client (`official-entry.md` §4.6;
+        // `official-session.md` §9.3.9's user-close row: "target follows entry §4.6", and entering
+        // has no Back). One Disconnect on the login connection, none on the world's.
         if matches!(action, Action::Quit | Action::Back) && self.cancels_entry() {
             self.status = if action == Action::Back {
                 Status::Cancelled

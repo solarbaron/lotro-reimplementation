@@ -557,14 +557,12 @@ fn a_refused_datagram_leaves_the_table_as_it_was() {
     assert!(r.ingest(1, open[1].clone(), 0.0).unwrap().is_some());
 }
 
-/// W2-EVICT-TABLE-FULL under §9.3.9 P10-10J: the oldest tombstone is evicted at the moment the cap
-/// overflows, not at the datagram's end, so siblings see the eviction in order. A repeat before the
-/// new completion is still a duplicate; after it, the evicted identity's part is new and, at a full
-/// incomplete table, drops the whole datagram with nothing applied.
-///
-/// Labelled until the writer answers whether end-of-datagram trimming is allowed.
+/// W2-EVICT-TABLE-FULL under §9.3.9 P10-10L: tombstone trimming happens at the END of the datagram
+/// only, so every sibling sees the old unexpired tombstones plus the earlier completions. A repeat of
+/// the oldest identity is a duplicate whether it comes before or after the completion that overflows
+/// the cap, and the oldest goes once the datagram is taken.
 #[test]
-fn a_sibling_evicts_at_the_moment_of_overflow() {
+fn trimming_waits_for_the_end_of_the_datagram() {
     for repeat_first in [false, true] {
         let mut r = BlobReassembler::default();
         // Sixty-four tombstones, identity 1000 the oldest.
@@ -585,7 +583,6 @@ fn a_sibling_evicts_at_the_moment_of_overflow() {
                 .unwrap();
         }
         assert_eq!(r.incomplete_len(), 64);
-        let before = r.clone();
         let new = parts(4, 500, 500, 3, &[3])[0].clone();
         let repeat = oldest[0].clone();
         let datagram = if repeat_first {
@@ -593,23 +590,20 @@ fn a_sibling_evicts_at_the_moment_of_overflow() {
         } else {
             [new, repeat]
         };
-        if repeat_first {
-            assert_eq!(r.check_packet(1, &datagram, 1.0), Ok(()));
-            let blobs = r.ingest_packet(1, &datagram, 1.0).expect("taken whole");
-            assert_eq!(blobs.len(), 1);
-            assert_eq!(r.counts().duplicates, 1);
-            assert_eq!(r.tombstone_sizes().0, MAX_BLOB_TOMBSTONES);
-            assert_eq!(r.counts().tombstones_evicted, 1);
-        } else {
-            let full = Err(SessionError::ReassemblyTableFull { max_concurrent: 64 });
-            assert_eq!(r.check_packet(1, &datagram, 1.0).map(|()| 0), full);
-            assert_eq!(r.ingest_packet(1, &datagram, 1.0).map(|b| b.len()), full);
-            assert!(
-                r.same_state(&before),
-                "nothing applied, the eviction undone"
-            );
-        }
+        assert_eq!(r.check_packet(1, &datagram, 1.0), Ok(()), "{repeat_first}");
+        let blobs = r.ingest_packet(1, &datagram, 1.0).expect("taken whole");
+        assert_eq!(blobs.len(), 1);
+        assert_eq!(r.counts().duplicates, 1, "the old part is still known");
+        assert_eq!(r.tombstone_sizes().0, MAX_BLOB_TOMBSTONES);
+        assert_eq!(r.counts().tombstones_evicted, 1, "trimmed at the end");
         assert_eq!(r.incomplete_len(), 64);
+        // After the datagram the oldest is gone: its part now needs a new entry, at a full table.
+        let full = Err(SessionError::ReassemblyTableFull { max_concurrent: 64 });
+        assert_eq!(
+            r.check_packet(1, std::slice::from_ref(&oldest[0]), 1.0)
+                .map(|()| 0),
+            full
+        );
     }
 }
 
@@ -1233,4 +1227,107 @@ fn twenty_fragments_pass_and_twenty_one_drop_the_datagram() {
     );
     assert_eq!(link.acked(), acked, "nothing is committed");
     assert_eq!(link.counts().empty_controls, MAX_FRAGS_PER_PACKET as u64);
+}
+
+// ----- Vector 22 on the wire: fresh sequences, masked and checksum-valid datagrams -----
+
+/// Vector 22's explicit synthetic recipient (§10.2).
+const V22_RECIPIENT: u64 = 0x0100_0000_0000_0042;
+
+/// One complete queue-3 blob of Vector 22's recipient, group 0, at `order`.
+fn v22_q3(order: u16, body: &[u8]) -> BlobFragment {
+    split_blob(3, order, 0, 0, Some(V22_RECIPIENT), 0x40, body)
+        .expect("split")
+        .remove(0)
+}
+
+/// Vector 22: A at word 5, B at 6 and an identical A at 7, each in its own masked datagram with a
+/// fresh sequence, all deliver and advance to 7. Body equality alone is not a duplicate across
+/// identities (§9.3.9).
+#[test]
+fn vector_22_wire_equal_bodies_at_different_words_deliver() {
+    let mut link = Link::new();
+    link.send(&[v22_q3(5, &[0x11])], 0.2).expect("A at 5");
+    link.send(&[v22_q3(6, &[0x22])], 0.201).expect("B at 6");
+    link.send(&[v22_q3(7, &[0x11])], 0.202).expect("A at 7");
+    let got = link.delivered();
+    assert_eq!(got.len(), 3);
+    assert!(got.iter().all(|b| b.recipient_id == V22_RECIPIENT));
+    assert_eq!(link.counts().duplicates, 0);
+    // Advanced to 7: word 6 is older now.
+    link.send(&[v22_q3(6, &[0x33])], 0.203).expect("older");
+    assert!(link.delivered().is_empty());
+    assert_eq!(link.counts().queue3_older, 1);
+}
+
+/// Vector 22: end-of-datagram trimming sees every sibling before it evicts; a later sibling that
+/// matches an old tombstone still deduplicates even though an earlier sibling would have overflowed
+/// the cap in the middle of the datagram.
+#[test]
+fn vector_22_wire_a_later_sibling_still_sees_the_oldest_tombstone() {
+    let mut link = Link::new();
+    let queue2 = |id: u16, body: &[u8]| {
+        split_blob(2, id, id, 0, Some(V22_RECIPIENT), 0x40, body)
+            .expect("split")
+            .remove(0)
+    };
+    // Sixty-four tombstones, identity 0 the oldest, in datagrams of at most 20 fragments.
+    let all: Vec<BlobFragment> = (0..MAX_BLOB_TOMBSTONES as u16)
+        .map(|id| queue2(id, &[id as u8]))
+        .collect();
+    for (i, chunk) in all.chunks(MAX_FRAGS_PER_PACKET).enumerate() {
+        link.send(chunk, 0.2 + i as f64 * 0.001).expect("fill");
+    }
+    assert_eq!(link.delivered().len(), MAX_BLOB_TOMBSTONES);
+    // One datagram: a new completion (the 65th), then an exact repeat of the oldest.
+    link.send(&[queue2(500, &[9]), queue2(0, &[0])], 0.3)
+        .expect("accepted");
+    let got = link.delivered();
+    assert_eq!(got.len(), 1, "the repeat deduplicates");
+    assert_eq!(got[0].blob_id, 500);
+    assert_eq!(link.counts().duplicates, 1);
+    assert_eq!(link.counts().tombstones_evicted, 1);
+    // The oldest went at the end of that datagram: its repeat now delivers.
+    link.send(&[queue2(0, &[0])], 0.31).expect("accepted");
+    assert_eq!(link.delivered().len(), 1);
+}
+
+/// Vector 22: eight full 1 MiB bodies fit the 8 MiB cap; a ninth distinct completion evicts the
+/// oldest body after its datagram.
+#[test]
+fn vector_22_wire_eight_mebibyte_bodies_fit_and_a_ninth_evicts() {
+    let mut link = Link::new();
+    // The largest bodies the default limit assembles (2404 parts, just under 1 MiB).
+    let body = |seed: u8| vec![seed; 2404 * MAX_BLOB_FRAG_PAYLOAD];
+    assert!(8 * body(0).len() <= MAX_TOMBSTONE_BYTES);
+    let mut t = 0.2;
+    let mut send_body = |link: &mut Link, id: u16, seed: u8| {
+        let frags =
+            split_blob(2, id, id, 0, Some(V22_RECIPIENT), 0x40, &body(seed)).expect("split");
+        for chunk in frags.chunks(MAX_FRAGS_PER_PACKET) {
+            t += 0.000_1;
+            link.send(chunk, t).expect("part");
+        }
+    };
+    for id in 0..8u16 {
+        send_body(&mut link, id, id as u8 + 1);
+        assert_eq!(link.delivered().len(), 1, "body {id}");
+    }
+    assert_eq!(link.counts().tombstones_evicted, 0, "eight fit");
+    send_body(&mut link, 8, 9);
+    assert_eq!(link.delivered().len(), 1);
+    assert_eq!(link.counts().tombstones_evicted, 1, "the ninth evicts one");
+    // The oldest (identity 0) is forgotten, the next oldest (identity 1) is still known.
+    let first_part = |id: u16, seed: u8| {
+        split_blob(2, id, id, 0, Some(V22_RECIPIENT), 0x40, &body(seed))
+            .expect("split")
+            .remove(0)
+    };
+    let dups = link.counts().duplicates;
+    link.send(&[first_part(1, 2)], t + 0.01)
+        .expect("old part of 1");
+    assert_eq!(link.counts().duplicates, dups + 1, "identity 1 retained");
+    let before = link.counts().duplicates;
+    link.send(&[first_part(0, 1)], t + 0.02).expect("part of 0");
+    assert_eq!(link.counts().duplicates, before, "identity 0 evicted");
 }

@@ -466,7 +466,7 @@ pub enum Command {
     /// with [`NetError::InvalidCommand`]. The session stays [`SessionState::InWorld`] until
     /// the answer. The official backend has no return to the list (`docs/ARCHITECTURE.md` §19.1):
     /// it takes the command only in the world, where it closes the session with one Disconnect on
-    /// the active world connection and no logout RPC (`official-session.md` §9.3.9), and
+    /// the active world connection and no logout RPC (`official-session.md` §9.3.12), and
     /// `Disconnected { ClientRequested }` is its answer (the client goes to the account form);
     /// while entering it refuses it with [`NetError::InvalidCommand`].
     ///

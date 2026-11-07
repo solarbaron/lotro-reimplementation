@@ -343,16 +343,18 @@ fn the_accumulator_is_on_every_line() {
     let lines = evidence_of(|| {
         let (mut conn, mut server) = connected();
         conn.tick(0.3).expect("the first report");
-        // Bytes to report, attached to the next reliable blob.
+        // Bytes to report, attached to the next reliable blob once the one-second cap after the
+        // first report is up (§9.3.12).
         conn.receive_datagram(&server.blob(), PEER, 0.4, WireCodecs::NONE)
             .expect("bytes");
-        let seqs = conn.send_blob(2, 0, 0x6F, &[0], 0.5, None).expect("a blob");
+        let at = 0.3 + FLOW_REPORT_ONLY_PERIOD_SEC + 0.1;
+        let seqs = conn.send_blob(2, 0, 0x6F, &[0], at, None).expect("a blob");
         while conn.pop_outbound_datagram().is_some() {}
         let nak = OptionalHeaders {
             sequence_nak: Some(seqs),
             ..OptionalHeaders::default()
         };
-        conn.receive_datagram(&server.packet(&nak), PEER, 0.6, WireCodecs::NONE)
+        conn.receive_datagram(&server.packet(&nak), PEER, at + 0.1, WireCodecs::NONE)
             .expect("the NAK");
     });
     let resend = lines_of(&lines, "kind=\"resend\"");

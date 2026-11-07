@@ -4086,6 +4086,151 @@ fn a_discard_leaves_nothing_to_resend() {
     assert!(conn.pop_outbound_datagram().is_none());
 }
 
+/// §9.3.9 closed transport action table, first row: the drop needs flag `0x00000004` AND a fragment.
+/// An unmasked control with the flag and no fragment is not that row; it keeps the rules of a
+/// standalone unmasked control (here an accepted Ack).
+#[test]
+fn an_unmasked_flag_without_a_fragment_is_not_an_unmasked_fragment() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 70), 9000);
+    let mut conn = connected_connection(peer, 0x0000_006B);
+    let mut dgram = server_ack(0x0100);
+    let mut parsed = decode_datagram(&dgram, true, None, false).unwrap();
+    parsed.header.flags |= FLAG_HAS_FRAGMENTED_BLOBS;
+    parsed.header.checksum =
+        combine_packet_checksum(parsed.header, parsed.payload_sum, None).unwrap();
+    dgram[2..22].copy_from_slice(&parsed.header.to_wire_bytes());
+    let got = conn.receive_datagram(&dgram, peer, 0.5, WireCodecs::NONE);
+    assert!(
+        !matches!(got, Err(SessionError::UnmaskedFragment { .. })),
+        "{got:?}"
+    );
+}
+
+/// Vector 24 and the §5.3 F4 exception: a NAK whose first number is above the retained `0xF4`
+/// never frees it implicitly; a later NAK for the `0xF4` resends its identical saved bytes. A
+/// retained `0xEC` below that first number follows the generic §5.3 rule and is freed. Only an
+/// explicit cumulative Ack covering the `0xF4` ends its retention.
+#[test]
+fn an_implicit_ack_never_frees_the_retained_f4() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 68), 9000);
+    let mut conn = connected_connection(peer, 0x0000_0069);
+    let control = |opt: OptionalHeaders| {
+        encode_datagram(
+            DatagramHeader {
+                rec_id: 0x0100,
+                ..DatagramHeader::default()
+            },
+            &opt,
+            &[],
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    let nak = |seq: u32| {
+        control(OptionalHeaders {
+            sequence_nak: Some(vec![seq]),
+            ..OptionalHeaders::default()
+        })
+    };
+    let ec = conn
+        .send_blob_retained(1, 0, 2, 0xEC, &[1], 1.0, None)
+        .unwrap()[0];
+    let f4 = conn.send_blob_kept(1, 0, 0xF4, &[0], 1.0, None).unwrap()[0];
+    let later = conn.send_blob(2, 0, 0x10, &[2], 1.0, None).unwrap()[0];
+    let sent = drained_packets(&mut conn);
+    let saved = sent
+        .iter()
+        .find(|p| p.header.seq_num == f4)
+        .expect("the F4")
+        .clone();
+    assert!(ec < f4 && f4 < later);
+
+    // A NAK whose first requested number is above the F4: everything below is implicitly
+    // acknowledged except the F4.
+    conn.receive_datagram(&nak(later), peer, 1.1, WireCodecs::NONE)
+        .unwrap();
+    let resent = drained_packets(&mut conn);
+    assert_eq!(resent.len(), 1);
+    assert_eq!(resent[0].header.seq_num, later);
+
+    // A NAK for the F4 resends its identical saved bytes, sequence, word and checksum.
+    conn.receive_datagram(&nak(f4), peer, 1.2, WireCodecs::NONE)
+        .unwrap();
+    let again = drained_packets(&mut conn);
+    assert_eq!(again.len(), 1, "the F4 is still retained");
+    assert_eq!(again[0].header, saved.header);
+    assert_eq!(again[0].fragments, saved.fragments);
+    assert_eq!(conn.pending_out_of_order_acks(), 0);
+
+    // The EC record below the first NAKed number was freed by the generic rule.
+    conn.receive_datagram(&nak(ec), peer, 1.3, WireCodecs::NONE)
+        .unwrap();
+    assert!(conn.pop_outbound_datagram().is_none());
+    assert_eq!(conn.pending_out_of_order_acks(), 1);
+
+    // An explicit cumulative Ack covering the F4 ends its retention.
+    conn.receive_datagram(
+        &control(OptionalHeaders {
+            cumulative_ack: Some(f4),
+            ..OptionalHeaders::default()
+        }),
+        peer,
+        1.4,
+        WireCodecs::NONE,
+    )
+    .unwrap();
+    conn.receive_datagram(&nak(f4), peer, 1.5, WireCodecs::NONE)
+        .unwrap();
+    assert!(conn.pop_outbound_datagram().is_none());
+    assert_eq!(conn.pending_out_of_order_acks(), 2);
+}
+
+/// §9.3.9 "Login connection at valid referral" and §9.3.12 "Login transport lifetime": a retired
+/// login connection sends no application again. Labelled: its retained application records are
+/// dropped at retirement, so a NAK for one gets an OutOfOrderAck, while its transport goes on.
+#[test]
+fn a_retired_login_connection_resends_no_application() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 69), 9000);
+    let mut conn = connected_connection(peer, 0x0000_006A);
+    let ec = conn
+        .send_blob_retained(1, 0, 2, 0xEC, &[1], 1.0, None)
+        .unwrap()[0];
+    let _ = drained_packets(&mut conn);
+    conn.retire();
+    let nak = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0100,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders {
+            sequence_nak: Some(vec![ec]),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    conn.receive_datagram(&nak, peer, 1.1, WireCodecs::NONE)
+        .unwrap();
+    assert!(
+        conn.pop_outbound_datagram().is_none(),
+        "no application resend"
+    );
+    assert_eq!(conn.pending_out_of_order_acks(), 1);
+    assert_eq!(
+        conn.state(),
+        ConnectionState::Connected,
+        "transport goes on"
+    );
+    // Its transport ticks go on: the out-of-order Ack goes out, with no fragment.
+    conn.tick(1.2).unwrap();
+    let out = drained_packets(&mut conn);
+    assert!(out.iter().all(|p| p.fragments.is_empty()));
+    assert!(out.iter().any(|p| p.opt_headers.out_of_order_ack.is_some()));
+}
+
 /// §9.3.7: one standalone Disconnect copies the sequence and word, draws no mask and waits for no
 /// flush, and nothing goes out for a connection that is not established.
 #[test]

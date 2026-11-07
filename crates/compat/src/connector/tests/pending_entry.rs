@@ -551,10 +551,9 @@ fn the_retiring_login_connection_concerns_the_session_no_more() {
         progress_stages(&d.take_events()),
         [WorldEntryStage::WorldHandshake]
     );
-    assert_eq!(
-        d.connection_states().0,
-        None,
-        "retired at the world's State 5"
+    assert!(
+        d.connection_states().0.is_some(),
+        "the login transport outlives the world's State 5 (§9.3.12)"
     );
     world.take_sent();
     world.deliver(
@@ -578,7 +577,11 @@ fn the_retiring_login_connection_concerns_the_session_no_more() {
     d.step(1.4, true, &go);
     assert!(!d.ended());
     assert_eq!(d.pending_sizes().0, 0);
-    assert_eq!(d.counters().stray_referrals, 0, "no connection takes it");
+    assert_eq!(
+        d.counters().stray_referrals,
+        1,
+        "counted and skipped: no connection takes it (§9.3.9)"
+    );
     assert!(!d.take_events().iter().any(|e| matches!(
         e,
         Event::EnterWorldFailed { .. } | Event::Disconnected { .. }
@@ -948,6 +951,219 @@ fn a_pending_despawn_removes_the_entity_and_nothing_brings_it_back() {
         )),
         "{events:?}"
     );
+}
+
+fn unsupported_alone(events: &[Event]) -> bool {
+    events.iter().any(|e| {
+        matches!(
+            e,
+            Event::Disconnected {
+                reason: DisconnectReason::Unsupported
+            }
+        )
+    }) && !events
+        .iter()
+        .any(|e| matches!(e, Event::Account(AccountEvent::LoginRefused { .. })))
+}
+
+/// Vector 24 and §9.3.11: a later `0x90` from the current world peer with a zero or logical 2 ID,
+/// one that does not read, or one with another valid ID gives Disconnected Unsupported alone, never
+/// a pre-`Connected` LoginRefused pair.
+#[test]
+fn vector_24_a_later_bad_session_start_is_unsupported() {
+    let cases: [(&str, Vec<u8>); 4] = [
+        ("zero ID", ready_of(0)),
+        ("logical 2", ready_of(DEFAULT_RECIPIENT)),
+        ("undecodable", vec![0x00, 1, 2]),
+        ("another ID", ready_of(PLAYER + 1)),
+    ];
+    for (what, body) in cases {
+        let (world, mut d, mut server) = at_session_start(scripted());
+        world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+        d.step(1.4, true, &go);
+        let _ = d.take_events();
+        world.deliver(server.event(0x90, &body), WORLD_SERVER);
+        d.step(1.5, true, &go);
+        assert!(d.ended(), "{what}");
+        let events = d.take_events();
+        assert!(unsupported_alone(&events), "{what}: {events:?}");
+    }
+}
+
+/// Vector 24: an explicit `0x40` to the `0x90`'s ID is required-progress Unsupported and deletes
+/// nothing; one to an unannounced other ID is counted and skipped with no tombstone.
+#[test]
+fn vector_24_despawns_of_the_player_and_of_an_unannounced_id() {
+    let (world, mut d, mut server) = at_session_start(scripted());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    let _ = d.take_events();
+    let sizes = d.pending_sizes();
+    // An unannounced nonlocal ID: counted, no tombstone, nothing ends.
+    let no_target = d.entry_progress().no_target;
+    world.deliver(
+        server.event_to(0x40, 0x0100_0000_0000_0999, &[0x00]),
+        WORLD_SERVER,
+    );
+    d.step(2.1, true, &go);
+    assert!(!d.ended());
+    assert_eq!(d.pending_sizes(), sizes, "no tombstone");
+    assert_eq!(d.entry_progress().no_target, no_target + 1);
+    assert_eq!(d.entry_progress().despawns, 0);
+    // The local player's ID: Unsupported, nothing deleted before the teardown.
+    world.deliver(server.event_to(0x40, PLAYER, &[0x00]), WORLD_SERVER);
+    d.step(2.2, true, &go);
+    assert!(d.ended());
+    assert_eq!(d.entry_progress().despawns, 0);
+    let events = d.take_events();
+    assert!(unsupported_alone(&events), "{events:?}");
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::EntityDespawned { .. }))
+    );
+}
+
+/// Vector 24: the release of a `0x90` with no `0x98` emits no entity spawn or update for it and
+/// holds its kept state; a later validated `0x98` for it lets the held state follow the spawn.
+#[test]
+fn vector_24_the_player_without_a_creation_is_held_until_one() {
+    let (world, mut d, mut server) = at_session_start(gated());
+    world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+    world.deliver(
+        server.event_to(0xCE, PLAYER, &service_support::player_position()),
+        WORLD_SERVER,
+    );
+    d.step(2.0, true, &go);
+    world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+    d.command(
+        &Command::WorldLoaded {
+            generation: Some(1),
+        },
+        2.1,
+    )
+    .expect("loaded");
+    d.step(2.2, true, &go);
+    assert!(d.in_world());
+    let events = d.take_events();
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::EntityCreated { id, .. } if id.0 == PLAYER
+        )),
+        "{events:?}"
+    );
+    assert_eq!(d.pending_sizes(), (0, 0));
+    assert!(d.local_hold_len() > 0, "held, not released");
+    // A validated `0x98` for the player's ID: the held state follows it.
+    let create = EntityCreate {
+        template_did: 0x7000_0001,
+        entity_id: PLAYER,
+    }
+    .to_bytes()
+    .expect("0x98");
+    world.deliver(server.event(0x98, &create), WORLD_SERVER);
+    d.step(2.3, true, &go);
+    assert_eq!(d.local_hold_len(), 0, "taken after the spawn");
+    assert!(d.in_world());
+}
+
+/// The login-peer families of §9.3.12 "Winning login-peer receive rule after Connected".
+const LOGIN_PEER_FAMILIES: [u32; 10] =
+    [0xCE, 0x4C, 0x92, 0x88, 0x30, 0x5F, 0xA8, 0xC7, 0x153, 0x149];
+
+/// §9.3.12: complete `0xCE`, `0x4C`, `0x92`, `0x88`, `0x30`, `0x5F`, `0xA8`, `0xC7`, `0x153` and
+/// `0x149` on the LOGIN connection after `Connected` count and skip, before the referral and after
+/// it: no state change, no application reply, no close and no deadline reset.
+#[test]
+fn login_peer_families_after_connected_change_nothing() {
+    let application = |world: &World| -> usize {
+        world
+            .take_sent()
+            .iter()
+            .filter_map(|(d, _)| decode_client_datagram(d, false).ok())
+            .map(|p| p.fragments.len())
+            .sum()
+    };
+    // At the idle list.
+    let (world, mut d, mut login) = driver_at_characters(production(), 0);
+    world.take_sent();
+    for op in LOGIN_PEER_FAMILIES {
+        world.deliver(login.event(op, &[0x00, 0x01]), LOGIN_SERVER);
+    }
+    d.step(0.5, true, &go);
+    assert!(!d.ended());
+    assert_eq!(application(&world), 0, "no application reply");
+    assert!(d.take_events().is_empty(), "no state change");
+
+    // While the selection waits for its referral: the 30-second clock is not reset.
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    d.step(1.1, true, &go);
+    world.take_sent();
+    let _ = d.take_events();
+    for op in LOGIN_PEER_FAMILIES {
+        world.deliver(login.event(op, &[0x00, 0x01]), LOGIN_SERVER);
+    }
+    d.step(20.0, true, &go);
+    assert_eq!(application(&world), 0);
+    assert!(progress_stages(&d.take_events()).is_empty());
+    d.step(30.9, false, &go);
+    assert!(!d.ended());
+    d.step(31.1, false, &go);
+    assert!(d.ended(), "the selection clock ran from the selection");
+
+    // After the referral the retired login connection's messages concern nothing.
+    let (world, mut d, mut login) = driver_at_characters(production(), 0);
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    d.step(1.1, true, &go);
+    world.deliver(
+        login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+        LOGIN_SERVER,
+    );
+    d.step(1.2, true, &go);
+    let server = Server::new(0x0222, 0xBEEF_0002);
+    server.connect_to(&world, 0xBEEF_0002, WORLD_SERVER);
+    d.step(1.3, true, &go);
+    world.take_sent();
+    let _ = d.take_events();
+    let retired = d.counters().retired_messages;
+    for op in LOGIN_PEER_FAMILIES {
+        world.deliver(login.event(op, &[0x00, 0x01]), LOGIN_SERVER);
+    }
+    d.step(1.4, true, &go);
+    assert!(!d.ended());
+    assert_eq!(
+        d.pending_sizes(),
+        (0, 0),
+        "nothing kept from the login peer"
+    );
+    assert!(d.counters().retired_messages > retired);
+    assert!(
+        world
+            .take_sent()
+            .iter()
+            .filter(|(_, to)| *to == LOGIN_SERVER)
+            .filter_map(|(dg, _)| decode_client_datagram(dg, false).ok())
+            .all(|p| p.fragments.is_empty()),
+        "no application send on the login connection"
+    );
+    assert!(d.take_events().is_empty());
 }
 
 /// `docs/m8-remediation.md` §27 fix 16: a server `0x30`, `0x60` or `0x19A` before `WorldEntered` is
@@ -1874,7 +2090,7 @@ fn a_user_close_after_the_world_state_5_says_one_on_world_only() {
     assert_eq!(disconnects(&world, &[LOGIN_SERVER, WORLD_SERVER]), [0, 1]);
 }
 
-/// §9.3.9: a typed logout is the same close: `ClientRequested`, one Disconnect, no RPC and no drain.
+/// §9.3.12: a typed logout is the same close: `ClientRequested`, one Disconnect, no RPC and no drain.
 #[test]
 fn a_typed_logout_closes_with_one_disconnect_and_no_rpc() {
     let (world, mut d, mut server) = at_session_start(gated());
@@ -2087,7 +2303,8 @@ fn held_commands_in_the_world_on_a_gated_fixture() {
         Err(tessera_net::NetError::InvalidCommand(MOVE_HELD))
     ));
     assert_eq!(d.counters().moves_held, moves + 1);
-    assert!(d.take_events().is_empty(), "no line per move (labelled)");
+    // §9.3.12: only `WorldLoaded` is exempt from the plain line; a held move gets it.
+    assert_one_held_line(&d.take_events());
     assert_eq!(d.counters().outside_world, 0);
     d.step(2.6, true, &go);
     let sent = world.take_sent();

@@ -5003,6 +5003,13 @@ fn oe_t23_leaving_the_list_exits_and_cancel_goes_to_the_form() {
     );
     model.apply(crate::screens::model::Action::Enter, Instant::now());
     assert!(model.back_button().is_enabled(), "the Cancel of the entry");
+    // `official-session.md` §9.3.9 user-close row, entry §4.6: Quit (and so Escape and window
+    // close) while entering exits the client; the Cancel button goes to the account form.
+    let mut quitting = model.clone();
+    quitting.apply(crate::screens::model::Action::Quit, Instant::now());
+    assert_eq!(*quitting.status(), crate::screens::model::Status::Quit);
+    model.apply(crate::screens::model::Action::Back, Instant::now());
+    assert_eq!(*model.status(), crate::screens::model::Status::Cancelled);
 }
 
 /// `official-entry.md` §4.5, OE-T23: every return from the character screens to the account form

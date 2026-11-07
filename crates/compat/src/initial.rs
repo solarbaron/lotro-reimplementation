@@ -869,9 +869,6 @@ pub struct Negotiation {
     /// When the login first queued: the base of its one absolute limit, kept for the whole attempt
     /// so that no later `0x130` can restart it (§9.3.8).
     queued_since: Option<f64>,
-    /// A `0x12D` status `1` or a ready `0x130` already started its list wait: a later one of
-    /// either changes no clock (§9.3.9 status rule: only the first starts the list clock).
-    list_ready_taken: bool,
     /// An actual `0x12F` arrived before `0xEC`: `0xEC` is suppressed (§9.3.8).
     historical: bool,
 }
@@ -912,7 +909,6 @@ impl Negotiation {
                 ignored: 0,
             },
             queued_since: None,
-            list_ready_taken: false,
             historical: false,
         }
     }
@@ -998,20 +994,23 @@ impl Negotiation {
         self.stages.ec_sent
     }
 
-    /// `0x12D` status `1` at `now`: the §9.3.9 status rule. Only the FIRST status `1` or ready
-    /// `0x130` of the attempt, in a stage with no list wait yet, enters the list wait and starts its
-    /// 30-second clock (answers `true`); any other is counted and changes no clock.
+    /// `0x12D` status `1` at `now`: the §9.3.9 status rule. In the `AwaitDD` stage an unsolicited
+    /// one is counted and skipped, keeps the `0xDD` clock and sends nothing. In every other active
+    /// stage it enters the list wait like a ready `0x130` ([`Self::queue_ready`]); answers `true`
+    /// when that started a list clock.
     pub fn version_accepted(&mut self, now: f64) -> bool {
+        if matches!(self.phase, Phase::AwaitingRequest(_)) {
+            self.ignored();
+            return false;
+        }
         self.list_ready(now)
     }
 
     /// A queued `0x130` at `now` cancels the running non-queue wait and installs one absolute limit
-    /// from the FIRST queued status of this login attempt, which no later `0x130` extends (§9.3.9).
-    /// Answers whether this was the first.
-    ///
-    /// Labelled until the writer answers (the queued, ready, queued case): the five-minute limit is
-    /// anchored once per login attempt, so a queued status after a ready one returns to the same
-    /// absolute limit, and a later ready one cannot start a second list wait.
+    /// from the FIRST queued status of this login attempt, which no later `0x130` extends (§9.3.9,
+    /// Vector 25): a queued status after a ready one reinstates the SAME limit. Answers whether this
+    /// was the first. When the reinstated limit has already passed, [`Self::expired`] answers
+    /// [`UnsupportedNegotiation::QueueDeadline`] at once and the driver fails immediately.
     pub fn queued(&mut self, now: f64) -> bool {
         let first = self.queued_since.is_none();
         let since = *self.queued_since.get_or_insert(now);
@@ -1024,21 +1023,24 @@ impl Negotiation {
         self.list_ready(now)
     }
 
-    /// The §9.3.9 status rule for `0x12D` status `1` and a ready `0x130`, in every initial stage:
-    /// enter the list wait with the EC-sent and F5-replied history kept. Only the FIRST of either
-    /// cancels the prior non-list stage or queue clock and starts the 30-second list clock, and only
-    /// when no list wait runs yet; answers `true` then. A repeat, or one while a list wait already
-    /// runs (after the `0xF5` reply), is counted and changes no clock.
+    /// The §9.3.9 status rule for `0x12D` status `1` (outside `AwaitDD`) and a ready `0x130` (in
+    /// every active stage): enter the list wait with the EC-sent and F5-replied history kept. It
+    /// cancels the prior non-list stage or queue clock and starts the 30-second list clock ONLY if
+    /// no current list wait exists; answers `true` then. One while a list wait already runs (a
+    /// repeat, or after the `0xF5` reply) is counted and never resets that clock.
+    ///
+    /// Labelled (question for the writer): a ready status after a re-queue finds no current list
+    /// wait (the queued status cancelled it), so it starts a new one; the queue's absolute limit
+    /// keeps its first origin, so alternating statuses cannot renew it ([`Self::queued`]).
     fn list_ready(&mut self, now: f64) -> bool {
         let list_wait = matches!(
             self.phase,
             Phase::AwaitingList(_) | Phase::HistoricalList(_) | Phase::Finished | Phase::Connecting
         );
-        if self.list_ready_taken || list_wait {
+        if list_wait {
             self.ignored();
             return false;
         }
-        self.list_ready_taken = true;
         self.phase = Phase::HistoricalList(now);
         true
     }
@@ -1367,8 +1369,8 @@ mod tests {
         assert_eq!(n.deadline(), None);
     }
 
-    /// §9.3.8: queued, ready and queued again keep the first limit, however often they alternate,
-    /// and only the first ready starts a list wait.
+    /// §9.3.9 and Vector 25: queued, ready and queued again keep the first limit, however often
+    /// they alternate; a queued status after that limit fails at once.
     #[test]
     fn queued_and_ready_cannot_alternate_past_the_limit() {
         let mut n = Negotiation::new();
@@ -1378,14 +1380,52 @@ mod tests {
         assert_eq!(n.deadline(), Some(320.0));
         assert!(!n.queued(291.0));
         assert_eq!(n.deadline(), Some(300.0), "the first limit, not a new one");
+        // Labelled: a ready after the re-queue starts a new list wait.
+        assert!(n.queue_ready(292.0));
+        assert_eq!(n.deadline(), Some(322.0));
         let ignored = n.stages().ignored;
-        assert!(!n.queue_ready(292.0));
-        assert_eq!(n.deadline(), Some(300.0));
+        assert!(!n.queue_ready(293.0), "a repeat in the list wait");
+        assert_eq!(n.deadline(), Some(322.0));
         assert_eq!(n.stages().ignored, ignored + 1);
+        // Queued again after the absolute limit: UnsupportedTimeout at once.
+        assert!(!n.queued(301.0));
         assert_eq!(
-            n.expired(300.0),
+            n.expired(301.0),
             Some(UnsupportedNegotiation::QueueDeadline)
         );
+        assert!(UnsupportedNegotiation::QueueDeadline.is_deadline());
+    }
+
+    /// Vector 25: queued at 0, ready at 20, queued at 40 restores the absolute queue deadline 300
+    /// seconds from the FIRST queued report, not 340.
+    #[test]
+    fn vector_25_the_queue_deadline_keeps_its_first_origin() {
+        let mut n = Negotiation::new();
+        n.connected(0.0);
+        assert!(n.queued(0.0));
+        assert!(n.queue_ready(20.0));
+        assert!(!n.queued(40.0));
+        assert_eq!(n.deadline(), Some(QUEUE_WAIT_SEC));
+        assert_eq!(n.expired(QUEUE_WAIT_SEC - 0.1), None);
+        assert_eq!(
+            n.expired(QUEUE_WAIT_SEC),
+            Some(UnsupportedNegotiation::QueueDeadline)
+        );
+    }
+
+    /// Vector 25: an unsolicited `0x12D` status 1 while AwaitDD counts and skips, keeps the `0xDD`
+    /// clock and starts no list wait.
+    #[test]
+    fn vector_25_status_1_in_await_dd_is_skipped() {
+        let mut n = Negotiation::new();
+        n.connected(0.0);
+        assert!(!n.version_accepted(5.0));
+        assert_eq!(n.stages().ignored, 1);
+        assert_eq!(n.deadline(), Some(DD_WAIT_SEC), "the DD clock is kept");
+        assert!(n.wants_request(), "still in AwaitDD");
+        // A ready 0x130 in AwaitDD still enters the list wait.
+        assert!(n.queue_ready(6.0));
+        assert_eq!(n.deadline(), Some(6.0 + HISTORICAL_LIST_WAIT_SEC));
     }
 
     /// §9.3.9 status rule: only the FIRST `0x12D` status 1 or ready `0x130` starts the list clock;
@@ -1406,13 +1446,14 @@ mod tests {
             Some(UnsupportedNegotiation::HistoricalListDeadline)
         );
 
-        // In the `0xDD` wait: the first enters the list wait (cancelling the `0xDD` clock), and the
-        // next of either kind is a repeat.
+        // In the `0xDD` wait: a ready `0x130` enters the list wait (cancelling the `0xDD` clock),
+        // and the next of either kind is a repeat. (A `0x12D` status 1 there is skipped, Vector 25.)
         let mut n = Negotiation::new();
         n.connected(0.0);
-        assert!(n.version_accepted(5.0));
+        assert!(n.queue_ready(5.0));
         assert_eq!(n.deadline(), Some(5.0 + HISTORICAL_LIST_WAIT_SEC));
         assert!(!n.queue_ready(6.0));
+        assert!(!n.version_accepted(6.0));
         assert_eq!(n.deadline(), Some(5.0 + HISTORICAL_LIST_WAIT_SEC));
         assert!(
             !n.wants_request(),

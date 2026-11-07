@@ -1456,6 +1456,15 @@ test = false
 doc = false
 bench = false
 
+# --- M8: decision 0046 item 13's resource-set report 0x13D (official-session.md §9.3.12) ---
+
+[[bin]]
+name = "compat_resource_report"
+path = "fuzz_targets/compat_resource_report.rs"
+test = false
+doc = false
+bench = false
+
 # --- M8 cleanup: tessera-compat PE version-resource reader (decision 0042 item 1) ---
 
 [[bin]]

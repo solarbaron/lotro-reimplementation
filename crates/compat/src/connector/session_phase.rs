@@ -77,8 +77,14 @@
 //! a test's synthetic network reaches the code beyond that stage; [`super::net::LiveNet`] has
 //! neither.
 //!
-//! Decision 0046 items 5 and 10 hold `0x13D`, `0x19E`, every world `0x30` before `WorldEntered`,
-//! `0x30000035`, `0x24` and `0x19A` ([`super::pending_world::WITHHELD_BEFORE_F4`]). `0x24` stays held
+//! Decision 0046 items 5 and 10 hold `0x19E`, every world `0x30` before `WorldEntered`,
+//! `0x30000035`, `0x24` and `0x19A` ([`super::pending_world::WITHHELD_BEFORE_F4`]). Item 13 lifts the
+//! `0x13D` hold for its restricted candidate (`official-session.md` §9.3.12): built from the same
+//! preflight snapshot as `0xEC` before the first datagram, and queued once on queue 1 to
+//! [`RESOURCE_REPORT_DESTINATION`] right after the first complete character list and before
+//! `Connected`, so before any `0x6F`. An omission (any [`ReportOmission`]) withholds the whole report
+//! under item 5, is logged as a kind and never ends the login; the stage line's withheld list names
+//! it ([`super::pending_world::withheld_before_f4`]). `0x24` stays held
 //! in the world too until OPEN-WORLD-9 settles its body: a `Command::Move` is a local
 //! `InvalidCommand` and nothing is sent, not even the historical 38-byte form
 //! ([`DriverCounters::moves_held`], §9.3.9 "World send inventory").
@@ -281,7 +287,7 @@ use crate::world::{
     WorldError, active_target, encode_event_envelope, one_shared_prefix, rebuild_shared_prefix,
 };
 
-use super::data::{SchemaView, chat_categories, prepare_advertisement};
+use super::data::{SchemaView, chat_categories, prepare_preflight, prepare_resource_report};
 use super::diag::{
     AuthMode, BindCase, HANDSHAKE_REPORT_SEC, HandshakeReport, LinkDiag, LocalSource,
     LoginServerEntry, RejectKind, RemoteForm, RemoteName, carries_challenge, error_kind,
@@ -296,9 +302,11 @@ use super::entities::{
 use super::login_phase::PlainSteps;
 use super::net::{ConnectorNet, SendHttpClient};
 use super::pending_world::{
-    DEFAULT_RECIPIENT, DEFAULT_RECIPIENT_DESPAWN_APPLIES, EntitySnapshot, PendingWorld, Stored,
-    withheld_summary,
+    DEFAULT_RECIPIENT, DEFAULT_RECIPIENT_DESPAWN_APPLIES, EntitySnapshot, PendingWorld,
+    ReportStatus, Stored, withheld_before_f4, withheld_summary,
 };
+use crate::resource_report::ReportOmission;
+pub use crate::resource_report::{OPCODE_RESOURCE_SET_REPORT, RESOURCE_REPORT_DESTINATION};
 
 /// One line of the evidence log (`official-session.md` §9.3.11 "Required live-log CONTENT"), written
 /// only while `$on` (the local opt-in, off by default: [`SessionStart::evidence`]).
@@ -342,6 +350,7 @@ pub const QUEUE_RELIABLE_UNORDERED: u8 = 4;
 /// | `0x12C` | 4 | — |
 /// | `0xEC`, `0xF5` | 1 | — (§9.3.2, §9.3.3) |
 /// | `0x19E` | 1 | — (§9.3.8; omitted under decision 0046) |
+/// | `0x13D` | 1 | — (§9.3.12; to [`RESOURCE_REPORT_DESTINATION`], decision 0046 item 13) |
 /// | `0x6F` | 2 | — (§9.3.8; to [`SELECTION_DESTINATION`]) |
 /// | `0x24` | 1, or 3 when discrete ([`movement_is_discrete`]) | `0x05` on queue 3 |
 /// | `0xF4` | 1 | — (§9.3.9: observed queue; its trigger is OPEN-WORLD-9) |
@@ -361,6 +370,7 @@ pub fn outbound_queue(opcode: u32, payload: &[u8]) -> (u8, u16) {
         OPCODE_INSTALL_ADVERTISEMENT
         | OPCODE_COMPLETION
         | OPCODE_CLIENT_PLATFORM_ID
+        | OPCODE_RESOURCE_SET_REPORT
         | OPCODE_PORTAL_READY_ACK => (QUEUE_UNRELIABLE, 0),
         OPCODE_CHARACTER_SELECT => (QUEUE_RELIABLE_ORDERED, 0),
         OPCODE_MOVEMENT_STEP if !movement_is_discrete(payload) => (QUEUE_UNRELIABLE, 0),
@@ -1124,6 +1134,28 @@ pub struct DriverCounters {
     pub refusals_skipped: u64,
     /// Malformed `0x12E`, `0x12D` or `0x130` (§9.3.9: counted and discarded).
     pub malformed_control: u64,
+    /// Resource-set reports `0x13D` queued (decision 0046 item 13: at most one per login).
+    pub resource_reports_sent: u64,
+    /// Resource-set reports omitted under decision 0046 item 5 (at most one per login).
+    pub resource_reports_omitted: u64,
+}
+
+/// Decision 0046 item 13's report in one driver (`official-session.md` §9.3.12).
+#[derive(Debug)]
+enum ReportState {
+    /// Decided at the start, not acted on yet: the complete data, or why it is omitted.
+    Pending(Result<Vec<u8>, ReportOmission>),
+    /// Acted on at the first complete character list; nothing more happens in this login.
+    Decided(ReportStatus),
+}
+
+impl ReportState {
+    fn status(&self) -> ReportStatus {
+        match self {
+            Self::Pending(_) => ReportStatus::Undecided,
+            Self::Decided(status) => *status,
+        }
+    }
 }
 
 /// The resolver of a message past [`MAX_MESSAGE_PLAY_EVENTS`]: it looks nothing up and
@@ -1153,6 +1185,10 @@ pub struct SessionDriver<N: ConnectorNet> {
     /// The advertisement built before the first datagram; taken once, when `0xEC` goes out
     /// (one per primary login connection, decision 0046 item 2).
     advertisement: Option<PreparedAdvertisement>,
+    /// Decision 0046 item 13's report (`official-session.md` §9.3.12): its candidate or omission,
+    /// decided once from the preflight snapshot, then whether it went out. One per driver, so a new
+    /// login attempt gets a fresh decision.
+    resource_report: ReportState,
     schema: SchemaView,
     stage: Stage,
     characters: Vec<(u64, String)>,
@@ -1384,8 +1420,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return Err(StartFailure::Cancelled);
         }
         // §9.3.7's preflight comes before the ticket: its failure spends nothing.
-        let advertisement =
-            prepare_advertisement(start.schema.0.as_ref()).map_err(StartFailure::Unsupported)?;
+        let preflight =
+            prepare_preflight(start.schema.0.as_ref()).map_err(StartFailure::Unsupported)?;
+        // §9.3.12, decision 0046 item 13: the report's candidate from the same snapshot. An
+        // omission is never a start failure: the login goes on under item 5.
+        let resource_report = ReportState::Pending(prepare_resource_report(
+            start.schema.0.as_ref(),
+            &preflight.archives,
+        ));
+        let advertisement = preflight.advertisement;
         // §3.2 item 2: the wildcard address unless the two-colon `-h` form's `localHost`
         // (which overrides) or `Net.BindInterface` selects one. A `localHost` segment that
         // is given still overrides `Net.BindInterface` when it is not an IPv4 literal (or
@@ -1466,6 +1509,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             version: start.version,
             initial: Negotiation::new(),
             advertisement: Some(advertisement),
+            resource_report,
             schema: start.schema,
             stage: Stage::Login,
             characters: Vec::new(),
@@ -1810,11 +1854,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 refused_world_datagrams = world,
                 pending_entities = self.pending.entities(),
                 pending_bytes = self.pending.bytes(),
-                withheld = %withheld_summary(),
+                withheld = %withheld_summary(self.resource_report.status()),
                 "official world entry: stopped"
             );
             // §9.3.11 "Required live-log CONTENT": what was withheld, one line per family.
-            for w in super::pending_world::WITHHELD_BEFORE_F4 {
+            for w in withheld_before_f4(self.resource_report.status()) {
                 evidence!(
                     self.evidence_log,
                     info,
@@ -3303,9 +3347,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// One that fails ends the attempt, with no forward scan, no partial list and no character
     /// invented, and so does a compressed or routed one; an unknown appearance form (OPEN-WORLD-9) is
     /// such a failure. Every later list is counted and skipped in every phase: the list and its
-    /// private IDs stay as they are. `Connected` carries names only: no attribute is guessed. `0x13D`
-    /// and `0x19E` are not emitted (decision 0046 item 5). The account table belongs to this list's
-    /// character-screen state and triggers nothing.
+    /// private IDs stay as they are. `Connected` carries names only: no attribute is guessed. `0x19E`
+    /// is not emitted (decision 0046 item 5); decision 0046 item 13's `0x13D` is queued once here,
+    /// before `Connected`, or omitted ([`Self::resource_report`]). The account table belongs to this
+    /// list's character-screen state and triggers nothing.
     fn character_list(&mut self, m: &Inbound, now: f64) {
         if self.stage != Stage::Login {
             self.counters.later_lists_skipped = self.counters.later_lists_skipped.saturating_add(1);
@@ -3340,6 +3385,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.characters = names;
         self.initial.list_received();
         self.initial_step("character list", now);
+        // §9.3.12: after the first complete list and before `Connected`, so before any `0x6F`.
+        self.resource_report(now);
         self.stage = Stage::Characters;
         let characters = self
             .characters
@@ -4235,6 +4282,89 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 tracing::debug!(error = %e, "official session: the ready message was not queued");
                 false
             }
+        }
+    }
+
+    /// Decision 0046 item 13 (`official-session.md` §9.3.12): once per login, at the first complete
+    /// character list. An eligible candidate is queued on queue 1, group 0, to
+    /// [`RESOURCE_REPORT_DESTINATION`], unfragmented with blob ID 0 under the current word, sequence
+    /// and flow policy; its sequence is taken now, so it goes out before any later `0x6F`. Nothing
+    /// waits for its Ack, a response or `0x149`, and no timeout is added. A NAK for it follows the
+    /// generic queue-1 rule (labelled: §9.3.12 gives it no retention). An omission, or a candidate
+    /// that cannot be queued, withholds the whole report under item 5 and the login goes on. The log
+    /// line names the outcome and a kind only, never a key, label, mask or DID.
+    fn resource_report(&mut self, now: f64) {
+        let ReportState::Pending(candidate) = std::mem::replace(
+            &mut self.resource_report,
+            ReportState::Decided(ReportStatus::Undecided),
+        ) else {
+            return;
+        };
+        let status = match candidate {
+            Ok(data) if self.send_resource_report(&data, now) => ReportStatus::Sent,
+            Ok(_) => ReportStatus::Omitted(ReportOmission::Enqueue),
+            Err(kind) => ReportStatus::Omitted(kind),
+        };
+        self.resource_report = ReportState::Decided(status);
+        match status {
+            ReportStatus::Sent => {
+                self.counters.resource_reports_sent =
+                    self.counters.resource_reports_sent.saturating_add(1);
+                tracing::info!("official session: resource-set report sent");
+                evidence!(
+                    self.evidence_log,
+                    info,
+                    direction = "send",
+                    event_kind = "resource-set report",
+                    action = "sent",
+                    raw_opcode = format_args!("{OPCODE_RESOURCE_SET_REPORT:#x}"),
+                    first_of_opcode = true,
+                    queue = QUEUE_UNRELIABLE,
+                    sequence_group = 0,
+                    recipient = "explicit protocol destination",
+                    "official evidence: resource-set report"
+                );
+            }
+            ReportStatus::Omitted(kind) => {
+                self.counters.resource_reports_omitted =
+                    self.counters.resource_reports_omitted.saturating_add(1);
+                tracing::info!(
+                    reason = kind.label(),
+                    "official session: resource-set report omitted"
+                );
+                self.held_evidence(OPCODE_RESOURCE_SET_REPORT, kind.withholding_reason());
+            }
+            ReportStatus::Undecided => {}
+        }
+    }
+
+    /// Queues `0x13D`'s complete data `data` on queue 1 of the login connection to
+    /// [`RESOURCE_REPORT_DESTINATION`] in the explicit recipient form (§9.3.12).
+    fn send_resource_report(&mut self, data: &[u8], now: f64) -> bool {
+        let (queue, group) = outbound_queue(OPCODE_RESOURCE_SET_REPORT, &[]);
+        let sent = self
+            .login
+            .mux
+            .connection_mut(self.login.conn)
+            .map(|connection| {
+                connection.send_blob_to(
+                    queue,
+                    group,
+                    RESOURCE_REPORT_DESTINATION,
+                    OPCODE_RESOURCE_SET_REPORT,
+                    data,
+                    now,
+                    self.codecs.outgoing.as_deref(),
+                )
+            });
+        match sent {
+            Some(Ok(_)) => true,
+            Some(Err(e)) => {
+                self.counters.send_failures += 1;
+                tracing::debug!(error = %e, "official session: resource-set report not queued");
+                false
+            }
+            None => false,
         }
     }
 

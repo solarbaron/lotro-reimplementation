@@ -414,6 +414,39 @@ entry = ["tessera_compat::world::CharacterListResponse::from_envelope_body"]
 input = "network"
 target = "compat_initial_negotiation"
 
+# Decision 0046 item 13 (official-session.md §9.3.12): the strict 0x13D codec, the pure resolver over
+# hostile mapper records and the client's route through hostile DID maps and enum mappers.
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/world.rs"
+entry = [
+    "tessera_compat::world::ResourceSetMask::decode",
+    "tessera_compat::world::ResourceSetReport::decode",
+    "tessera_compat::world::ResourceSetReport::from_bytes",
+]
+input = "network"
+target = "compat_resource_report"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/resource_report.rs"
+entry = [
+    "tessera_compat::resource_report::resolve_resource_sets",
+    "tessera_compat::resource_report::resource_set_config",
+]
+input = "install record"
+target = "compat_resource_report"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/official/install_data.rs"
+entry = [
+    "tessera_client::official::install_data::resource_set_lookup",
+    "tessera_client::official::install_data::resource_sets_of",
+]
+input = "install record"
+target = "compat_resource_report"
+
 [[parser]]
 crate = "tessera-compat"
 file = "crates/compat/src/connector/session_phase.rs"

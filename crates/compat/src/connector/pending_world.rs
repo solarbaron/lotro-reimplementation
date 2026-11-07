@@ -49,13 +49,15 @@
 //! # What is not sent
 //!
 //! [`WITHHELD_BEFORE_F4`] is the one place that names the client messages the observed client sends
-//! before `0xF4` and Tessera does not. The stage line of an entry that stops carries the list
-//! ([`withheld_summary`]), so a live log shows what was withheld.
+//! before `0xF4` and Tessera may not. A session's own list ([`withheld_before_f4`]) drops `0x13D` when
+//! decision 0046 item 13's report went out and otherwise names its omission kind. The stage line of an
+//! entry that stops carries that list ([`withheld_summary`]), so a live log shows what was withheld.
 
 use std::collections::BTreeMap;
 
 use tessera_net::Location;
 
+use crate::resource_report::ReportOmission;
 use crate::world::PropertyTableUpdate;
 
 /// Most target keys kept per world connection (§9.3.9).
@@ -82,12 +84,15 @@ pub struct WithheldSend {
     pub held_by: &'static str,
 }
 
-/// The client messages withheld before `0xF4` (`official-session.md` §9.3.8, §9.3.9 "World send
-/// inventory"). The first three are decision 0046 item 5's fixed omissions, the next four its item
-/// 10's, which §9.3.9 cites: they stay unsent for any user past the warning and consent gate until a
-/// source for their contents exists. All are labelled known differences from the observed client, the
-/// server's reaction is untested, and the run ends at `UnsupportedTimeout`. `0xF4` itself has no source
-/// yet (OPEN-WORLD-9).
+/// The client messages the observed client sends before `0xF4` that a session may withhold
+/// (`official-session.md` §9.3.8, §9.3.9 "World send inventory", §9.3.12). The first three are
+/// decision 0046 item 5's omissions, the next four its item 10's, which §9.3.9 cites: they stay unsent
+/// for any user past the warning and consent gate until a source for their contents exists. `0x13D`
+/// is the one exception: decision 0046 item 13 sends its restricted candidate when eligible, so a
+/// session's own list ([`withheld_before_f4`]) drops it when it was sent and otherwise names the
+/// item-13 omission kind. `0x19E` has no genuine own-process platform source. All are labelled known
+/// differences from the observed client, the server's reaction is untested, and the run ends at
+/// `UnsupportedTimeout`. `0xF4` itself has no source yet (OPEN-WORLD-9).
 pub const WITHHELD_BEFORE_F4: [WithheldSend; 8] = [
     WithheldSend {
         family: "0x13D",
@@ -95,7 +100,7 @@ pub const WITHHELD_BEFORE_F4: [WithheldSend; 8] = [
     },
     WithheldSend {
         family: "0x19E",
-        held_by: "decision 0046 item 5, OPEN-SESSION-20",
+        held_by: "decision 0046 item 5; no genuine own-process platform source",
     },
     WithheldSend {
         family: "first world 0x30",
@@ -123,10 +128,44 @@ pub const WITHHELD_BEFORE_F4: [WithheldSend; 8] = [
     },
 ];
 
-/// The families of [`WITHHELD_BEFORE_F4`], for one log field.
+/// What became of a session's resource-set report `0x13D` (decision 0046 item 13,
+/// `official-session.md` §9.3.12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportStatus {
+    /// No character list has been decoded yet: nothing was decided.
+    Undecided,
+    /// The candidate was queued once.
+    Sent,
+    /// It was omitted, for this kind.
+    Omitted(ReportOmission),
+}
+
+/// The withheld list of one session: [`WITHHELD_BEFORE_F4`] without `0x13D` once it was sent, and
+/// with the item-13 omission kind as its reason when it was omitted.
 #[must_use]
-pub fn withheld_summary() -> String {
+pub fn withheld_before_f4(report: ReportStatus) -> Vec<WithheldSend> {
     WITHHELD_BEFORE_F4
+        .iter()
+        .filter_map(|w| {
+            if w.family != "0x13D" {
+                return Some(*w);
+            }
+            match report {
+                ReportStatus::Sent => None,
+                ReportStatus::Undecided => Some(*w),
+                ReportStatus::Omitted(kind) => Some(WithheldSend {
+                    family: w.family,
+                    held_by: kind.withholding_reason(),
+                }),
+            }
+        })
+        .collect()
+}
+
+/// The families of a session's [`withheld_before_f4`], for one log field.
+#[must_use]
+pub fn withheld_summary(report: ReportStatus) -> String {
+    withheld_before_f4(report)
         .iter()
         .map(|w| w.family)
         .collect::<Vec<_>>()
@@ -920,7 +959,7 @@ mod tests {
 
     #[test]
     fn the_withheld_record_names_every_family_of_the_inventory() {
-        let s = withheld_summary();
+        let s = withheld_summary(ReportStatus::Undecided);
         for family in [
             "0x13D",
             "0x19E",
@@ -940,6 +979,30 @@ mod tests {
         for send in &WITHHELD_BEFORE_F4[..3] {
             assert!(send.held_by.contains("decision 0046 item 5"), "{send:?}");
         }
+        assert_eq!(
+            WITHHELD_BEFORE_F4[1].held_by,
+            "decision 0046 item 5; no genuine own-process platform source"
+        );
+    }
+
+    /// Decision 0046 item 13: a sent report leaves the list; an omitted one names its kind.
+    #[test]
+    fn the_session_list_follows_the_report() {
+        let sent = withheld_before_f4(ReportStatus::Sent);
+        assert_eq!(sent.len(), WITHHELD_BEFORE_F4.len() - 1);
+        assert!(sent.iter().all(|w| w.family != "0x13D"));
+        assert!(!withheld_summary(ReportStatus::Sent).contains("0x13D"));
+        assert!(sent.iter().any(|w| w.family == "0x19E"), "0x19E stays");
+        let omitted = withheld_before_f4(ReportStatus::Omitted(ReportOmission::VariantMismatch));
+        let report = omitted
+            .iter()
+            .find(|w| w.family == "0x13D")
+            .expect("listed");
+        assert_eq!(
+            report.held_by,
+            "decision 0046 item 5; item 13 variant mismatch"
+        );
+        assert_eq!(omitted.len(), WITHHELD_BEFORE_F4.len());
     }
 
     /// §9.3.9: only an explicit 0x40 to a resolved target deletes. Labelled until the writer answers:

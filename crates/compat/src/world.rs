@@ -316,6 +316,12 @@ pub enum WorldError {
     /// The `MessageEnvelope` around an event failed to decode (`official-session.md` §9.1).
     #[error("message envelope: {0}")]
     Envelope(#[from] SessionError),
+    /// A resource-set report field was not in its strict minimal form (`official-session.md`
+    /// §9.3.12 "Bit count, packing and bounds"): a stray bit above its count in the last byte, a
+    /// count above the highest set bit, a count past [`RESOURCE_SET_MAX_BITS`], a key outside
+    /// `1..=RESOURCE_SET_MAX_BITS`, or a count in a longer compact form than it needs.
+    #[error("resource-set report field is not in its strict minimal form: {0}")]
+    ResourceSetField(&'static str),
 }
 
 /// Largest absolute world coordinate (metres) accepted in `0xCE`
@@ -3645,8 +3651,10 @@ plain_codec!(AccountEvictionNotice);
 /// Event `0x19E` (`platform_account_id_report`, C→S, 9 bytes, §3.4).
 ///
 /// One flags byte and the `u64` LE ID, nothing after them (`official-session.md` §9.3.7, Vector
-/// 15). OPEN-SESSION-20: the driver does not emit it. No real platform ID or destination is
-/// specified, and zero or a borrowed ID is never sent; `0x13D` is omitted with it.
+/// 15). The driver does not emit it: decision 0046 item 5 holds it, and Tessera has no genuine
+/// own-process platform source (§9.3.12, `official-messages-world.md` §3.6), so zero or a borrowed
+/// ID is never sent. `0x13D` is separate: decision 0046 item 13 sends its restricted candidate when
+/// eligible ([`ResourceSetReport`], [`crate::resource_report`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlatformAccountIdReport {
     /// `platform_id` (`u64` LE).
@@ -3681,6 +3689,215 @@ impl PlatformAccountIdReport {
     }
 }
 plain_codec!(PlatformAccountIdReport);
+
+/// Most bits in one resource-set report field (`official-session.md` §9.3.12 "Bit count, packing
+/// and bounds": a Tessera resource choice, not an observed maximum). A key outside
+/// `1..=RESOURCE_SET_MAX_BITS` gives no report.
+pub const RESOURCE_SET_MAX_BITS: u32 = 4096;
+
+/// One field of a resource-set report (`official-session.md` §9.3.12): a Type 22 wire bitfield
+/// (`official-messages-world.md` §2.7.1) in its strict minimal form. The count is the highest set
+/// key (`0` for an empty field), written as a minimal compact VLE (§2.2.1), then exactly
+/// `ceil(count / 8)` bytes, low bit first; key *k* is bit *k − 1*, and the unused high bits of the
+/// last byte are clear. There is no word padding.
+///
+/// Unlike [`WireBitfield`], which other Type 22 users keep, this type never holds a stray bit or a
+/// count beyond the highest set bit, and its decoder refuses them, so stale bits are never
+/// forwarded. Its `Debug` names no key: only how many are set.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct ResourceSetMask {
+    /// The highest set key, `0` when empty.
+    bit_count: u32,
+    /// The `ceil(bit_count / 8)` packed bytes.
+    bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for ResourceSetMask {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let set: u32 = self.bytes.iter().map(|b| b.count_ones()).sum();
+        f.debug_struct("ResourceSetMask")
+            .field("set", &set)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The byte length of the minimal 3-tier VLE of `value` (§2.2.1), `None` past its range.
+const fn vle3_len(value: u32) -> Option<usize> {
+    if value <= 0x7F {
+        Some(1)
+    } else if value <= 0x3FFF {
+        Some(2)
+    } else if value <= 0x3FFF_FFFF {
+        Some(4)
+    } else {
+        None
+    }
+}
+
+impl ResourceSetMask {
+    /// The empty field (count `0`, no packed bytes).
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            bit_count: 0,
+            bytes: Vec::new(),
+        }
+    }
+
+    /// The field with the keys `keys` set (repeats are harmless).
+    ///
+    /// # Errors
+    ///
+    /// [`WorldError::ResourceSetField`] for a key outside `1..=RESOURCE_SET_MAX_BITS`: nothing is
+    /// clamped or truncated.
+    pub fn from_keys(keys: &[u32]) -> Result<Self, WorldError> {
+        if keys.iter().any(|k| *k == 0 || *k > RESOURCE_SET_MAX_BITS) {
+            return Err(WorldError::ResourceSetField("key outside the policy range"));
+        }
+        let Some(&top) = keys.iter().max() else {
+            return Ok(Self::empty());
+        };
+        let mut bytes = vec![0u8; (top as usize).div_ceil(8)];
+        for &key in keys {
+            let bit = (key - 1) as usize;
+            if let Some(byte) = bytes.get_mut(bit / 8) {
+                *byte |= 1 << (bit % 8);
+            }
+        }
+        Ok(Self {
+            bit_count: top,
+            bytes,
+        })
+    }
+
+    /// The field with the one key `key` set.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::from_keys`].
+    pub fn singleton(key: u32) -> Result<Self, WorldError> {
+        Self::from_keys(&[key])
+    }
+
+    /// The bit count on the wire: the highest set key, `0` when empty.
+    #[must_use]
+    pub const fn bit_count(&self) -> u32 {
+        self.bit_count
+    }
+
+    /// The packed bytes, low bit first.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// The set keys, ascending.
+    #[must_use]
+    pub fn keys(&self) -> Vec<u32> {
+        let mut keys = Vec::new();
+        for (i, byte) in self.bytes.iter().enumerate() {
+            for bit in 0..8u32 {
+                if byte & (1 << bit) != 0 {
+                    // `i < 512` and `bit < 8`: below the 4096-bit cap.
+                    keys.push((i as u32) * 8 + bit + 1);
+                }
+            }
+        }
+        keys
+    }
+
+    /// Writes the field: its minimal count, then its packed bytes.
+    ///
+    /// # Errors
+    ///
+    /// Never fails for a value of this type (its count is at most [`RESOURCE_SET_MAX_BITS`]).
+    pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
+        writer.write_vle3(self.bit_count)?;
+        writer.write_bytes(&self.bytes);
+        Ok(())
+    }
+
+    /// Reads one field in its strict minimal form, checking `ceil(count / 8)` against the
+    /// remaining bytes before anything is allocated (§7.1 item 1).
+    ///
+    /// # Errors
+    ///
+    /// [`WorldError::ResourceSetField`] for a count past [`RESOURCE_SET_MAX_BITS`], a count in a
+    /// longer compact form than it needs, a stray bit above the count in the last byte, or a count
+    /// above the highest set bit; [`WorldError`] on truncation.
+    pub fn decode(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
+        let start = reader.position();
+        let bit_count = reader.read_vle3()?;
+        if bit_count > RESOURCE_SET_MAX_BITS {
+            return Err(WorldError::ResourceSetField("count past the policy cap"));
+        }
+        if vle3_len(bit_count) != Some(reader.position() - start) {
+            return Err(WorldError::ResourceSetField(
+                "count not in its minimal form",
+            ));
+        }
+        let byte_len = (bit_count as usize).div_ceil(8);
+        reader.ensure_count(byte_len, 1)?;
+        let bytes = reader.read_bytes(byte_len)?.to_vec();
+        if let Some(&last) = bytes.last() {
+            let used = bit_count % 8;
+            if used != 0 && last >> used != 0 {
+                return Err(WorldError::ResourceSetField("stray bit above the count"));
+            }
+            let top = (bit_count - 1) % 8;
+            if last & (1 << top) == 0 {
+                return Err(WorldError::ResourceSetField(
+                    "count above the highest set bit",
+                ));
+            }
+        }
+        Ok(Self { bit_count, bytes })
+    }
+}
+
+/// Event `0x13D` (resource-set report, C→S; `official-session.md` §9.3.12, decision 0046 item 13).
+///
+/// One shared zero, then two strict [`ResourceSetMask`] fields: the available sets, then the loaded
+/// sets. No property ID, second base byte, word padding or archive iteration field. Under decision
+/// 0046 item 13 the driver sends only the restricted candidate, one install-resolved default set in
+/// both fields ([`crate::resource_report`]); the codec itself takes any strict fields.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ResourceSetReport {
+    /// The available resource sets.
+    pub available: ResourceSetMask,
+    /// The loaded resource sets.
+    pub loaded: ResourceSetMask,
+}
+
+impl ResourceSetReport {
+    /// Numeric event ID (`0x0000013D`).
+    pub const EVENT_ID: u32 = 0x0000_013D;
+
+    /// Writes the complete data: the one shared zero and both fields.
+    ///
+    /// # Errors
+    ///
+    /// Never fails for values of this type.
+    pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
+        writer.write_base_flags();
+        self.available.encode(writer)?;
+        self.loaded.encode(writer)
+    }
+
+    /// Reads the complete data, both fields strict.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorldError`] on framing errors or a field that is not strict.
+    pub fn decode(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
+        reader.read_base_flags()?;
+        Ok(Self {
+            available: ResourceSetMask::decode(reader)?,
+            loaded: ResourceSetMask::decode(reader)?,
+        })
+    }
+}
+plain_codec!(ResourceSetReport);
 
 /// Event `0x6F` (`character_enter_world_request`, C→S, §3.5).
 #[derive(Debug, Clone, PartialEq)]

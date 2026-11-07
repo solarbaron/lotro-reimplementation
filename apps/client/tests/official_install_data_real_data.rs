@@ -395,3 +395,56 @@ fn the_advertisement_is_built_from_the_install_and_follows_the_rules() {
     );
     eprintln!("advertisement bytes: {}", prepared.data.len());
 }
+
+/// Decision 0046 item 13 (`official-session.md` §9.3.12): the install's ResourceSets enum resolves
+/// by the restricted route, the minimum mount check passes over the preflight snapshot, and the
+/// candidate `0x13D` is one strict, minimal singleton, the same in both fields. Only structural
+/// properties are checked: no key, label, mask or DID is printed or compared with a value.
+#[test]
+fn the_resource_set_report_resolves_from_the_install() {
+    use tessera_compat::connector::data::{prepare_preflight, prepare_resource_report};
+    use tessera_compat::world::ResourceSetReport;
+
+    let Some(root) = game_dir() else {
+        eprintln!("TESSERA_GAME_DIR unset: skipped");
+        return;
+    };
+    let lang = language(&root);
+    let data = must(
+        install_data_at(&root, &lang),
+        "the install's records do not read",
+    );
+    let names = match data.resource_sets() {
+        Ok(names) => names,
+        Err(kind) => panic!("the resource sets do not resolve: {}", kind.label()),
+    };
+    assert!(names.name_count() >= 1);
+    let preflight = must(prepare_preflight(&data), "the preflight fails");
+    let bytes = match prepare_resource_report(&data, &preflight.archives) {
+        Ok(bytes) => bytes,
+        Err(kind) => panic!("the report is omitted: {}", kind.label()),
+    };
+    let report = must(
+        ResourceSetReport::from_bytes(&bytes),
+        "the report is not strict",
+    );
+    assert_eq!(report.available, report.loaded, "both fields are equal");
+    let keys = report.available.keys();
+    assert_eq!(keys.len(), 1, "one set bit");
+    assert_eq!(
+        Some(report.available.bit_count()),
+        keys.first().copied(),
+        "the count is the highest set key"
+    );
+    assert_eq!(
+        report.available.bytes().len(),
+        report.available.bit_count().div_ceil(8) as usize,
+        "no padding"
+    );
+    assert_eq!(
+        keys.first().copied(),
+        Some(names.default_key()),
+        "the report carries the resolved default"
+    );
+    eprintln!("resource-set report: built");
+}

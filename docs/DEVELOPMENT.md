@@ -576,9 +576,18 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   lines (`debug`, under the evidence target, so only with the opt-in) carry the server's number.
 - `official evidence: connection closed`: which connection closed, why and in which stage
   (`retiring=true` is the old login connection, which no longer decides the session's end).
+- `official session: resource-set report sent` or `official session: resource-set report omitted`
+  (`info`, always, once per login right after the character list): decision 0046 item 13's `0x13D`
+  (`official-session.md` §9.3.12). An omission names only its kind (`reason=`, for example
+  `variant mismatch` or `dictionary mismatch`); no line carries the set's key, label, mask or DID.
+  With the opt-in, a send also writes `official evidence: resource-set report` (`direction`,
+  `raw_opcode`, `first_of_opcode`, `queue`, `sequence_group`; the packet and blob lines carry its
+  `recipient_token`), and an omission an `official evidence: held send` line with
+  `held_opcode=0x13d` and `withholding_reason="decision 0046 item 5; item 13 <kind>"`.
 - `official world entry: stopped`: what an entry that stopped withheld (`withheld=`), followed by one
   `official evidence: withheld before 0xF4` line per withheld family with `held_opcode` and
-  `withholding_reason`.
+  `withholding_reason`. `0x13D` is in that list only when its report was omitted, with the item-13
+  kind as its reason; `0x19E` always is (no genuine own-process platform source).
 - `official evidence: held send`: the first command of each held kind that reached the session and was
   refused there with "Not supported by this version of Tessera yet", with `held_opcode`,
   `withholding_reason` and `first_of_opcode=true`; later ones are only counted. A production run

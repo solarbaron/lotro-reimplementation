@@ -28,7 +28,11 @@
 //! - the inputs of the login's initial exchange (`official-session.md` §9.3.2, §9.3.7,
 //!   decision 0046, [`InitialInputs`]): the mounted language's full key, the installed name
 //!   rules and one entry per mounted base archive, read once on the connector's thread, each
-//!   of them answering "unsupported" as a kind when it cannot be read truthfully.
+//!   of them answering "unsupported" as a kind when it cannot be read truthfully;
+//! - the ResourceSets enum for decision 0046 item 13's `0x13D` (`official-session.md` §9.3.12,
+//!   [`resource_set_lookup`]): the default set's key and the effective names, through the
+//!   superblock's master DID map, root key 7, sub-key `0x8C`, checked against the dictionary's two
+//!   report properties; an omission kind when any step fails, never a value in a log.
 //!
 //! The in-game calendar (`official-messages-world.md` §4.4.2) is not read here: the spec's
 //! lookup (key `0x96` of directory `0x0F000002`) contradicts `environment.md` §3, which
@@ -53,6 +57,10 @@ use tessera_compat::initial::{
     AdvertisedArchive, InstallUnsupported, IterationNote, IterationSpan, MAX_ADVERTISED_ARCHIVES,
     MAX_ADVERTISEMENT_BYTES, fold_language_code,
 };
+use tessera_compat::resource_report::{
+    DictionaryEntry, MapperNames, ReportOmission, ResourceSetNames, SUB_KEY_RESOURCE_SETS,
+    resolve_resource_sets,
+};
 use tessera_compat::world::{
     EncodedPropertyValue, LocalizedTokenText, LocalizedTokenTextArg, LocalizedTokenTextArgPayload,
     LocalizedTokenTextContent, PortalStateSchema, PropertyType, TextSource,
@@ -65,7 +73,7 @@ use tessera_formats::script_table::resolve::{
     COMBINATION_OVERRIDING, RUN_LIST_KINDS, ScriptVocabulary,
 };
 use tessera_formats::script_table::{Node, NodeData, NodeKind, ScriptTable, Scriptlet};
-use tessera_formats::{DataIdMap, Did, EnumMapper, Record as _, StringSource};
+use tessera_formats::{DataIdMap, Did, DidKind, EnumMapper, Record as _, StringSource};
 use tessera_install::{DID_ITERATION, IterationRecord};
 use tessera_props::{PROPERTY_DICTIONARY_DID, PropertyRegistry};
 use tessera_text::{
@@ -406,6 +414,8 @@ pub struct ArchiveData {
     schemas: BTreeMap<u32, PortalStateSchema>,
     chat_keys: Option<Vec<u32>>,
     initial: InitialInputs,
+    /// Decision 0046 item 13's ResourceSets reading ([`resource_sets_of`]), read once.
+    resource_sets: Result<ResourceSetNames, ReportOmission>,
     templates: Mutex<TemplateCache>,
     texts_without_values: AtomicU64,
 }
@@ -586,6 +596,10 @@ impl InstallData for ArchiveData {
         self.initial.inventory.clone()
     }
 
+    fn resource_sets(&self) -> Result<ResourceSetNames, ReportOmission> {
+        self.resource_sets.clone()
+    }
+
     /// `true` when looking up `table_did` reads nothing: it is not a string-table DID (it is
     /// refused unread), or the cache holds it. The cache is known to hold every table it
     /// read as long as it never evicted one: then it holds exactly as many tables as were
@@ -758,6 +772,75 @@ fn one_language_key(
         (Some(key), None) => Ok(key),
         (Some(_), Some(_)) => Err(InstallUnsupported::LanguageAmbiguous),
     }
+}
+
+/// Decision 0046 item 13's reading of the ResourceSets enum (`official-session.md` §9.3.12 steps
+/// 1–3 and 6) from an open set: the master DID map from `client_general`'s superblock and the
+/// property dictionary's two report definitions ([`resource_set_lookup`]).
+///
+/// # Errors
+///
+/// [`ReportOmission`] as a kind.
+pub fn resource_sets_of(
+    set: &ArchiveSet,
+    registry: &PropertyRegistry,
+) -> Result<ResourceSetNames, ReportOmission> {
+    let read = |did: Did| bounded_record(set, did.0, MAX_TABLE_RECORD);
+    let root = master_map(set).ok_or(ReportOmission::RouteMissing)?;
+    let dictionary = |pid: u32| {
+        registry.definition(pid).map(|d| DictionaryEntry {
+            type_code: d.ty.code(),
+            data: d.data.0,
+        })
+    };
+    resource_set_lookup(&read, root, &dictionary)
+}
+
+/// Steps 1–3 and 6 of §9.3.12 over the records `read` gives: the master DID map `root` (which must
+/// carry the DID-map prefix `0x28`, as the superblock route requires), its root key 7 (named enum
+/// mappers), then sub-key [`SUB_KEY_RESOURCE_SETS`], each searched in both map groups (`records.md`
+/// §8.1, [`map_target`]). The target and every base must be an enum mapper by their DID's family
+/// before anything is read, so a DID map is never parsed as one; each record is decoded completely
+/// with bounded allocations ([`EnumMapper::parse_expecting`]) and read within [`MAX_TABLE_RECORD`].
+/// The chain, names and dictionary rules are [`resolve_resource_sets`]'s. Nothing is printed: the
+/// mapper DID the world spec prints is never a fallback.
+///
+/// # Errors
+///
+/// [`ReportOmission`] as a kind.
+pub fn resource_set_lookup(
+    read: RecordReader<'_>,
+    root: Did,
+    dictionary: &dyn Fn(u32) -> Option<DictionaryEntry>,
+) -> Result<ResourceSetNames, ReportOmission> {
+    if root.0 >> 24 != 0x28 {
+        return Err(ReportOmission::RouteMissing);
+    }
+    let map = |did: Did| -> Result<DataIdMap, ReportOmission> {
+        let bytes = read(did).ok_or(ReportOmission::RouteMissing)?;
+        DataIdMap::parse_expecting(&bytes, did).map_err(|_| ReportOmission::DecodeError)
+    };
+    let master = map(root)?;
+    let mappers = map_target(&master, ROOT_KEY_ENUM_MAPPERS).ok_or(ReportOmission::RouteMissing)?;
+    if mappers.kind() != DidKind::DataIdMap {
+        return Err(ReportOmission::WrongFamily);
+    }
+    let named = map(mappers)?;
+    let target = map_target(&named, SUB_KEY_RESOURCE_SETS).ok_or(ReportOmission::RouteMissing)?;
+    let mut read_mapper = |did: u32| -> Result<MapperNames, ReportOmission> {
+        let did = Did(did);
+        if did.kind() != DidKind::EnumMapper {
+            return Err(ReportOmission::WrongFamily);
+        }
+        let bytes = read(did).ok_or(ReportOmission::RouteMissing)?;
+        let mapper =
+            EnumMapper::parse_expecting(&bytes, did).map_err(|_| ReportOmission::DecodeError)?;
+        Ok(MapperNames {
+            base: mapper.base.0,
+            names: mapper.names().to_vec(),
+        })
+    };
+    resolve_resource_sets(target.0, &mut read_mapper, dictionary)
 }
 
 /// The mounted language's base archive must carry the union of the key's high and low 16-bit
@@ -1726,6 +1809,14 @@ fn open(root: &Path, language: &str) -> Result<ArchiveData, InstallProblem> {
         tracing::warn!("official session: the chat category enum is missing");
     }
     let initial = initial_inputs(&set);
+    let resource_sets = resource_sets_of(&set, &registry);
+    if let Err(kind) = &resource_sets {
+        // A kind only: no key, label or DID of the install.
+        tracing::debug!(
+            reason = kind.label(),
+            "official session: the resource sets cannot be read"
+        );
+    }
     let served = Arc::new(Mutex::new(ServedTables::default()));
     let strings = Strings::new(SetTables {
         set: Arc::clone(&set),
@@ -1739,6 +1830,7 @@ fn open(root: &Path, language: &str) -> Result<ArchiveData, InstallProblem> {
         schemas,
         chat_keys,
         initial,
+        resource_sets,
         templates: Mutex::new(TemplateCache::default()),
         texts_without_values: AtomicU64::new(0),
     })

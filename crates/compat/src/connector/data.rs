@@ -24,6 +24,9 @@ use crate::login::{
     root_did_map_from_superblock,
 };
 use crate::play::chat::{ChatCategories, LiteralTexts, TextResolver};
+use crate::resource_report::{
+    EFFECTIVE_RESOURCE_SET_OPTION, ReportOmission, ResourceSetNames, candidate_data,
+};
 use crate::session::{BitTreeCodec, BitTreeTable, CodecUuids};
 use crate::world::{
     EncodedPropertyValue, LocalizedTokenText, PortalStateSchema, PortalStateSchemaLookup,
@@ -183,6 +186,19 @@ pub trait InstallData: Send + Sync + std::fmt::Debug {
     fn archive_inventory(&self) -> Result<Vec<AdvertisedArchive>, InstallUnsupported> {
         Err(InstallUnsupported::NotRead)
     }
+
+    /// The install's ResourceSets enum as decision 0046 item 13 reads it (`official-session.md`
+    /// §9.3.12 steps 1–3 and 6): the default set's key and the effective names, resolved through
+    /// the master DID map's route and checked against the property dictionary
+    /// ([`crate::resource_report::resolve_resource_sets`]). The default answers
+    /// [`ReportOmission::NotRead`], so the report is omitted.
+    ///
+    /// # Errors
+    ///
+    /// [`ReportOmission`]: a kind, never a value.
+    fn resource_sets(&self) -> Result<ResourceSetNames, ReportOmission> {
+        Err(ReportOmission::NotRead)
+    }
 }
 
 /// The chat categories of the session (`official-messages-play.md` §6.7): every category
@@ -213,6 +229,26 @@ pub fn chat_categories(data: &dyn InstallData) -> ChatCategories {
 pub fn prepare_advertisement(
     data: &dyn InstallData,
 ) -> Result<PreparedAdvertisement, UnsupportedNegotiation> {
+    prepare_preflight(data).map(|p| p.advertisement)
+}
+
+/// What §9.3.7's preflight read, kept together: the advertisement and the snapshot of base
+/// archives it lists, which decision 0046 item 13's mount check reads (`official-session.md`
+/// §9.3.12 "Archive relation and minimum mount check": the same successful preflight as `0xEC`).
+#[derive(Debug)]
+pub struct Preflight {
+    /// The advertisement.
+    pub advertisement: PreparedAdvertisement,
+    /// One entry per mounted base archive the advertisement lists.
+    pub archives: Vec<AdvertisedArchive>,
+}
+
+/// [`prepare_advertisement`], keeping the archive snapshot.
+///
+/// # Errors
+///
+/// As [`prepare_advertisement`].
+pub fn prepare_preflight(data: &dyn InstallData) -> Result<Preflight, UnsupportedNegotiation> {
     let key = data
         .selected_language_key()
         .map_err(UnsupportedNegotiation::LanguageKey)?;
@@ -221,7 +257,30 @@ pub fn prepare_advertisement(
         .map_err(UnsupportedNegotiation::Inventory)?;
     data.check_name_table()
         .map_err(UnsupportedNegotiation::NameRule)?;
-    PreparedAdvertisement::new(key, &archives)
+    let advertisement = PreparedAdvertisement::new(key, &archives)?;
+    Ok(Preflight {
+        advertisement,
+        archives,
+    })
+}
+
+/// Decision 0046 item 13's candidate `0x13D` of this install (`official-session.md` §9.3.12): its
+/// complete data (one shared zero, both fields), or why it is omitted. Built from the same preflight
+/// snapshot as `0xEC`, for the launch's effective configuration
+/// ([`crate::resource_report::EFFECTIVE_RESOURCE_SET_OPTION`]). An omission never stops the login.
+///
+/// # Errors
+///
+/// [`ReportOmission`] as a kind.
+pub fn prepare_resource_report(
+    data: &dyn InstallData,
+    archives: &[AdvertisedArchive],
+) -> Result<Vec<u8>, ReportOmission> {
+    candidate_data(
+        data.resource_sets(),
+        EFFECTIVE_RESOURCE_SET_OPTION,
+        archives,
+    )
 }
 
 /// Makes the [`InstallData`] of the install root it is given, for the `<Lang>` token the

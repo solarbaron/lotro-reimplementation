@@ -8,7 +8,14 @@ use super::service_support::{
     ObservedMessage, observed_buffers, observed_raw_datagram, observed_world_stream,
 };
 use super::*;
-use crate::connector::pending_world::{DEFAULT_RECIPIENT, MAX_PENDING_ENTITIES, withheld_summary};
+use crate::connector::pending_world::{
+    DEFAULT_RECIPIENT, MAX_PENDING_ENTITIES, ReportStatus, withheld_summary,
+};
+use crate::resource_report::ReportOmission;
+
+/// The report status of these tests' install, which does not read the resource sets (decision 0046
+/// item 13: omitted, so `0x13D` stays in the withheld list).
+const NOT_READ: ReportStatus = ReportStatus::Omitted(ReportOmission::NotRead);
 use crate::connector::session_phase::{
     CHAT_UNAVAILABLE, ENTRY_REENTRY_NOT_SUPPORTED, HELD_COMMAND, MOVE_HELD,
 };
@@ -237,7 +244,7 @@ fn a_production_entry_stops_at_the_readiness_wait_and_withholds_every_unsourced_
         .find(|l| l.contains("official world entry: stopped"))
         .unwrap_or_else(|| panic!("{logs}"));
     assert!(line.contains("waiting for world readiness"), "{line}");
-    assert!(line.contains(&withheld_summary()), "{line}");
+    assert!(line.contains(&withheld_summary(NOT_READ)), "{line}");
 }
 
 /// The stage line of a stopped entry carries what was withheld, on every road out. A selection
@@ -270,7 +277,7 @@ fn a_refused_selection_writes_the_stage_line_with_what_was_withheld() {
         .find(|l| l.contains("official world entry: stopped"))
         .unwrap_or_else(|| panic!("{logs}"));
     assert!(line.contains("selection refused"), "{line}");
-    assert!(line.contains(&withheld_summary()), "{line}");
+    assert!(line.contains(&withheld_summary(NOT_READ)), "{line}");
 }
 
 /// The network right revoked during an entry: nothing is sent, and the log still has the line.
@@ -291,7 +298,7 @@ fn a_revoked_entry_writes_the_stage_line_and_sends_nothing() {
         .collect();
     assert_eq!(lines.len(), 1, "{logs}");
     assert!(lines[0].contains("network right revoked"), "{logs}");
-    assert!(lines[0].contains(&withheld_summary()), "{logs}");
+    assert!(lines[0].contains(&withheld_summary(NOT_READ)), "{logs}");
 }
 
 /// A placement outside what a location can be is no exact placement: no progress, no scene to load,

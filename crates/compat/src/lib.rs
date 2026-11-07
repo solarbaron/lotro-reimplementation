@@ -43,7 +43,10 @@
 //! 10. [`initial`]: the initial exchange of the login connection (`official-session.md`
 //!     §9.3.1–§9.3.5, decision 0046): the `0xDD` decoder, the install advertisement `0xEC`,
 //!     the completion `0xF5` and the bounded wait for the character list. Sans I/O.
-//! 11. [`connector`]: the live connector: the login (HTTPS first), the world list and queue,
+//! 11. [`resource_report`]: decision 0046 item 13's restricted resource-set report `0x13D`
+//!     (`official-session.md` §9.3.12): the install-resolved default set, its omission kinds
+//!     and the mount check, as pure functions. Sans I/O.
+//! 12. [`connector`]: the live connector: the login (HTTPS first), the world list and queue,
 //!     the UDP session to the character list and into the world, the play messages and the
 //!     chat server, on a thread of its own, every network operation through [`net_access`].
 //!
@@ -74,6 +77,7 @@ pub mod initial;
 pub mod login;
 pub mod net_access;
 pub mod play;
+pub mod resource_report;
 pub mod session;
 pub mod version_resource;
 pub mod world;

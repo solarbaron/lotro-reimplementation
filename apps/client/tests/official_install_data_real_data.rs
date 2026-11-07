@@ -420,7 +420,8 @@ fn the_resource_set_report_resolves_from_the_install() {
     };
     assert!(names.name_count() >= 1);
     let preflight = must(prepare_preflight(&data), "the preflight fails");
-    let bytes = match prepare_resource_report(&data, &preflight.archives) {
+    // No `--resource-set` argument: the built-in default (§9.3.12 step 5).
+    let bytes = match prepare_resource_report(&data, &preflight.archives, Ok(None)) {
         Ok(bytes) => bytes,
         Err(kind) => panic!("the report is omitted: {}", kind.label()),
     };

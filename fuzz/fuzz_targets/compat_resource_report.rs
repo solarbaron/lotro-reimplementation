@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Decision 0046 item 13's resource-set report on hostile input (`official-session.md` §9.3.12):
 //! the strict `0x13D` decoder, the pure resolver (chain, names, dictionary, configuration, mount
-//! check) over records the input describes, and the client's route through hostile DID maps and enum
-//! mappers.
+//! check) over records the input describes, the client's route through hostile DID maps and enum
+//! mappers, and the `--resource-set` list of a hostile launch template (it comes from the remote
+//! launcher configuration).
 //!
 //! The whole input is tried as a `0x13D`; split into length-prefixed chunks it also gives mapper
 //! records, a configuration string, archive variants and the records of an in-memory install. No
@@ -16,9 +17,10 @@ use libfuzzer_sys::fuzz_target;
 use tessera_client::official::install_data::resource_set_lookup;
 use tessera_compat::initial::AdvertisedArchive;
 use tessera_compat::resource_report::{
-    DictionaryEntry, MapperNames, PID_AVAILABLE_RESOURCE_SETS, PID_LOADED_RESOURCE_SETS,
-    RESOURCE_SET_CHAIN_LIMIT, ReportOmission, TYPE_BITFIELD, candidate_data, check_mounted,
-    resolve_resource_sets, resource_set_config, selected_key,
+    ARCHIVE_KIND_HIGH_RES, DictionaryEntry, MapperNames, PID_AVAILABLE_RESOURCE_SETS,
+    PID_LOADED_RESOURCE_SETS, RESOURCE_SET_ARGUMENT, RESOURCE_SET_CHAIN_LIMIT, ReportOmission,
+    TYPE_BITFIELD, candidate_data, check_mounted, is_high_res, launch_resource_set_option,
+    resolve_resource_sets, resource_set_config, selected_key, template_resource_set_option,
 };
 use tessera_compat::world::{RESOURCE_SET_MAX_BITS, ResourceSetMask, ResourceSetReport};
 use tessera_formats::Did;
@@ -76,10 +78,13 @@ fn mapper_of(chunk: &[u8], count: usize) -> MapperNames {
     MapperNames { base, names }
 }
 
-fn archive(variant: u16) -> AdvertisedArchive {
+/// A base archive of `variant`; `high_res` makes it the `highres` archive, which the mount check
+/// leaves out.
+fn archive(variant: u16, high_res: bool) -> AdvertisedArchive {
     let [a, b] = variant.to_le_bytes();
+    let kind = if high_res { ARCHIVE_KIND_HIGH_RES } else { 3 };
     AdvertisedArchive {
-        resource_id: [a, b, 3, 1, 0, 0, 0, 0],
+        resource_id: [a, b, kind, 1, 0, 0, 0, 0],
         iteration_count: 0,
         spans: Vec::new(),
         notes: Vec::new(),
@@ -168,7 +173,10 @@ fuzz_target!(|data: &[u8]| {
                 .0
                 .iter()
                 .take(32)
-                .map(|p| archive(u16::from_le_bytes(*p)))
+                .map(|p| {
+                    let v = u16::from_le_bytes(*p);
+                    archive(v & 0x7FFF, v & 0x8000 != 0)
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -182,8 +190,39 @@ fuzz_target!(|data: &[u8]| {
         }
         if let Ok(bytes) = candidate_data(Ok(names.clone()), option.as_deref(), &variants) {
             assert!(check_mounted(key, &variants).is_ok());
+            assert!(
+                variants
+                    .iter()
+                    .filter(|a| !is_high_res(a))
+                    .all(
+                        |a| u32::from(u16::from_le_bytes([a.resource_id[0], a.resource_id[1]]))
+                            == key - 1
+                    ),
+                "every base in scope at the key minus one"
+            );
             check_candidate(&bytes, key);
         }
+    }
+
+    // A hostile launch template: the expansion and split, then the argument's list.
+    let template = String::from_utf8_lossy(data);
+    let params = tessera_compat::login::ArgTemplateParams::default();
+    match template_resource_set_option(&template, &params) {
+        // Quotes are stripped by the split, so the argument need not appear verbatim.
+        Ok(Some(list)) => {
+            let _ = resource_set_config(Some(&list));
+        }
+        Ok(None) => {}
+        Err(kind) => assert_eq!(kind, ReportOmission::ConfigMultiple),
+    }
+    let argv: Vec<String> = parts
+        .iter()
+        .take(16)
+        .map(|c| String::from_utf8_lossy(c).into_owned())
+        .collect();
+    if let Ok(Some(list)) = launch_resource_set_option(&argv) {
+        assert!(argv.iter().any(|a| a.starts_with(RESOURCE_SET_ARGUMENT)));
+        let _ = resource_set_config(Some(&list));
     }
 
     // The client's route over an install made of the chunks.

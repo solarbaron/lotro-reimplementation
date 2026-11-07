@@ -411,13 +411,16 @@ fn vector_25_flow_schedule() {
     mux.tick(0.999).expect("tick");
     assert!(reports(&mut mux, id, 0.999).0.is_empty());
 
-    // Maintenance at +1.0: the report carries the Ack and fragment bytes since 0.
+    // Maintenance at +1.0: the tick at the due instant sends the standalone report, which
+    // carries the Ack and fragment bytes since 0; the next tick sends nothing more.
     mux.tick(1.0).expect("tick");
     let (r, _) = reports(&mut mux, id, 1.0);
-    assert_eq!(r.len(), 1);
-    assert!(!r[0].attached);
+    assert_eq!(r.len(), 1, "sends at +1.0");
+    assert!(!r[0].attached, "standalone");
     assert_eq!(u64::from(r[0].bytes), held);
     assert_eq!(r[0].interval_ms, 1000);
+    mux.tick(1.05).expect("tick");
+    assert!(reports(&mut mux, id, 1.05).0.is_empty(), "not again");
 
     // Fresh fragment at +1.1, carrier at +1.5: the carrier goes without a report.
     let p = server.packet();
@@ -459,14 +462,16 @@ fn vector_25_flow_schedule() {
         assert!(seqs.is_empty(), "no sequenced packet at {t}: {seqs:?}");
     }
 
-    // Next eligible fragment at +33.1: the due report goes out, intervalMs 31100.
+    // Next eligible fragment at +33.1: the report is long due, so the tick at +33.1 sends it,
+    // standalone, with intervalMs exactly 31100.
     let p = server.packet();
     held += p.len() as u64;
     mux.receive_from_peer(&p, SERVER, 33.1, WireCodecs::NONE)
         .expect("fragment");
     mux.tick(33.1).expect("tick");
     let (r, _) = reports(&mut mux, id, 33.1);
-    assert_eq!(r.len(), 1);
+    assert_eq!(r.len(), 1, "sends at +33.1");
+    assert!(!r[0].attached, "standalone");
     assert_eq!(r[0].interval_ms, 31_100, "no saturation");
     assert_eq!(u64::from(r[0].bytes), held);
 
@@ -579,4 +584,45 @@ fn periodic_server_datagrams_get_at_most_one_report_a_second() {
         collect(&mut mux, id, last, &mut sent);
         assert_eq!(sent.reported_bytes, received, "period {period}");
     }
+}
+
+/// Remediation §31 fix 5: a due standalone report goes at the FIRST maintenance tick at or after
+/// its due instant, not a later one; a carrier and a tick at the same instant carry one report, on
+/// the carrier (the driver runs a pass's carriers before its tick).
+#[test]
+fn a_due_report_goes_at_the_first_tick_or_on_a_carrier_at_that_instant() {
+    // The first tick after the due instant 1.0 comes at 1.37: it sends, the next does not.
+    let mut server = Server::new();
+    let (mut mux, id, _) = connected_at(&mut server, 0.0);
+    mux.tick(0.0).expect("tick");
+    let _ = reports(&mut mux, id, 0.0);
+    let p = server.packet();
+    mux.receive_from_peer(&p, SERVER, 0.3, WireCodecs::NONE)
+        .expect("fragment");
+    mux.tick(0.9).expect("tick");
+    assert!(
+        reports(&mut mux, id, 0.9).0.is_empty(),
+        "not before it is due"
+    );
+    mux.tick(1.37).expect("tick");
+    let (r, _) = reports(&mut mux, id, 1.37);
+    assert_eq!(r.len(), 1);
+    assert!(!r[0].attached);
+    assert_eq!(r[0].interval_ms, 1370);
+    mux.tick(1.5).expect("tick");
+    assert!(reports(&mut mux, id, 1.5).0.is_empty());
+
+    // A carrier and a tick both at the due instant 2.37: one report, on the carrier.
+    let p = server.packet();
+    mux.receive_from_peer(&p, SERVER, 1.6, WireCodecs::NONE)
+        .expect("fragment");
+    let conn = mux.connection_mut(id).expect("conn");
+    conn.send_blob(2, 0, 0x6F, &[1], 2.37, None)
+        .expect("carrier");
+    mux.tick(2.37).expect("tick");
+    let (r, seqs) = reports(&mut mux, id, 2.37);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(r[0].attached, "on the carrier");
+    assert_eq!(r[0].interval_ms, 1000);
+    assert_eq!(seqs.len(), 1, "no standalone packet beside the carrier");
 }

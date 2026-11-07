@@ -30,20 +30,19 @@
 //!    mapper as their data reference; never their printed DID as a fallback.
 //!
 //! Then the minimum mount check ([`check_mounted`]): at least one mounted base archive, and every
-//! base's archive-header variant equal to the key minus one. Any failure omits the WHOLE report and
+//! advertised base's archive-header variant, `highres` left out, equal to the key minus one. Any failure omits the WHOLE report and
 //! keeps the login going (item 5); a key outside `1..=4096` gives no report, never a clamped one.
 //!
 //! # Labelled choices (OPEN for the writer)
 //!
-//! - Tessera has no resource-set launch option and no sourced launcher key, so the effective
-//!   configuration is always the built-in default ([`EFFECTIVE_RESOURCE_SET_OPTION`]); the
-//!   tokeniser is exercised on synthetic input only.
+//! - The effective configuration is the `--resource-set` argument of the expanded launch template,
+//!   or the built-in default without one ([`launch_resource_set_option`], remediation §31 fix 7).
 //! - "Exactly one positive named entry" is read as: the ultimate base's names list has exactly one
 //!   entry, its name is not empty and its key is not zero; a key-0 or unnamed entry makes it not
 //!   unique rather than being ignored.
 //! - A repeated key counts in the names list only; display text is never read.
-//! - The mounted bases are every base archive of the `0xEC` inventory snapshot (portal, region,
-//!   language and, when mounted, `highres`).
+//! - The mounted bases are the base archives of the `0xEC` inventory snapshot without `highres`
+//!   ([`check_mounted`], remediation §31 fix 12).
 //!
 //! [`InstallData::resource_sets`]: crate::connector::InstallData::resource_sets
 
@@ -89,10 +88,60 @@ pub const TYPE_BITFIELD: u32 = 22;
 /// install has two; more is refused as a decode error rather than kept without bound.
 pub const MAX_RESOURCE_SET_NAMES: usize = 4096;
 
-/// The resource-set list of this Tessera launch: Tessera has no such option and no launcher key is
-/// sourced (§9.3.12 step 5), so it is always absent and the built-in default applies. Labelled
-/// choice, OPEN for the writer.
-pub const EFFECTIVE_RESOURCE_SET_OPTION: Option<&str> = None;
+/// The launch option whose value is an explicit resource-set list (§9.3.12 steps 4–5,
+/// remediation §31 fix 7).
+pub const RESOURCE_SET_ARGUMENT: &str = "--resource-set";
+
+/// The resource-set list of this launch, as the expanded launch template gives it (§9.3.12 steps
+/// 4–5): `Ok(None)` with no [`RESOURCE_SET_ARGUMENT`], so the built-in default applies; `Ok(Some(list))`
+/// with the list for [`resource_set_config`]'s tokeniser.
+///
+/// Labelled choice (C8, pending writer answer to remediation §31 fix 7): Tessera's session
+/// configuration is the expanded `GameClient.WIN32.ArgTemplate` (`official-login.md` §3.6), split
+/// into arguments by its §3.6 rules ([`crate::login::build_launch_argv`]); `GameClient.HighResPatchArg`
+/// is not appended, and `--HighResOutOfDate` is never a resource-set token. The argument is matched
+/// exactly, in the forms `--resource-set LIST` and `--resource-set=LIST`. A missing value (the last
+/// argument, or one followed by another `--` option) is an empty list, which omits the report. The
+/// argument given twice is a multi-set configuration ([`ReportOmission::ConfigMultiple`]).
+///
+/// # Errors
+///
+/// [`ReportOmission::ConfigMultiple`] for a second [`RESOURCE_SET_ARGUMENT`].
+pub fn launch_resource_set_option(argv: &[String]) -> Result<Option<String>, ReportOmission> {
+    let mut found: Option<String> = None;
+    let mut args = argv.iter().peekable();
+    while let Some(arg) = args.next() {
+        let value = if arg == RESOURCE_SET_ARGUMENT {
+            match args.peek() {
+                Some(next) if !next.starts_with("--") => args.next().cloned().unwrap_or_default(),
+                _ => String::new(),
+            }
+        } else if let Some(list) = arg
+            .strip_prefix(RESOURCE_SET_ARGUMENT)
+            .and_then(|rest| rest.strip_prefix('='))
+        {
+            list.to_owned()
+        } else {
+            continue;
+        };
+        if found.replace(value).is_some() {
+            return Err(ReportOmission::ConfigMultiple);
+        }
+    }
+    Ok(found)
+}
+
+/// [`launch_resource_set_option`] of `template` expanded with `params` (`official-login.md` §3.6).
+///
+/// # Errors
+///
+/// As [`launch_resource_set_option`].
+pub fn template_resource_set_option(
+    template: &str,
+    params: &crate::login::ArgTemplateParams,
+) -> Result<Option<String>, ReportOmission> {
+    launch_resource_set_option(&crate::login::build_launch_argv(template, params, None))
+}
 
 /// Why the report is omitted: a kind only, never a key, label, mask or DID. Each one omits the whole
 /// `0x13D` under decision 0046 item 5 and never ends the login.
@@ -471,9 +520,28 @@ pub fn archive_variant(archive: &AdvertisedArchive) -> u16 {
     u16::from_le_bytes([a, b])
 }
 
+/// The archive kind byte of `highres` (`dat-container.md` §3.4, superblock `0x14E`).
+pub const ARCHIVE_KIND_HIGH_RES: u8 = 0x08;
+
+/// The dataset type of a portal archive (`dat-container.md` §3.4, superblock `0x14F`).
+pub const DATASET_PORTAL: u8 = 1;
+
+/// Whether `archive` is the `highres` portal archive (`dat-container.md` §3.4: kind `0x08`,
+/// dataset type 1 in the identifier's bytes 2 and 3).
+#[must_use]
+pub fn is_high_res(archive: &AdvertisedArchive) -> bool {
+    let [_, _, kind, dataset, ..] = archive.resource_id;
+    kind == ARCHIVE_KIND_HIGH_RES && dataset == DATASET_PORTAL
+}
+
 /// The minimum mount check of §9.3.12 over the preflight's base archives: `key` in
-/// `1..=RESOURCE_SET_MAX_BITS`, at least one base, and every base's variant equal to `key − 1`
-/// (the enum key is one greater than the variant).
+/// `1..=RESOURCE_SET_MAX_BITS`, at least one base in scope, and every base in scope with its
+/// variant equal to `key − 1` (the enum key is one greater than the variant).
+///
+/// Labelled choice (C8, pending writer answer to remediation §31 fix 12): the scope is exactly the
+/// base archives Tessera advertises in its `0xEC` (§9.3.7's advertised base set, `archives`)
+/// without `highres` ([`is_high_res`]), whatever its variant: §9.3.12 keeps the optional highres
+/// family's group apart from the report's set.
 ///
 /// # Errors
 ///
@@ -483,14 +551,12 @@ pub fn check_mounted(key: u32, archives: &[AdvertisedArchive]) -> Result<(), Rep
     if key == 0 || key > RESOURCE_SET_MAX_BITS {
         return Err(ReportOmission::KeyOutOfRange);
     }
-    if archives.is_empty() {
+    let variant = key - 1;
+    let mut in_scope = archives.iter().filter(|a| !is_high_res(a)).peekable();
+    if in_scope.peek().is_none() {
         return Err(ReportOmission::NoMountedBase);
     }
-    let variant = key - 1;
-    if archives
-        .iter()
-        .any(|a| u32::from(archive_variant(a)) != variant)
-    {
+    if in_scope.any(|a| u32::from(archive_variant(a)) != variant) {
         return Err(ReportOmission::VariantMismatch);
     }
     Ok(())
@@ -844,6 +910,117 @@ mod tests {
         assert_eq!(
             check_mounted(RESOURCE_SET_MAX_BITS, &[archive(4095)]),
             Ok(())
+        );
+    }
+
+    fn high_res(variant: u16) -> AdvertisedArchive {
+        let mut a = archive(variant);
+        a.resource_id[2] = ARCHIVE_KIND_HIGH_RES;
+        a
+    }
+
+    /// Remediation §31 fix 12 (labelled C8 choice): the check covers the advertised bases without
+    /// `highres`, whatever its variant.
+    #[test]
+    fn the_mount_check_leaves_high_res_out() {
+        assert!(is_high_res(&high_res(0)));
+        assert!(!is_high_res(&archive(0)));
+        // A region archive of kind 8 is not highres (dataset type 2).
+        let mut region = archive(0);
+        region.resource_id[2] = ARCHIVE_KIND_HIGH_RES;
+        region.resource_id[3] = 2;
+        assert!(!is_high_res(&region));
+        assert_eq!(check_mounted(3, &[archive(2), high_res(7)]), Ok(()));
+        assert_eq!(check_mounted(3, &[archive(2), high_res(2)]), Ok(()));
+        assert_eq!(
+            check_mounted(3, &[archive(2), archive(7), high_res(2)]),
+            Err(ReportOmission::VariantMismatch),
+            "a base with another variant still omits"
+        );
+        assert_eq!(
+            check_mounted(3, &[high_res(2)]),
+            Err(ReportOmission::NoMountedBase),
+            "highres alone is no mounted base"
+        );
+    }
+
+    fn argv(template: &str) -> Vec<String> {
+        crate::login::split_arg_template_argv(template)
+    }
+
+    /// Remediation §31 fix 7 (labelled C8 choice): the expanded launch template's `--resource-set`
+    /// argument is the explicit list; without one the built-in default applies.
+    #[test]
+    fn the_launch_template_gives_the_list() {
+        let pick = |template: &str| launch_resource_set_option(&argv(template));
+        // Absent.
+        assert_eq!(
+            pick("-a {SUBSCRIPTION} --language {LANG} --rodat on"),
+            Ok(None)
+        );
+        assert_eq!(pick(""), Ok(None));
+        // One token, both forms; quotes are stripped by the §3.6 split.
+        assert_eq!(pick("--resource-set Base"), Ok(Some("Base".to_owned())));
+        assert_eq!(pick("--resource-set=Base"), Ok(Some("Base".to_owned())));
+        assert_eq!(
+            pick(r#"--rodat on --resource-set "Base, Extra" --gametype X"#),
+            Ok(Some("Base, Extra".to_owned()))
+        );
+        // An empty value, a missing one, or one followed by another option.
+        assert_eq!(pick(r#"--resource-set """#), Ok(Some(String::new())));
+        assert_eq!(pick("--resource-set"), Ok(Some(String::new())));
+        assert_eq!(pick("--resource-set="), Ok(Some(String::new())));
+        assert_eq!(
+            pick("--resource-set --HighResOutOfDate"),
+            Ok(Some(String::new())),
+            "--HighResOutOfDate is not a resource-set token"
+        );
+        // The argument twice.
+        assert_eq!(
+            pick("--resource-set Base --resource-set Base"),
+            Err(ReportOmission::ConfigMultiple)
+        );
+        // Not the argument.
+        assert_eq!(pick("--resource-sets Base --resource-setX"), Ok(None));
+    }
+
+    /// The template forms through the whole candidate: absent, one matching token, one other token,
+    /// two tokens and an empty value.
+    #[test]
+    fn the_template_forms_decide_the_candidate() {
+        let names = resolve(&chain(&[(7, "Extra")], &[(3, "Base")])).expect("resolves");
+        let params = crate::login::ArgTemplateParams {
+            language: "English".to_owned(),
+            ..crate::login::ArgTemplateParams::default()
+        };
+        let decide = |template: &str| {
+            template_resource_set_option(template, &params).and_then(|option| {
+                candidate_data(Ok(names.clone()), option.as_deref(), &[archive(2)])
+            })
+        };
+        let sent = decide("-a {SUBSCRIPTION} --language {LANG}");
+        assert_eq!(sent, Ok(vec![0x00, 0x03, 0x04, 0x03, 0x04]));
+        assert_eq!(decide("--language {LANG} --resource-set base"), sent);
+        assert_eq!(
+            decide("--resource-set Extra"),
+            Err(ReportOmission::ConfigOtherSet)
+        );
+        assert_eq!(
+            decide("--resource-set Base,Extra"),
+            Err(ReportOmission::ConfigMultiple)
+        );
+        assert_eq!(
+            decide("--resource-set Base,Base"),
+            Err(ReportOmission::ConfigMultiple)
+        );
+        assert_eq!(
+            decide(r#"--resource-set """#),
+            Err(ReportOmission::ConfigEmpty)
+        );
+        // A placeholder value nobody filled in is dropped by the split, so the value is missing.
+        assert_eq!(
+            decide("--resource-set {UNKNOWN}"),
+            Err(ReportOmission::ConfigEmpty)
         );
     }
 

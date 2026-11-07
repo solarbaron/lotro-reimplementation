@@ -5927,6 +5927,60 @@ pub struct SentPacketRecord {
     pub kept_until_acked: bool,
 }
 
+/// The last thing the transport did with a watched kept blob ([`SessionConnection::send_blob_watched`],
+/// the item-13 report of `official-session.md` §9.3.12) that its peer caused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeptBlobAction {
+    /// A cumulative Ack covered every record of it: its retention ended.
+    CoveredByCumulativeAck,
+    /// A `SequenceNakHeader` named one of its records, which was resent with its saved bytes.
+    NakResend,
+    /// A `SequenceNakHeader` named one of its records after the record was gone, so an
+    /// `OutOfOrderAckHeader` answers it (§5.3, §5.4).
+    OutOfOrderAck,
+}
+
+impl KeptBlobAction {
+    /// A neutral word for an evidence line.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::CoveredByCumulativeAck => "covered_by_cumulative_ack",
+            Self::NakResend => "nak_resend",
+            Self::OutOfOrderAck => "out_of_order_ack",
+        }
+    }
+}
+
+/// What the transport did with a watched kept blob, for the evidence log: counts and the
+/// connection's own sequence numbers only, never a byte of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct KeptBlobFate {
+    /// The private sequence of its first transmission (its first datagram).
+    pub first_sequence: u32,
+    /// How many datagrams it took.
+    pub datagrams: u32,
+    /// A cumulative Ack covered every one of its records.
+    pub covered_by_cumulative_ack: bool,
+    /// Resends of its records on a `SequenceNakHeader`.
+    pub nak_resends: u64,
+    /// NAKs for its records answered with an `OutOfOrderAckHeader`.
+    pub out_of_order_acks: u64,
+    /// The latest of those, `None` while the peer did none of them.
+    pub last: Option<KeptBlobAction>,
+}
+
+/// Most datagrams of one watched blob whose sequence numbers are kept (a resource-set report of
+/// two 4096-bit fields fills at most three; engineering choice, spec silent).
+const MAX_WATCHED_SEQUENCES: usize = 8;
+
+/// The watched kept blob of a connection and its sequences.
+#[derive(Debug, Clone, Default)]
+struct WatchedBlob {
+    seqs: Vec<u32>,
+    fate: KeptBlobFate,
+}
+
 /// What one connection counted of its handshake and its datagrams, for diagnostics: counts
 /// only, never an address, a port or datagram bytes (decision 0044 item 3). Engineering
 /// choice, spec silent.
@@ -6877,6 +6931,8 @@ pub struct SessionConnection {
     /// The evidence log of an official run ([`Evidence`]); `None` for everything else.
     evidence: Option<Box<Evidence>>,
     closed_from: Option<ConnectionState>,
+    /// The blob [`Self::send_blob_watched`] sent, for the evidence of what became of it.
+    watched: Option<WatchedBlob>,
 }
 
 impl std::fmt::Debug for SessionConnection {
@@ -6959,6 +7015,7 @@ impl SessionConnection {
             counts: HandshakeCounts::default(),
             evidence: None,
             closed_from: None,
+            watched: None,
         }
     }
 
@@ -7590,6 +7647,64 @@ impl SessionConnection {
             }
         }
         Ok(seqs)
+    }
+
+    /// [`Self::send_blob_retained`] to `recipient_id` whose records are kept like the `0xF4`'s
+    /// ([`Self::send_blob_kept`]) and watched for the evidence log ([`Self::watched_fate`]).
+    ///
+    /// For decision 0046 item 13's `0x13D` (`official-session.md` §9.3.12). Labelled choice (C8,
+    /// pending writer answer to remediation §31 fix 2): before the referral its records stay until
+    /// a cumulative Ack covers them or the connection closes; a `SequenceNakHeader` naming one
+    /// resends its saved bytes with the same sequence number, word and checksum, as for the
+    /// retained `0xEC` and `0xF5`; like the `0xF4` it is exempt from the implicit acknowledgement
+    /// below a NAK's first number; and nothing resends it on a timer. At the referral
+    /// [`Self::retire`] drops it like every other application record. One blob is watched per
+    /// connection: a second call watches the newer one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError`] if fragmentation or packet queueing fails.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_blob_watched(
+        &mut self,
+        queue_id: u8,
+        seq_group: u16,
+        recipient_id: u64,
+        blob_header_word: u32,
+        payload: &[u8],
+        now_sec: f64,
+        outgoing_codec: Option<&dyn BitTreeCodec>,
+    ) -> Result<Vec<u32>, SessionError> {
+        let seqs = self.send_blob_retained(
+            queue_id,
+            seq_group,
+            recipient_id,
+            blob_header_word,
+            payload,
+            now_sec,
+            outgoing_codec,
+        )?;
+        for seq in &seqs {
+            if let Some(rec) = self.retransmit_table.get_mut(seq) {
+                rec.kept_until_acked = true;
+            }
+        }
+        let kept: Vec<u32> = seqs.iter().copied().take(MAX_WATCHED_SEQUENCES).collect();
+        self.watched = kept.first().copied().map(|first| WatchedBlob {
+            fate: KeptBlobFate {
+                first_sequence: first,
+                datagrams: u32::try_from(seqs.len()).unwrap_or(u32::MAX),
+                ..KeptBlobFate::default()
+            },
+            seqs: kept,
+        });
+        Ok(seqs)
+    }
+
+    /// What became of the blob [`Self::send_blob_watched`] sent, `None` when none was.
+    #[must_use]
+    pub fn watched_fate(&self) -> Option<KeptBlobFate> {
+        self.watched.as_ref().map(|w| w.fate)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -8259,6 +8374,23 @@ impl SessionConnection {
         Ok(())
     }
 
+    /// A NAK for `seq` was answered by `action`: counted when `seq` is the watched blob's.
+    fn note_watched(&mut self, seq: u32, action: KeptBlobAction) {
+        let Some(w) = self.watched.as_mut().filter(|w| w.seqs.contains(&seq)) else {
+            return;
+        };
+        match action {
+            KeptBlobAction::NakResend => {
+                w.fate.nak_resends = w.fate.nak_resends.saturating_add(1);
+            }
+            KeptBlobAction::OutOfOrderAck => {
+                w.fate.out_of_order_acks = w.fate.out_of_order_acks.saturating_add(1);
+            }
+            KeptBlobAction::CoveredByCumulativeAck => {}
+        }
+        w.fate.last = Some(action);
+    }
+
     fn process_optional_headers(
         &mut self,
         opt: &OptionalHeaders,
@@ -8275,6 +8407,15 @@ impl SessionConnection {
         if let Some(ack_seq) = opt.cumulative_ack {
             self.retransmit_table
                 .retain(|&seq, _| (seq.wrapping_sub(ack_seq) as i32) > 0);
+            if let Some(w) = self.watched.as_mut()
+                && !w.fate.covered_by_cumulative_ack
+                && w.seqs
+                    .iter()
+                    .all(|&seq| (seq.wrapping_sub(ack_seq) as i32) <= 0)
+            {
+                w.fate.covered_by_cumulative_ack = true;
+                w.fate.last = Some(KeptBlobAction::CoveredByCumulativeAck);
+            }
         }
 
         // SequenceNakHeader (0x00001000, §5.3)
@@ -8283,8 +8424,9 @@ impl SessionConnection {
                 // Implicitly acknowledge all sent packets strictly before nak_seqs[0] (§5.3),
                 // except a retained `0xF4`: the §5.3 F4 exception and §9.3.9's F4 retention end it
                 // only with an explicit cumulative Ack covering it or the connection's close. The
-                // EC and F5 records follow the generic rule. An inbound OutOfOrderAck never ends
-                // it either (below).
+                // watched `0x13D` is kept the same way ([`Self::send_blob_watched`], labelled C8
+                // choice). The EC and F5 records follow the generic rule. An inbound
+                // OutOfOrderAck never ends it either (below).
                 self.retransmit_table.retain(|&seq, rec| {
                     rec.kept_until_acked || (seq.wrapping_sub(first_nak) as i32) >= 0
                 });
@@ -8328,11 +8470,15 @@ impl SessionConnection {
                     }
                     self.note_send(line, now_sec);
                     self.outbound_datagrams.push_back(dgram);
+                    self.note_watched(s, KeptBlobAction::NakResend);
                 } else if self.out_of_order_ack_queue.len() >= MAX_PENDING_OUT_OF_ORDER_ACKS {
                     self.dropped_out_of_order_acks =
                         self.dropped_out_of_order_acks.saturating_add(1);
                 } else if !self.out_of_order_ack_queue.contains(&s) {
                     self.out_of_order_ack_queue.push_back(s);
+                    self.note_watched(s, KeptBlobAction::OutOfOrderAck);
+                } else {
+                    self.note_watched(s, KeptBlobAction::OutOfOrderAck);
                 }
             }
         }
@@ -8563,6 +8709,12 @@ impl SessionConnection {
                 // §9.3.12 P10-10L: the first FlowControl-only packet, then one for eligible
                 // traffic no other report carried, one FLOW_REPORT_ONLY_PERIOD_SEC after the last
                 // report sent, standalone or attached.
+                //
+                // Labelled choice (C8, pending writer answer to remediation §31 fix 5): "may send"
+                // is read as "sends": a due standalone report goes at the FIRST maintenance tick at
+                // or after its due instant. A carrier at the same instant takes the report first
+                // (the driver queues a pass's carriers before its tick), which clears the
+                // eligibility, so that instant carries one report, on the carrier.
                 if self.flow.flow_only_due_at().is_some_and(|t| now_sec >= t) {
                     self.send_flow_only(now_sec, outgoing_codec)?;
                 }

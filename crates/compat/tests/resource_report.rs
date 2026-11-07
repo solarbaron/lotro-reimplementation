@@ -4,7 +4,7 @@
 
 use tessera_compat::resource_report::{ReportOmission, check_mounted};
 use tessera_compat::world::{
-    RESOURCE_SET_MAX_BITS, ResourceSetMask, ResourceSetReport, WireReader, WorldError,
+    RESOURCE_SET_MAX_BITS, ResourceSetMask, ResourceSetReport, WireBitfield, WireReader, WorldError,
 };
 
 fn report(available: &[u32], loaded: &[u32]) -> ResourceSetReport {
@@ -59,6 +59,23 @@ fn both_empty() {
 fn a_stray_bit_above_the_count_fails() {
     assert!(matches!(
         ResourceSetReport::from_bytes(&[0x00, 0x06, 0xA0, 0x00]),
+        Err(WorldError::ResourceSetField(_))
+    ));
+}
+
+/// Remediation §31 fix 11: the strict unused-bit check is the `0x13D` codec's own (a self-check of
+/// Tessera's encoding); the shared Type 22 decoder that reads the server's tables ignores unused
+/// bits (`property-system.md`), so the same bytes decode there.
+#[test]
+fn the_shared_type_22_decoder_keeps_stray_bits() {
+    let field = [0x06, 0xA0];
+    let mut reader = WireReader::new(&field);
+    let shared = WireBitfield::decode(&mut reader).expect("readers ignore unused bits");
+    assert_eq!(shared.bit_count, 6);
+    assert_eq!(shared.bytes, [0xA0]);
+    let mut reader = WireReader::new(&field);
+    assert!(matches!(
+        ResourceSetMask::decode(&mut reader),
         Err(WorldError::ResourceSetField(_))
     ));
 }

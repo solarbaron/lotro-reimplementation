@@ -25,7 +25,7 @@ use crate::login::{
 };
 use crate::play::chat::{ChatCategories, LiteralTexts, TextResolver};
 use crate::resource_report::{
-    EFFECTIVE_RESOURCE_SET_OPTION, ReportOmission, ResourceSetNames, candidate_data,
+    ITEM_13_RESOURCE_REPORT, ReportOmission, ResourceSetNames, candidate_data,
 };
 use crate::session::{BitTreeCodec, BitTreeTable, CodecUuids};
 use crate::world::{
@@ -266,8 +266,9 @@ pub fn prepare_preflight(data: &dyn InstallData) -> Result<Preflight, Unsupporte
 
 /// Decision 0046 item 13's candidate `0x13D` of this install (`official-session.md` §9.3.12): its
 /// complete data (one shared zero, both fields), or why it is omitted. Built from the same preflight
-/// snapshot as `0xEC`, for the launch's effective configuration
-/// ([`crate::resource_report::EFFECTIVE_RESOURCE_SET_OPTION`]). An omission never stops the login.
+/// snapshot as `0xEC`, for the launch's effective configuration `resource_sets`: the list the
+/// expanded launch template gives, `Ok(None)` for the built-in default
+/// ([`crate::resource_report::launch_resource_set_option`]). An omission never stops the login.
 ///
 /// # Errors
 ///
@@ -275,12 +276,12 @@ pub fn prepare_preflight(data: &dyn InstallData) -> Result<Preflight, Unsupporte
 pub fn prepare_resource_report(
     data: &dyn InstallData,
     archives: &[AdvertisedArchive],
+    resource_sets: Result<Option<&str>, ReportOmission>,
 ) -> Result<Vec<u8>, ReportOmission> {
-    candidate_data(
-        data.resource_sets(),
-        EFFECTIVE_RESOURCE_SET_OPTION,
-        archives,
-    )
+    if !ITEM_13_RESOURCE_REPORT {
+        return Err(ReportOmission::Withdrawn);
+    }
+    candidate_data(data.resource_sets(), resource_sets?, archives)
 }
 
 /// Makes the [`InstallData`] of the install root it is given, for the `<Lang>` token the

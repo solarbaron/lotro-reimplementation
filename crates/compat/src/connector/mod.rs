@@ -60,6 +60,7 @@ pub mod entities;
 pub mod login_phase;
 pub mod net;
 pub mod pending_world;
+pub mod report_evidence;
 pub mod session_phase;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

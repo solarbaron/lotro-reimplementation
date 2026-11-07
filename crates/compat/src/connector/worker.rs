@@ -17,8 +17,8 @@ use tessera_net::account::{
 use tessera_net::{Command, DisconnectReason, Event};
 
 use crate::login::{
-    LoginFailureClass, QueueEvaluation, SessionHandoff, TicketRefresher, WorldDescriptor,
-    WorldStatus as ServiceStatus, is_rfc1918_queue_url,
+    ArgTemplateParams, LoginFailureClass, QueueEvaluation, SessionHandoff, TicketRefresher,
+    WorldDescriptor, WorldStatus as ServiceStatus, is_rfc1918_queue_url,
 };
 
 use super::control::{Control, Msg};
@@ -34,6 +34,7 @@ use super::session_phase::{
     SessionDriver, SessionStart, StartFailure, refusal_cut, resolve_chat_endpoint,
 };
 use super::{EVENT_QUEUE, MAX_BATCH, READ_PAUSE};
+use crate::resource_report::{ReportOmission, template_resource_set_option};
 
 /// Shortest wait of the session loop for a command: after a pass in which something
 /// happened (more datagrams may follow at once) and when a timer is already due.
@@ -385,6 +386,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         }
     };
     let plain = auth.plain.clone();
+    let resource_sets = launch_resource_sets(&local, &auth);
     drop(auth);
     if stop() {
         return;
@@ -408,6 +410,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         login_server_entry: joined.login_server_entry,
         dump,
         evidence,
+        resource_sets,
     };
     let now = || clock.elapsed().as_secs_f64();
     let mut driver = match SessionDriver::start(&mut net, start, now(), &stop) {
@@ -897,6 +900,37 @@ fn shutdown<N: ConnectorNet>(net: &N, driver: &mut SessionDriver<N>, now: &impl 
         std::thread::sleep(loop_wait(t, driver.next_deadline(t)).min(left));
     }
     tracing::info!("official session closed");
+}
+
+/// The launch's resource-set list for decision 0046 item 13's report (`official-session.md`
+/// §9.3.12 steps 4–5): the `--resource-set` argument of the remote `GameClient.WIN32.ArgTemplate`
+/// as Tessera expands it for its session configuration (`official-login.md` §3.6;
+/// [`template_resource_set_option`]). Only values that are no secret are filled in: the ticket,
+/// subscription, login and chat server stay empty, since none of them can name a resource set and
+/// the expansion is never sent or logged.
+fn launch_resource_sets(
+    local: &LocalInputs,
+    auth: &Authenticated,
+) -> Result<Option<String>, ReportOmission> {
+    let remote = &auth.remote;
+    let params = ArgTemplateParams {
+        language: local.language.clone(),
+        game_type: local.config.datacenter_game_name.clone(),
+        auth_server_url: remote
+            .effective_auth_server_url(&auth.datacenter.auth_server)
+            .to_owned(),
+        gls_ticket_lifetime_sec: remote.gls_ticket_lifetime_sec,
+        support_url: remote.support_url.clone().unwrap_or_default(),
+        support_service_url: remote.support_service_url.clone().unwrap_or_default(),
+        bug_url: remote.bug_url.clone().unwrap_or_default(),
+        crash_receiver: remote.crash_receiver.clone().unwrap_or_default(),
+        upload_throttle: remote
+            .default_upload_throttle_mbps
+            .clone()
+            .unwrap_or_default(),
+        ..ArgTemplateParams::default()
+    };
+    template_resource_set_option(&remote.arg_template, &params)
 }
 
 #[cfg(test)]

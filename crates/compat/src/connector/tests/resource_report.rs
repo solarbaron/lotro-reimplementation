@@ -343,3 +343,278 @@ fn each_attempt_decides_once() {
         assert_eq!(d.counters().resource_reports_sent, 1);
     }
 }
+
+/// The datagrams the client sent since the last call, raw, with their sequence numbers and blob
+/// opcodes.
+fn sent_raw(world: &World) -> Vec<(Vec<u8>, u32, Vec<u32>)> {
+    world
+        .take_sent()
+        .into_iter()
+        .filter_map(|(d, _)| {
+            let p = decode_client_datagram(&d, false).ok()?;
+            let ops = p
+                .fragments
+                .iter()
+                .filter_map(|f| f.header.blob_header_word)
+                .collect();
+            Some((d, p.header.seq_num, ops))
+        })
+        .collect()
+}
+
+fn enter(d: &mut SessionDriver<FakeNet>, now: f64) {
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        now,
+    )
+    .expect("enter");
+}
+
+/// Remediation §31 fix 3, "selection queued in the same tick as the 13D": a report still undecided
+/// when the selection comes is decided and queued first, so its datagram goes before the `0x6F`'s,
+/// both in the same flush and never in one datagram.
+#[test]
+fn a_selection_in_the_reports_tick_goes_in_a_later_datagram() {
+    let ((), logs) = logs_of(|| {
+        let (world, mut d, _login) = driver_at_characters(Service::default(), 0);
+        let _ = world.take_sent();
+        let data = ResourceSetReport {
+            available: crate::world::ResourceSetMask::singleton(1).expect("key"),
+            loaded: crate::world::ResourceSetMask::singleton(1).expect("key"),
+        }
+        .to_bytes()
+        .expect("encode");
+        d.pend_report_for_tests(Ok(data));
+        enter(&mut d, 1.0);
+        d.step(1.0, true, &go);
+        let sent = sent_raw(&world);
+        let report = sent
+            .iter()
+            .position(|(_, _, ops)| ops.contains(&0x13D))
+            .expect("the report");
+        let selection = sent
+            .iter()
+            .position(|(_, _, ops)| ops.contains(&0x6F))
+            .expect("the selection");
+        assert!(report < selection, "{sent:?}");
+        assert!(sent[report].1 < sent[selection].1);
+        assert!(
+            sent.iter()
+                .all(|(_, _, ops)| !(ops.contains(&0x13D) && ops.contains(&0x6F)))
+        );
+    });
+    assert!(
+        logs.contains("report_position=\"earlier_datagram\""),
+        "{logs}"
+    );
+    assert!(!logs.contains("same_datagram") && !logs.contains("later_datagram"));
+}
+
+/// Remediation §31 fix 3, "13D omitted: 6F goes at once": the selection's first flush carries it.
+#[test]
+fn an_omitted_report_lets_the_selection_go_at_once() {
+    let ((), logs) = logs_of(|| {
+        let (world, mut d, _login) = driver_at_characters(Service::default(), 0);
+        let _ = world.take_sent();
+        enter(&mut d, 1.0);
+        d.step(1.0, true, &go);
+        let sent = sent_raw(&world);
+        assert!(
+            sent.iter().any(|(_, _, ops)| ops.contains(&0x6F)),
+            "{sent:?}"
+        );
+        assert!(sent.iter().all(|(_, _, ops)| !ops.contains(&0x13D)));
+    });
+    assert!(logs.contains("report_decision=\"omitted\""), "{logs}");
+    assert!(
+        logs.contains(&format!(
+            "report_omission=\"{}\"",
+            ReportOmission::NotRead.label()
+        )),
+        "{logs}"
+    );
+}
+
+/// Labelled C8 choice (remediation §31 fix 2) at the driver: the login server's NAK for the report
+/// resends its identical bytes, a covering Ack ends it, and the evidence fields (§31 fix 8) say so:
+/// the decision, the sequence of the first transmission, the transport's action and the position,
+/// with one summary at the referral. No key, label or mask is logged.
+#[test]
+fn the_report_evidence_follows_its_transport() {
+    let (seq, logs) = logs_of(|| {
+        let mut start = session_start(0, None, Arc::default());
+        start.schema = SchemaView(Arc::new(Reporting::eligible()));
+        let world = new_world(Service::default());
+        let mut net = FakeNet(world.clone());
+        let mut d = SessionDriver::start(&mut net, start, 0.0, &go).expect("start");
+        let mut login = Server::new(0x0111, 0xBEEF_0001);
+        world.deliver(login.challenge(0xBEEF_0001), LOGIN_SERVER);
+        world.deliver(
+            login.control(OptionalHeaders {
+                cumulative_ack: Some(0),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(0.0, true, &go);
+        let _ = world.take_sent();
+        world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
+        d.step(0.1, true, &go);
+        let sent = sent_raw(&world);
+        let (saved, seq, _) = sent
+            .into_iter()
+            .find(|(_, _, ops)| ops.contains(&0x13D))
+            .expect("the report");
+
+        // A NAK for it: the identical datagram again.
+        world.deliver(
+            login.control(OptionalHeaders {
+                sequence_nak: Some(vec![seq]),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(0.2, true, &go);
+        let again = sent_raw(&world);
+        assert!(again.iter().any(|(d, _, _)| *d == saved), "{again:?}");
+        // No resend without a NAK.
+        d.step(2.0, true, &go);
+        assert!(
+            sent_raw(&world)
+                .iter()
+                .all(|(_, _, ops)| !ops.contains(&0x13D))
+        );
+
+        enter(&mut d, 2.5);
+        d.step(2.5, true, &go);
+        // A covering Ack.
+        world.deliver(
+            login.control(OptionalHeaders {
+                cumulative_ack: Some(seq),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(4.0, true, &go);
+        world.deliver(
+            login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+            LOGIN_SERVER,
+        );
+        d.step(4.1, true, &go);
+        assert_eq!(d.counters().resource_reports_sent, 1);
+        seq
+    });
+    let want_seq = |line: &str| line.contains(&format!("report_sequence={seq}"));
+    let decided = logs
+        .lines()
+        .find(|l| {
+            l.contains("official evidence: resource-set report")
+                && l.contains("report_decision=\"sent\"")
+        })
+        .unwrap_or_else(|| panic!("{logs}"));
+    assert!(want_seq(decided), "{decided}");
+    let resent = logs
+        .lines()
+        .find(|l| l.contains("report_ack_action=\"nak_resend\""))
+        .unwrap_or_else(|| panic!("{logs}"));
+    assert!(resent.contains("report_nak_resends=1"), "{resent}");
+    assert!(want_seq(resent), "{resent}");
+    assert!(
+        logs.contains("report_ack_action=\"covered_by_cumulative_ack\""),
+        "{logs}"
+    );
+    assert!(
+        logs.contains("report_position=\"earlier_datagram\""),
+        "{logs}"
+    );
+    let summaries: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("official evidence: resource-set report summary"))
+        .collect();
+    assert_eq!(summaries.len(), 1, "{logs}");
+    assert!(summaries[0].contains("at=\"referral\""), "{}", summaries[0]);
+    assert!(
+        summaries[0].contains("report_ack_action=\"covered_by_cumulative_ack\""),
+        "{}",
+        summaries[0]
+    );
+    assert!(
+        summaries[0].contains("report_position=\"earlier_datagram\""),
+        "{}",
+        summaries[0]
+    );
+    assert!(
+        !logs.contains("SynthDefaultSet") && !logs.contains("SynthChildSet"),
+        "{logs}"
+    );
+}
+
+/// A report never acted on by the server says `none_yet` in its one summary at the close.
+#[test]
+fn an_unanswered_report_is_none_yet_at_the_close() {
+    let ((), logs) = logs_of(|| {
+        let (_world, mut d, _login) = at_characters(Reporting::eligible());
+        d.begin_shutdown(1.0);
+    });
+    let summary = logs
+        .lines()
+        .find(|l| l.contains("official evidence: resource-set report summary"))
+        .unwrap_or_else(|| panic!("{logs}"));
+    assert!(summary.contains("at=\"close\""), "{summary}");
+    assert!(
+        summary.contains("report_ack_action=\"none_yet\""),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("report_position=\"no_6f_yet\""),
+        "{summary}"
+    );
+}
+
+/// A launch list and the omission it gives, `None` for a sent report.
+type LaunchCase = (
+    Result<Option<String>, ReportOmission>,
+    Option<ReportOmission>,
+);
+
+/// Remediation §31 fix 7 at the driver: the launch template's `--resource-set` list is the
+/// configuration of steps 4–5.
+#[test]
+fn the_launch_list_is_the_configuration() {
+    let cases: [LaunchCase; 5] = [
+        (Ok(None), None),
+        (Ok(Some(" synthdefaultset\t".to_owned())), None),
+        (
+            Ok(Some("SynthChildSet".to_owned())),
+            Some(ReportOmission::ConfigOtherSet),
+        ),
+        (
+            Ok(Some("SynthDefaultSet,SynthChildSet".to_owned())),
+            Some(ReportOmission::ConfigMultiple),
+        ),
+        (Ok(Some(String::new())), Some(ReportOmission::ConfigEmpty)),
+    ];
+    for (list, omitted) in cases {
+        let mut start = session_start(0, None, Arc::default());
+        start.schema = SchemaView(Arc::new(Reporting::eligible()));
+        start.resource_sets = list.clone();
+        let (world, d, _login) = driver_at_characters_from(Service::default(), start);
+        let reported = reports(&sent_fragments(&world));
+        match omitted {
+            None => assert_eq!(reported, 1, "{list:?}"),
+            Some(kind) => {
+                assert_eq!(reported, 0, "{list:?}");
+                assert_eq!(d.counters().resource_reports_omitted, 1, "{kind:?}");
+            }
+        }
+    }
+    // A template with two `--resource-set` arguments.
+    let mut start = session_start(0, None, Arc::default());
+    start.schema = SchemaView(Arc::new(Reporting::eligible()));
+    start.resource_sets = Err(ReportOmission::ConfigMultiple);
+    let (world, d, _login) = driver_at_characters_from(Service::default(), start);
+    assert_eq!(reports(&sent_fragments(&world)), 0);
+    assert_eq!(d.counters().resource_reports_omitted, 1);
+}

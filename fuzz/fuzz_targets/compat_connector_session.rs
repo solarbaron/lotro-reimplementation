@@ -514,6 +514,8 @@ fn start(net: &mut Net, flags: u8, evidence: bool) -> Option<SessionDriver<Net>>
         // independent of bit 7 of the first byte (abandon or graceful shutdown) and all four
         // combinations run.
         evidence,
+        // No launch `--resource-set` argument: the built-in default.
+        resource_sets: Ok(None),
     };
     SessionDriver::start(net, start, 0.0, &|| false).ok()
 }

@@ -584,6 +584,26 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   `raw_opcode`, `first_of_opcode`, `queue`, `sequence_group`; the packet and blob lines carry its
   `recipient_token`), and an omission an `official evidence: held send` line with
   `held_opcode=0x13d` and `withholding_reason="decision 0046 item 5; item 13 <kind>"`.
+  The report's fields (remediation §31 fix 8; only with the opt-in, never a key, mask, label or DID):
+  - `report_decision`: `sent`, or `omitted` with `report_omission` (the bounded kind, as in
+    `reason=`), or `undecided` when the session ended before the character list.
+  - `report_sequence`: the private packet sequence of the report's first transmission on the login
+    connection (`0` when it was not sent); the packet lines with the same `seq` are its datagrams.
+  - `report_ack_action`: what the login server did with it, latest first: `covered_by_cumulative_ack`
+    (a cumulative Ack covered it, its retention ended), `nak_resend` (a NAK named it and its saved
+    bytes went again; `report_nak_resends` counts them), `out_of_order_ack` (a NAK named it after its
+    record was gone, at the referral for example; `report_out_of_order_acks` counts them), or
+    `none_yet` (nothing so far).
+  - `report_position`: where its first datagram went against the first `0x6F`'s:
+    `earlier_datagram` (the rule), `no_6f_yet` (no selection sent), `not_sent` (omitted), or
+    `same_datagram` / `later_datagram`, which must never appear and would be a Tessera fault.
+
+  The lines are: the decision line above (`report_decision`, `report_sequence`, `report_position`),
+  `official evidence: resource-set report transport` each time the server's Acks or NAKs change
+  what became of it (rate-limited like the refusal lines, with `skipped`),
+  `official evidence: resource-set report before the selection` at the first `0x6F`
+  (`report_position`), and one `official evidence: resource-set report summary` with every field,
+  at the referral (`at="referral"`) or, without one, at the close (`at="close"`).
 - `official world entry: stopped`: what an entry that stopped withheld (`withheld=`), followed by one
   `official evidence: withheld before 0xF4` line per withheld family with `held_opcode` and
   `withholding_reason`. `0x13D` is in that list only when its report was omitted, with the item-13

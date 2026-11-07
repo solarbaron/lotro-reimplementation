@@ -1117,7 +1117,10 @@ fn vector_25_a_queued_status_after_the_deadline_fails_at_once() {
     world.deliver(queue1(&mut login, 0x130, &ready), LOGIN_SERVER);
     d.step(295.0, true, &go);
     slow_server(&world, &mut d, &mut login, 296.0, 305.0);
-    assert!(!d.ended(), "the list wait runs past the queue deadline");
+    assert!(
+        !d.ended(),
+        "the wait after the ready status runs past the queue deadline"
+    );
     let _ = d.take_events();
     world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
     d.step(306.0, true, &go);
@@ -2521,4 +2524,48 @@ fn a_debug_form_of_the_start_failure_names_no_value() {
     ));
     let text = format!("{failure:?}");
     assert!(!text.contains('/'), "{text}");
+}
+
+/// Labelled C8 choice (remediation §31 fix 4): a queued login whose ready `0x130` comes before the
+/// first `0xDD` returns to the `0xDD` wait, so that `0xDD` still sends `0xEC`, exactly once; a
+/// `0x12D` status 1 before it is skipped the same way.
+#[test]
+fn a_ready_status_before_the_request_keeps_the_advertisement() {
+    let (world, mut d, mut login) = connected();
+    let (queued, ready) = queue_statuses();
+    world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
+    d.step(1.0, true, &go);
+    world.deliver(queue1(&mut login, 0x130, &ready), LOGIN_SERVER);
+    d.step(2.0, true, &go);
+    let status = VersionStatusMessage {
+        status: 1,
+        server_version_info: String::new(),
+    }
+    .encode()
+    .expect("encode");
+    world.deliver(
+        queue1(&mut login, 0x12D, &encode_event_envelope(&status)),
+        LOGIN_SERVER,
+    );
+    d.step(2.5, true, &go);
+    assert!(!d.initial_stages().ec_sent);
+    let _ = sent_packets(&world);
+    world.deliver(
+        queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+        LOGIN_SERVER,
+    );
+    d.step(3.0, true, &go);
+    assert!(
+        d.initial_stages().ec_sent,
+        "the first valid 0xDD sends 0xEC"
+    );
+    assert!(opcodes(&sent_packets(&world)).contains(&0xEC));
+    // A second 0xDD sends nothing.
+    world.deliver(
+        queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+        LOGIN_SERVER,
+    );
+    d.step(3.5, true, &go);
+    assert!(!opcodes(&sent_packets(&world)).contains(&0xEC));
+    assert!(!d.ended());
 }

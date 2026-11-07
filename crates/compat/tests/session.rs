@@ -16,21 +16,21 @@ use tessera_compat::session::{
     FLAG_FLOW_CONTROL, FLAG_HAS_FRAGMENTED_BLOBS, FLAG_MASKED_CHECKSUM, FLAG_OUT_OF_ORDER_ACK,
     FLAG_SEQUENCE_NAK, FLAG_SERVER_REDIRECT, FLAG_TRANSPORT_ERROR, FLAG_UNDEFINED_10,
     FLAG_UNDEFINED_23, FLAG_WORLD_REFERRAL, FlowControlHeader, FragmentAttachment,
-    INVALID_DATAGRAM_FLAGS_MASK, InMemoryUdpTransport, IsaacCipher, LOGON_RESULT_QUEUED,
-    LoginQueuePosition, LoginQueueStatusMessage, LogonOutcome, MAX_BLOB_FRAG_PAYLOAD,
-    MAX_FRAGS_PER_PACKET, MAX_NAK_ENTRIES, MAX_SEQ_LOOKAHEAD, MAX_UNIQUE_PORT_ATTEMPTS,
-    MessageRoutingHeader, OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS,
-    OPCODE_SINGLE_WRAPPER, OPCODE_SYSTEM_NOTIFICATION, OPCODE_VERSION_REQUEST,
-    OPCODE_VERSION_STATUS, OptionalHeaders, RECEIVE_FORBIDDEN_FLAGS_MASK, ReferralAuthHeader,
-    ServerRedirectHeader, SessionAuthHeader, SessionConnection, SessionError, SessionEvent,
-    SessionMultiplexer, SystemNotificationMessage, TransportErrorHeader, UdpDatagramTransport,
-    VALID_DATAGRAM_FLAGS_MASK, VersionStatusMessage, WireCodecs, WorldReferralHeader,
-    check_ticket_text, combine_packet_checksum, compute_datagram_checksum, decode_datagram,
-    decode_message, des3_cbc_decrypt, des3_cbc_encrypt, dispatch_message, encode_batch_container,
-    encode_datagram, encode_message, encode_message_with_routing, encode_single_wrapper,
-    encode_single_wrapper_with_context, encode_variable_u32, guid_fields_swapped, next_unique_port,
-    payload_checksum, sndbuf_probe_midpoint, split_blob, unique_port_candidates,
-    unique_port_ip_value, unique_port_seed, verify_packet_checksum,
+    INVALID_DATAGRAM_FLAGS_MASK, InMemoryUdpTransport, IsaacCipher, KeptBlobAction,
+    LOGON_RESULT_QUEUED, LoginQueuePosition, LoginQueueStatusMessage, LogonOutcome,
+    MAX_BLOB_FRAG_PAYLOAD, MAX_FRAGS_PER_PACKET, MAX_NAK_ENTRIES, MAX_SEQ_LOOKAHEAD,
+    MAX_UNIQUE_PORT_ATTEMPTS, MessageRoutingHeader, OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION,
+    OPCODE_LOGIN_QUEUE_STATUS, OPCODE_SINGLE_WRAPPER, OPCODE_SYSTEM_NOTIFICATION,
+    OPCODE_VERSION_REQUEST, OPCODE_VERSION_STATUS, OptionalHeaders, RECEIVE_FORBIDDEN_FLAGS_MASK,
+    ReferralAuthHeader, ServerRedirectHeader, SessionAuthHeader, SessionConnection, SessionError,
+    SessionEvent, SessionMultiplexer, SystemNotificationMessage, TransportErrorHeader,
+    UdpDatagramTransport, VALID_DATAGRAM_FLAGS_MASK, VersionStatusMessage, WireCodecs,
+    WorldReferralHeader, check_ticket_text, combine_packet_checksum, compute_datagram_checksum,
+    decode_datagram, decode_message, des3_cbc_decrypt, des3_cbc_encrypt, dispatch_message,
+    encode_batch_container, encode_datagram, encode_message, encode_message_with_routing,
+    encode_single_wrapper, encode_single_wrapper_with_context, encode_variable_u32,
+    guid_fields_swapped, next_unique_port, payload_checksum, sndbuf_probe_midpoint, split_blob,
+    unique_port_candidates, unique_port_ip_value, unique_port_seed, verify_packet_checksum,
 };
 
 /// The synthetic version stamp of Vector 6 (`official-session.md` §10.2,
@@ -4490,4 +4490,183 @@ fn an_out_of_order_acknowledgement_ends_the_gaps_clock() {
     .unwrap();
     conn.tick(1.0 + MAX_GAP_AGE_SEC + 1.0).unwrap();
     assert_eq!(conn.state(), ConnectionState::Connected);
+}
+
+/// A synthetic standalone control from the server to the connection with recipient `0x0100`.
+fn server_control(opt: OptionalHeaders) -> Vec<u8> {
+    encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0100,
+            ..DatagramHeader::default()
+        },
+        &opt,
+        &[],
+        None,
+        None,
+    )
+    .unwrap()
+}
+
+/// A synthetic `SequenceNakHeader` for `seqs`.
+fn server_nak(seqs: &[u32]) -> Vec<u8> {
+    server_control(OptionalHeaders {
+        sequence_nak: Some(seqs.to_vec()),
+        ..OptionalHeaders::default()
+    })
+}
+
+/// The queued datagrams as raw bytes with their sequence numbers and blob opcodes.
+fn drained_raw(conn: &mut SessionConnection) -> Vec<(Vec<u8>, u32, Vec<u32>)> {
+    std::iter::from_fn(|| conn.pop_outbound_datagram())
+        .map(|d| {
+            let p = decode_datagram(&d, false, None, false).unwrap();
+            let ops = p
+                .fragments
+                .iter()
+                .filter_map(|f| f.header.blob_header_word)
+                .collect();
+            (d, p.header.seq_num, ops)
+        })
+        .collect()
+}
+
+/// The synthetic `0x13D` destination of these tests (a test value, not the spec's routing constant).
+const REPORT_TO: u64 = 0x0600_0000_0000_0999;
+
+/// Labelled C8 choice (remediation §31 fix 2) for the watched `0x13D`: a dropped report is resent
+/// only on a NAK naming it, with its identical bytes (sequence, word and checksum); the implicit
+/// acknowledgement below a first NAK above it does not free it; a covering cumulative Ack does; and
+/// nothing resends it on a timer.
+#[test]
+fn the_watched_report_is_kept_until_a_covering_ack_and_resent_only_on_a_nak() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 71), 9000);
+    let mut conn = connected_connection(peer, 0x0000_0071);
+    let report = conn
+        .send_blob_watched(1, 0, REPORT_TO, 0x13D, &[0, 1, 1, 1, 1], 1.0, None)
+        .unwrap();
+    assert_eq!(report.len(), 1);
+    let report = report[0];
+    let later = conn.send_blob(2, 0, 0x10, &[2], 1.0, None).unwrap()[0];
+    let sent = drained_raw(&mut conn);
+    // "Drop" the report's datagram: only its saved bytes are kept for the comparison.
+    let saved = sent
+        .iter()
+        .find(|(_, seq, _)| *seq == report)
+        .map(|(d, _, _)| d.clone())
+        .expect("the report went out");
+    let fate = conn.watched_fate().expect("watched");
+    assert_eq!(fate.first_sequence, report);
+    assert_eq!(fate.datagrams, 1);
+    assert_eq!(fate.last, None);
+
+    // No timer resends it.
+    for t in [1.5, 3.0, 10.0, 20.0] {
+        conn.receive_datagram(&server_ack(0x0100), peer, t, WireCodecs::NONE)
+            .unwrap();
+        conn.tick(t).unwrap();
+        assert!(
+            drained_raw(&mut conn)
+                .iter()
+                .all(|(_, _, ops)| ops.is_empty()),
+            "no resend without a NAK at {t}"
+        );
+    }
+
+    // A NAK for it: the identical bytes.
+    conn.receive_datagram(&server_nak(&[report]), peer, 20.1, WireCodecs::NONE)
+        .unwrap();
+    let again = drained_raw(&mut conn);
+    assert_eq!(again.len(), 1);
+    assert_eq!(again[0].0, saved, "identical bytes, sequence and checksum");
+    let fate = conn.watched_fate().expect("watched");
+    assert_eq!(fate.nak_resends, 1);
+    assert_eq!(fate.last.map(KeptBlobAction::label), Some("nak_resend"));
+
+    // A NAK whose first number is above it: the implicit acknowledgement does not free it.
+    conn.receive_datagram(&server_nak(&[later]), peer, 20.2, WireCodecs::NONE)
+        .unwrap();
+    let _ = drained_raw(&mut conn);
+    conn.receive_datagram(&server_nak(&[report]), peer, 20.3, WireCodecs::NONE)
+        .unwrap();
+    let again = drained_raw(&mut conn);
+    assert_eq!(again.len(), 1, "still kept");
+    assert_eq!(again[0].0, saved);
+    assert_eq!(conn.pending_out_of_order_acks(), 0);
+    assert_eq!(conn.watched_fate().map(|f| f.nak_resends), Some(2));
+
+    // A cumulative Ack covering it frees it: a later NAK gets an OutOfOrderAck.
+    conn.receive_datagram(
+        &server_control(OptionalHeaders {
+            cumulative_ack: Some(report),
+            ..OptionalHeaders::default()
+        }),
+        peer,
+        20.4,
+        WireCodecs::NONE,
+    )
+    .unwrap();
+    let fate = conn.watched_fate().expect("watched");
+    assert!(fate.covered_by_cumulative_ack);
+    assert_eq!(
+        fate.last.map(KeptBlobAction::label),
+        Some("covered_by_cumulative_ack")
+    );
+    conn.receive_datagram(&server_nak(&[report]), peer, 20.5, WireCodecs::NONE)
+        .unwrap();
+    assert!(drained_raw(&mut conn).is_empty());
+    assert_eq!(conn.pending_out_of_order_acks(), 1);
+    let fate = conn.watched_fate().expect("watched");
+    assert_eq!(fate.out_of_order_acks, 1);
+    assert_eq!(
+        fate.last.map(KeptBlobAction::label),
+        Some("out_of_order_ack")
+    );
+}
+
+/// The referral's login retirement applies unchanged to the watched report (labelled C8 choice,
+/// remediation §31 fix 2): a NAK for it afterwards gets an OutOfOrderAck, never an application
+/// resend.
+#[test]
+fn a_retired_connection_drops_the_watched_report() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 72), 9000);
+    let mut conn = connected_connection(peer, 0x0000_0072);
+    let report = conn
+        .send_blob_watched(1, 0, REPORT_TO, 0x13D, &[0, 1, 1, 1, 1], 1.0, None)
+        .unwrap()[0];
+    let _ = drained_raw(&mut conn);
+    conn.retire();
+    conn.receive_datagram(&server_nak(&[report]), peer, 1.1, WireCodecs::NONE)
+        .unwrap();
+    assert!(drained_raw(&mut conn).is_empty());
+    assert_eq!(conn.pending_out_of_order_acks(), 1);
+    assert_eq!(
+        conn.watched_fate().and_then(|f| f.last),
+        Some(KeptBlobAction::OutOfOrderAck)
+    );
+}
+
+/// Remediation §31 fix 3: a `0x6F` queued right after the `0x13D` (the same tick) goes in a later
+/// datagram; no datagram carries both.
+#[test]
+fn a_selection_queued_with_the_report_goes_in_a_later_datagram() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 73), 9000);
+    let mut conn = connected_connection(peer, 0x0000_0073);
+    conn.send_blob_watched(1, 0, REPORT_TO, 0x13D, &[0, 1, 1, 1, 1], 1.0, None)
+        .unwrap();
+    conn.send_blob_to(2, 0, 0x0600_0000_0000_0998, 0x6F, &[0; 10], 1.0, None)
+        .unwrap();
+    let sent = drained_raw(&mut conn);
+    let report = sent
+        .iter()
+        .position(|(_, _, ops)| ops.contains(&0x13D))
+        .expect("the report");
+    let selection = sent
+        .iter()
+        .position(|(_, _, ops)| ops.contains(&0x6F))
+        .expect("the selection");
+    assert!(report < selection, "the report's datagram first");
+    assert!(
+        sent.iter()
+            .all(|(_, _, ops)| !(ops.contains(&0x13D) && ops.contains(&0x6F)))
+    );
 }

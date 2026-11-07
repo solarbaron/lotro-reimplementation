@@ -2653,6 +2653,8 @@ fn session_start(
         dump: None,
         // The tests read the evidence lines; production has the log off unless the user opts in.
         evidence: true,
+        // No `--resource-set` argument: the built-in default (§9.3.12 step 5).
+        resource_sets: Ok(None),
     }
 }
 

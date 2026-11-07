@@ -11,19 +11,19 @@ use super::*;
 use crate::connector::pending_world::{
     DEFAULT_RECIPIENT, MAX_PENDING_ENTITIES, ReportStatus, withheld_summary,
 };
-use crate::resource_report::ReportOmission;
-
-/// The report status of these tests' install, which does not read the resource sets (decision 0046
-/// item 13: omitted, so `0x13D` stays in the withheld list).
-const NOT_READ: ReportStatus = ReportStatus::Omitted(ReportOmission::NotRead);
 use crate::connector::session_phase::{
     CHAT_UNAVAILABLE, ENTRY_REENTRY_NOT_SUPPORTED, HELD_COMMAND, MOVE_HELD,
 };
+use crate::resource_report::ReportOmission;
 use crate::world::{
     EncodedPropertyEntry, EncodedPropertyTable, EncodedPropertyValue, EntityCreate,
     PID_WORLD_TIME_OFFSET, PlayerSessionReady,
 };
 use tessera_net::WorldEntryStage;
+
+/// The report status of these tests' install, which does not read the resource sets (decision 0046
+/// item 13: omitted, so `0x13D` stays in the withheld list).
+const NOT_READ: ReportStatus = ReportStatus::Omitted(ReportOmission::NotRead);
 
 const PLAYER: u64 = 0x0100_0000_0000_0007;
 

@@ -40,8 +40,9 @@
 //! is in its handshake: one on the login connection and none on the world's
 //! (`SessionDriver::begin_shutdown`).
 //! Required progress is only the preflight, the session's codec, the bodies of `0x12C` and `0x6F`,
-//! the first `0x6C` and the first `0x90`; any other complete message that fails is counted and
-//! skipped.
+//! the first `0x6C`, every `0x90` from the current world peer (an undecodable or conflicting later one
+//! is Unsupported, §9.3.11) and a `0x40` whose target resolves to the `0x90`'s ID (Unsupported,
+//! §9.3.9); any other complete message that fails is counted and skipped.
 //!
 //! # The road into the world
 //!
@@ -49,7 +50,9 @@
 //! table. Separate 30-second waits follow, none reset by other traffic ([`EntryWait`]): to the
 //! referral, to the world connection's State 5, to a complete valid `0x90`, and from `0x90` to the
 //! sourced readiness. Each real step is an `Event::WorldEntryProgress`. Only a `0x90` of the world
-//! connection during its own wait starts the last one; any other is counted and skipped.
+//! connection during its own wait starts the last one. A later `0x90` from the world peer that does not
+//! read, or names an ID of `0` or `2` or another ID, is Unsupported; one from the login or another
+//! peer is counted and skipped without touching the identity.
 //!
 //! On the world connection each checked message, top-level or embedded in a `0x4C`, is decoded under
 //! its named layout with its one shared byte and kept in [`PendingWorld`] only when that holds to
@@ -302,7 +305,7 @@ use super::entities::{
 use super::login_phase::PlainSteps;
 use super::net::{ConnectorNet, SendHttpClient};
 use super::pending_world::{
-    DEFAULT_RECIPIENT, DEFAULT_RECIPIENT_DESPAWN_APPLIES, EntitySnapshot, PendingWorld,
+    DEFAULT_RECIPIENT, DEFAULT_RECIPIENT_DESPAWN_APPLIES, EntitySnapshot, HeldUpdate, PendingWorld,
     ReportStatus, Stored, withheld_before_f4, withheld_summary,
 };
 use crate::resource_report::ReportOmission;
@@ -1070,6 +1073,9 @@ pub struct DriverCounters {
     pub cancelled_referrals: u64,
     /// Messages that failed to decode.
     pub decode_errors: u64,
+    /// In-world updates of the `0x90`'s ID merged into its local hold for want of a validated `0x98`
+    /// (§9.3.9; [`PendingWorld::hold_update`]).
+    pub local_held: u64,
     /// Opcodes this driver does not handle.
     pub unhandled: u64,
     /// Outgoing messages that could not be queued.
@@ -1284,6 +1290,9 @@ pub struct SessionDriver<N: ConnectorNet> {
     /// them for as long as a session stays open (`docs/DEVELOPMENT.md` "Reading a live official
     /// run").
     message_log: LogLimit,
+    /// The opt-in `skipped_property_id` lines ([`Self::log_skipped_property`]): bounded like the
+    /// refusal lines, with their own budget so one never starves the other.
+    property_log: LogLimit,
     /// The time of the message being handled, for [`Self::message_log`].
     log_clock: f64,
     bind: BindCase,
@@ -1565,6 +1574,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             unknown_log: LogLimit::default(),
             send_log: LogLimit::default(),
             message_log: LogLimit::default(),
+            property_log: LogLimit::default(),
             log_clock: now,
             bind,
             local_source,
@@ -1675,6 +1685,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
     #[must_use]
     pub fn local_hold_len(&self) -> usize {
         self.pending.local_hold().map_or(0, |h| h.messages.len())
+    }
+
+    /// The local player's held snapshot, in release order (§9.3.9; tests).
+    #[must_use]
+    pub fn local_hold(&self) -> Option<EntitySnapshot> {
+        self.pending.local_hold()
     }
 
     /// Whether a selection is refused locally: the session has been in the world and left it, and
@@ -3984,6 +4000,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
         body: &[u8],
         depth: usize,
     ) -> Option<CreateOutcome> {
+        if self.pending.holds(recipient) && self.hold_local(opcode, recipient, body) {
+            return None;
+        }
         if !Self::feed_opcode(opcode) {
             self.play_message(opcode, recipient, body);
             return None;
@@ -4064,12 +4083,83 @@ impl<N: ConnectorNet> SessionDriver<N> {
         outcome
     }
 
+    /// §9.3.9: the `0x90`'s ID with no validated `0x98` gets no update before one. A validated in-world
+    /// `0x52`, entity `0x88`/`0x92` or removal, `0x89`, `0xCE` or `0xCC` keyed to it (its RAW logical
+    /// recipient, as on the way to `WorldEntered`) merges into the local hold, so the `0x98` replays the
+    /// LATEST state after the spawn, never an older one over newer live state. Whether the message was
+    /// taken; one that does not read goes the ordinary way and is counted there.
+    fn hold_local(&mut self, opcode: u32, recipient: u64, body: &[u8]) -> bool {
+        let stored = match opcode {
+            PropertyTableUpdate::EVENT_ID_ENTITY => {
+                let Ok(entries) = PropertyTableUpdate::entry_spans(body, &self.schema) else {
+                    return false;
+                };
+                self.pending
+                    .hold_update(recipient, HeldUpdate::Table(&entries))
+            }
+            op if SinglePropertyUpdate::scope_of(op) == Some(PropertyScope::Entity) => {
+                let mut r = WireReader::new(body);
+                let Ok(u) = SinglePropertyUpdate::decode(&mut r, op, &self.schema)
+                    .and_then(|u| r.finish().map(|()| u))
+                else {
+                    return false;
+                };
+                self.pending.hold_update(
+                    recipient,
+                    HeldUpdate::Single {
+                        opcode: op,
+                        property: u.entry.pid,
+                        body,
+                    },
+                )
+            }
+            op if PropertyRemoval::scope_of(op) == Some(PropertyScope::Entity) => {
+                let mut r = WireReader::new(body);
+                let Ok(u) =
+                    PropertyRemoval::decode(&mut r, op).and_then(|u| r.finish().map(|()| u))
+                else {
+                    return false;
+                };
+                self.pending
+                    .hold_update(recipient, HeldUpdate::Removal(u.property_id))
+            }
+            VisualDescriptionUpdate::EVENT_ID => {
+                if VisualDescriptionUpdate::from_bytes(body).is_err() {
+                    return false;
+                }
+                self.pending
+                    .hold_update(recipient, HeldUpdate::Appearance(body))
+            }
+            PositionUpdate::EVENT_ID => {
+                if PositionUpdate::from_bytes(body).is_err() {
+                    return false;
+                }
+                self.pending
+                    .hold_update(recipient, HeldUpdate::Position(body))
+            }
+            PortalPositionSync::EVENT_ID => {
+                if PortalPositionSync::from_bytes(body, &self.schema).is_err() {
+                    return false;
+                }
+                self.pending.hold_update(recipient, HeldUpdate::Sync(body))
+            }
+            _ => return false,
+        };
+        if stored.is_some() {
+            self.counters.local_held = self.counters.local_held.saturating_add(1);
+        }
+        stored.is_some()
+    }
+
     /// The opt-in `skipped_property_id` evidence of §9.3.11 ("Required live-log CONTENT"): when a
     /// table decode stopped at a property the schema does not know, its numeric key and type
     /// category, never its value or account data. The schema has no type for an unknown key, so its
-    /// category is `not-in-schema` (labelled, Tessera's word). Other errors log nothing here.
-    fn log_skipped_property(&self, error: &WorldError, what: &'static str) {
-        if let WorldError::UnknownPropertyId(pid) = error {
+    /// category is `not-in-schema` (labelled, Tessera's word). Other errors log nothing here. The lines
+    /// are rate-bounded like the refusal lines, with the count of those left out.
+    fn log_skipped_property(&mut self, error: &WorldError, what: &'static str) {
+        if let WorldError::UnknownPropertyId(pid) = error
+            && let Some(skipped) = self.property_log.allow(self.log_clock)
+        {
             evidence!(
                 self.evidence_log,
                 debug,
@@ -4077,6 +4167,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 what,
                 skipped_property_id = format_args!("{pid:#x}"),
                 skipped_property_type_category = "not-in-schema",
+                skipped,
                 "official evidence: property key skipped"
             );
         }

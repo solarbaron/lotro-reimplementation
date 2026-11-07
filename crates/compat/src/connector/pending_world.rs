@@ -44,6 +44,9 @@
 //! §9.3.9: the `0x90`'s own ID without a validated `0x98` emits no synthetic spawn and no update at
 //! the release: its latest merged properties and motion stay in a bounded priority local hold until a
 //! validated `0x98` for it permits spawn-before-update, or the close ([`PendingWorld::take_local_hold`]).
+//! The world's in-world updates of that ID before its `0x98` merge into the hold rather than apply
+//! ([`PendingWorld::hold_update`]), so the replay after the spawn is the latest state, never an older
+//! snapshot over newer live state.
 //! An explicit `0x40` to an unannounced nonlocal ID is counted and skipped with no tombstone
 //! ([`PendingWorld::despawn_applies`]); one to the `0x90`'s ID is required-progress Unsupported, and
 //! every `0x90` from the current world peer must read (the driver, `session_phase`).
@@ -253,8 +256,41 @@ pub struct PendingWorld {
     /// The first `0x90`'s encoded table: required local state (module docs).
     session_table: Option<Vec<u8>>,
     /// The local player's merged properties and motion when no validated `0x98` announced it by the
-    /// release: held, never released, until a validated `0x98` for its ID or the close (§9.3.9).
-    local_hold: Option<EntitySnapshot>,
+    /// release: held, never released, until a validated `0x98` for its ID or the close (§9.3.9). The
+    /// world's later updates of that ID merge into it ([`Self::hold_update`]).
+    local_hold: Option<LocalHold>,
+}
+
+/// The local player's held state after the release (§9.3.9).
+#[derive(Debug)]
+struct LocalHold {
+    entity: u64,
+    state: PendingEntity,
+}
+
+/// One validated in-world update of the held `0x90` ID, as its encoded data
+/// ([`PendingWorld::hold_update`]).
+#[derive(Debug, Clone, Copy)]
+pub enum HeldUpdate<'a> {
+    /// A `0x52`'s entries by property.
+    Table(&'a [(u32, &'a [u8])]),
+    /// A complete `0x88` or `0x92` of `property`.
+    Single {
+        /// Its opcode.
+        opcode: u32,
+        /// Its property.
+        property: u32,
+        /// Its complete body.
+        body: &'a [u8],
+    },
+    /// An entity-scope property removal: the held value of `property` is dropped.
+    Removal(u32),
+    /// A complete `0x89`.
+    Appearance(&'a [u8]),
+    /// A complete `0xCE`.
+    Position(&'a [u8]),
+    /// A complete `0xCC`.
+    Sync(&'a [u8]),
 }
 
 /// One entity's snapshot for its release at `WorldEntered`.
@@ -328,17 +364,100 @@ impl PendingWorld {
     /// Takes the local player's held snapshot when a validated `0x98` for `id` arrives in the world
     /// (§9.3.9: spawn first, then its merged properties and motion). `None` for any other ID.
     pub fn take_local_hold(&mut self, id: u64) -> Option<EntitySnapshot> {
-        if self.local_hold.as_ref().is_some_and(|h| h.entity == id) {
-            self.local_hold.take()
+        if self.holds(id) {
+            self.local_hold.take().map(|h| EntitySnapshot {
+                entity: h.entity,
+                messages: state_messages(&h.state),
+            })
         } else {
             None
         }
     }
 
-    /// The local player's held snapshot, if any (tests and diagnostics).
+    /// The local player's held snapshot, if any (tests and diagnostics): a copy, in release order.
     #[must_use]
-    pub const fn local_hold(&self) -> Option<&EntitySnapshot> {
-        self.local_hold.as_ref()
+    pub fn local_hold(&self) -> Option<EntitySnapshot> {
+        self.local_hold.as_ref().map(|h| EntitySnapshot {
+            entity: h.entity,
+            messages: state_messages(&h.state),
+        })
+    }
+
+    /// Whether the local hold is that of `id`: the `0x90`'s ID after the release, with no validated
+    /// `0x98` for it yet.
+    #[must_use]
+    pub fn holds(&self, id: u64) -> bool {
+        self.local_hold.as_ref().is_some_and(|h| h.entity == id)
+    }
+
+    /// A validated in-world update of the held `0x90` ID before its validated `0x98` (§9.3.9: no
+    /// update for that ID before it; its LATEST merged properties and motion are kept). It merges into
+    /// the hold as the store merges, so a later `0x98` replays the newest state and never a stale one.
+    /// The hold keeps [`MAX_PENDING_BYTES`]; an update past it drops the held value it would have
+    /// replaced, so what is replayed is never older than what was seen (labelled). `None` when `id`
+    /// has no hold.
+    pub fn hold_update(&mut self, id: u64, update: HeldUpdate<'_>) -> Option<Stored> {
+        let hold = self.local_hold.as_mut().filter(|h| h.entity == id)?;
+        let e = &mut hold.state;
+        let bytes = e.held();
+        let fits = |old: usize, new: usize| {
+            bytes.saturating_sub(old).saturating_add(new) <= MAX_PENDING_BYTES
+        };
+        let stored = match update {
+            HeldUpdate::Table(entries) => {
+                if merged_size(e, entries, bytes) > MAX_PENDING_BYTES {
+                    for (property, _) in entries {
+                        e.properties.remove(property);
+                    }
+                    Stored::ByteCap
+                } else {
+                    for (property, encoded) in entries {
+                        let arrival = e.next_arrival;
+                        e.next_arrival = arrival.saturating_add(1);
+                        e.properties.insert(
+                            *property,
+                            KeptProperty {
+                                opcode: OPCODE_TABLE,
+                                encoded: encoded.to_vec(),
+                                arrival,
+                            },
+                        );
+                    }
+                    Stored::Kept
+                }
+            }
+            HeldUpdate::Single {
+                opcode,
+                property,
+                body,
+            } => {
+                let old = e.properties.get(&property).map_or(0, |p| p.encoded.len());
+                if fits(old, body.len()) {
+                    let arrival = e.next_arrival;
+                    e.next_arrival = arrival.saturating_add(1);
+                    e.properties.insert(
+                        property,
+                        KeptProperty {
+                            opcode,
+                            encoded: body.to_vec(),
+                            arrival,
+                        },
+                    );
+                    Stored::Kept
+                } else {
+                    e.properties.remove(&property);
+                    Stored::ByteCap
+                }
+            }
+            HeldUpdate::Removal(property) => {
+                e.properties.remove(&property);
+                Stored::Kept
+            }
+            HeldUpdate::Appearance(body) => replace_held(&mut e.appearance, body, fits),
+            HeldUpdate::Position(body) => replace_held(&mut e.position, body, fits),
+            HeldUpdate::Sync(body) => replace_held(&mut e.sync, body, fits),
+        };
+        Some(stored)
     }
 
     /// Whether a `0x40` to `target` deletes (§9.3.9): only an explicit nonlocal target that a
@@ -580,7 +699,7 @@ impl PendingWorld {
             .copied()
             .filter(|id| self.resolved(*id))
             .collect();
-        let player = self.player;
+        let player = self.player.filter(|id| !resolved.contains(id));
         let mut spawns = Vec::new();
         let mut states = Vec::new();
         let mut entities = std::mem::take(&mut self.entities);
@@ -599,7 +718,7 @@ impl PendingWorld {
                     messages: vec![(OPCODE_CREATE, body)],
                 });
             }
-            let messages = state_messages(e);
+            let messages = state_messages(&e);
             if !messages.is_empty() {
                 states.push(EntitySnapshot {
                     entity: id,
@@ -609,18 +728,14 @@ impl PendingWorld {
         }
         // §9.3.9: the announced `0x90` ID with no validated `0x98` emits no synthetic spawn and no
         // update; its latest merged properties and motion stay held, in priority, until a validated
-        // `0x98` for it or the close.
-        if let Some(id) = player
-            && let Some(e) = entities.remove(&id)
-            && !e.despawned
-        {
-            let messages = state_messages(e);
-            if !messages.is_empty() {
-                self.local_hold = Some(EntitySnapshot {
-                    entity: id,
-                    messages,
-                });
-            }
+        // `0x98` for it or the close. The hold exists even when nothing was kept, so the world's later
+        // updates of that ID are held too ([`Self::hold_update`]).
+        if let Some(id) = player {
+            let state = entities
+                .remove(&id)
+                .filter(|e| !e.despawned)
+                .unwrap_or_default();
+            self.local_hold = Some(LocalHold { entity: id, state });
         }
         (spawns, states)
     }
@@ -633,9 +748,9 @@ impl PendingWorld {
 
 /// One entity's kept properties and motion, in release order: the merged `0x52` table, the
 /// `0x88`/`0x92` singles in arrival order, then appearance and motion (§9.3.9).
-fn state_messages(e: PendingEntity) -> Vec<KeptMessage> {
+fn state_messages(e: &PendingEntity) -> Vec<KeptMessage> {
     let mut messages = Vec::new();
-    let mut properties: Vec<KeptProperty> = e.properties.into_values().collect();
+    let mut properties: Vec<&KeptProperty> = e.properties.values().collect();
     properties.sort_by_key(|p| p.arrival);
     let table: Vec<&[u8]> = properties
         .iter()
@@ -652,18 +767,34 @@ fn state_messages(e: PendingEntity) -> Vec<KeptMessage> {
         properties
             .into_iter()
             .filter(|p| p.opcode != OPCODE_TABLE)
-            .map(|p| (p.opcode, p.encoded)),
+            .map(|p| (p.opcode, p.encoded.clone())),
     );
-    if let Some(body) = e.appearance {
-        messages.push((OPCODE_APPEARANCE, body));
+    if let Some(body) = &e.appearance {
+        messages.push((OPCODE_APPEARANCE, body.clone()));
     }
-    if let Some(body) = e.position {
-        messages.push((OPCODE_POSITION, body));
+    if let Some(body) = &e.position {
+        messages.push((OPCODE_POSITION, body.clone()));
     }
-    if let Some(body) = e.sync {
-        messages.push((OPCODE_SYNC, body));
+    if let Some(body) = &e.sync {
+        messages.push((OPCODE_SYNC, body.clone()));
     }
     messages
+}
+
+/// Replaces one held field of the local hold with `body` when `fits` allows it; else drops the old
+/// value, so a stale one is never replayed (labelled, [`PendingWorld::hold_update`]).
+fn replace_held(
+    field: &mut Option<Vec<u8>>,
+    body: &[u8],
+    fits: impl Fn(usize, usize) -> bool,
+) -> Stored {
+    if fits(held(field), body.len()) {
+        *field = Some(body.to_vec());
+        Stored::Kept
+    } else {
+        *field = None;
+        Stored::ByteCap
+    }
 }
 
 /// The store's byte count once `entries` are merged into `entity`: each property counts once, its
@@ -792,6 +923,56 @@ mod tests {
         assert!(r.local_hold().is_some());
         r.discard();
         assert!(r.local_hold().is_none());
+    }
+
+    /// §9.3.9: in-world updates of the held `0x90` ID before its `0x98` merge into the hold, so the
+    /// replay carries the latest values; a removal drops the held value; another ID has no hold.
+    #[test]
+    fn in_world_updates_of_the_held_player_merge_into_the_hold() {
+        let mut p = PendingWorld::default();
+        p.set_player(9);
+        assert_eq!(p.table(9, &[(1, &[0xA1]), (2, &[0xB1])]), Stored::Kept);
+        assert_eq!(p.position(9, &[3], None, None), Stored::Kept);
+        let _ = p.take_snapshots();
+        assert!(p.holds(9));
+        assert_eq!(
+            p.hold_update(7, HeldUpdate::Sync(&[1])),
+            None,
+            "no hold for 7"
+        );
+        assert_eq!(
+            p.hold_update(9, HeldUpdate::Table(&[(1, &[0xA2])])),
+            Some(Stored::Kept)
+        );
+        assert_eq!(p.hold_update(9, HeldUpdate::Removal(2)), Some(Stored::Kept));
+        assert_eq!(
+            p.hold_update(9, HeldUpdate::Position(&[4])),
+            Some(Stored::Kept)
+        );
+        let hold = p.take_local_hold(9).expect("held");
+        assert_eq!(
+            hold.messages,
+            vec![
+                (
+                    0x52,
+                    PropertyTableUpdate::body_of_entries(&[&[0xA2]]).expect("table")
+                ),
+                (0xCE, vec![4]),
+            ]
+        );
+        assert!(!p.holds(9));
+
+        // Past the bound the update is not kept and the value it would replace is dropped.
+        let mut q = PendingWorld::default();
+        q.set_player(9);
+        assert_eq!(q.appearance(9, &[5]), Stored::Kept);
+        let _ = q.take_snapshots();
+        let big = vec![0; MAX_PENDING_BYTES + 1];
+        assert_eq!(
+            q.hold_update(9, HeldUpdate::Appearance(&big)),
+            Some(Stored::ByteCap)
+        );
+        assert_eq!(q.local_hold().map(|h| h.messages.len()), Some(0));
     }
 
     #[test]

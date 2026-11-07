@@ -1059,6 +1059,26 @@ fn vector_24_the_player_without_a_creation_is_held_until_one() {
     );
     assert_eq!(d.pending_sizes(), (0, 0));
     assert!(d.local_hold_len() > 0, "held, not released");
+    // A newer in-world `0xCE` for the player's ID before its `0x98` is merged into the hold, not
+    // applied: the replay after the spawn carries the latest motion, never the older one.
+    let mut newer = crate::world::PositionUpdate::from_bytes(&service_support::player_position())
+        .expect("0xCE");
+    newer.seq_byte = Some(1);
+    let newer = newer.to_bytes().expect("0xCE");
+    assert_ne!(newer, service_support::player_position());
+    world.deliver(server.event_to(0xCE, PLAYER, &newer), WORLD_SERVER);
+    let held = d.counters().local_held;
+    d.step(2.25, true, &go);
+    assert_eq!(d.counters().local_held, held + 1);
+    assert!(d.take_events().is_empty(), "no update before the 0x98");
+    let hold = d.local_hold().expect("held");
+    let motion: Vec<&Vec<u8>> = hold
+        .messages
+        .iter()
+        .filter(|(op, _)| *op == 0xCE)
+        .map(|(_, body)| body)
+        .collect();
+    assert_eq!(motion, [&newer], "only the latest motion is held");
     // A validated `0x98` for the player's ID: the held state follows it.
     let create = EntityCreate {
         template_did: 0x7000_0001,
@@ -2081,8 +2101,9 @@ fn a_user_close_in_the_world_handshake_says_one_on_login_and_none_on_world() {
     assert!(world.take_sent().is_empty(), "no auth retry");
 }
 
-/// §9.3.9: past the world's State 5 the login connection is retired: a user's close says one on the
-/// world and none on login.
+/// §9.3.12 "Login transport lifetime": past the referral the login connection is retiring while the
+/// world lives (transport only, no Disconnect of its own): a user's close says one on the world and
+/// none on login.
 #[test]
 fn a_user_close_after_the_world_state_5_says_one_on_world_only() {
     let (world, mut d, _server) = at_session_start(production());
@@ -2170,7 +2191,7 @@ fn a_typed_logout_while_entering_is_refused_locally() {
 
 /// §9.3.12's held-command table: on a production path every chat route in the world is held: the one
 /// capability text as a local `InvalidCommand`, one plain system line per command and no `0x30`; a stale
-/// `WorldLoaded` gets the same text with no line (labelled, writer fix 18).
+/// `WorldLoaded` gets the same text with no line (§9.3.12: `WorldLoaded` is the one exempt command).
 #[test]
 fn held_commands_say_one_text_and_send_nothing() {
     let (world, mut d, mut server) = at_session_start(scripted());

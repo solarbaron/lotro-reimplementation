@@ -2783,7 +2783,7 @@ fn the_referral_retires_the_login_connection_with_no_disconnect() {
     assert_eq!(
         d.connection_states().0,
         Some(ConnectionState::Connected),
-        "until the world's State 5"
+        "the referred login connection stays connected (retiring) while the world lives"
     );
     let disconnects_to = |world: &World, to: SocketAddrV4| {
         world

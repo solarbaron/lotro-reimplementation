@@ -601,8 +601,14 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   `distance_class`, `baseline_present`. These lines have budgets of their own, so a crowded entry's
   first skip is shown: the first of each class always, then 64 discards, repeats and odd distances
   and 32 plain deliveries. A plain delivery past those has no line; the totals count it.
-- `official evidence: login connection retired`: the referred login connection, with no Disconnect,
-  at the world connection's State 5.
+- The referred login connection is not retired at the world connection's State 5: while the world
+  lives it keeps only its transport (Ack, NAK, clock and flow) under its own timers, sends no
+  application or credential message, and its own close, error or silence ends only it, with
+  `retiring=true` on its `connection closed` line and no Disconnect (`official-session.md` §9.3.12
+  "Login transport lifetime").
+- `official evidence: property key skipped` (`debug`, opt-in): a property table that stopped at a key
+  the schema does not know, with `skipped_property_id`, `skipped_property_type_category` and `what`
+  (where it was read), never a value; at most one each 10 s, with `skipped` for the rest.
 - `official evidence: connection totals`: the counts, once, when a connection closes or when it is let
   go, and the last of the session layer's lines for that connection: what reaches it after its close has no line and no count
   (`sends`, `resends`, `controls`, `handshakes`, `handshake_resends`, `disconnects`,
@@ -687,8 +693,9 @@ handshake, never an address, port, account or ticket (`crates/compat/src/connect
 
 A live run now tries to reach the character list through that exchange under interim policies
 that are known to differ from, or are not confirmed against, the official client
-(OPEN-SESSION-8 and 13; decision 0046, Consequences). `0x19E` and `0x13D` are not sent, nor is
-the first world `0x30`; a `0x6C` or `0x90` the client cannot read is reported as unsupported
+(OPEN-SESSION-8 and 13; decision 0046, Consequences). `0x19E` is not sent, `0x13D` only as
+decision 0046 item 13's restricted report when the install allows it, and the first world `0x30`
+is not sent; a `0x6C` or `0x90` the client cannot read is reported as unsupported
 rather than guessed at. A rejected attempt does not say which rule caused it.
 
 `RUST_LOG=info,tessera_compat=debug` shows the waiting lines too.

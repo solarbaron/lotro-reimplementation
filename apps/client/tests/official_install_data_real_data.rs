@@ -428,22 +428,20 @@ fn the_resource_set_report_resolves_from_the_install() {
         ResourceSetReport::from_bytes(&bytes),
         "the report is not strict",
     );
-    assert_eq!(report.available, report.loaded, "both fields are equal");
+    // Every check prints no value when it fails (§9.3.11: install metadata is never logged).
+    assert!(report.available == report.loaded, "both fields are equal");
     let keys = report.available.keys();
-    assert_eq!(keys.len(), 1, "one set bit");
-    assert_eq!(
-        Some(report.available.bit_count()),
-        keys.first().copied(),
+    assert!(keys.len() == 1, "one set bit");
+    assert!(
+        Some(report.available.bit_count()) == keys.first().copied(),
         "the count is the highest set key"
     );
-    assert_eq!(
-        report.available.bytes().len(),
-        report.available.bit_count().div_ceil(8) as usize,
+    assert!(
+        report.available.bytes().len() == report.available.bit_count().div_ceil(8) as usize,
         "no padding"
     );
-    assert_eq!(
-        keys.first().copied(),
-        Some(names.default_key()),
+    assert!(
+        keys.first().copied() == Some(names.default_key()),
         "the report carries the resolved default"
     );
     eprintln!("resource-set report: built");

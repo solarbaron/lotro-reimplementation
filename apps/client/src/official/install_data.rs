@@ -785,7 +785,16 @@ pub fn resource_sets_of(
     set: &ArchiveSet,
     registry: &PropertyRegistry,
 ) -> Result<ResourceSetNames, ReportOmission> {
-    let read = |did: Did| bounded_record(set, did.0, MAX_TABLE_RECORD);
+    // A record that exists but does not read within its bound is a decode error, not a missing
+    // route: the reader notes it, and the kind is corrected below (the private reason only).
+    let unreadable = std::cell::Cell::new(false);
+    let read = |did: Did| {
+        let bytes = bounded_record(set, did.0, MAX_TABLE_RECORD);
+        if bytes.is_none() && set.locate(did.0).ok().flatten().is_some() {
+            unreadable.set(true);
+        }
+        bytes
+    };
     let root = master_map(set).ok_or(ReportOmission::RouteMissing)?;
     let dictionary = |pid: u32| {
         registry.definition(pid).map(|d| DictionaryEntry {
@@ -793,7 +802,13 @@ pub fn resource_sets_of(
             data: d.data.0,
         })
     };
-    resource_set_lookup(&read, root, &dictionary)
+    resource_set_lookup(&read, root, &dictionary).map_err(|kind| {
+        if kind == ReportOmission::RouteMissing && unreadable.get() {
+            ReportOmission::DecodeError
+        } else {
+            kind
+        }
+    })
 }
 
 /// Steps 1–3 and 6 of §9.3.12 over the records `read` gives: the master DID map `root` (which must

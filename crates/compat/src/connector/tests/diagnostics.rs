@@ -1294,6 +1294,15 @@ fn an_exit_waits_for_the_session_it_just_let_go() {
 /// `before_challenge`, else after it: the driver's events, whether it ended, the datagrams sent after
 /// the refusal (two more seconds of steps) and what it logged.
 fn login_refusal(code: u32, before_challenge: bool) -> ((Vec<Event>, bool, usize), String) {
+    login_refusal_as(code, before_challenge, false)
+}
+
+/// [`login_refusal`] with the code in a `TransportFatalErrorHeader` when `fatal`.
+fn login_refusal_as(
+    code: u32,
+    before_challenge: bool,
+    fatal: bool,
+) -> ((Vec<Event>, bool, usize), String) {
     logs_of(|| {
         let (world, mut d) = driver_at_login(Service::default(), 0);
         let login = Server::new(0x0111, 1);
@@ -1303,12 +1312,22 @@ fn login_refusal(code: u32, before_challenge: bool) -> ((Vec<Event>, bool, usize
         }
         world.take_sent();
         world.deliver(
-            login.control(OptionalHeaders {
-                transport_error: Some(crate::session::TransportErrorHeader {
+            login.control({
+                let header = crate::session::TransportErrorHeader {
                     error_code: code,
                     error_subcode: 0,
-                }),
-                ..OptionalHeaders::default()
+                };
+                if fatal {
+                    OptionalHeaders {
+                        transport_fatal_error: Some(header),
+                        ..OptionalHeaders::default()
+                    }
+                } else {
+                    OptionalHeaders {
+                        transport_error: Some(header),
+                        ..OptionalHeaders::default()
+                    }
+                }
             }),
             LOGIN_SERVER,
         );
@@ -1324,8 +1343,8 @@ fn login_refusal(code: u32, before_challenge: bool) -> ((Vec<Event>, bool, usize
 /// §9.3.12 "Old-install rejection": a listed refusal code on the login connection before any
 /// challenge writes the private diagnostic PreChallengeInstallRejected once, without the evidence
 /// opt-in, with no code value and no claim that the install is out of date; the `ClientNotAccepted`
-/// refusal follows as before and no auth is retried. The same code after the challenge, and a code
-/// that is not listed, write no such line.
+/// refusal follows as before and no auth is retried. The same code after the challenge, the same code
+/// in a TransportFatalError, and a code that is not listed, write no such line.
 #[test]
 fn a_listed_refusal_before_the_challenge_writes_the_install_diagnostic_only() {
     const LINE: &str = "PreChallengeInstallRejected";
@@ -1376,6 +1395,23 @@ fn a_listed_refusal_before_the_challenge_writes_the_install_diagnostic_only() {
             "{events:?}"
         );
         assert!(!logs.contains(LINE), "{logs}");
+
+        // §9.3.12: only a non-fatal TransportError is the condition. The same code in a
+        // TransportFatalError before the challenge is the same refusal with no diagnostic.
+        let ((events, ended, resent), logs) = login_refusal_as(code, true, true);
+        assert!(ended, "{events:?}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Account(AccountEvent::LoginRefused {
+                    reason: LoginRefusal::ClientNotAccepted,
+                    ..
+                })
+            )),
+            "{events:?}"
+        );
+        assert_eq!(resent, 0, "no auth retry");
+        assert!(!logs.contains(LINE), "fatal: no diagnostic: {logs}");
     }
     // A code that is not listed, before the challenge: no diagnostic.
     let unlisted = 0x0000_1234;

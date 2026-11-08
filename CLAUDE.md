@@ -597,19 +597,31 @@ fine. Format-level terms like "DID" or "landblock" are fine.
 - **M8 (official-server compatibility) is in scope** by the owner's decision of 2026-10-11
   (`docs/decisions/0034-official-server-compatibility.md`); **partly done and needs more
   work** (`docs/ROADMAP.md` M8 status):
-  - **Spec pass 10 and C8 (2026-10-31 to 11-05; the current state, read this first):** from two
+  - **Spec pass 10 and C8 (2026-10-31 to 11-07; the current state, read this first):** from two
     passive captures of the owner's own sessions, pass 10 on branch `m8-spec-pass-10` (Review, not
-    merged, fresh dirty-room review pending; checks in its `docs/m8-remediation.md` §21–§27, and §28, the
-    check of a9f97b31 that the code's labelled choices cite, is not committed yet: it waits for the
-    writer's next commit on that branch) corrects
+    merged, fresh dirty-room review pending; checks in its `docs/m8-remediation.md` §21–§30; §31, the
+    check of 79ab5984 that the code's newest labelled choices cite, is committed by the writer's next
+    pass) corrects
     the checksum, first sequence numbers, flags, compact integers, challenge and accept, ISAAC seeds and
     codec directions, and adds the referral, the world handshake, the initial install advertisement
     (0xEC after 0xDD), the character-list appearance codec and the 6F destination. Where the branch and
     the stage-1 specs below disagree, the branch is current. C8 (`crates/compat/src/initial.rs`,
-    `session`, `connector`, `world`) follows the branch at a9f97b31 and is merged by the owner's decision
-    without waiting for spec acceptance (decision 0046; a deliberate exception to decision 0018).
-    No live run has been made yet. A production login reaches the character list and a selection, then
-    the referral, which retires the login connection with no Disconnect, the world handshake and 0x90.
+    `session`, `connector`, `world`, `resource_report`) follows the branch at 79ab5984 and is merged by
+    the owner's decision without waiting for spec acceptance (decision 0046; a deliberate exception to
+    decision 0018). **Live runs (owner, 2026-11-05):** two runs; their logs reached this builder session
+    under decision 0046 item 11 (exposure in decision 0041). They exposed a short compressed datagram the
+    decoder refused and a FlowControl report loop (both fixed: `00cd8228`, `a872b959`). The second run
+    reached the character list and sent the selection, but no referral came: after 6F the server sent
+    nothing of its post-selection sequence. The leading suspect is the omitted resource-set report 0x13D
+    (OPEN-SESSION-20), so the owner allowed it (decision 0046 item 13, 2026-11-06): since `24c9210b`..
+    `f5e042d2` (2026-11-07, gate 8,904 passed, CI green) Tessera sends 0x13D once after the first
+    character list, with the install's default resource set (resolved from the install's enum mappers,
+    never built in) in both fields, kept until acknowledged and resent on NAK, in a datagram before any
+    6F; any failed check omits it. Labelled choices wait for the writer (remediation §31 fixes 2, 3, 4, 5,
+    7, 12). The evidence log is opt-in (`TESSERA_OFFICIAL_EVIDENCE=1`, fields in `docs/DEVELOPMENT.md`,
+    `report_*` for 0x13D). **Next:** the writer's pass 10m, and the owner's next live run, whose expected
+    first sign is a 0x149 after 0x13D and before 6F. If the referral comes, a production login goes on
+    to the referral, which retires the login connection with no Disconnect, the world handshake and 0x90.
     A full pending store counts and skips, the first 0x90's table stays pending, and the first placement
     has no source, so the entry stops at the readiness wait: `UnsupportedTimeout` after 30 s, one
     Disconnect, the start screen, with no F4 and no `WorldEntered`, because OPEN-WORLD-9 is open. A send
@@ -619,8 +631,8 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     locally, and typed logout closes with no RPC. Interim rules (header word, FlowControl, counters, EC
     order) and the writer's open questions are labelled in the code and known or suspected to differ from
     the official client. Decision 0046 records the owner's scope: any user past the warning; truthful
-    install data only; 0x13D, 0x19E, the first world RPC, later world 0x30, 0x30000035, 0x24, 0x19A and
-    chat at login omitted; create and delete withheld. Diagnostics: `TESSERA_OFFICIAL_DUMP_DIR`,
+    install data only; 0x19E, the first world RPC, later world 0x30, 0x30000035, 0x24, 0x19A and chat at
+    login omitted (0x13D too, until item 13); create and delete withheld. Diagnostics: `TESSERA_OFFICIAL_DUMP_DIR`,
     `TESSERA_OFFICIAL_LOGIN_SERVER`.
   - **Specs: stage 1 Accepted (2026-10-25).** `official-login.md`, `official-session.md`,
     `official-messages-world.md`, `official-messages-play.md` and `property-system.md` §10

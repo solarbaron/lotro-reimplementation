@@ -4140,7 +4140,8 @@ pub fn substitute_arg_template(
     out
 }
 
-fn contains_unreplaced_placeholder(token: &str) -> bool {
+/// Whether `token` still holds an unreplaced `{...}` placeholder (`official-login.md` §3.6 step 2).
+pub(crate) fn contains_unreplaced_placeholder(token: &str) -> bool {
     if let Some(open_idx) = token.find('{')
         && let Some(after_open) = token.get(open_idx + 1..)
         && let Some(close_idx) = after_open.find('}')
@@ -4155,16 +4156,43 @@ fn contains_unreplaced_placeholder(token: &str) -> bool {
     }
 }
 
-/// Splits an expanded command-line template string into an `argv` vector of
-/// arguments, stripping surrounding double quotes (`"..."`) on individual
-/// tokens and omitting any token that still contains an unreplaced `{...}`
-/// placeholder (`docs/specs/official-login.md` §3.6, invariant `I15`).
+/// One argument of an expanded command-line template, before the §3.6 filter: its text with
+/// surrounding double quotes stripped, and whether it still holds an unreplaced `{...}` placeholder
+/// (`docs/specs/official-login.md` §3.6 steps 1–2).
+#[derive(Clone, PartialEq, Eq)]
+pub struct TemplateToken {
+    /// The argument with its double quotes stripped.
+    pub text: String,
+    /// It still holds an unreplaced placeholder, so the §3.6 split drops it.
+    pub unreplaced: bool,
+}
+
+impl fmt::Debug for TemplateToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The text may hold a ticket: never shown.
+        f.debug_struct("TemplateToken")
+            .field("unreplaced", &self.unreplaced)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Splits an expanded command-line template string into its arguments by the §3.6 quoting rules,
+/// KEEPING the ones that still hold an unreplaced `{...}` placeholder, marked
+/// ([`TemplateToken::unreplaced`]), so a caller can look at them before the filter of
+/// [`split_arg_template_argv`] (`official-session.md` §9.3.12 step 5).
 #[must_use]
-pub fn split_arg_template_argv(expanded_template: &str) -> Vec<String> {
+pub fn split_arg_template_tokens(expanded_template: &str) -> Vec<TemplateToken> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
     let mut had_quotes = false;
+    let push = |current: &mut String, tokens: &mut Vec<TemplateToken>| {
+        let unreplaced = contains_unreplaced_placeholder(current);
+        tokens.push(TemplateToken {
+            text: std::mem::take(current),
+            unreplaced,
+        });
+    };
 
     for ch in expanded_template.chars() {
         match ch {
@@ -4174,21 +4202,30 @@ pub fn split_arg_template_argv(expanded_template: &str) -> Vec<String> {
             }
             c if c.is_ascii_whitespace() && !in_quotes => {
                 if !current.is_empty() || had_quotes {
-                    if !contains_unreplaced_placeholder(&current) {
-                        tokens.push(std::mem::take(&mut current));
-                    } else {
-                        current.clear();
-                    }
+                    push(&mut current, &mut tokens);
                     had_quotes = false;
                 }
             }
             other => current.push(other),
         }
     }
-    if (!current.is_empty() || had_quotes) && !contains_unreplaced_placeholder(&current) {
-        tokens.push(current);
+    if !current.is_empty() || had_quotes {
+        push(&mut current, &mut tokens);
     }
     tokens
+}
+
+/// Splits an expanded command-line template string into an `argv` vector of
+/// arguments, stripping surrounding double quotes (`"..."`) on individual
+/// tokens and omitting any token that still contains an unreplaced `{...}`
+/// placeholder (`docs/specs/official-login.md` §3.6, invariant `I15`).
+#[must_use]
+pub fn split_arg_template_argv(expanded_template: &str) -> Vec<String> {
+    split_arg_template_tokens(expanded_template)
+        .into_iter()
+        .filter(|t| !t.unreplaced)
+        .map(|t| t.text)
+        .collect()
 }
 
 /// Substitutes `params` into `template` and splits the result into a clean

@@ -372,7 +372,7 @@ fn enter(d: &mut SessionDriver<FakeNet>, now: f64) {
     .expect("enter");
 }
 
-/// Remediation §31 fix 3, "selection queued in the same tick as the 13D": a report still undecided
+/// §9.3.12 and Vector 25 item-13 extension, "Eligible report not yet sent; user selects": a report still undecided
 /// when the selection comes is decided and queued first, so its datagram goes before the `0x6F`'s,
 /// both in the same flush and never in one datagram.
 #[test]
@@ -410,9 +410,94 @@ fn a_selection_in_the_reports_tick_goes_in_a_later_datagram() {
         "{logs}"
     );
     assert!(!logs.contains("same_datagram") && !logs.contains("later_datagram"));
+    let decided = logs
+        .lines()
+        .find(|l| l.contains("report_decision=\"sent\""))
+        .unwrap_or_else(|| panic!("{logs}"));
+    assert!(decided.contains("selection_held=true"), "{decided}");
 }
 
-/// Remediation §31 fix 3, "13D omitted: 6F goes at once": the selection's first flush carries it.
+/// §9.3.12 and remediation §32 fix 13: any omission releases a held selection at once, a late
+/// encoding or enqueue one too, and the decision line says the selection was held.
+#[test]
+fn a_late_omission_releases_a_held_selection() {
+    let ((), logs) = logs_of(|| {
+        let (world, mut d, _login) = driver_at_characters(Service::default(), 0);
+        let _ = world.take_sent();
+        d.pend_report_for_tests(Err(ReportOmission::Encoding));
+        enter(&mut d, 1.0);
+        d.step(1.0, true, &go);
+        let sent = sent_raw(&world);
+        assert!(
+            sent.iter().any(|(_, _, ops)| ops.contains(&0x6F)),
+            "{sent:?}"
+        );
+        assert!(sent.iter().all(|(_, _, ops)| !ops.contains(&0x13D)));
+    });
+    // The last decision line is the pended one (the fixture decided an omission at the list).
+    let decided = logs
+        .lines()
+        .rfind(|l| l.contains("report_decision=\"omitted\""))
+        .unwrap_or_else(|| panic!("{logs}"));
+    assert!(decided.contains("selection_held=true"), "{decided}");
+    assert!(
+        decided.contains("report_reason=\"encoding_or_send_failure\""),
+        "{decided}"
+    );
+}
+
+/// §9.3.12 "expected FIRST observable": the first login `0x149` after the report is logged once as
+/// `after_report_before_6f` when no selection went yet, and as `after_6f` otherwise; the summary
+/// carries it.
+#[test]
+fn the_first_149_after_the_report_is_placed() {
+    let ((), logs) = logs_of(|| {
+        let (world, mut d, mut login) = at_characters(Reporting::eligible());
+        world.deliver(login.event(0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+        world.deliver(login.event(0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+        d.step(0.5, true, &go);
+        enter(&mut d, 1.0);
+        d.step(1.0, true, &go);
+        world.deliver(login.event(0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+        d.step(1.5, true, &go);
+        d.begin_shutdown(2.0);
+    });
+    let firsts: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("official evidence: first 0x149 after the resource-set report"))
+        .collect();
+    assert_eq!(firsts.len(), 1, "{logs}");
+    assert!(
+        firsts[0].contains("first_149_after_report=\"after_report_before_6f\""),
+        "{}",
+        firsts[0]
+    );
+    let summary = logs
+        .lines()
+        .find(|l| l.contains("official evidence: resource-set report summary"))
+        .unwrap_or_else(|| panic!("{logs}"));
+    assert!(
+        summary.contains("first_149_after_report=\"after_report_before_6f\""),
+        "{summary}"
+    );
+
+    let ((), logs) = logs_of(|| {
+        let (world, mut d, mut login) = at_characters(Reporting::eligible());
+        enter(&mut d, 1.0);
+        d.step(1.0, true, &go);
+        world.deliver(login.event(0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+        d.step(1.5, true, &go);
+        d.begin_shutdown(2.0);
+    });
+    assert!(
+        logs.contains("first_149_after_report=\"after_6f\""),
+        "{logs}"
+    );
+    assert!(!logs.contains("after_report_before_6f"), "{logs}");
+}
+
+/// Vector 25 item-13 extension, "Report omitted by preflight; user selects": the selection's first
+/// flush carries the `0x6F`, with no report or `0x149` wait.
 #[test]
 fn an_omitted_report_lets_the_selection_go_at_once() {
     let ((), logs) = logs_of(|| {
@@ -437,10 +522,11 @@ fn an_omitted_report_lets_the_selection_go_at_once() {
     );
 }
 
-/// Labelled C8 choice (remediation §31 fix 2) at the driver: the login server's NAK for the report
-/// resends its identical bytes, a covering Ack ends it, and the evidence fields (§31 fix 8) say so:
-/// the decision, the sequence of the first transmission, the transport's action and the position,
-/// with one summary at the referral. No key, label or mask is logged.
+/// §9.3.12 retention and the §9.3.11 item-13 evidence row at the driver: the login server's NAK for
+/// the report resends its identical bytes, a covering Ack ends it, and the evidence fields say so:
+/// the decision, one record per report-bearing datagram with its initial `none`, every transition
+/// with the action before and whether the record is still retained, the position, `selection_held`
+/// and `first_149_after_report`, with one summary at the referral. No key, label or mask is logged.
 #[test]
 fn the_report_evidence_follows_its_transport() {
     let (seq, logs) = logs_of(|| {
@@ -515,15 +601,36 @@ fn the_report_evidence_follows_its_transport() {
         })
         .unwrap_or_else(|| panic!("{logs}"));
     assert!(want_seq(decided), "{decided}");
-    let resent = logs
+    assert!(decided.contains("selection_held=false"), "{decided}");
+    assert!(decided.contains("report_reason=\"eligible\""), "{decided}");
+    // One record per report-bearing datagram, with its initial action.
+    let first = logs
         .lines()
-        .find(|l| l.contains("report_ack_action=\"nak_resend\""))
+        .find(|l| l.contains("official evidence: resource-set report datagram"))
         .unwrap_or_else(|| panic!("{logs}"));
-    assert!(resent.contains("report_nak_resends=1"), "{resent}");
-    assert!(want_seq(resent), "{resent}");
+    assert!(want_seq(first), "{first}");
+    assert!(first.contains("report_ack_action=\"none\""), "{first}");
+    assert!(first.contains("report_retained=true"), "{first}");
+    // Every transition, in order, not one overwriting the other.
+    let transitions: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("official evidence: resource-set report transport"))
+        .collect();
+    assert_eq!(transitions.len(), 2, "{logs}");
+    assert!(want_seq(transitions[0]), "{}", transitions[0]);
     assert!(
-        logs.contains("report_ack_action=\"covered_by_cumulative_ack\""),
-        "{logs}"
+        transitions[0].contains("report_ack_from=\"none\"")
+            && transitions[0].contains("report_ack_action=\"nak_resend\"")
+            && transitions[0].contains("report_retained=true"),
+        "{}",
+        transitions[0]
+    );
+    assert!(
+        transitions[1].contains("report_ack_from=\"nak_resend\"")
+            && transitions[1].contains("report_ack_action=\"covered_by_cumulative_ack\"")
+            && transitions[1].contains("report_retained=false"),
+        "{}",
+        transitions[1]
     );
     assert!(
         logs.contains("report_position=\"earlier_datagram\""),
@@ -545,15 +652,92 @@ fn the_report_evidence_follows_its_transport() {
         "{}",
         summaries[0]
     );
+    for field in [
+        "selection_held=false",
+        "report_retained=0",
+        "first_149_after_report=\"none\"",
+        "report_nak_resends=1",
+    ] {
+        assert!(summaries[0].contains(field), "{field}: {}", summaries[0]);
+    }
     assert!(
         !logs.contains("SynthDefaultSet") && !logs.contains("SynthChildSet"),
         "{logs}"
     );
 }
 
-/// A report never acted on by the server says `none_yet` in its one summary at the close.
+/// Vector 25 item-13 extension, "Valid referral while report unacknowledged": the report stays with
+/// the retiring login transport. A login NAK for it after the referral resends its identical saved
+/// bytes to the login server, the world handshake neither copies nor recreates it, and the
+/// transition is logged with the retiring login.
 #[test]
-fn an_unanswered_report_is_none_yet_at_the_close() {
+fn the_report_stays_with_the_retiring_login_after_the_referral() {
+    let ((), logs) = logs_of(|| {
+        let (world, mut d, login) = at_characters(Reporting::eligible());
+        let (saved, seq, _) = sent_raw(&world)
+            .into_iter()
+            .find(|(_, _, ops)| ops.contains(&0x13D))
+            .expect("the report");
+        enter(&mut d, 1.0);
+        d.step(1.0, true, &go);
+        world.deliver(
+            login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+            LOGIN_SERVER,
+        );
+        d.step(1.1, true, &go);
+        let server = Server::new(0x0222, 0xBEEF_0002);
+        server.connect_to(&world, 0xBEEF_0002, WORLD_SERVER);
+        d.step(1.2, true, &go);
+        let handshake = world.take_sent();
+        assert!(
+            handshake
+                .iter()
+                .filter(|(_, dst)| *dst == WORLD_SERVER)
+                .filter_map(|(b, _)| decode_client_datagram(b, false).ok())
+                .all(|p| p
+                    .fragments
+                    .iter()
+                    .all(|f| f.header.blob_header_word != Some(0x13D))),
+            "the world handshake carries no report"
+        );
+        world.deliver(
+            login.control(OptionalHeaders {
+                sequence_nak: Some(vec![seq]),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(1.3, true, &go);
+        let again = world.take_sent();
+        assert!(
+            again
+                .iter()
+                .any(|(b, dst)| *dst == LOGIN_SERVER && *b == saved),
+            "the identical saved report resent to the login server"
+        );
+        assert!(
+            again
+                .iter()
+                .filter(|(_, dst)| *dst == WORLD_SERVER)
+                .all(|(b, _)| *b != saved)
+        );
+    });
+    let line = logs
+        .lines()
+        .find(|l| l.contains("official evidence: resource-set report transport"))
+        .unwrap_or_else(|| panic!("{logs}"));
+    assert!(
+        line.contains("report_ack_action=\"nak_resend\"")
+            && line.contains("report_retained=true")
+            && line.contains("login_retiring=true"),
+        "{line}"
+    );
+}
+
+/// A report never acted on by the server says `none` in its one summary at the close, and is still
+/// retained.
+#[test]
+fn an_unanswered_report_is_none_at_the_close() {
     let ((), logs) = logs_of(|| {
         let (_world, mut d, _login) = at_characters(Reporting::eligible());
         d.begin_shutdown(1.0);
@@ -563,17 +747,15 @@ fn an_unanswered_report_is_none_yet_at_the_close() {
         .find(|l| l.contains("official evidence: resource-set report summary"))
         .unwrap_or_else(|| panic!("{logs}"));
     assert!(summary.contains("at=\"close\""), "{summary}");
-    assert!(
-        summary.contains("report_ack_action=\"none_yet\""),
-        "{summary}"
-    );
+    assert!(summary.contains("report_ack_action=\"none\""), "{summary}");
+    assert!(summary.contains("report_retained=1"), "{summary}");
     assert!(
         summary.contains("report_position=\"no_6f_yet\""),
         "{summary}"
     );
 }
 
-/// Remediation §31 fix 8: without the evidence opt-in no `report_*` field and no summary is
+/// §9.3.11: without the evidence opt-in no `report_*` field and no summary is
 /// written, for a sent report through its NAK, selection, covering Ack and referral, and for an
 /// omitted one at the close; the always-on decision line still is.
 #[test]
@@ -586,6 +768,10 @@ fn the_report_evidence_stays_silent_without_the_opt_in() {
             "report_ack_action",
             "report_position",
             "report_nak_resends",
+            "report_reason",
+            "report_retained",
+            "selection_held",
+            "first_149_after_report",
             "resource-set report summary",
             "resource-set report before the selection",
             "resource-set report transport",
@@ -671,7 +857,7 @@ type LaunchCase = (
     Option<ReportOmission>,
 );
 
-/// Remediation §31 fix 7 at the driver: the launch template's `--resource-set` list is the
+/// §9.3.12 step 5 at the driver: the launch template's `--resource-set` list is the
 /// configuration of steps 4–5.
 #[test]
 fn the_launch_list_is_the_configuration() {

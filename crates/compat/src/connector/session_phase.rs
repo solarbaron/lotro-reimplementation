@@ -86,12 +86,14 @@
 //! preflight snapshot as `0xEC` before the first datagram, for the launch template's
 //! `--resource-set` list or the built-in default ([`SessionStart::resource_sets`]), and queued once
 //! on queue 1 to [`RESOURCE_REPORT_DESTINATION`] right after the first complete character list and
-//! before `Connected`, so its first datagram is earlier than any `0x6F`'s (a selection that found it
-//! undecided would decide and queue it first). Its records are kept until a covering cumulative Ack,
-//! resent on a NAK and never on a timer, until the referral retires them (labelled C8 choices,
-//! [`SessionConnection::send_blob_watched`]). An omission (any [`ReportOmission`]) withholds the whole report
-//! under item 5, is logged as a kind and never ends the login; the stage line's withheld list names
-//! it ([`super::pending_world::withheld_before_f4`]). `0x24` stays held
+//! before `Connected`, so all its datagrams are earlier than any `0x6F`'s (a selection that found it
+//! undecided would be held while it is decided and queued first). Its records are kept until a
+//! covering cumulative Ack or the login's close, resent on a NAK with their identical saved bytes and
+//! never on a timer, and they stay with the retiring login transport at the referral
+//! ([`SessionConnection::send_blob_watched`], [`SessionConnection::retire`]). An omission (any
+//! [`ReportOmission`]) withholds the whole report under item 5, is logged as a kind, releases a held
+//! selection and never ends the login; the stage line's withheld list names it
+//! ([`super::pending_world::withheld_before_f4`]). `0x24` stays held
 //! in the world too until OPEN-WORLD-9 settles its body: a `Command::Move` is a local
 //! `InvalidCommand` and nothing is sent, not even the historical 38-byte form
 //! ([`DriverCounters::moves_held`], §9.3.9 "World send inventory").
@@ -312,9 +314,15 @@ use super::pending_world::{
     DEFAULT_RECIPIENT, DEFAULT_RECIPIENT_DESPAWN_APPLIES, EntitySnapshot, HeldUpdate, PendingWorld,
     ReportStatus, Stored, withheld_before_f4, withheld_summary,
 };
-use super::report_evidence::{ReportEvidence, ack_action_label, decision_label, omission_label};
+use super::report_evidence::{
+    ReportEvidence, ack_action_label, decision_label, omission_label, reason_label,
+};
 use crate::resource_report::ReportOmission;
 pub use crate::resource_report::{OPCODE_RESOURCE_SET_REPORT, RESOURCE_REPORT_DESTINATION};
+
+/// The login connection's `0x149` (§9.3.12): counted and skipped there; its first arrival after the
+/// report is the report's expected first observable, recorded on the evidence target only.
+const OPCODE_LOGIN_149: u32 = 0x149;
 
 /// One line of the evidence log (`official-session.md` §9.3.11 "Required live-log CONTENT"), written
 /// only while `$on` (the local opt-in, off by default: [`SessionStart::evidence`]).
@@ -935,6 +943,9 @@ pub struct EntryProgress {
     pub default_target: u64,
     /// Checked messages for an ID nothing has announced yet, kept under that raw key.
     pub no_target: u64,
+    /// Explicit `0x40`s to an unannounced nonlocal ID that deleted the pending data kept under that
+    /// raw key, with no tombstone (§9.3.9, Vector 24).
+    pub unannounced_cleared: u64,
     /// Other messages of the world connection before `WorldEntered`.
     pub other: u64,
     /// Checked messages, top-level or embedded, that did not decode to exact exhaustion or whose
@@ -1125,6 +1136,9 @@ pub struct DriverCounters {
     /// Valid `0x90`s that repeated the entry's ID: counted, the first table stays pending (§9.3.11: a
     /// later well-formed one with the same ID keeps the FIRST table, whatever its own table).
     pub session_starts_repeated: u64,
+    /// `0x90`s after `WorldEntered`, readable or not: counted and skipped with no rebinding and no
+    /// table replacement (§9.3.11).
+    pub session_starts_after_entry: u64,
     /// Envelopes whose routing header named a `routingField0` other than the fragment's
     /// `recipientId`; they keep `recipientId` (module docs "Entities").
     pub routed_envelopes: u64,
@@ -1209,11 +1223,11 @@ pub struct SessionDriver<N: ConnectorNet> {
     /// decided once from the preflight snapshot, then whether it went out. One per driver, so a new
     /// login attempt gets a fresh decision.
     resource_report: ReportState,
-    /// The report's evidence fields ([`super::report_evidence`]): its first sequence, its transport
-    /// fate and its position against the first `0x6F`.
+    /// The report's evidence fields ([`super::report_evidence`]): its datagrams' sequences, its
+    /// position against the first `0x6F`, a held selection and the first `0x149` after it. Its
+    /// transport transitions are logged as they come, each one (bounded by construction in the
+    /// session layer, [`SessionConnection::take_watched_transitions`]).
     report_evidence: ReportEvidence,
-    /// The report's transport lines on the evidence target: bounded like the refusal lines.
-    report_log: LogLimit,
     schema: SchemaView,
     stage: Stage,
     characters: Vec<(u64, String)>,
@@ -1544,7 +1558,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
             advertisement: Some(advertisement),
             resource_report,
             report_evidence: ReportEvidence::default(),
-            report_log: LogLimit::default(),
             schema: start.schema,
             stage: Stage::Login,
             characters: Vec::new(),
@@ -1950,7 +1963,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.feed_deferred();
         let read_any = read && self.receive(now, stop) > 0;
         self.run_links(now, stop);
-        self.log_report_fate(now);
+        self.log_report_fate();
         self.run_refresh(now, stop);
         if stop() {
             return read_any || self.events.len() != before;
@@ -2291,6 +2304,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             actions = p.actions,
             default_target = p.default_target,
             no_target = p.no_target,
+            unannounced_cleared = p.unannounced_cleared,
             other = p.other,
             unread = p.unread,
             pending_entities = self.pending.entities(),
@@ -2690,8 +2704,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
             }
             // §9.3.9: nothing the retiring login connection says concerns the session any more.
-            SessionEvent::BlobReceived(_) if !world && self.login_referred => {
+            SessionEvent::BlobReceived(blob) if !world && self.login_referred => {
                 self.counters.retired_messages = self.counters.retired_messages.saturating_add(1);
+                if blob.blob_header_word == OPCODE_LOGIN_149 {
+                    self.note_login_149();
+                }
             }
             SessionEvent::BlobReceived(blob) => {
                 if blob.queue_id == QUEUE_RELIABLE_ORDERED {
@@ -2945,7 +2962,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 // bounded transport-only Ack/NAK/clock/flow goes on while the world connection
                 // lives, on the shared socket (§9.3.12 "Login transport lifetime").
                 self.login_referred = true;
-                self.log_report_fate(now);
                 self.log_report_summary("referral");
                 if let Some(c) = self.login.mux.connection_mut(self.login.conn) {
                     c.retire();
@@ -2972,6 +2988,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
     fn message(&mut self, m: &Inbound, now: f64) {
         self.log_clock = now;
         let (opcode, recipient, body, world) = (m.opcode, m.recipient, m.body.as_slice(), m.world);
+        if opcode == OPCODE_LOGIN_149 && !world {
+            self.note_login_149();
+        }
         if (OPCODE_CLIENT_VERSION..=OPCODE_LOGIN_QUEUE_STATUS).contains(&opcode) {
             match ControlMessage::decode(opcode, body) {
                 Ok(m) => self.control(m, now),
@@ -3002,6 +3021,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             PlayerSessionReady::EVENT_ID if self.session_start_due(m.world) => {
                 return self.session_ready(m, now);
             }
+            PlayerSessionReady::EVENT_ID if self.session_start_after_entry() => return,
             CharacterOperationError::EVENT_ID => return self.character_error(m),
             AccountEvictionNotice::EVENT_ID => return self.eviction(m, now),
             ServerShutdownText::EVENT_ID => return self.shutdown_notice(m),
@@ -3040,19 +3060,32 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// Whether a `0x90` of this connection is judged as a session start (§9.3.9, §9.3.11): only the
-    /// current world peer's, from that connection's State 5 on, so a later one is compared with the
-    /// first. A login or other peer's `0x90` goes to the bounded skips without touching the world
-    /// identity (§9.3.11). A network with [`ConnectorNet::readiness_specified`] is a test's synthetic
-    /// script, which may carry the world on the login connection (module docs).
+    /// current world peer's, from that connection's State 5 until `WorldEntered`, so a later one is
+    /// compared with the first. A login or other peer's `0x90` goes to the bounded skips without
+    /// touching the world identity (§9.3.11). After `WorldEntered` every later `0x90` is counted and
+    /// skipped, with no rebinding and no table replacement ([`Self::session_start_after_entry`]). A
+    /// network with [`ConnectorNet::readiness_specified`] is a test's synthetic script, which may
+    /// carry the world on the login connection (module docs).
     fn session_start_due(&self, world: bool) -> bool {
         match &self.stage {
             Stage::Entering { wait, .. } if !self.readiness_specified => {
                 world && matches!(*wait, EntryWait::SessionStart | EntryWait::Readiness)
             }
-            Stage::InWorld { .. } if !self.readiness_specified => world,
-            Stage::Entering { .. } | Stage::InWorld { .. } => true,
-            Stage::Login | Stage::Characters => false,
+            Stage::Entering { .. } => true,
+            Stage::Login | Stage::Characters | Stage::InWorld { .. } => false,
         }
+    }
+
+    /// A `0x90` after `WorldEntered` (§9.3.11, Vector 24 pending extension): counted and skipped,
+    /// readable or not, with no identity rebinding and no table replacement; its in-world meaning
+    /// stays OPEN-WORLD-9. Answers whether it was one.
+    fn session_start_after_entry(&mut self) -> bool {
+        if !matches!(self.stage, Stage::InWorld { .. }) {
+            return false;
+        }
+        self.counters.session_starts_after_entry =
+            self.counters.session_starts_after_entry.saturating_add(1);
+        true
     }
 
     /// Whether `m` is passed over on the login connection (§9.3.9's application dispatch scope):
@@ -3089,8 +3122,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// on as it would for an unreadable body of that message (§9.3.9). Anything else is counted.
     fn envelope_refused(&mut self, blob: &ReassembledBlob, world: bool, now: f64) {
         match blob.blob_header_word {
-            // §9.3.11: every required `0x90` from the current world peer must read, first or later;
-            // after `Connected` this is Disconnected Unsupported alone (`end_by_table`).
+            // §9.3.11: every required `0x90` from the current world peer must read, first or later,
+            // until `WorldEntered`; after `Connected` this is Disconnected Unsupported alone
+            // (`end_by_table`). After `WorldEntered` it is counted and skipped.
+            PlayerSessionReady::EVENT_ID if self.session_start_after_entry() => return,
             PlayerSessionReady::EVENT_ID if self.session_start_due(world) => {
                 return self.end_by_table(
                     TableRow::Unsupported,
@@ -3161,8 +3196,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }
         };
         if !self.initial.wants_request() {
-            // A first one while queued is held for the ready status (labelled C8 choice,
-            // `Negotiation::ready_before_request`).
+            // §9.3.9 `Queued130` row: a first one while queued is held for the ready status
+            // (`Negotiation::request_not_wanted`).
             self.initial.request_not_wanted(request, m.recipient);
             self.sync_initial();
             return;
@@ -3175,7 +3210,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// After a ready status brought the stage back to `AwaitDD`: the `0xDD` held from the queue, if
-    /// any, is the first valid one now and sends `0xEC` once (labelled C8 choice,
+    /// any, is the first valid one now and sends `0xEC` once (§9.3.9 status rule, Vector 25,
     /// `Negotiation::ready_before_request`).
     fn release_held_request(&mut self, now: f64) {
         let Some((request, recipient)) = self.initial.take_held_request() else {
@@ -3514,6 +3549,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// (§9.3.11). These come after `Connected`, so the outcome is Disconnected Unsupported with no
     /// LoginRefused pair ([`Self::end_by_table`]).
     fn session_ready(&mut self, m: &Inbound, now: f64) {
+        // After `WorldEntered` a later one is counted and skipped, never Unsupported (§9.3.11).
+        if self.session_start_after_entry() {
+            return;
+        }
         // A compressed or routed form is an unsupported variant, refused like a body that does not
         // read.
         let decoded = (m.envelope_flags == 0)
@@ -3791,9 +3830,16 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     );
                     return;
                 }
-                // §9.3.9: only an explicit, resolved target deletes; an explicit `0x40` to an
-                // unannounced nonlocal ID is counted and skipped with no tombstone.
+                // §9.3.9, Vector 24: only an explicit, resolved target records a despawn; an explicit
+                // `0x40` to an unannounced nonlocal ID deletes every pending datum kept under that
+                // raw key, takes no tombstone and is counted and skipped, so a later `0x98` starts
+                // clean. Labelled choice (C8, pending writer answer to remediation §32's note on a
+                // `0x40` nested in `0x4C`): a batch's `0x40` takes this same road.
                 if !self.pending.despawn_applies(target) {
+                    if self.pending.forget_unannounced(target) {
+                        self.entry_progress.unannounced_cleared =
+                            self.entry_progress.unannounced_cleared.saturating_add(1);
+                    }
                     self.entry_progress.no_target = self.entry_progress.no_target.saturating_add(1);
                     return;
                 }
@@ -4474,15 +4520,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// Decision 0046 item 13 (`official-session.md` §9.3.12): once per login, at the first complete
     /// character list. An eligible candidate is queued on queue 1, group 0, to
     /// [`RESOURCE_REPORT_DESTINATION`], unfragmented with blob ID 0 under the current word, sequence
-    /// and flow policy; its sequence is taken now and its datagrams are queued now, so its first
-    /// transmission is in an earlier datagram than any later `0x6F` (remediation §31 fix 3). Nothing
-    /// waits for its Ack, a response or `0x149`, and no timeout is added. Its records are kept until
-    /// a cumulative Ack covers them, resent on a NAK and never on a timer
-    /// ([`SessionConnection::send_blob_watched`], labelled C8 choice for §31 fix 2). An omission, or
-    /// a candidate that cannot be queued, withholds the whole report under item 5 and the login goes
-    /// on. The log line names the outcome and a kind only, never a key, label, mask or DID; the
-    /// evidence line adds the private sequence of its first transmission. A second call does
-    /// nothing.
+    /// and flow policy; its sequences are taken now and all its datagrams are queued now, so every
+    /// fragment's first transmission is in an earlier datagram than any later `0x6F`. Nothing waits
+    /// for its Ack, a response or `0x149`, and no timeout is added. Its records are kept until a
+    /// cumulative Ack covers them or the login closes, resent on a NAK and never on a timer, also
+    /// after the referral ([`SessionConnection::send_blob_watched`], [`SessionConnection::retire`]).
+    /// An omission (preflight, encoding or enqueue), withholds the whole report under item 5, the
+    /// login goes on, and a held selection goes at once ([`Self::send_entry`]). The log line names
+    /// the outcome and a kind only, never a key, label, mask or DID; the evidence lines add the
+    /// private sequence of every report-bearing datagram. A second call does nothing.
     fn resource_report(&mut self, now: f64) {
         if !matches!(self.resource_report, ReportState::Pending(_)) {
             return;
@@ -4495,8 +4541,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
         };
         let status = match candidate {
             Ok(data) => match self.send_resource_report(&data, now) {
-                Some(sequence) => {
-                    self.report_evidence.sent(sequence);
+                Some(sequences) => {
+                    self.report_evidence.sent(&sequences);
                     ReportStatus::Sent
                 }
                 None => ReportStatus::Omitted(ReportOmission::Enqueue),
@@ -4504,6 +4550,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             Err(kind) => ReportStatus::Omitted(kind),
         };
         self.resource_report = ReportState::Decided(status);
+        let selection_held = self.report_evidence.selection_held();
         match status {
             ReportStatus::Sent => {
                 self.counters.resource_reports_sent =
@@ -4521,10 +4568,27 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     sequence_group = 0,
                     recipient = "explicit protocol destination",
                     report_decision = decision_label(status),
+                    report_reason = reason_label(status),
                     report_sequence = self.report_evidence.sequence().unwrap_or(0),
+                    report_datagrams = self.report_evidence.sequences().len(),
                     report_position = self.report_evidence.position_label(status),
+                    selection_held,
                     "official evidence: resource-set report"
                 );
+                // One record per report-bearing datagram, with its initial action `none`.
+                for (datagram, &sequence) in self.report_evidence.sequences().iter().enumerate() {
+                    evidence!(
+                        self.evidence_log,
+                        info,
+                        direction = "send",
+                        event_kind = "resource-set report",
+                        report_sequence = sequence,
+                        report_datagram = datagram,
+                        report_ack_action = ack_action_label(None),
+                        report_retained = true,
+                        "official evidence: resource-set report datagram"
+                    );
+                }
             }
             ReportStatus::Omitted(kind) => {
                 self.counters.resource_reports_omitted =
@@ -4540,8 +4604,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     event_kind = "resource-set report",
                     action = "omitted",
                     report_decision = decision_label(status),
+                    report_reason = reason_label(status),
                     report_omission = omission_label(status),
                     report_position = self.report_evidence.position_label(status),
+                    selection_held,
                     "official evidence: resource-set report"
                 );
                 self.held_evidence(OPCODE_RESOURCE_SET_REPORT, kind.withholding_reason());
@@ -4552,9 +4618,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     /// Queues `0x13D`'s complete data `data` on queue 1 of the login connection to
     /// [`RESOURCE_REPORT_DESTINATION`] in the explicit recipient form (§9.3.12), kept and watched
-    /// ([`SessionConnection::send_blob_watched`]). The sequence of its first datagram, `None` when it
-    /// was not queued.
-    fn send_resource_report(&mut self, data: &[u8], now: f64) -> Option<u32> {
+    /// ([`SessionConnection::send_blob_watched`]). The sequences of its datagrams, `None` when it was
+    /// not queued (an enqueue omission).
+    fn send_resource_report(&mut self, data: &[u8], now: f64) -> Option<Vec<u32>> {
         let (queue, group) = outbound_queue(OPCODE_RESOURCE_SET_REPORT, &[]);
         let sent = self
             .login
@@ -4572,74 +4638,90 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 )
             });
         match sent {
-            Some(Ok(seqs)) => seqs.first().copied(),
+            Some(Ok(seqs)) if !seqs.is_empty() => Some(seqs),
+            Some(Ok(_)) | None => None,
             Some(Err(e)) => {
                 self.counters.send_failures += 1;
                 tracing::debug!(error = %e, "official session: resource-set report not queued");
                 None
             }
-            None => None,
         }
     }
 
-    /// What the login connection's transport did with the sent report since the last call
-    /// (remediation §31 fix 8): one bounded evidence line per change, never a value of it.
-    fn log_report_fate(&mut self, now: f64) {
+    /// Every transition of what the login connection's transport did with each report-bearing
+    /// datagram since the last call (§9.3.11 item-13 row): one evidence line each, the action before
+    /// and after and whether the record is still retained. Not rate-limited: the session layer
+    /// bounds the transitions by construction ([`SessionConnection::take_watched_transitions`]).
+    fn log_report_fate(&mut self) {
+        let Some(connection) = self.login.mux.connection_mut(self.login.conn) else {
+            return;
+        };
+        let transitions = connection.take_watched_transitions();
         if !self.evidence_log {
             return;
         }
-        let fate = self
-            .login
-            .mux
-            .connection(self.login.conn)
-            .and_then(SessionConnection::watched_fate);
-        let Some(fate) = self.report_evidence.fate_changed(fate) else {
-            return;
-        };
-        if fate.last.is_none() {
-            return;
-        }
-        if let Some(skipped) = self.report_log.allow(now) {
+        for t in transitions {
             evidence!(
                 self.evidence_log,
                 info,
                 direction = "recv",
                 event_kind = "resource-set report",
-                report_sequence = fate.first_sequence,
-                report_ack_action = ack_action_label(Some(fate)),
-                report_nak_resends = fate.nak_resends,
-                report_out_of_order_acks = fate.out_of_order_acks,
-                skipped,
+                report_sequence = t.sequence,
+                report_datagram = t.datagram,
+                report_ack_from = ack_action_label(t.from),
+                report_ack_action = ack_action_label(Some(t.to)),
+                report_retained = t.retained,
+                login_retiring = self.login_referred,
                 "official evidence: resource-set report transport"
             );
         }
     }
 
-    /// The report's one summary line, at the referral or the close, whichever comes first
-    /// (remediation §31 fix 8): the decision, the sequence, the transport's latest action
-    /// (`none_yet` when the peer did nothing with it) and its position against the first `0x6F`.
+    /// A `0x149` arrived on the login connection: the first one after the report is placed against
+    /// the first `0x6F` (§9.3.12 "expected FIRST observable"), on one evidence line.
+    fn note_login_149(&mut self) {
+        if let Some(first) = self.report_evidence.note_149() {
+            evidence!(
+                self.evidence_log,
+                info,
+                direction = "recv",
+                event_kind = "resource-set report",
+                first_149_after_report = first.label(),
+                "official evidence: first 0x149 after the resource-set report"
+            );
+        }
+    }
+
+    /// The report's one summary line, at the referral or the close, whichever comes first: the
+    /// decision, its first sequence, the transport's latest action (`none` when the peer did nothing
+    /// with it), how many of its datagrams are still retained, its position against the first
+    /// `0x6F`, whether a selection was held for it and where the first `0x149` after it arrived.
+    /// Transitions after a summary at the referral still get their own lines.
     fn log_report_summary(&mut self, at: &'static str) {
+        self.log_report_fate();
         if !self.evidence_log || !self.report_evidence.take_summary() {
             return;
         }
         let status = self.resource_report.status();
-        let fate = self
-            .login
-            .mux
-            .connection(self.login.conn)
-            .and_then(SessionConnection::watched_fate)
-            .or(self.report_evidence.last_fate());
+        let connection = self.login.mux.connection(self.login.conn);
+        let fate = connection.and_then(SessionConnection::watched_fate);
+        let retained = connection.map_or(0, SessionConnection::watched_retained);
         evidence!(
             self.evidence_log,
             info,
             at,
             report_decision = decision_label(status),
+            report_reason = reason_label(status),
             report_omission = omission_label(status),
             report_sequence = self.report_evidence.sequence().unwrap_or(0),
-            report_ack_action = ack_action_label(fate),
+            report_datagrams = self.report_evidence.sequences().len(),
+            report_ack_action = ack_action_label(fate.and_then(|f| f.last)),
             report_nak_resends = fate.map_or(0, |f| f.nak_resends),
             report_out_of_order_acks = fate.map_or(0, |f| f.out_of_order_acks),
+            report_retained = retained,
             report_position = self.report_evidence.position_label(status),
+            selection_held = self.report_evidence.selection_held(),
+            first_149_after_report = self.report_evidence.first_149().label(),
             "official evidence: resource-set report summary"
         );
     }
@@ -4648,9 +4730,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// explicit recipient form, with no extension word (§9.3.8, Vector 12). Its body is
     /// [`CharacterEnterWorldRequest`]'s with the one-byte empty client table of §9.3.9.
     fn send_entry(&mut self, env: &[u8], now: f64) -> bool {
-        // §9.3.12, remediation §31 fix 3: the report's first transmission comes in an earlier
-        // datagram than any `0x6F`. A selection follows `Connected`, which follows the report's
-        // decision; should it ever not, the report is decided and queued first, here.
+        // §9.3.12: every report fragment's first transmission comes in an earlier datagram than
+        // any `0x6F`. A selection follows `Connected`, which follows the report's decision; should
+        // it ever not, the selection is held for the decision, which is made and queued first, here,
+        // and released at once on any omission (preflight, encoding or enqueue).
+        if matches!(self.resource_report, ReportState::Pending(_)) {
+            self.report_evidence.hold_selection();
+        }
         self.resource_report(now);
         let opcode = CharacterEnterWorldRequest::EVENT_ID;
         let (queue, group) = outbound_queue(opcode, &[]);
@@ -4677,8 +4763,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
                         info,
                         direction = "send",
                         event_kind = "resource-set report",
-                        report_sequence = self.report_evidence.sequence().unwrap_or(0),
+                        report_sequence = self
+                            .report_evidence
+                            .sequences()
+                            .last()
+                            .copied()
+                            .unwrap_or(0),
                         report_position = position.label(),
+                        selection_held = self.report_evidence.selection_held(),
                         "official evidence: resource-set report before the selection"
                     );
                 }
@@ -5408,7 +5500,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// Puts decision 0046 item 13's report back before its decision with `candidate`, for a test of
-    /// the selection's guard (remediation §31 fix 3): a production driver decides it at the list.
+    /// the selection's hold (§9.3.12): a production driver decides it at the list.
     #[cfg(test)]
     pub fn pend_report_for_tests(&mut self, candidate: Result<Vec<u8>, ReportOmission>) {
         self.resource_report = ReportState::Pending(candidate);

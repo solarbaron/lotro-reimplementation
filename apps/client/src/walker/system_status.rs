@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The System status overlay of an official session (`official-entry.md` §8.7 "P10-10J display
+//! The System status overlay of an official session (`official-entry.md` §8 "P10-10M display
 //! policy"): the in-world system-message area is the chat window's System line list; when no chat
 //! window runs (no game UI attached), the same bounded plain line shows in this overlay, painted by
-//! Tessera's own code and labelled "System". A line stays until the player activates its visible
-//! Dismiss button, or the next one replaces it (§8.7). A click on the button activates it, and so
-//! does Tab (which focuses the button) then Enter or Space. Escape keeps its phase-specific close
-//! meaning and does not dismiss the overlay. It takes no command input and shows no markup; it is no
-//! plugin-host element.
+//! Tessera's own code and labelled "System". A line stays until the player clicks its visible
+//! Dismiss button, or the next one replaces it. The overlay is mouse-only: it has no keyboard input
+//! band, focus or capture, so every key goes on as without it (Tab keeps the world's
+//! `target_next_enemy` binding). Escape keeps its phase-specific close meaning and does not dismiss
+//! the overlay. It takes no command input and shows no markup; it is no plugin-host element.
 //!
 //! Engineering choices, spec silent: the overlay sits at the top centre of the viewport with its
-//! button to the right of the line; a second Tab takes the focus off the button again, so Tab's other
-//! meanings return; a new line clears the focus; and it shows only in an official session (other
-//! sessions keep their chat overlay and HUD notices).
+//! button to the right of the line, and it shows only in an official session (other sessions keep
+//! their chat overlay and HUD notices).
 
-use tessera_input::{KeyCode, MouseButton, RawEvent};
+use tessera_input::{MouseButton, RawEvent};
 use tessera_render::{Pass, Renderer};
 
 use super::hud::TextPanel;
@@ -33,9 +32,7 @@ pub const DISMISS: &str = "[ Dismiss ]";
 const BUTTON_GAP: f32 = 8.0;
 
 const GOLD: [u8; 3] = [255, 214, 120];
-/// The button's colour while it has the keyboard focus.
-const FOCUSED: [u8; 3] = [255, 255, 255];
-/// The button's colour otherwise.
+/// The button's colour.
 const BUTTON: [u8; 3] = [200, 200, 200];
 
 /// The overlay (module docs).
@@ -44,8 +41,6 @@ pub struct SystemStatus {
     line: Option<String>,
     panel: TextPanel,
     button: TextPanel,
-    /// The Dismiss button has the keyboard focus (Tab).
-    focused: bool,
     /// The pointer's last position, physical pixels.
     cursor: Option<(f64, f64)>,
 }
@@ -75,19 +70,11 @@ impl SystemStatus {
     /// Shows `text`, replacing the line shown.
     pub fn show(&mut self, text: &str) {
         self.line = Some(plain(text));
-        self.focused = false;
     }
 
     /// Dismisses the line (the Dismiss button's action); returns whether one showed.
     pub fn dismiss(&mut self) -> bool {
-        self.focused = false;
         self.line.take().is_some()
-    }
-
-    /// Whether the Dismiss button has the keyboard focus.
-    #[must_use]
-    pub const fn focused(&self) -> bool {
-        self.focused
     }
 
     /// Where the line and the button are drawn for an overlay centred on `centre_x` with its top at
@@ -110,9 +97,8 @@ impl SystemStatus {
     }
 
     /// One raw input event with the button at `button` (`[x, y, width, height]`, physical pixels;
-    /// `None` when it is not drawn): a left click on it dismisses the line; Tab moves the keyboard
-    /// focus onto the button (or off it again); Enter or Space with the focus on it dismisses the
-    /// line. Escape is never used here (§8.7). Answers whether the event was used.
+    /// `None` when it is not drawn): a left click on it dismisses the line. No key is ever used
+    /// here, Escape included (§8, mouse-only). Answers whether the event was used.
     pub fn handle_with(&mut self, event: &RawEvent, button: Option<[f32; 4]>) -> bool {
         match event {
             RawEvent::CursorMoved { x, y } => {
@@ -145,22 +131,6 @@ impl SystemStatus {
                 }
                 hit
             }
-            RawEvent::Key {
-                key: KeyCode::Tab,
-                pressed: true,
-                repeat: false,
-            } => {
-                self.focused = !self.focused;
-                true
-            }
-            RawEvent::Key {
-                key: KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space,
-                pressed: true,
-                repeat: false,
-            } if self.focused => {
-                self.dismiss();
-                true
-            }
             _ => false,
         }
     }
@@ -182,9 +152,8 @@ impl SystemStatus {
         match self.text() {
             Some(t) => {
                 self.panel.set(renderer, vec![(t, GOLD)], scale);
-                let colour = if self.focused { FOCUSED } else { BUTTON };
                 self.button
-                    .set(renderer, vec![(DISMISS.to_owned(), colour)], scale);
+                    .set(renderer, vec![(DISMISS.to_owned(), BUTTON)], scale);
             }
             None => {
                 self.panel.release(renderer);
@@ -230,7 +199,7 @@ mod tests {
         assert!(shown.chars().all(|c| c == 'é'));
     }
 
-    fn key(key: KeyCode) -> RawEvent {
+    fn key(key: tessera_input::KeyCode) -> RawEvent {
         RawEvent::Key {
             key,
             pressed: true,
@@ -238,16 +207,24 @@ mod tests {
         }
     }
 
-    /// §8.7: a click on the visible Dismiss button, or Tab then Enter/Space, dismisses the line;
-    /// Escape does not.
+    /// `official-entry.md` §8 (P10-10M): a click on the visible Dismiss button dismisses the line;
+    /// no key does, Escape included.
     #[test]
-    fn the_dismiss_button_dismisses_and_escape_does_not() {
+    fn only_a_click_on_the_dismiss_button_dismisses() {
+        use tessera_input::KeyCode;
         let button = Some([100.0, 10.0, 80.0, 20.0]);
         let mut s = SystemStatus::default();
         s.show("line");
-        // Escape keeps its own meaning: not used here, and the line stays.
-        assert!(!s.handle_with(&key(KeyCode::Escape), button));
-        assert_eq!(s.line(), Some("line"));
+        for k in [
+            KeyCode::Escape,
+            KeyCode::Tab,
+            KeyCode::Enter,
+            KeyCode::NumpadEnter,
+            KeyCode::Space,
+        ] {
+            assert!(!s.handle_with(&key(k), button), "{k:?} is not used");
+            assert_eq!(s.line(), Some("line"), "{k:?} does not dismiss");
+        }
         // A click outside the button is not used.
         s.handle_with(&RawEvent::CursorMoved { x: 50.0, y: 15.0 }, button);
         let click = RawEvent::MouseButton {
@@ -260,28 +237,34 @@ mod tests {
         s.handle_with(&RawEvent::CursorMoved { x: 120.0, y: 15.0 }, button);
         assert!(s.handle_with(&click, button));
         assert_eq!(s.line(), None);
-
-        // Enter or Space without the focus is not used; Tab then Enter or Space dismisses.
-        for activate in [KeyCode::Enter, KeyCode::Space] {
-            s.show("again");
-            assert!(!s.handle_with(&key(activate), button));
-            assert_eq!(s.line(), Some("again"));
-            assert!(s.handle_with(&key(KeyCode::Tab), button));
-            assert!(s.focused());
-            assert!(!s.handle_with(&key(KeyCode::Escape), button));
-            assert_eq!(s.line(), Some("again"), "Escape does not dismiss");
-            assert!(s.handle_with(&key(activate), button));
-            assert_eq!(s.line(), None);
-            assert!(!s.focused());
-        }
-        // A second Tab takes the focus off the button.
-        s.show("third");
-        assert!(s.handle_with(&key(KeyCode::Tab), button));
-        assert!(s.handle_with(&key(KeyCode::Tab), button));
-        assert!(!s.focused());
         // With no line nothing is used.
-        s.dismiss();
-        assert!(!s.handle_with(&key(KeyCode::Tab), button));
+        assert!(!s.handle_with(&click, button));
+    }
+
+    /// §8 (P10-10M): Tab keeps the world's `target_next_enemy` binding while a line shows: the
+    /// overlay passes it on, and the default keymap's walk mapper fires that action for it.
+    #[test]
+    fn tab_reaches_target_next_enemy_while_a_line_shows() {
+        use std::time::Duration;
+        use tessera_input::{
+            InputMapper, KeyCode, StandardActions, default_keymap, default_registry,
+        };
+        let mut s = SystemStatus::default();
+        s.show("line");
+        let tab = key(KeyCode::Tab);
+        assert!(!s.handle_with(&tab, Some([0.0, 0.0, 10.0, 10.0])));
+        let registry = default_registry();
+        let ids = StandardActions::new(&registry).expect("standard actions");
+        let (mut m, _) = InputMapper::new(registry, &default_keymap());
+        ids.enter_walk_mode(&mut m);
+        m.handle(&tab, Duration::ZERO);
+        m.update(Duration::ZERO);
+        let action = m
+            .registry()
+            .action("target_next_enemy")
+            .expect("target_next_enemy");
+        assert!(m.just_pressed(action));
+        assert_eq!(s.line(), Some("line"));
     }
 
     #[test]

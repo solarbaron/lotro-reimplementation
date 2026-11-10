@@ -584,28 +584,59 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   `raw_opcode`, `first_of_opcode`, `queue`, `sequence_group`; the packet and blob lines carry its
   `recipient_token`), and an omission an `official evidence: held send` line with
   `held_opcode=0x13d` and `withholding_reason="decision 0046 item 5; item 13 <kind>"`.
-  The report's fields (remediation §31 fix 8; only with the opt-in, never a key, mask, label or DID):
+  The report's fields (`official-session.md` §9.3.11 "Item-13 report" row; only with the opt-in,
+  never a key, mask, label or DID):
   - `report_decision`: `sent`, or `omitted` with `report_omission` (the bounded kind, as in
     `reason=`), or `undecided` when the session ended before the character list.
-  - `report_sequence`: the private packet sequence of the report's first transmission on the login
-    connection (`0` when it was not sent); the packet lines with the same `seq` are its datagrams.
-  - `report_ack_action`: what the login server last did with it (one word, the latest action
-    only): `covered_by_cumulative_ack`
-    (a cumulative Ack covered it, its retention ended), `nak_resend` (a NAK named it and its saved
-    bytes went again; `report_nak_resends` counts them), `out_of_order_ack` (a NAK named it after its
-    record was gone, at the referral for example; `report_out_of_order_acks` counts them), or
-    `none_yet` (nothing so far).
-  - `report_position`: where its first datagram went against the first `0x6F`'s:
+  - `report_reason`: the spec's category of the decision: `eligible` for a send, otherwise
+    `withdrawn`, `missing_route`, `malformed_mapper`, `cycle_or_depth`, `ambiguous_name`,
+    `invalid_configuration` (a case-variant or placeholder `--resource-set` in the served launch
+    template, for example), `dictionary_mismatch`, `mount_mismatch`, `resource_bound` or
+    `encoding_or_send_failure`.
+  - `report_sequence`: the private packet sequence of one report-bearing datagram on the login
+    connection. Each datagram of the report gets its own `official evidence: resource-set report
+    datagram` line (`report_datagram` is its index) with `report_ack_action="none"` and
+    `report_retained=true`; the packet lines with the same `seq` are its datagrams. The decision line
+    and the summary carry the first one (`0` when it was not sent) and `report_datagrams`.
+  - `report_ack_action`: what the transport did with one report datagram, one line per change,
+    never overwritten: `none` (nothing yet), `nak_resend` (a NAK named it and its identical saved
+    bytes went again), `covered_by_cumulative_ack` (a cumulative Ack covered it; its retention
+    ended), or `out_of_order_ack`, which means only that Tessera sent an OutOfOrderAck because the
+    NAKed report sequence was no longer retained (after a covering Ack, for example). An inbound
+    OutOfOrderAck from the server names the server's own sequences and is never a report action.
+    `report_ack_from` is the action before, `report_retained` whether the datagram is still kept for
+    a resend, and `login_retiring=true` marks a change after the referral: the report stays with the
+    retiring login connection until a covering Ack or its close, never moves to the world connection.
+    The summary has the latest action, `report_nak_resends`, `report_out_of_order_acks` and
+    `report_retained` (how many of its datagrams are still kept).
+  - `report_position`: where the report's LAST datagram went against the first `0x6F`'s:
     `earlier_datagram` (the rule), `no_6f_yet` (no selection sent), `not_sent` (omitted), or
     `same_datagram` / `later_datagram`, which must never appear and would be a Tessera fault.
+  - `selection_held`: `true` when the selection arrived while the report was still undecided and
+    waited for its decision (an omission of any kind lets it go at once). The production order
+    decides the report at the character list, before the screens can select, so `false` is normal.
+  - `first_149_after_report`: where the first `0x149` from the login server after the report arrived:
+    `none` (none yet), `after_report_before_6f` or `after_6f`. Its own line,
+    `official evidence: first 0x149 after the resource-set report`, comes when it arrives, and the
+    summary repeats it.
 
-  The lines are: the decision line above (a send carries `report_decision`, `report_sequence` and
-  `report_position`; an omission `report_decision`, `report_omission` and `report_position`),
-  `official evidence: resource-set report transport` each time the server's Acks or NAKs change
-  what became of it (rate-limited like the refusal lines, with `skipped`),
-  `official evidence: resource-set report before the selection` at the first `0x6F`
-  (`report_position`), and one `official evidence: resource-set report summary` with every field,
-  at the referral (`at="referral"`) or, without one, at the close (`at="close"`).
+  The lines are: the decision line above (a send carries `report_decision`, `report_reason`,
+  `report_sequence`, `report_datagrams`, `report_position` and `selection_held`; an omission
+  `report_decision`, `report_reason`, `report_omission`, `report_position` and `selection_held`),
+  one `official evidence: resource-set report datagram` per report datagram,
+  `official evidence: resource-set report transport` for every change of what became of a datagram
+  (not rate-limited; at most four per datagram by construction), `official evidence: first 0x149
+  after the resource-set report` once, `official evidence: resource-set report before the selection`
+  at the first `0x6F` (`report_position`, `selection_held`), and one `official evidence: resource-set
+  report summary` with every field, at the referral (`at="referral"`) or, without one, at the close
+  (`at="close"`). Transport changes after a summary at the referral still get their own lines.
+
+  **For the item-13 live run (owner):** stay on the character list before selecting, at least as long
+  as in the previous live run, and note privately (in your own checklist, not here) whether the
+  selection was early. The expected first sign that the report was taken is
+  `first_149_after_report="after_report_before_6f"`: a `0x149` from the login server after the report
+  and before the selection. Tessera adds no wait for it; an early selection may come first, which
+  makes the run answer nothing about the report.
 - `official world entry: stopped`: what an entry that stopped withheld (`withheld=`), followed by one
   `official evidence: withheld before 0xF4` line per withheld family with `held_opcode` and
   `withholding_reason`. `0x13D` is in that list only when its report was omitted, with the item-13
@@ -624,8 +655,9 @@ grep -E 'official_evidence|official session:|official world entry:|official logi
   first skip is shown: the first of each class always, then 64 discards, repeats and odd distances
   and 32 plain deliveries. A plain delivery past those has no line; the totals count it.
 - The referred login connection is not retired at the world connection's State 5: while the world
-  lives it keeps only its transport (Ack, NAK, clock and flow) under its own timers, sends no
-  application or credential message, and its own close, error or silence ends only it, with
+  lives it keeps only its transport (Ack, NAK, clock and flow) under its own timers, sends no new
+  application or credential message (a NAK for the still-unacknowledged report resends its identical
+  saved datagram, a transport copy), and its own close, error or silence ends only it, with
   `retiring=true` on its `connection closed` line and no Disconnect (`official-session.md` §9.3.12
   "Login transport lifetime").
 - `official evidence: property key skipped` (`debug`, opt-in): a property table that stopped at a key

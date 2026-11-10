@@ -4187,8 +4187,9 @@ fn an_implicit_ack_never_frees_the_retained_f4() {
 }
 
 /// §9.3.9 "Login connection at valid referral" and §9.3.12 "Login transport lifetime": a retired
-/// login connection sends no application again. Labelled: its retained application records are
-/// dropped at retirement, so a NAK for one gets an OutOfOrderAck, while its transport goes on.
+/// login connection sends no application again. Labelled choice (C8, pending writer answer to
+/// remediation §32 fix 1): its retained `0xEC`/`0xF5` records are dropped at retirement, so a NAK for
+/// one gets an OutOfOrderAck, while its transport goes on (the report is the one exception).
 #[test]
 fn a_retired_login_connection_resends_no_application() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 69), 9000);
@@ -4533,8 +4534,9 @@ fn drained_raw(conn: &mut SessionConnection) -> Vec<(Vec<u8>, u32, Vec<u32>)> {
 /// The synthetic `0x13D` destination of these tests (a test value, not the spec's routing constant).
 const REPORT_TO: u64 = 0x0600_0000_0000_0999;
 
-/// Labelled C8 choice (remediation §31 fix 2) for the watched `0x13D`: a dropped report is resent
-/// only on a NAK naming it, with its identical bytes (sequence, word and checksum); the implicit
+/// §9.3.12 and §10.2 Vector 25 item-13 extension ("Retained report at sequence 7; NAK first
+/// requests 9, later requests 7", "Covering cumulative Ack 7"): a dropped report is resent only on
+/// a NAK naming it, with its identical bytes (sequence, word and checksum); the implicit
 /// acknowledgement below a first NAK above it does not free it; a covering cumulative Ack does; and
 /// nothing resends it on a timer.
 #[test]
@@ -4623,29 +4625,113 @@ fn the_watched_report_is_kept_until_a_covering_ack_and_resent_only_on_a_nak() {
     );
 }
 
-/// The referral's login retirement applies unchanged to the watched report (labelled C8 choice,
-/// remediation §31 fix 2): a NAK for it afterwards gets an OutOfOrderAck, never an application
-/// resend.
+/// §10.2 Vector 25 item-13 extension, "Valid referral while report unacknowledged": the report
+/// stays with the retiring login transport (§9.3.12). A login NAK for it afterwards resends its
+/// identical saved bytes, never an OutOfOrderAck; a covering cumulative Ack then releases it.
+/// Labelled choice (C8, pending writer answer to remediation §32 fix 1): the retained `0xEC` is
+/// still dropped at the retirement.
 #[test]
-fn a_retired_connection_drops_the_watched_report() {
+fn a_retired_connection_keeps_the_watched_report() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 72), 9000);
     let mut conn = connected_connection(peer, 0x0000_0072);
+    let ec = conn
+        .send_blob_retained(1, 0, 2, 0xEC, &[1], 1.0, None)
+        .unwrap()[0];
     let report = conn
         .send_blob_watched(1, 0, REPORT_TO, 0x13D, &[0, 1, 1, 1, 1], 1.0, None)
         .unwrap()[0];
-    let _ = drained_raw(&mut conn);
+    let saved = drained_raw(&mut conn)
+        .into_iter()
+        .find(|(_, seq, _)| *seq == report)
+        .map(|(d, _, _)| d)
+        .expect("the report went out");
     conn.retire();
-    conn.receive_datagram(&server_nak(&[report]), peer, 1.1, WireCodecs::NONE)
+    // No timer resends it on the retiring transport either.
+    conn.tick(5.0).unwrap();
+    assert!(
+        drained_raw(&mut conn)
+            .iter()
+            .all(|(_, _, ops)| ops.is_empty())
+    );
+    conn.receive_datagram(&server_nak(&[report]), peer, 5.1, WireCodecs::NONE)
+        .unwrap();
+    let again = drained_raw(&mut conn);
+    assert_eq!(again.len(), 1);
+    assert_eq!(again[0].0, saved, "identical bytes, sequence and checksum");
+    assert_eq!(conn.pending_out_of_order_acks(), 0);
+    assert_eq!(
+        conn.watched_fate().and_then(|f| f.last),
+        Some(KeptBlobAction::NakResend)
+    );
+    // The EC was dropped at the retirement (labelled): its NAK gets an OutOfOrderAck.
+    conn.receive_datagram(&server_nak(&[ec]), peer, 5.2, WireCodecs::NONE)
         .unwrap();
     assert!(drained_raw(&mut conn).is_empty());
     assert_eq!(conn.pending_out_of_order_acks(), 1);
+    // A covering cumulative Ack releases the report.
+    conn.receive_datagram(
+        &server_control(OptionalHeaders {
+            cumulative_ack: Some(report),
+            ..OptionalHeaders::default()
+        }),
+        peer,
+        5.3,
+        WireCodecs::NONE,
+    )
+    .unwrap();
+    assert!(
+        conn.watched_fate()
+            .is_some_and(|f| f.covered_by_cumulative_ack)
+    );
+    let _ = drained_raw(&mut conn);
+    conn.receive_datagram(&server_nak(&[report]), peer, 5.4, WireCodecs::NONE)
+        .unwrap();
+    assert!(
+        drained_raw(&mut conn)
+            .iter()
+            .all(|(_, _, ops)| ops.is_empty()),
+        "released: no application resend"
+    );
     assert_eq!(
         conn.watched_fate().and_then(|f| f.last),
         Some(KeptBlobAction::OutOfOrderAck)
     );
 }
 
-/// Remediation §31 fix 3: a `0x6F` queued right after the `0x13D` (the same tick) goes in a later
+/// §10.2 Vector 25 item-13 extension, "Inbound OutOfOrderAck 7 while outbound report 7 retained":
+/// the inbound header changes only the incoming gaps; the outbound report stays and a later NAK
+/// resends it. The watched fate records no action for the inbound header.
+#[test]
+fn an_inbound_out_of_order_ack_never_releases_the_report() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 74), 9000);
+    let mut conn = connected_connection(peer, 0x0000_0074);
+    let report = conn
+        .send_blob_watched(1, 0, REPORT_TO, 0x13D, &[0, 1, 1, 1, 1], 1.0, None)
+        .unwrap()[0];
+    let saved = drained_raw(&mut conn)
+        .into_iter()
+        .find(|(_, seq, _)| *seq == report)
+        .map(|(d, _, _)| d)
+        .expect("the report went out");
+    conn.receive_datagram(
+        &server_control(OptionalHeaders {
+            out_of_order_ack: Some(vec![report]),
+            ..OptionalHeaders::default()
+        }),
+        peer,
+        1.1,
+        WireCodecs::NONE,
+    )
+    .unwrap();
+    assert_eq!(conn.watched_fate().and_then(|f| f.last), None);
+    conn.receive_datagram(&server_nak(&[report]), peer, 1.2, WireCodecs::NONE)
+        .unwrap();
+    let again = drained_raw(&mut conn);
+    assert_eq!(again.len(), 1);
+    assert_eq!(again[0].0, saved);
+}
+
+/// §9.3.12: a `0x6F` queued right after the `0x13D` (the same tick) goes in a later
 /// datagram; no datagram carries both.
 #[test]
 fn a_selection_queued_with_the_report_goes_in_a_later_datagram() {

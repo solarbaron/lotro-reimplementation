@@ -442,6 +442,7 @@ crate = "tessera-compat"
 file = "crates/compat/src/resource_report.rs"
 entry = [
     "tessera_compat::resource_report::launch_resource_set_option",
+    "tessera_compat::resource_report::launch_resource_set_tokens",
     "tessera_compat::resource_report::template_resource_set_option",
 ]
 input = "network"

@@ -1105,6 +1105,28 @@ fn vector_25_a_requeue_restores_the_first_queue_deadline() {
     assert_refused(&mut d, UnsupportedNegotiation::QueueDeadline);
 }
 
+/// Labelled choice (C8, pending writer answer to remediation §32 fix 2) at the driver: queued at 0,
+/// ready at 20, queued at 40 and ready at 70 with no `0xDD`. The post-queue `0xDD` deadline starts
+/// at the first ready status (20 + 30), does not run out inside the queue window, and is reinstated
+/// at 70, where it has passed: the login fails at once with the `0xDD` deadline, not at 100.
+#[test]
+fn a_requeue_reinstates_the_post_queue_request_deadline() {
+    let (world, mut d, mut login) = connected();
+    let (queued, ready) = queue_statuses();
+    world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
+    d.step(0.5, true, &go);
+    world.deliver(queue1(&mut login, 0x130, &ready), LOGIN_SERVER);
+    d.step(20.0, true, &go);
+    world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
+    d.step(40.0, true, &go);
+    slow_server(&world, &mut d, &mut login, 45.0, 69.0);
+    assert!(!d.ended(), "the DD deadline does not run out while queued");
+    let _ = d.take_events();
+    world.deliver(queue1(&mut login, 0x130, &ready), LOGIN_SERVER);
+    d.step(70.0, true, &go);
+    assert_refused(&mut d, UnsupportedNegotiation::RequestDeadline);
+}
+
 /// Vector 25: another ready, then a queued status after the absolute queue deadline, gives
 /// UnsupportedTimeout at once; the queue window is never renewed and no queue panel update follows.
 #[test]
@@ -2526,9 +2548,9 @@ fn a_debug_form_of_the_start_failure_names_no_value() {
     assert!(!text.contains('/'), "{text}");
 }
 
-/// Labelled C8 choice (remediation §31 fix 4): a queued login whose ready `0x130` comes before the
-/// first `0xDD` returns to the `0xDD` wait, so that `0xDD` still sends `0xEC`, exactly once; a
-/// `0x12D` status 1 before it is skipped the same way.
+/// §9.3.9 status rule and Vector 25 ("Ready 130 or 12D status 1 before valid DD"): a queued login
+/// whose ready `0x130` comes before the first `0xDD` returns to the `0xDD` wait, so that `0xDD` still
+/// sends `0xEC`, exactly once; a `0x12D` status 1 before it is skipped the same way.
 #[test]
 fn a_ready_status_before_the_request_keeps_the_advertisement() {
     let (world, mut d, mut login) = connected();
@@ -2570,9 +2592,10 @@ fn a_ready_status_before_the_request_keeps_the_advertisement() {
     assert!(!d.ended());
 }
 
-/// Labelled C8 choice (remediation §31 fix 4): a valid `0xDD` that arrives while the login is
-/// queued is held, and the ready status (a ready `0x130` or a `0x12D` status 1) sends `0xEC` for
-/// it, once, to the recipient it named; a second `0xDD` afterwards sends nothing.
+/// §9.3.9 `Queued130` row and Vector 25 ("Valid N=0 DD while Queued130, then ready"): a valid `0xDD`
+/// that arrives while the login is queued is held, and the ready status (a ready `0x130` or a
+/// `0x12D` status 1) sends `0xEC` for it, once, to the recipient it named; a second `0xDD`
+/// afterwards sends nothing.
 #[test]
 fn a_request_while_queued_is_answered_at_the_ready_status() {
     let status_1 = encode_event_envelope(

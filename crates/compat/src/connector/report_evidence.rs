@@ -1,34 +1,46 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The evidence fields of decision 0046 item 13's resource-set report `0x13D`
-//! (`official-session.md` §9.3.12 "Resource-set report source boundary"; remediation §31 fix 8): what
-//! the driver decided, the private sequence of its first transmission, what the transport did with
-//! it, and where it went relative to the first `0x6F`. Only the opt-in evidence target carries them
+//! (`official-session.md` §9.3.11 "Item-13 report" row, §9.3.12 "Resource-set report source
+//! boundary"): what the driver decided, the private sequence of each report-bearing datagram, every
+//! transition of what the transport did with each of them and whether it is still retained, where
+//! the report went relative to the first `0x6F`, whether a selection was held for it, and where the
+//! first `0x149` after it arrived. Only the opt-in evidence target carries them
 //! (`docs/DEVELOPMENT.md` "Reading a live official run"); none of them is a key, mask, label or DID.
 //!
 //! | Field | Values |
 //! |---|---|
 //! | `report_decision` | `sent`, `omitted` (with `report_omission`, a [`ReportOmission`] label), `undecided` |
-//! | `report_sequence` | the private packet sequence of its first transmission, `0` when not sent |
-//! | `report_ack_action` | `covered_by_cumulative_ack`, `nak_resend` (with `report_nak_resends`), `out_of_order_ack`, `none_yet` |
+//! | `report_reason` | `eligible`, `withdrawn`, `missing_route`, `malformed_mapper`, `cycle_or_depth`, `ambiguous_name`, `invalid_configuration`, `dictionary_mismatch`, `mount_mismatch`, `resource_bound`, `encoding_or_send_failure` |
+//! | `report_sequence` | the private sequence of one report-bearing datagram: one record per datagram |
+//! | `report_ack_action` | `covered_by_cumulative_ack`, `nak_resend`, `out_of_order_ack`, `none` (with `report_ack_from` and `report_retained`) |
 //! | `report_position` | `earlier_datagram`, `same_datagram`, `later_datagram`, `no_6f_yet`, `not_sent` |
+//! | `selection_held` | `true` when a selection arrived while the report was undecided |
+//! | `first_149_after_report` | `none`, `after_report_before_6f`, `after_6f` |
 //!
-//! `same_datagram` and `later_datagram` must never happen (§9.3.12 "Transmit the 13D before a
-//! user-selected 6F", remediation §31 fix 3): each blob goes in datagrams of its own, in queue order,
-//! and the report is queued before `Connected`. They are named so a live log would show a breach.
+//! `report_ack_action` `out_of_order_ack` means only that Tessera sent an OutOfOrderAck because the
+//! NAKed report sequence was no longer retained (after a covering cumulative Ack, for example). An
+//! inbound OutOfOrderAck names the server's sequence space and is never a report action.
+//!
+//! `report_position` compares the datagram of the report's LAST fragment with the first `0x6F`'s
+//! datagrams (§9.3.12: ALL fragments first in earlier datagrams). `same_datagram` (the spec's
+//! `same_datagram_before_6F` and `same_datagram_after_6F`) and `later_datagram` must never happen:
+//! each blob goes in datagrams of its own, in queue order, and the report is queued before
+//! `Connected`. They are named so a live log would show a breach.
 //!
 //! [`ReportOmission`]: crate::resource_report::ReportOmission
 
 use super::pending_world::ReportStatus;
-use crate::session::{KeptBlobAction, KeptBlobFate};
+use crate::resource_report::ReportOmission;
+use crate::session::{KeptBlobAction, MAX_WATCHED_SEQUENCES};
 
-/// Where the report's first datagram went relative to the first `0x6F`'s.
+/// Where the report's last datagram went relative to the first `0x6F`'s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportPosition {
-    /// In an earlier datagram: the rule.
+    /// Every report datagram is earlier than the first `0x6F`'s: the rule.
     EarlierDatagram,
-    /// In the same datagram: must never happen.
+    /// A report fragment shares a datagram with the `0x6F`: must never happen.
     SameDatagram,
-    /// In a later datagram: must never happen.
+    /// A report fragment went in a later datagram than the first `0x6F`'s: must never happen.
     LaterDatagram,
 }
 
@@ -43,15 +55,16 @@ impl ReportPosition {
         }
     }
 
-    /// The position of a report whose first datagram has sequence `report` against the datagrams
-    /// `selection` of the first `0x6F` (the driver's own sequence space; in-flight spans are far
-    /// below 2³¹, so the signed difference orders them).
+    /// The position of a report whose datagrams are `report` against the datagrams `selection` of
+    /// the first `0x6F` (the driver's own sequence space; in-flight spans are far below 2³¹, so the
+    /// signed difference orders them). The report's LAST datagram decides.
     #[must_use]
-    pub fn of(report: u32, selection: &[u32]) -> Option<Self> {
+    pub fn of(report: &[u32], selection: &[u32]) -> Option<Self> {
+        let last = *report.last()?;
         let first = *selection.first()?;
-        Some(if selection.contains(&report) {
+        Some(if report.iter().any(|seq| selection.contains(seq)) {
             Self::SameDatagram
-        } else if (report.wrapping_sub(first) as i32) < 0 {
+        } else if (last.wrapping_sub(first) as i32) < 0 {
             Self::EarlierDatagram
         } else {
             Self::LaterDatagram
@@ -59,40 +72,111 @@ impl ReportPosition {
     }
 }
 
+/// Where the first `0x149` of the login connection arrived after the report was sent: a bounded
+/// presence and order field (§9.3.12 "expected FIRST observable").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum First149 {
+    /// None arrived after the report (or no report was sent).
+    #[default]
+    None,
+    /// After the report and before the first `0x6F` was sent: the expected first observable.
+    AfterReportBefore6F,
+    /// After the first `0x6F` was sent.
+    After6F,
+}
+
+impl First149 {
+    /// The evidence word.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::AfterReportBefore6F => "after_report_before_6f",
+            Self::After6F => "after_6f",
+        }
+    }
+}
+
 /// The driver's record of the report's evidence.
 #[derive(Debug, Default)]
 pub struct ReportEvidence {
-    /// The sequence of the report's first transmission, once queued.
-    sequence: Option<u32>,
+    /// The sequences of the report's datagrams, once queued (at most [`MAX_WATCHED_SEQUENCES`]).
+    sequences: Vec<u32>,
     /// Its position against the first `0x6F`, once one went.
     position: Option<ReportPosition>,
-    /// The transport fate last logged.
-    logged: Option<KeptBlobFate>,
+    /// A first `0x6F` went (after the report or not).
+    selection_sent: bool,
+    /// A selection arrived while the report was undecided, and waited for its decision.
+    selection_held: bool,
+    /// The first `0x149` after the report.
+    first_149: First149,
     /// The one summary line was written (at the referral or the close).
     summarised: bool,
 }
 
 impl ReportEvidence {
-    /// The report was queued with its first datagram at `sequence`.
-    pub fn sent(&mut self, sequence: u32) {
-        self.sequence = Some(sequence);
+    /// The report was queued in the datagrams `sequences`.
+    pub fn sent(&mut self, sequences: &[u32]) {
+        self.sequences = sequences
+            .iter()
+            .copied()
+            .take(MAX_WATCHED_SEQUENCES)
+            .collect();
     }
 
-    /// The private sequence of the report's first transmission.
+    /// The private sequence of the report's first datagram.
     #[must_use]
-    pub const fn sequence(&self) -> Option<u32> {
-        self.sequence
+    pub fn sequence(&self) -> Option<u32> {
+        self.sequences.first().copied()
+    }
+
+    /// The private sequences of every report-bearing datagram.
+    #[must_use]
+    pub fn sequences(&self) -> &[u32] {
+        &self.sequences
+    }
+
+    /// A selection arrived while the report was undecided: it was held for the decision.
+    pub fn hold_selection(&mut self) {
+        self.selection_held = true;
+    }
+
+    /// Whether a selection was held for the report.
+    #[must_use]
+    pub const fn selection_held(&self) -> bool {
+        self.selection_held
     }
 
     /// A `0x6F` went in the datagrams `selection`: the position against the first one, `Some` only
     /// for the first `0x6F` after a sent report.
     pub fn selection_sent(&mut self, selection: &[u32]) -> Option<ReportPosition> {
-        if self.position.is_some() {
+        let first = !std::mem::replace(&mut self.selection_sent, true);
+        if !first || self.position.is_some() {
             return None;
         }
-        let position = ReportPosition::of(self.sequence?, selection)?;
+        let position = ReportPosition::of(&self.sequences, selection)?;
         self.position = Some(position);
         Some(position)
+    }
+
+    /// A `0x149` arrived on the login connection: `Some` with the new value the first time one
+    /// arrives after the report was sent, for its one evidence line.
+    pub fn note_149(&mut self) -> Option<First149> {
+        if self.sequences.is_empty() || self.first_149 != First149::None {
+            return None;
+        }
+        self.first_149 = if self.selection_sent {
+            First149::After6F
+        } else {
+            First149::AfterReportBefore6F
+        };
+        Some(self.first_149)
+    }
+
+    /// Where the first `0x149` after the report arrived.
+    #[must_use]
+    pub const fn first_149(&self) -> First149 {
+        self.first_149
     }
 
     /// The position word for a line now.
@@ -103,22 +187,6 @@ impl ReportEvidence {
             (ReportStatus::Sent, None) => "no_6f_yet",
             _ => "not_sent",
         }
-    }
-
-    /// `fate` when it changed since the last call that returned one: the moment to log it.
-    pub fn fate_changed(&mut self, fate: Option<KeptBlobFate>) -> Option<KeptBlobFate> {
-        let fate = fate?;
-        if self.logged == Some(fate) {
-            return None;
-        }
-        self.logged = Some(fate);
-        Some(fate)
-    }
-
-    /// The fate last seen by [`Self::fate_changed`] (the connection may be gone by the close).
-    #[must_use]
-    pub const fn last_fate(&self) -> Option<KeptBlobFate> {
-        self.logged
     }
 
     /// Whether the summary line is still to be written; `true` once.
@@ -146,46 +214,95 @@ pub const fn omission_label(status: ReportStatus) -> &'static str {
     }
 }
 
-/// The `report_ack_action` word of `fate`: its latest peer action, or `none_yet`.
+/// The `report_reason` category of `status` (`official-session.md` §9.3.11 item-13 row). The
+/// grouping of Tessera's omission kinds into the spec's categories is an engineering choice; the
+/// finer kind stays in `report_omission`.
 #[must_use]
-pub fn ack_action_label(fate: Option<KeptBlobFate>) -> &'static str {
-    fate.and_then(|f| f.last)
-        .map_or("none_yet", KeptBlobAction::label)
+pub const fn reason_label(status: ReportStatus) -> &'static str {
+    match status {
+        ReportStatus::Sent => "eligible",
+        ReportStatus::Undecided => "none",
+        ReportStatus::Omitted(kind) => match kind {
+            ReportOmission::Withdrawn => "withdrawn",
+            ReportOmission::NotRead | ReportOmission::RouteMissing => "missing_route",
+            ReportOmission::WrongFamily
+            | ReportOmission::DecodeError
+            | ReportOmission::DuplicateKey
+            | ReportOmission::BaseDefaultNotUnique
+            | ReportOmission::ZeroKey
+            | ReportOmission::LabelChanged
+            | ReportOmission::NonAsciiLabel => "malformed_mapper",
+            ReportOmission::CycleOrDepth => "cycle_or_depth",
+            ReportOmission::AmbiguousLabel => "ambiguous_name",
+            ReportOmission::ConfigEmpty
+            | ReportOmission::ConfigNonAscii
+            | ReportOmission::ConfigUnmatched
+            | ReportOmission::ConfigMultiple
+            | ReportOmission::ConfigOtherSet
+            | ReportOmission::ConfigSpelling
+            | ReportOmission::ConfigPlaceholder => "invalid_configuration",
+            ReportOmission::DictionaryMissing
+            | ReportOmission::DictionaryType
+            | ReportOmission::DictionaryMismatch => "dictionary_mismatch",
+            ReportOmission::NoMountedBase | ReportOmission::VariantMismatch => "mount_mismatch",
+            ReportOmission::KeyOutOfRange => "resource_bound",
+            ReportOmission::Encoding | ReportOmission::Enqueue => "encoding_or_send_failure",
+        },
+    }
+}
+
+/// The `report_ack_action` word of an action, `none` before the peer did anything.
+#[must_use]
+pub fn ack_action_label(action: Option<KeptBlobAction>) -> &'static str {
+    action.map_or("none", KeptBlobAction::label)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resource_report::ReportOmission;
 
     #[test]
-    fn the_position_orders_the_first_datagrams() {
+    fn the_position_follows_the_last_report_datagram() {
         assert_eq!(
-            ReportPosition::of(5, &[6]),
+            ReportPosition::of(&[5], &[6]),
             Some(ReportPosition::EarlierDatagram)
         );
         assert_eq!(
-            ReportPosition::of(6, &[6, 7]),
+            ReportPosition::of(&[4, 5], &[6]),
+            Some(ReportPosition::EarlierDatagram)
+        );
+        assert_eq!(
+            ReportPosition::of(&[6], &[6, 7]),
             Some(ReportPosition::SameDatagram)
         );
         assert_eq!(
-            ReportPosition::of(7, &[6]),
+            ReportPosition::of(&[5, 6], &[6, 7]),
+            Some(ReportPosition::SameDatagram),
+            "a later fragment shares the 0x6F's datagram"
+        );
+        assert_eq!(
+            ReportPosition::of(&[5, 8], &[6, 7]),
+            Some(ReportPosition::LaterDatagram),
+            "the first fragment earlier is not enough"
+        );
+        assert_eq!(
+            ReportPosition::of(&[7], &[6]),
             Some(ReportPosition::LaterDatagram)
         );
         // Across the wrap.
         assert_eq!(
-            ReportPosition::of(u32::MAX, &[2]),
+            ReportPosition::of(&[u32::MAX - 1, u32::MAX], &[2]),
             Some(ReportPosition::EarlierDatagram)
         );
-        assert_eq!(ReportPosition::of(5, &[]), None);
+        assert_eq!(ReportPosition::of(&[5], &[]), None);
+        assert_eq!(ReportPosition::of(&[], &[6]), None);
     }
 
     #[test]
     fn the_position_is_the_first_selection_only() {
         let mut e = ReportEvidence::default();
         assert_eq!(e.position_label(ReportStatus::Sent), "no_6f_yet");
-        assert_eq!(e.selection_sent(&[9]), None, "no report yet");
-        e.sent(4);
+        e.sent(&[4]);
         assert_eq!(
             e.selection_sent(&[9]),
             Some(ReportPosition::EarlierDatagram)
@@ -196,28 +313,40 @@ mod tests {
             e.position_label(ReportStatus::Omitted(ReportOmission::NotRead)),
             "not_sent"
         );
+        // A first 0x6F before any report has no position, and a later report gets none either.
+        let mut f = ReportEvidence::default();
+        assert_eq!(f.selection_sent(&[9]), None);
+        f.sent(&[10]);
+        assert_eq!(f.selection_sent(&[11]), None);
+    }
+
+    /// §9.3.12 "expected FIRST observable": the first `0x149` after the report is placed once, before
+    /// or after the first `0x6F`; one before the report is not counted.
+    #[test]
+    fn the_first_149_after_the_report_is_placed_once() {
+        let mut e = ReportEvidence::default();
+        assert_eq!(e.note_149(), None, "before the report");
+        e.sent(&[4, 5]);
+        assert_eq!(e.note_149(), Some(First149::AfterReportBefore6F));
+        assert_eq!(e.note_149(), None, "only the first");
+        e.selection_sent(&[6]);
+        assert_eq!(e.note_149(), None);
+        assert_eq!(e.first_149().label(), "after_report_before_6f");
+
+        let mut late = ReportEvidence::default();
+        late.sent(&[4]);
+        late.selection_sent(&[6]);
+        assert_eq!(late.note_149(), Some(First149::After6F));
+        assert_eq!(late.first_149().label(), "after_6f");
+        assert_eq!(ReportEvidence::default().first_149().label(), "none");
     }
 
     #[test]
-    fn a_fate_is_logged_when_it_changes() {
+    fn a_held_selection_is_recorded() {
         let mut e = ReportEvidence::default();
-        assert_eq!(e.fate_changed(None), None);
-        let fate = KeptBlobFate {
-            first_sequence: 4,
-            datagrams: 1,
-            ..KeptBlobFate::default()
-        };
-        assert_eq!(e.fate_changed(Some(fate)), Some(fate));
-        assert_eq!(e.fate_changed(Some(fate)), None);
-        let resent = KeptBlobFate {
-            nak_resends: 1,
-            last: Some(KeptBlobAction::NakResend),
-            ..fate
-        };
-        assert_eq!(e.fate_changed(Some(resent)), Some(resent));
-        assert_eq!(ack_action_label(Some(fate)), "none_yet");
-        assert_eq!(ack_action_label(Some(resent)), "nak_resend");
-        assert_eq!(ack_action_label(None), "none_yet");
+        assert!(!e.selection_held());
+        e.hold_selection();
+        assert!(e.selection_held());
     }
 
     #[test]
@@ -237,5 +366,20 @@ mod tests {
             ReportOmission::ConfigMultiple.label()
         );
         assert_eq!(omission_label(ReportStatus::Sent), "none");
+        assert_eq!(reason_label(ReportStatus::Sent), "eligible");
+        assert_eq!(reason_label(omitted), "invalid_configuration");
+        assert_eq!(
+            reason_label(ReportStatus::Omitted(ReportOmission::Enqueue)),
+            "encoding_or_send_failure"
+        );
+        assert_eq!(
+            reason_label(ReportStatus::Omitted(ReportOmission::VariantMismatch)),
+            "mount_mismatch"
+        );
+        assert_eq!(ack_action_label(None), "none");
+        assert_eq!(
+            ack_action_label(Some(KeptBlobAction::OutOfOrderAck)),
+            "out_of_order_ack"
+        );
     }
 }

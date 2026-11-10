@@ -268,7 +268,7 @@ pub fn prepare_preflight(data: &dyn InstallData) -> Result<Preflight, Unsupporte
 /// complete data (one shared zero, both fields), or why it is omitted. Built from the same preflight
 /// snapshot as `0xEC`, for the launch's effective configuration `resource_sets`: the list the
 /// expanded launch template gives, `Ok(None)` for the built-in default
-/// ([`crate::resource_report::launch_resource_set_option`]). An omission never stops the login.
+/// ([`crate::resource_report::template_resource_set_option`]). An omission never stops the login.
 ///
 /// # Errors
 ///

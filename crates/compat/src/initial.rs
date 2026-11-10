@@ -874,6 +874,10 @@ pub struct Negotiation {
     /// The first valid `0xDD` that arrived while queued, with the recipient it named, held for the
     /// ready status ([`Self::ready_before_request`]).
     held_request: Option<(InstallRequest, u64)>,
+    /// The origin of the one post-queue `0xDD` deadline: the FIRST ready status that brought the
+    /// login back from the queue before the first valid `0xDD` (§9.3.9 status rule). Set once and
+    /// never renewed ([`Self::ready_before_request`]).
+    post_queue_request_since: Option<f64>,
 }
 
 impl Default for Negotiation {
@@ -914,6 +918,7 @@ impl Negotiation {
             queued_since: None,
             historical: false,
             held_request: None,
+            post_queue_request_since: None,
         }
     }
 
@@ -1000,8 +1005,8 @@ impl Negotiation {
 
     /// `0x12D` status `1` at `now`: the §9.3.9 status rule. In the `AwaitDD` stage an unsolicited
     /// one is counted and skipped, keeps the `0xDD` clock and sends nothing. Before the first `0xDD`
-    /// it is a ready status, which keeps or restores the `0xDD` wait (labelled C8 choice,
-    /// remediation §31 fix 4: `0xEC` goes exactly once on the first valid `0xDD`). In every other
+    /// it is a ready status, which keeps or restores the `0xDD` wait (`Negotiation::ready_before_request`:
+    /// `0xEC` goes exactly once on the first valid `0xDD`). In every other
     /// active stage it enters the list wait like a ready `0x130` ([`Self::queue_ready`]); answers
     /// `true` when that started a list clock or went back to the `0xDD` wait.
     pub fn version_accepted(&mut self, now: f64) -> bool {
@@ -1040,26 +1045,29 @@ impl Negotiation {
             && matches!(self.phase, Phase::AwaitingRequest(_) | Phase::Queued(_))
     }
 
-    /// A ready status (`0x12D` status `1` or a ready `0x130`) before the first valid `0xDD`.
+    /// A ready status (`0x12D` status `1` or a ready `0x130`) before the first valid `0xDD`
+    /// (§9.3.9 status rule, P10-10M; Vector 25): it is counted and skipped and the stage stays at,
+    /// or returns to, `AwaitDD`; no `0xEC` and no list clock are made up. In `AwaitDD` its clock is
+    /// kept. From the queued stage, whose status cancelled that clock, ONE post-queue 30-second
+    /// `0xDD` deadline starts at the FIRST such ready status and is never renewed; the queue's
+    /// absolute limit keeps its first origin for a later queued status ([`Self::queued`]). Answers
+    /// `true` for that return from the queue (a real stage change), `false` for a skip in `AwaitDD`.
     ///
-    /// Labelled choice (C8, pending writer answer to remediation §31 fix 4): §9.3.9's status rule
-    /// would enter the list wait, after which a valid `0xDD` is only stored and `0xEC` never goes,
-    /// so a queued login could never advertise its install. Tessera keeps `0xEC` exactly once on
-    /// the first valid `0xDD`: a ready status before it is counted and skipped and leaves the
-    /// stage at `AwaitDD`. In `AwaitDD` its clock is kept; from the queued stage, whose status
-    /// cancelled that clock, the `0xDD` wait starts again at `now`, and the queue's absolute limit
-    /// keeps its first origin for a later queued status ([`Self::queued`]). Answers `true` for that
-    /// return from the queue (a real stage change), `false` for a skip in `AwaitDD`.
+    /// Labelled choice (C8, pending writer answer to remediation §32 fix 2): a later queued status
+    /// suspends that deadline (the queue's limit runs instead), and a later ready status reinstates
+    /// it with its first origin, so a deadline that passed meanwhile fails at once
+    /// ([`Self::expired`]), the same pattern as the queue's own limit. Queued at 0, ready at 20,
+    /// queued at 40 and ready at 70 with no `0xDD` therefore fails at 70.
     ///
-    /// The same choice covers a valid `0xDD` that arrives while queued: the first one is held with
-    /// its recipient ([`Self::request_not_wanted`]) instead of being forgotten, and when a ready
-    /// status brings the stage back to `AwaitDD` the driver takes it ([`Self::take_held_request`])
-    /// and treats it as the first valid `0xDD` at that moment, so `0xEC` goes once for it. Later
-    /// ones while queued only update the opaque word, as any later `0xDD`.
+    /// A valid `0xDD` that arrives while queued is held: the first one is kept with its recipient
+    /// ([`Self::request_not_wanted`]), and when a ready status brings the stage back to `AwaitDD`
+    /// the driver takes it ([`Self::take_held_request`]) and answers it with `0xEC` once, at that
+    /// moment. Later ones while queued only update the opaque word, as any later `0xDD`.
     fn ready_before_request(&mut self, now: f64) -> bool {
         self.ignored();
         if matches!(self.phase, Phase::Queued(_)) {
-            self.phase = Phase::AwaitingRequest(now);
+            let since = *self.post_queue_request_since.get_or_insert(now);
+            self.phase = Phase::AwaitingRequest(since);
             return true;
         }
         false
@@ -1102,8 +1110,12 @@ impl Negotiation {
 
     /// A valid `0xDD` that does not trigger `0xEC` now ([`Self::wants_request`] is `false`), from
     /// `recipient`. In the queued stage before the first valid `0xDD`, the first one is held for
-    /// the ready status (labelled C8 choice, `Negotiation::ready_before_request`); its word is kept.
+    /// the ready status (§9.3.9 `Queued130` row, `Negotiation::ready_before_request`); its word is kept.
     /// Any other one is a later `0xDD` ([`Self::later_request`]).
+    ///
+    /// Labelled choice (C8, pending writer answer to remediation §32 fix 3): after an actual `0x12C`
+    /// on the historical path no `0xDD` is held, so a ready status enters the list wait with no
+    /// `0xEC` (§9.3.9's historical exception), and the server never sees both advertisements.
     pub fn request_not_wanted(&mut self, request: InstallRequest, recipient: u64) {
         if self.held_request.is_none()
             && self.awaits_first_request()
@@ -1451,7 +1463,7 @@ mod tests {
     fn queued_and_ready_cannot_alternate_past_the_limit() {
         let mut n = Negotiation::new();
         n.connected(0.0);
-        // After the first `0xDD` (a ready status before it is the labelled C8 skip, below).
+        // After the first `0xDD` (a ready status before it is skipped, §9.3.9 status rule, below).
         n.request_seen(1);
         assert!(n.queued(0.0));
         assert!(n.queue_ready(290.0));
@@ -1491,6 +1503,95 @@ mod tests {
         );
     }
 
+    /// Labelled choice (C8, pending writer answer to remediation §32 fix 2): queued at 0, ready at 20,
+    /// queued at 40 and ready at 70 with no `0xDD`: the post-queue DD deadline (20 + 30) is suspended
+    /// while queued and reinstated with its first origin at 70, where it has passed, so the login fails
+    /// at once with the DD deadline; it never runs out inside the queue window, and 70 starts nothing
+    /// new.
+    #[test]
+    fn a_requeue_suspends_the_post_queue_request_deadline_and_never_renews_it() {
+        let mut n = Negotiation::new();
+        n.connected(0.0);
+        assert!(n.queued(0.0));
+        assert!(n.queue_ready(20.0));
+        assert_eq!(n.deadline(), Some(20.0 + DD_WAIT_SEC));
+        assert!(!n.queued(40.0));
+        assert_eq!(n.deadline(), Some(QUEUE_WAIT_SEC), "the queue's limit runs");
+        assert_eq!(n.expired(50.0), None, "not inside the queue window");
+        assert_eq!(n.expired(69.9), None);
+        assert!(n.queue_ready(70.0));
+        assert_eq!(
+            n.deadline(),
+            Some(20.0 + DD_WAIT_SEC),
+            "reinstated, not 100"
+        );
+        assert_eq!(
+            n.expired(70.0),
+            Some(UnsupportedNegotiation::RequestDeadline)
+        );
+        // The same with a 0x12D status 1 as the ready status.
+        let mut v = Negotiation::new();
+        v.connected(0.0);
+        assert!(v.queued(0.0));
+        assert!(v.version_accepted(20.0));
+        assert!(!v.queued(40.0));
+        assert!(v.version_accepted(45.0));
+        assert_eq!(v.deadline(), Some(20.0 + DD_WAIT_SEC));
+        assert_eq!(v.expired(45.0), None);
+        assert_eq!(
+            v.expired(50.0),
+            Some(UnsupportedNegotiation::RequestDeadline)
+        );
+        // A DD held while queued answers the reinstated deadline: it is taken at the ready status.
+        let mut h = Negotiation::new();
+        h.connected(0.0);
+        assert!(h.queued(0.0));
+        assert!(h.queue_ready(20.0));
+        assert!(!h.queued(40.0));
+        h.request_not_wanted(
+            InstallRequest {
+                server_config: 1,
+                name_rule_key: 3,
+                trailing: Vec::new(),
+            },
+            2,
+        );
+        assert!(h.queue_ready(70.0));
+        assert!(h.take_held_request().is_some());
+        h.advertisement_sent(70.0);
+        assert_eq!(h.expired(70.0), None);
+    }
+
+    /// Vector 25 ("Historical 12F→12C, then ready without DD"): after an actual `0x12C` a ready status
+    /// enters the list wait with no `0xEC`; a `0xDD` while queued on that path is not held (labelled
+    /// choice, C8, pending writer answer to remediation §32 fix 3).
+    #[test]
+    fn vector_25_the_historical_path_enters_the_list_wait_without_ec() {
+        let mut n = Negotiation::new();
+        n.connected(0.0);
+        assert!(n.version_requested(1.0));
+        assert!(n.version_accepted(2.0));
+        assert_eq!(n.deadline(), Some(2.0 + HISTORICAL_LIST_WAIT_SEC));
+        assert!(!n.wants_request());
+        assert!(!n.stages().ec_sent);
+        let mut q = Negotiation::new();
+        q.connected(0.0);
+        assert!(q.version_requested(1.0));
+        assert!(q.queued(2.0));
+        q.request_not_wanted(
+            InstallRequest {
+                server_config: 1,
+                name_rule_key: 3,
+                trailing: Vec::new(),
+            },
+            2,
+        );
+        assert!(!q.holds_request());
+        assert!(q.queue_ready(3.0));
+        assert_eq!(q.take_held_request(), None);
+        assert_eq!(q.deadline(), Some(3.0 + HISTORICAL_LIST_WAIT_SEC));
+    }
+
     /// Vector 25: an unsolicited `0x12D` status 1 while AwaitDD counts and skips, keeps the `0xDD`
     /// clock and starts no list wait.
     #[test]
@@ -1501,16 +1602,17 @@ mod tests {
         assert_eq!(n.stages().ignored, 1);
         assert_eq!(n.deadline(), Some(DD_WAIT_SEC), "the DD clock is kept");
         assert!(n.wants_request(), "still in AwaitDD");
-        // Labelled C8 (remediation §31 fix 4): a ready 0x130 before the first 0xDD is skipped too.
+        // Vector 25: a ready 0x130 before the first valid 0xDD is skipped too, the DD clock kept.
         assert!(!n.queue_ready(6.0));
         assert_eq!(n.stages().ignored, 2);
         assert_eq!(n.deadline(), Some(DD_WAIT_SEC));
         assert!(n.wants_request());
     }
 
-    /// Labelled C8 choice (remediation §31 fix 4): a queued login whose ready status comes before
-    /// the first `0xDD` goes back to the `0xDD` wait, so the first valid `0xDD` still sends `0xEC`
-    /// exactly once; the queue keeps its first origin; after `0xEC` the status rule is §9.3.9's.
+    /// §9.3.9 status rule and Vector 25 ("Ready 130 or 12D status 1 before valid DD"): a queued login
+    /// whose ready status comes before the first `0xDD` goes back to the `0xDD` wait, so the first
+    /// valid `0xDD` still sends `0xEC` exactly once; a repeated ready never renews the DD clock; the
+    /// queue keeps its first origin; after `0xEC` a ready status enters the list wait.
     #[test]
     fn a_ready_status_before_the_first_request_keeps_the_advertisement() {
         let rules: [fn(&mut Negotiation, f64) -> bool; 2] =
@@ -1533,6 +1635,11 @@ mod tests {
             assert!(!n.queued(30.0));
             assert_eq!(n.deadline(), Some(1.0 + QUEUE_WAIT_SEC));
             assert!(ready(&mut n, 40.0));
+            assert_eq!(
+                n.deadline(),
+                Some(20.0 + DD_WAIT_SEC),
+                "the post-queue DD deadline keeps its first origin"
+            );
             // The first valid 0xDD sends 0xEC, once.
             assert!(n.wants_request());
             n.request_seen(7);
@@ -1545,9 +1652,11 @@ mod tests {
         }
     }
 
-    /// Labelled C8 choice (remediation §31 fix 4): a valid `0xDD` that arrives while queued is held,
-    /// and the ready status that brings back `AwaitDD` releases it as the first valid `0xDD`, once;
-    /// a later `0xDD` while queued only updates the word.
+    /// §9.3.9 `Queued130` row and Vector 25 ("Valid N=0 DD while Queued130, then ready"): a valid
+    /// `0xDD` that arrives while queued is held, and the ready status that brings back `AwaitDD`
+    /// releases it as the first valid `0xDD`, once; a later `0xDD` while queued only updates the
+    /// word. After an actual `0x12C` nothing is held (labelled choice, C8, pending writer answer to
+    /// remediation §32 fix 3).
     #[test]
     fn a_request_while_queued_is_held_for_the_ready_status() {
         let rules: [fn(&mut Negotiation, f64) -> bool; 2] =
@@ -1610,7 +1719,7 @@ mod tests {
             Some(UnsupportedNegotiation::HistoricalListDeadline)
         );
 
-        // After the first `0xDD` (before it a ready status is skipped, the labelled C8 choice): a
+        // After the first `0xDD` (before it a ready status is skipped, §9.3.9 status rule): a
         // ready `0x130` enters the list wait, and the next of either kind is a repeat.
         let mut n = Negotiation::new();
         n.connected(0.0);

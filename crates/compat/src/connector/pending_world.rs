@@ -47,9 +47,10 @@
 //! The world's in-world updates of that ID before its `0x98` merge into the hold rather than apply
 //! ([`PendingWorld::hold_update`]), so the replay after the spawn is the latest state, never an older
 //! snapshot over newer live state.
-//! An explicit `0x40` to an unannounced nonlocal ID is counted and skipped with no tombstone
-//! ([`PendingWorld::despawn_applies`]); one to the `0x90`'s ID is required-progress Unsupported, and
-//! every `0x90` from the current world peer must read (the driver, `session_phase`).
+//! An explicit `0x40` to an unannounced nonlocal ID deletes every pending datum kept under that raw
+//! key, takes no tombstone and is counted and skipped ([`PendingWorld::forget_unannounced`]), so a
+//! later `0x98` starts clean; one to the `0x90`'s ID is required-progress Unsupported, and every
+//! `0x90` from the current world peer must read until `WorldEntered` (the driver, `session_phase`).
 //!
 //! # What is not sent
 //!
@@ -472,6 +473,27 @@ impl PendingWorld {
         target != DEFAULT_RECIPIENT
             && self.player != Some(target)
             && (self.resolved(target) || self.despawned(target))
+    }
+
+    /// An explicit `0x40` to `target`, an unannounced nonlocal ID (§9.3.9, Vector 24 pending
+    /// extension): every pending datum kept under that raw key is deleted and no tombstone is
+    /// taken, so a later validated `0x98` starts a clean incarnation with none of the old
+    /// properties. The default recipient, the `0x90`'s ID, an announced key and a key with a despawn
+    /// record are left alone (they are [`Self::despawn_applies`]'s or the driver's). Answers whether
+    /// anything was deleted.
+    pub fn forget_unannounced(&mut self, target: u64) -> bool {
+        if target == DEFAULT_RECIPIENT
+            || self.player == Some(target)
+            || self.despawn_applies(target)
+        {
+            return false;
+        }
+        let Some(entity) = self.entities.remove(&target) else {
+            return false;
+        };
+        self.bytes = self.bytes.saturating_sub(entity.held());
+        self.order.retain(|k| *k != target);
+        true
     }
 
     /// The conditional selector kept with `key`'s latest `0xCE`, if any (metadata only).
@@ -1277,6 +1299,45 @@ mod tests {
 
     /// §9.3.9 and Vector 24: only an explicit 0x40 to an announced nonlocal target deletes; an
     /// unannounced ID deletes nothing and leaves no tombstone, and the `0x90`'s own ID is the driver's
+    /// Vector 24 pending extension: `0x92`(X), an explicit `0x40`(X) and then `0x98`(X) for an
+    /// unannounced nonlocal X: the `0x40` deletes the raw pending `0x92` with no tombstone, and the
+    /// `0x98` spawns a new incarnation WITHOUT that old property.
+    #[test]
+    fn an_explicit_despawn_of_an_unannounced_id_forgets_its_raw_data() {
+        let mut p = PendingWorld::default();
+        p.set_player(7);
+        assert_eq!(p.create(8, &[0]), Stored::Kept);
+        assert_eq!(p.single(9, 0x92, 4, &[2, 2, 2]), Stored::Kept);
+        assert_eq!(p.appearance(9, &[1]), Stored::Kept);
+        assert_eq!((p.entities(), p.bytes()), (2, 5));
+        assert!(!p.despawn_applies(9));
+        assert!(p.forget_unannounced(9));
+        assert_eq!((p.entities(), p.bytes()), (1, 1), "deleted, no tombstone");
+        assert!(!p.forget_unannounced(9), "nothing left");
+        // Not a despawn record: a later update is kept again, and a `0x98` creates normally.
+        assert_eq!(p.create(9, &[0, 5]), Stored::Kept);
+        assert!(p.resolved(9));
+        let (spawns, states) = p.take_snapshots();
+        assert_eq!(spawns.iter().map(|s| s.entity).collect::<Vec<_>>(), [8, 9]);
+        assert!(
+            states
+                .iter()
+                .all(|s| s.entity != 9 || s.messages.is_empty()),
+            "no old property: {states:?}"
+        );
+        // Never the default recipient, the local player, an announced or a despawned key.
+        let mut q = PendingWorld::default();
+        q.set_player(7);
+        assert_eq!(q.table(DEFAULT_RECIPIENT, &[(1, &[9])]), Stored::Kept);
+        assert!(!q.forget_unannounced(DEFAULT_RECIPIENT));
+        assert!(!q.forget_unannounced(7));
+        assert_eq!(q.create(8, &[0]), Stored::Kept);
+        assert!(!q.forget_unannounced(8));
+        assert_eq!(q.despawn(8), Stored::Kept);
+        assert!(!q.forget_unannounced(8));
+        assert_eq!(q.entities(), 2);
+    }
+
     /// Unsupported, never a deletion here; a despawn record answers so a repeat is counted as blocked.
     #[test]
     fn only_an_explicit_resolved_target_despawns() {

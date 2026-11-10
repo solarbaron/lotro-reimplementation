@@ -990,10 +990,59 @@ fn vector_24_a_later_bad_session_start_is_unsupported() {
     }
 }
 
+/// §9.3.11 and the Vector 24 pending extension: after `WorldEntered` a later `0x90` counts and skips,
+/// with no rebinding, whether it repeats the ID, names another, a zero or logical 2 ID, or does not
+/// read; the invalid-`0x90` rows above are pre-`WorldEntered` only.
+#[test]
+fn in_world_a_later_session_start_is_counted_and_skipped() {
+    let cases: [(&str, Vec<u8>); 5] = [
+        ("same ID", ready_of(PLAYER)),
+        ("zero ID", ready_of(0)),
+        ("logical 2", ready_of(DEFAULT_RECIPIENT)),
+        ("undecodable", vec![0x00, 1, 2]),
+        ("another ID", ready_of(PLAYER + 1)),
+    ];
+    for (what, body) in cases {
+        let (world, mut d, mut server) = at_session_start(gated());
+        world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
+        world.deliver(
+            server.event_to(0xCE, PLAYER, &service_support::player_position()),
+            WORLD_SERVER,
+        );
+        d.step(2.0, true, &go);
+        world.deliver(server.event(0x7C, &[0x00]), WORLD_SERVER);
+        d.command(
+            &Command::WorldLoaded {
+                generation: Some(1),
+            },
+            2.1,
+        )
+        .expect("loaded");
+        d.step(2.2, true, &go);
+        assert!(d.in_world(), "{what}");
+        let _ = d.take_events();
+        world.deliver(server.event(0x90, &body), WORLD_SERVER);
+        d.step(2.3, true, &go);
+        assert!(!d.ended(), "{what}");
+        assert!(d.in_world(), "{what}");
+        assert_eq!(d.counters().session_starts_after_entry, 1, "{what}");
+        let events = d.take_events();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::Disconnected { .. } | Event::WorldEntered { .. })),
+            "{what}: {events:?}"
+        );
+    }
+}
+
 /// Vector 24: an explicit `0x40` to the `0x90`'s ID is required-progress Unsupported and deletes
-/// nothing; one to an unannounced other ID is counted and skipped with no tombstone.
+/// nothing; one to an unannounced other ID deletes the pending data kept under that raw key, takes no
+/// tombstone and is counted and skipped (the pending extension: `0x89`(X), `0x40`(X), `0x98`(X)
+/// starts a clean incarnation).
 #[test]
 fn vector_24_despawns_of_the_player_and_of_an_unannounced_id() {
+    const X: u64 = 0x0100_0000_0000_0999;
     let (world, mut d, mut server) = at_session_start(scripted());
     world.deliver(server.event(0x90, &ready_of(PLAYER)), WORLD_SERVER);
     world.deliver(
@@ -1003,17 +1052,43 @@ fn vector_24_despawns_of_the_player_and_of_an_unannounced_id() {
     d.step(2.0, true, &go);
     let _ = d.take_events();
     let sizes = d.pending_sizes();
-    // An unannounced nonlocal ID: counted, no tombstone, nothing ends.
+    // An unannounced nonlocal ID with nothing kept: counted, no tombstone, nothing ends.
     let no_target = d.entry_progress().no_target;
-    world.deliver(
-        server.event_to(0x40, 0x0100_0000_0000_0999, &[0x00]),
-        WORLD_SERVER,
-    );
+    world.deliver(server.event_to(0x40, X, &[0x00]), WORLD_SERVER);
     d.step(2.1, true, &go);
     assert!(!d.ended());
     assert_eq!(d.pending_sizes(), sizes, "no tombstone");
     assert_eq!(d.entry_progress().no_target, no_target + 1);
     assert_eq!(d.entry_progress().despawns, 0);
+    assert_eq!(d.entry_progress().unannounced_cleared, 0);
+    // Data kept under X's raw key, then an explicit 0x40(X): all of it goes, no tombstone.
+    world.deliver(
+        server.event_to(0x89, X, service_support::observed_appearance()),
+        WORLD_SERVER,
+    );
+    d.step(2.15, true, &go);
+    assert_eq!(d.pending_sizes().0, sizes.0 + 1, "kept under X");
+    world.deliver(server.event_to(0x40, X, &[0x00]), WORLD_SERVER);
+    d.step(2.16, true, &go);
+    assert!(!d.ended());
+    assert_eq!(d.pending_sizes(), sizes, "deleted with no tombstone");
+    assert_eq!(d.entry_progress().unannounced_cleared, 1);
+    assert_eq!(d.entry_progress().despawns, 0);
+    // A later 0x98(X) starts clean: only the creation is kept.
+    let create = EntityCreate {
+        template_did: 0x7000_0001,
+        entity_id: X,
+    }
+    .to_bytes()
+    .expect("0x98");
+    world.deliver(server.event(0x98, &create), WORLD_SERVER);
+    d.step(2.17, true, &go);
+    assert_eq!(d.pending_sizes().0, sizes.0 + 1);
+    assert_eq!(
+        d.pending_sizes().1,
+        sizes.1 + create.len(),
+        "no old appearance"
+    );
     // The local player's ID: Unsupported, nothing deleted before the teardown.
     world.deliver(server.event_to(0x40, PLAYER, &[0x00]), WORLD_SERVER);
     d.step(2.2, true, &go);

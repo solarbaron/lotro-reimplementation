@@ -586,12 +586,13 @@ fn periodic_server_datagrams_get_at_most_one_report_a_second() {
     }
 }
 
-/// Remediation §31 fix 5: a due standalone report goes at the FIRST maintenance tick at or after
-/// its due instant, not a later one; a carrier and a tick at the same instant carry one report, on
-/// the carrier (the driver runs a pass's carriers before its tick).
+/// §9.3.12 (P10-10M) and Vector 25 ("Carrier coincides with due send"): the standalone report is
+/// scheduled AT its due instant (the connection's next deadline wakes the driver then), a later
+/// tick still sends it once, and a carrier and a tick at the same instant carry one report, on the
+/// carrier (the driver runs a pass's carriers before its tick).
 #[test]
 fn a_due_report_goes_at_the_first_tick_or_on_a_carrier_at_that_instant() {
-    // The first tick after the due instant 1.0 comes at 1.37: it sends, the next does not.
+    // The due instant 1.0 is the next deadline; a tick that comes late, at 1.37, sends once.
     let mut server = Server::new();
     let (mut mux, id, _) = connected_at(&mut server, 0.0);
     mux.tick(0.0).expect("tick");
@@ -599,6 +600,11 @@ fn a_due_report_goes_at_the_first_tick_or_on_a_carrier_at_that_instant() {
     let p = server.packet();
     mux.receive_from_peer(&p, SERVER, 0.3, WireCodecs::NONE)
         .expect("fragment");
+    assert_eq!(
+        mux.connection(id).and_then(|c| c.next_deadline()),
+        Some(1.0),
+        "scheduled at the due instant"
+    );
     mux.tick(0.9).expect("tick");
     assert!(
         reports(&mut mux, id, 0.9).0.is_empty(),

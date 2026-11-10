@@ -23,32 +23,38 @@
 //!    label up to ASCII case.
 //! 4. Matching: ASCII case-insensitive, no localisation or whitespace normalisation; the label must
 //!    be ASCII, and the same folded label at two effective keys is ambiguous.
-//! 5. Configuration ([`resource_set_config`]): no list is the single built-in default; a supplied
+//! 5. Configuration ([`template_resource_set_option`], [`resource_set_config`]): the explicit list is
+//!    the `--resource-set LIST` or `--resource-set=LIST` argument of the expanded
+//!    `GameClient.WIN32.ArgTemplate`, read before the §3.6 filter drops unreplaced placeholders; a
+//!    case-variant spelling, an unresolved placeholder in the option or its value, a missing or
+//!    empty value, or two occurrences omit. No list is the single built-in default; a supplied
 //!    list splits on commas with only ASCII space and tab trimmed at token ends; an empty, non-ASCII
 //!    or unmatched token, more than one token (even repeats) or another set omits.
 //! 6. Dictionary ([`check_dictionary`]): both report properties must be Type 22 with the route's
 //!    mapper as their data reference; never their printed DID as a fallback.
 //!
-//! Then the minimum mount check ([`check_mounted`]): at least one mounted base archive, and every
-//! advertised base's archive-header variant, `highres` left out, equal to the key minus one. Any failure omits the WHOLE report and
-//! keeps the login going (item 5); a key outside `1..=4096` gives no report, never a clamped one.
+//! Then the minimum mount check ([`check_mounted`]): at least one advertised base archive, and every
+//! `0xEC`-advertised base's archive-header variant, `highres` left out, equal to the key minus one.
+//! Any failure omits the WHOLE report and keeps the login going (item 5); a key outside `1..=4096`
+//! gives no report, never a clamped one.
 //!
 //! # Labelled choices (OPEN for the writer)
 //!
-//! - The effective configuration is the `--resource-set` argument of the expanded launch template,
-//!   or the built-in default without one ([`launch_resource_set_option`], remediation §31 fix 7).
 //! - "Exactly one positive named entry" is read as: the ultimate base's names list has exactly one
 //!   entry, its name is not empty and its key is not zero; a key-0 or unnamed entry makes it not
-//!   unique rather than being ignored.
+//!   unique rather than being ignored (labelled choice, C8, pending writer answer to remediation
+//!   §32's note on the positive named entry).
 //! - A repeated key counts in the names list only; display text is never read.
-//! - The mounted bases are the base archives of the `0xEC` inventory snapshot without `highres`
-//!   ([`check_mounted`], remediation §31 fix 12).
+//! - The "option marker" that ends a missing value is `--` (labelled choice, C8, pending writer
+//!   answer to remediation §32 fix 14); Tessera has no explicit local resource-set list, so the
+//!   template is the only explicit source.
 //!
 //! [`InstallData::resource_sets`]: crate::connector::InstallData::resource_sets
 
 use std::collections::{BTreeMap, HashSet};
 
 use crate::initial::AdvertisedArchive;
+use crate::login::TemplateToken;
 use crate::world::{RESOURCE_SET_MAX_BITS, ResourceSetMask, ResourceSetReport};
 
 /// Decision 0046 item 13 (owner, 2026-11-06): the restricted `0x13D` candidate may be sent. A
@@ -88,39 +94,81 @@ pub const TYPE_BITFIELD: u32 = 22;
 /// install has two; more is refused as a decode error rather than kept without bound.
 pub const MAX_RESOURCE_SET_NAMES: usize = 4096;
 
-/// The launch option whose value is an explicit resource-set list (§9.3.12 steps 4–5,
-/// remediation §31 fix 7).
+/// The launch option whose value is an explicit resource-set list (§9.3.12 step 5): exactly this
+/// lower-case spelling.
 pub const RESOURCE_SET_ARGUMENT: &str = "--resource-set";
 
-/// The resource-set list of this launch, as the expanded launch template gives it (§9.3.12 steps
-/// 4–5): `Ok(None)` with no [`RESOURCE_SET_ARGUMENT`], so the built-in default applies; `Ok(Some(list))`
-/// with the list for [`resource_set_config`]'s tokeniser.
-///
-/// Labelled choice (C8, pending writer answer to remediation §31 fix 7): Tessera's session
-/// configuration is the expanded `GameClient.WIN32.ArgTemplate` (`official-login.md` §3.6), split
-/// into arguments by its §3.6 rules ([`crate::login::build_launch_argv`]); `GameClient.HighResPatchArg`
-/// is not appended, and `--HighResOutOfDate` is never a resource-set token. The argument is matched
-/// exactly, in the forms `--resource-set LIST` and `--resource-set=LIST`. A missing value (the last
-/// argument, or one followed by another `--` option) is an empty list, which omits the report. The
-/// argument given twice is a multi-set configuration ([`ReportOmission::ConfigMultiple`]).
+/// The option marker that ends a missing value (§9.3.12 step 5). Labelled choice (C8, pending
+/// writer answer to remediation §32 fix 14): the long-option prefix.
+pub const OPTION_MARKER: &str = "--";
+
+/// The resource-set list of an argument vector (§9.3.12 step 5): `Ok(None)` with no
+/// [`RESOURCE_SET_ARGUMENT`], so the built-in default applies; `Ok(Some(list))` with the list for
+/// [`resource_set_config`]'s tokeniser. Each argument is checked for an unresolved `{...}`
+/// placeholder as the §3.6 split would ([`launch_resource_set_tokens`]).
 ///
 /// # Errors
 ///
-/// [`ReportOmission::ConfigMultiple`] for a second [`RESOURCE_SET_ARGUMENT`].
+/// As [`launch_resource_set_tokens`].
 pub fn launch_resource_set_option(argv: &[String]) -> Result<Option<String>, ReportOmission> {
+    let tokens: Vec<TemplateToken> = argv
+        .iter()
+        .map(|a| TemplateToken {
+            unreplaced: crate::login::contains_unreplaced_placeholder(a),
+            text: a.clone(),
+        })
+        .collect();
+    launch_resource_set_tokens(&tokens)
+}
+
+/// The resource-set list of the arguments of an expanded launch template, BEFORE the §3.6 filter
+/// drops the ones with an unreplaced placeholder (§9.3.12 step 5; `official-login.md` §3.6).
+///
+/// The option is matched exactly, lower case, in the forms `--resource-set LIST` and
+/// `--resource-set=LIST`. An ASCII-case variant of either form is an unsupported configuration
+/// ([`ReportOmission::ConfigSpelling`]), never skipped. An unresolved placeholder in the option's
+/// own argument or in its value omits ([`ReportOmission::ConfigPlaceholder`]), even though the
+/// §3.6 split would drop that argument. A missing value (the last argument, or one followed by an
+/// argument that starts with [`OPTION_MARKER`]) is an empty list, which omits the report later.
+/// `--HighResOutOfDate` is never a resource-set token. The argument given twice, in either form, is
+/// [`ReportOmission::ConfigMultiple`].
+///
+/// # Errors
+///
+/// [`ReportOmission::ConfigSpelling`], [`ReportOmission::ConfigPlaceholder`] or
+/// [`ReportOmission::ConfigMultiple`].
+pub fn launch_resource_set_tokens(
+    tokens: &[TemplateToken],
+) -> Result<Option<String>, ReportOmission> {
+    let equals_form = format!("{RESOURCE_SET_ARGUMENT}=");
     let mut found: Option<String> = None;
-    let mut args = argv.iter().peekable();
+    let mut args = tokens.iter().peekable();
     while let Some(arg) = args.next() {
-        let value = if arg == RESOURCE_SET_ARGUMENT {
+        let text = arg.text.as_str();
+        let value = if text == RESOURCE_SET_ARGUMENT {
+            if arg.unreplaced {
+                return Err(ReportOmission::ConfigPlaceholder);
+            }
             match args.peek() {
-                Some(next) if !next.starts_with("--") => args.next().cloned().unwrap_or_default(),
+                Some(next) if !next.text.starts_with(OPTION_MARKER) => {
+                    if next.unreplaced {
+                        return Err(ReportOmission::ConfigPlaceholder);
+                    }
+                    args.next().map(|t| t.text.clone()).unwrap_or_default()
+                }
                 _ => String::new(),
             }
-        } else if let Some(list) = arg
-            .strip_prefix(RESOURCE_SET_ARGUMENT)
-            .and_then(|rest| rest.strip_prefix('='))
-        {
+        } else if let Some(list) = text.strip_prefix(equals_form.as_str()) {
+            if arg.unreplaced {
+                return Err(ReportOmission::ConfigPlaceholder);
+            }
             list.to_owned()
+        } else if text.eq_ignore_ascii_case(RESOURCE_SET_ARGUMENT)
+            || text
+                .get(..equals_form.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(&equals_form))
+        {
+            return Err(ReportOmission::ConfigSpelling);
         } else {
             continue;
         };
@@ -131,16 +179,19 @@ pub fn launch_resource_set_option(argv: &[String]) -> Result<Option<String>, Rep
     Ok(found)
 }
 
-/// [`launch_resource_set_option`] of `template` expanded with `params` (`official-login.md` §3.6).
+/// [`launch_resource_set_tokens`] of `template` expanded with `params` (`official-login.md` §3.6),
+/// split by the §3.6 quoting rules with the unreplaced arguments still there
+/// ([`crate::login::split_arg_template_tokens`]). `GameClient.HighResPatchArg` is not appended.
 ///
 /// # Errors
 ///
-/// As [`launch_resource_set_option`].
+/// As [`launch_resource_set_tokens`].
 pub fn template_resource_set_option(
     template: &str,
     params: &crate::login::ArgTemplateParams,
 ) -> Result<Option<String>, ReportOmission> {
-    launch_resource_set_option(&crate::login::build_launch_argv(template, params, None))
+    let expanded = crate::login::substitute_arg_template(template, params, None);
+    launch_resource_set_tokens(&crate::login::split_arg_template_tokens(&expanded))
 }
 
 /// Why the report is omitted: a kind only, never a key, label, mask or DID. Each one omits the whole
@@ -181,6 +232,10 @@ pub enum ReportOmission {
     ConfigMultiple,
     /// The supplied token names another set than the default.
     ConfigOtherSet,
+    /// The launch template spells the resource-set option in another ASCII case.
+    ConfigSpelling,
+    /// The resource-set option or its value holds an unresolved placeholder.
+    ConfigPlaceholder,
     /// A report property has no definition in the dictionary.
     DictionaryMissing,
     /// A report property is not Type 22.
@@ -221,6 +276,8 @@ impl ReportOmission {
             Self::ConfigUnmatched => "configuration unmatched token",
             Self::ConfigMultiple => "configuration multiple sets",
             Self::ConfigOtherSet => "configuration other set",
+            Self::ConfigSpelling => "configuration option spelling",
+            Self::ConfigPlaceholder => "configuration unresolved placeholder",
             Self::DictionaryMissing => "dictionary missing",
             Self::DictionaryType => "dictionary type",
             Self::DictionaryMismatch => "dictionary mismatch",
@@ -254,6 +311,10 @@ impl ReportOmission {
             Self::ConfigUnmatched => "decision 0046 item 5; item 13 configuration unmatched token",
             Self::ConfigMultiple => "decision 0046 item 5; item 13 configuration multiple sets",
             Self::ConfigOtherSet => "decision 0046 item 5; item 13 configuration other set",
+            Self::ConfigSpelling => "decision 0046 item 5; item 13 configuration option spelling",
+            Self::ConfigPlaceholder => {
+                "decision 0046 item 5; item 13 configuration unresolved placeholder"
+            }
             Self::DictionaryMissing => "decision 0046 item 5; item 13 dictionary missing",
             Self::DictionaryType => "decision 0046 item 5; item 13 dictionary type",
             Self::DictionaryMismatch => "decision 0046 item 5; item 13 dictionary mismatch",
@@ -538,10 +599,9 @@ pub fn is_high_res(archive: &AdvertisedArchive) -> bool {
 /// `1..=RESOURCE_SET_MAX_BITS`, at least one base in scope, and every base in scope with its
 /// variant equal to `key − 1` (the enum key is one greater than the variant).
 ///
-/// Labelled choice (C8, pending writer answer to remediation §31 fix 12): the scope is exactly the
-/// base archives Tessera advertises in its `0xEC` (§9.3.7's advertised base set, `archives`)
-/// without `highres` ([`is_high_res`]), whatever its variant: §9.3.12 keeps the optional highres
-/// family's group apart from the report's set.
+/// The scope is exactly the `0xEC`-advertised bases (§9.3.7's advertised base set, `archives`:
+/// the portal bases and the advertised cell/map bases; declared auxiliary members are not
+/// separate bases) without `highres` ([`is_high_res`]), whatever its variant.
 ///
 /// # Errors
 ///
@@ -919,8 +979,8 @@ mod tests {
         a
     }
 
-    /// Remediation §31 fix 12 (labelled C8 choice): the check covers the advertised bases without
-    /// `highres`, whatever its variant.
+    /// §9.3.12 mount scope: the check covers the advertised bases without `highres`, whatever its
+    /// variant.
     #[test]
     fn the_mount_check_leaves_high_res_out() {
         assert!(is_high_res(&high_res(0)));
@@ -944,15 +1004,13 @@ mod tests {
         );
     }
 
-    fn argv(template: &str) -> Vec<String> {
-        crate::login::split_arg_template_argv(template)
-    }
-
-    /// Remediation §31 fix 7 (labelled C8 choice): the expanded launch template's `--resource-set`
-    /// argument is the explicit list; without one the built-in default applies.
+    /// §9.3.12 step 5: the expanded launch template's `--resource-set` argument is the explicit
+    /// list; without one the built-in default applies.
     #[test]
     fn the_launch_template_gives_the_list() {
-        let pick = |template: &str| launch_resource_set_option(&argv(template));
+        let pick = |template: &str| {
+            launch_resource_set_tokens(&crate::login::split_arg_template_tokens(template))
+        };
         // Absent.
         assert_eq!(
             pick("-a {SUBSCRIPTION} --language {LANG} --rodat on"),
@@ -980,8 +1038,50 @@ mod tests {
             pick("--resource-set Base --resource-set Base"),
             Err(ReportOmission::ConfigMultiple)
         );
+        // The two forms mixed.
+        assert_eq!(
+            pick("--resource-set=Base --resource-set Base"),
+            Err(ReportOmission::ConfigMultiple)
+        );
         // Not the argument.
         assert_eq!(pick("--resource-sets Base --resource-setX"), Ok(None));
+        // A case variant of either form omits as unsupported configuration, never skipped.
+        for template in [
+            "--Resource-Set Base",
+            "--RESOURCE-SET=Base",
+            "--language English --resource-SET Base",
+            "--resource-set Base --Resource-set Base",
+        ] {
+            assert_eq!(
+                pick(template),
+                Err(ReportOmission::ConfigSpelling),
+                "{template}"
+            );
+        }
+        // An unresolved placeholder in the option's argument or its value omits, although the
+        // §3.6 split would drop it.
+        for template in [
+            "--resource-set={UNKNOWN}",
+            "--resource-set {UNKNOWN}",
+            "--resource-set {UNKNOWN} Base",
+            r#"--resource-set "{UNKNOWN}""#,
+            "--resource-set=Base{X}",
+        ] {
+            assert_eq!(
+                pick(template),
+                Err(ReportOmission::ConfigPlaceholder),
+                "{template}"
+            );
+        }
+        // A plain argument vector is checked the same way.
+        assert_eq!(
+            launch_resource_set_option(&["--resource-set".to_owned(), "{X}".to_owned()]),
+            Err(ReportOmission::ConfigPlaceholder)
+        );
+        assert_eq!(
+            launch_resource_set_option(&["--resource-set=Base".to_owned()]),
+            Ok(Some("Base".to_owned()))
+        );
     }
 
     /// The template forms through the whole candidate: absent, one matching token, one other token,
@@ -1017,10 +1117,95 @@ mod tests {
             decide(r#"--resource-set """#),
             Err(ReportOmission::ConfigEmpty)
         );
-        // A placeholder value nobody filled in is dropped by the split, so the value is missing.
+        // A placeholder value nobody filled in omits, checked before the §3.6 filter would drop it;
+        // the next argument is never taken as the value instead.
         assert_eq!(
             decide("--resource-set {UNKNOWN}"),
-            Err(ReportOmission::ConfigEmpty)
+            Err(ReportOmission::ConfigPlaceholder)
+        );
+        assert_eq!(
+            decide("--resource-set {UNKNOWN} Base"),
+            Err(ReportOmission::ConfigPlaceholder)
+        );
+        assert_eq!(
+            decide("--resource-set={UNKNOWN}"),
+            Err(ReportOmission::ConfigPlaceholder)
+        );
+        // A recognised placeholder supplies the value through the normal substitution.
+        assert_eq!(
+            decide("--resource-set {LANG}"),
+            Err(ReportOmission::ConfigUnmatched),
+            "English names no set here"
+        );
+        // A case variant is unsupported configuration, not the default.
+        assert_eq!(
+            decide("--Resource-Set Base"),
+            Err(ReportOmission::ConfigSpelling)
+        );
+        // Other unreplaced placeholders are dropped as usual and change nothing.
+        assert_eq!(decide("--bugurl \"{BUGURL}\" --resource-set Base"), sent);
+    }
+
+    /// §10.2 "Synthetic resolved-default candidate (P10-10M)": an invented ultimate base with the one
+    /// positive name `SyntheticBase` at key 6 and a child that keeps it, no explicit list (or one
+    /// ASCII case variant of the name), both dictionary references agreeing and every advertised base
+    /// at variant 5: key 6 resolves at run time and the data is `00 06 20 06 20`. An unrelated folded
+    /// collision still sends; a collision with `SyntheticBase` at another effective key omits.
+    #[test]
+    fn the_synthetic_resolved_default_candidate() {
+        const WANT: [u8; 5] = [0x00, 0x06, 0x20, 0x06, 0x20];
+        let bases = [archive(5), archive(5), high_res(0)];
+        let names =
+            resolve(&chain(&[(6, "SyntheticBase")], &[(6, "SyntheticBase")])).expect("resolves");
+        assert_eq!(names.default_key(), 6);
+        for option in [
+            None,
+            Some("syntheticbase"),
+            Some("SYNTHETICBASE"),
+            Some("SyntheticBase"),
+        ] {
+            assert_eq!(
+                candidate_data(Ok(names.clone()), option, &bases).as_deref(),
+                Ok(WANT.as_slice()),
+                "{option:?}"
+            );
+        }
+        // Through the launch template too.
+        let params = crate::login::ArgTemplateParams::default();
+        for template in ["--rodat on", "--resource-set syntheticBASE"] {
+            let option = template_resource_set_option(template, &params).expect("option");
+            assert_eq!(
+                candidate_data(Ok(names.clone()), option.as_deref(), &bases).as_deref(),
+                Ok(WANT.as_slice()),
+                "{template}"
+            );
+        }
+        // An unrelated folded-label collision does not change eligibility.
+        let unrelated = resolve(&chain(
+            &[(6, "SyntheticBase"), (7, "Other"), (8, "OTHER")],
+            &[(6, "SyntheticBase")],
+        ))
+        .expect("resolves");
+        assert_eq!(
+            candidate_data(Ok(unrelated), None, &bases).as_deref(),
+            Ok(WANT.as_slice())
+        );
+        // A collision with the selected label at another effective key omits the whole report.
+        assert_eq!(
+            resolve(&chain(
+                &[(6, "SyntheticBase"), (9, "syntheticbase")],
+                &[(6, "SyntheticBase")],
+            )),
+            Err(ReportOmission::AmbiguousLabel)
+        );
+        // A variant of another base omits; the variant itself is not the key.
+        assert_eq!(
+            candidate_data(Ok(names.clone()), None, &[archive(5), archive(6)]),
+            Err(ReportOmission::VariantMismatch)
+        );
+        assert_eq!(
+            candidate_data(Ok(names), None, &[archive(6)]),
+            Err(ReportOmission::VariantMismatch)
         );
     }
 
@@ -1074,6 +1259,8 @@ mod tests {
             ReportOmission::ConfigUnmatched,
             ReportOmission::ConfigMultiple,
             ReportOmission::ConfigOtherSet,
+            ReportOmission::ConfigSpelling,
+            ReportOmission::ConfigPlaceholder,
             ReportOmission::DictionaryMissing,
             ReportOmission::DictionaryType,
             ReportOmission::DictionaryMismatch,

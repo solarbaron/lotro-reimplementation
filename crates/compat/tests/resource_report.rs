@@ -63,7 +63,7 @@ fn a_stray_bit_above_the_count_fails() {
     ));
 }
 
-/// Remediation §31 fix 11: the strict unused-bit check is the `0x13D` codec's own (a self-check of
+/// §10.2 Vector "Stray high bit in OWN outgoing encoding": the strict unused-bit check is the `0x13D` codec's own (a self-check of
 /// Tessera's encoding); the shared Type 22 decoder that reads the server's tables ignores unused
 /// bits (`property-system.md`), so the same bytes decode there.
 #[test]

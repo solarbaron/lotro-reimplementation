@@ -20,7 +20,8 @@ use tessera_compat::resource_report::{
     ARCHIVE_KIND_HIGH_RES, DictionaryEntry, MapperNames, PID_AVAILABLE_RESOURCE_SETS,
     PID_LOADED_RESOURCE_SETS, RESOURCE_SET_ARGUMENT, RESOURCE_SET_CHAIN_LIMIT, ReportOmission,
     TYPE_BITFIELD, candidate_data, check_mounted, is_high_res, launch_resource_set_option,
-    resolve_resource_sets, resource_set_config, selected_key, template_resource_set_option,
+    launch_resource_set_tokens, resolve_resource_sets, resource_set_config, selected_key,
+    template_resource_set_option,
 };
 use tessera_compat::world::{RESOURCE_SET_MAX_BITS, ResourceSetMask, ResourceSetReport};
 use tessera_formats::Did;
@@ -213,7 +214,25 @@ fuzz_target!(|data: &[u8]| {
             let _ = resource_set_config(Some(&list));
         }
         Ok(None) => {}
-        Err(kind) => assert_eq!(kind, ReportOmission::ConfigMultiple),
+        Err(kind) => assert!(
+            matches!(
+                kind,
+                ReportOmission::ConfigMultiple
+                    | ReportOmission::ConfigSpelling
+                    | ReportOmission::ConfigPlaceholder
+            ),
+            "{kind:?}"
+        ),
+    }
+    // The same split with the unreplaced arguments kept: a template without them gives the same
+    // answer as the filtered vector.
+    let tokens = tessera_compat::login::split_arg_template_tokens(&template);
+    if tokens.iter().all(|t| !t.unreplaced) {
+        let plain: Vec<String> = tokens.iter().map(|t| t.text.clone()).collect();
+        assert_eq!(
+            launch_resource_set_tokens(&tokens),
+            launch_resource_set_option(&plain)
+        );
     }
     let argv: Vec<String> = parts
         .iter()

@@ -905,7 +905,8 @@ fn shutdown<N: ConnectorNet>(net: &N, driver: &mut SessionDriver<N>, now: &impl 
 /// The launch's resource-set list for decision 0046 item 13's report (`official-session.md`
 /// §9.3.12 steps 4–5): the `--resource-set` argument of the remote `GameClient.WIN32.ArgTemplate`
 /// as Tessera expands it for its session configuration (`official-login.md` §3.6;
-/// [`template_resource_set_option`]). Only values that are no secret are filled in: the ticket,
+/// [`template_resource_set_option`], which reads the arguments with their unreplaced placeholders
+/// still marked, before the §3.6 filter). Only values that are no secret are filled in: the ticket,
 /// subscription, login and chat server stay empty, since none of them can name a resource set and
 /// the expansion is never sent or logged.
 fn launch_resource_sets(

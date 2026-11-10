@@ -1391,9 +1391,10 @@ impl Walker {
     /// distances. A key that the keymap binds to an action is left to the keymap. The
     /// chat (M7) sees every event first; while its input is open the walker keys are off.
     pub fn input(&mut self, event: &RawEvent) {
-        // The System overlay's Dismiss button (`official-entry.md` §8.7): a click on it, or Tab then
-        // Enter or Space while the chat input is closed; an event it used goes no further. Escape is
-        // never used by it (`system_status` module docs).
+        // The System overlay's Dismiss button (`official-entry.md` §8, P10-10M): only a click on it,
+        // while the chat input is closed; a click it used goes no further. It is mouse-only: no key
+        // is used by it, so Tab keeps `target_next_enemy` and Escape its own meaning
+        // (`system_status` module docs).
         if !self.chat.is_open()
             && !self.controls.ui_attached()
             && self

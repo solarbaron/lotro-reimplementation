@@ -496,6 +496,177 @@ fn the_first_149_after_the_report_is_placed() {
     assert!(!logs.contains("after_report_before_6f"), "{logs}");
 }
 
+/// A login `0x149` read in the same pass as the `0x6C` that decided the report left the server before
+/// the report did: it is not the first `0x149` after the report (§9.3.12 "expected FIRST
+/// observable"), so the field stays `none`; one in a later pass is placed.
+#[test]
+fn a_149_in_the_reports_own_pass_is_not_after_it() {
+    let ((), logs) = logs_of(|| {
+        let mut start = session_start(0, None, Arc::default());
+        start.schema = SchemaView(Arc::new(Reporting::eligible()));
+        let world = new_world(Service::default());
+        let mut net = FakeNet(world.clone());
+        let mut d = SessionDriver::start(&mut net, start, 0.0, &go).expect("start");
+        let mut login = Server::new(0x0111, 0xBEEF_0001);
+        world.deliver(login.challenge(0xBEEF_0001), LOGIN_SERVER);
+        world.deliver(
+            login.control(OptionalHeaders {
+                cumulative_ack: Some(0),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(0.0, true, &go);
+        world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
+        world.deliver(login.event(0x149, &[0x00, 0x7F]), LOGIN_SERVER);
+        d.step(0.1, true, &go);
+        assert_eq!(d.counters().resource_reports_sent, 1);
+        d.begin_shutdown(0.2);
+    });
+    assert!(
+        !logs.contains("official evidence: first 0x149 after the resource-set report"),
+        "{logs}"
+    );
+    let summary = logs
+        .lines()
+        .find(|l| l.contains("official evidence: resource-set report summary"))
+        .unwrap_or_else(|| panic!("{logs}"));
+    assert!(
+        summary.contains("first_149_after_report=\"none\""),
+        "{summary}"
+    );
+}
+
+/// Vector 25 item-13 extension, "Synthetic large singleton requires several datagrams; selection
+/// already pending": every report fragment is first sent in an earlier datagram than the first
+/// `0x6F`, the position is judged from the last fragment, and each report-bearing sequence is
+/// retained on its own: a cumulative Ack covering the first releases only it (a NAK for it then gets
+/// Tessera's OutOfOrderAck), while a NAK for a later one resends its identical saved bytes.
+#[test]
+fn a_report_of_several_datagrams_goes_whole_before_a_pending_selection() {
+    let (seqs, logs) = logs_of(|| {
+        let (world, mut d, login) = driver_at_characters(Service::default(), 0);
+        let _ = world.take_sent();
+        let mask = crate::world::ResourceSetMask::singleton(crate::world::RESOURCE_SET_MAX_BITS)
+            .expect("key");
+        let data = ResourceSetReport {
+            available: mask.clone(),
+            loaded: mask,
+        }
+        .to_bytes()
+        .expect("encode");
+        d.pend_report_for_tests(Ok(data));
+        enter(&mut d, 1.0);
+        d.step(1.0, true, &go);
+        let sent = sent_raw(&world);
+        let decoded: Vec<_> = sent
+            .iter()
+            .filter_map(|(b, seq, _)| Some((*seq, decode_client_datagram(b, false).ok()?, b)))
+            .collect();
+        // The report's datagrams: queue 1, several fragments.
+        let report: Vec<(u32, Vec<u8>)> = decoded
+            .iter()
+            .filter(|(_, p, _)| {
+                p.fragments
+                    .iter()
+                    .any(|f| f.header.queue_id == 1 && f.header.num_frags > 1)
+            })
+            .map(|(seq, _, b)| (*seq, (*b).clone()))
+            .collect();
+        assert!(report.len() >= 2, "{sent:?}");
+        let selection = sent
+            .iter()
+            .find(|(_, _, ops)| ops.contains(&0x6F))
+            .map(|(_, seq, _)| *seq)
+            .expect("the selection");
+        assert!(
+            report.iter().all(|(seq, _)| *seq < selection),
+            "every fragment before the 0x6F"
+        );
+        assert!(
+            sent.iter()
+                .filter(|(_, seq, _)| report.iter().any(|(r, _)| r == seq))
+                .all(|(_, _, ops)| !ops.contains(&0x6F))
+        );
+        let (first, _) = report[0].clone();
+        let (second, second_bytes) = report[1].clone();
+        // A cumulative Ack covering the first fragment's datagram only.
+        world.deliver(
+            login.control(OptionalHeaders {
+                cumulative_ack: Some(first),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(1.1, true, &go);
+        let _ = world.take_sent();
+        // A NAK for both: the second is resent identically, the first is no longer retained.
+        world.deliver(
+            login.control(OptionalHeaders {
+                sequence_nak: Some(vec![second, first]),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(1.2, true, &go);
+        let again = world.take_sent();
+        assert!(
+            again.iter().any(|(b, _)| *b == second_bytes),
+            "the second fragment's identical datagram"
+        );
+        let ooa: Vec<u32> = again
+            .iter()
+            .filter_map(|(b, _)| decode_client_datagram(b, false).ok())
+            .filter_map(|p| p.opt_headers.out_of_order_ack)
+            .flatten()
+            .collect();
+        assert!(ooa.contains(&first), "{ooa:?}");
+        assert!(!ooa.contains(&second), "{ooa:?}");
+        report.iter().map(|(s, _)| *s).collect::<Vec<_>>()
+    });
+    let decided = logs
+        .lines()
+        .rfind(|l| l.contains("report_decision=\"sent\""))
+        .unwrap_or_else(|| panic!("{logs}"));
+    assert!(decided.contains("selection_held=true"), "{decided}");
+    assert!(
+        decided.contains(&format!("report_datagrams={}", seqs.len())),
+        "{decided}"
+    );
+    let records = logs
+        .lines()
+        .filter(|l| l.contains("official evidence: resource-set report datagram"))
+        .count();
+    assert_eq!(
+        records,
+        seqs.len(),
+        "one record per report-bearing datagram"
+    );
+    let before = logs
+        .lines()
+        .find(|l| l.contains("official evidence: resource-set report before the selection"))
+        .unwrap_or_else(|| panic!("{logs}"));
+    assert!(
+        before.contains("report_position=\"earlier_datagram\"")
+            && before.contains(&format!("report_sequence={}", seqs[seqs.len() - 1])),
+        "judged from the last fragment: {before}"
+    );
+    let transport: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("official evidence: resource-set report transport"))
+        .collect();
+    let of = |seq: u32, action: &str| {
+        transport.iter().any(|l| {
+            l.contains(&format!("report_sequence={seq} "))
+                && l.contains(&format!("report_ack_action=\"{action}\""))
+        })
+    };
+    assert!(of(seqs[0], "cumulative_covered"), "{transport:?}");
+    assert!(of(seqs[0], "out_of_order_ack"), "{transport:?}");
+    assert!(of(seqs[1], "nak_resend"), "{transport:?}");
+    assert!(!of(seqs[1], "cumulative_covered"), "{transport:?}");
+}
+
 /// Vector 25 item-13 extension, "Report omitted by preflight; user selects": the selection's first
 /// flush carries the `0x6F`, with no report or `0x149` wait.
 #[test]
@@ -621,14 +792,16 @@ fn the_report_evidence_follows_its_transport() {
     assert!(
         transitions[0].contains("report_ack_from=\"none\"")
             && transitions[0].contains("report_ack_action=\"nak_resend\"")
-            && transitions[0].contains("report_retained=true"),
+            && transitions[0].contains("report_retained=true")
+            && transitions[0].contains("direction=\"send\""),
         "{}",
         transitions[0]
     );
     assert!(
         transitions[1].contains("report_ack_from=\"nak_resend\"")
-            && transitions[1].contains("report_ack_action=\"covered_by_cumulative_ack\"")
-            && transitions[1].contains("report_retained=false"),
+            && transitions[1].contains("report_ack_action=\"cumulative_covered\"")
+            && transitions[1].contains("report_retained=false")
+            && transitions[1].contains("direction=\"recv\""),
         "{}",
         transitions[1]
     );
@@ -643,7 +816,7 @@ fn the_report_evidence_follows_its_transport() {
     assert_eq!(summaries.len(), 1, "{logs}");
     assert!(summaries[0].contains("at=\"referral\""), "{}", summaries[0]);
     assert!(
-        summaries[0].contains("report_ack_action=\"covered_by_cumulative_ack\""),
+        summaries[0].contains("report_ack_action=\"cumulative_covered\""),
         "{}",
         summaries[0]
     );
@@ -667,9 +840,10 @@ fn the_report_evidence_follows_its_transport() {
 }
 
 /// Vector 25 item-13 extension, "Valid referral while report unacknowledged": the report stays with
-/// the retiring login transport. A login NAK for it after the referral resends its identical saved
-/// bytes to the login server, the world handshake neither copies nor recreates it, and the
-/// transition is logged with the retiring login.
+/// the retiring login transport. Every login NAK for it after the referral resends its identical
+/// saved bytes to the login server, the world handshake neither copies nor recreates it, the
+/// transition is logged with the retiring login, and the retiring login's close writes a summary
+/// with the resends after the referral and the record that close released.
 #[test]
 fn the_report_stays_with_the_retiring_login_after_the_referral() {
     let ((), logs) = logs_of(|| {
@@ -721,7 +895,54 @@ fn the_report_stays_with_the_retiring_login_after_the_referral() {
                 .filter(|(_, dst)| *dst == WORLD_SERVER)
                 .all(|(b, _)| *b != saved)
         );
+        // A second NAK resends the same bytes again.
+        world.deliver(
+            login.control(OptionalHeaders {
+                sequence_nak: Some(vec![seq]),
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(1.4, true, &go);
+        assert!(
+            world
+                .take_sent()
+                .iter()
+                .any(|(b, dst)| *dst == LOGIN_SERVER && *b == saved)
+        );
+        // The retiring login closes: the session goes on.
+        world.deliver(
+            login.control(OptionalHeaders {
+                disconnect: true,
+                ..OptionalHeaders::default()
+            }),
+            LOGIN_SERVER,
+        );
+        d.step(1.5, true, &go);
+        assert!(!d.ended());
+        d.begin_shutdown(2.0);
     });
+    let summary = |at: &str| {
+        logs.lines()
+            .find(|l| {
+                l.contains("official evidence: resource-set report summary")
+                    && l.contains(&format!("at=\"{at}\""))
+            })
+            .unwrap_or_else(|| panic!("{at}: {logs}"))
+    };
+    let referral = summary("referral");
+    assert!(referral.contains("report_nak_resends=0"), "{referral}");
+    assert!(referral.contains("report_retained=1"), "{referral}");
+    let login_close = summary("login_close");
+    for field in [
+        "report_nak_resends=2",
+        "report_ack_action=\"nak_resend\"",
+        "report_retained=1",
+    ] {
+        assert!(login_close.contains(field), "{field}: {login_close}");
+    }
+    let close = summary("close");
+    assert!(close.contains("report_retained=0"), "{close}");
     let line = logs
         .lines()
         .find(|l| l.contains("official evidence: resource-set report transport"))
@@ -749,10 +970,7 @@ fn an_unanswered_report_is_none_at_the_close() {
     assert!(summary.contains("at=\"close\""), "{summary}");
     assert!(summary.contains("report_ack_action=\"none\""), "{summary}");
     assert!(summary.contains("report_retained=1"), "{summary}");
-    assert!(
-        summary.contains("report_position=\"no_6f_yet\""),
-        "{summary}"
-    );
+    assert!(summary.contains("report_position=\"no_6F\""), "{summary}");
 }
 
 /// §9.3.11: without the evidence opt-in no `report_*` field and no summary is

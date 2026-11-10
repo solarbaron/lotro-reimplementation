@@ -4611,7 +4611,7 @@ fn the_watched_report_is_kept_until_a_covering_ack_and_resent_only_on_a_nak() {
     assert!(fate.covered_by_cumulative_ack);
     assert_eq!(
         fate.last.map(KeptBlobAction::label),
-        Some("covered_by_cumulative_ack")
+        Some("cumulative_covered")
     );
     conn.receive_datagram(&server_nak(&[report]), peer, 20.5, WireCodecs::NONE)
         .unwrap();

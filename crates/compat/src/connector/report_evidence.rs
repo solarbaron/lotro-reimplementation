@@ -12,20 +12,31 @@
 //! | `report_decision` | `sent`, `omitted` (with `report_omission`, a [`ReportOmission`] label), `undecided` |
 //! | `report_reason` | `eligible`, `withdrawn`, `missing_route`, `malformed_mapper`, `cycle_or_depth`, `ambiguous_name`, `invalid_configuration`, `dictionary_mismatch`, `mount_mismatch`, `resource_bound`, `encoding_or_send_failure` |
 //! | `report_sequence` | the private sequence of one report-bearing datagram: one record per datagram |
-//! | `report_ack_action` | `covered_by_cumulative_ack`, `nak_resend`, `out_of_order_ack`, `none` (with `report_ack_from` and `report_retained`) |
-//! | `report_position` | `earlier_datagram`, `same_datagram`, `later_datagram`, `no_6f_yet`, `not_sent` |
+//! | `report_ack_action` | `cumulative_covered`, `nak_resend`, `out_of_order_ack`, `none` (with `direction`, `report_ack_from` and `report_retained`) |
+//! | `report_position` | `earlier_datagram`, `same_datagram`, `later_datagram`, `no_6F`, `omitted`, `undecided` |
 //! | `selection_held` | `true` when a selection arrived while the report was undecided |
 //! | `first_149_after_report` | `none`, `after_report_before_6f`, `after_6f` |
 //!
-//! `report_ack_action` `out_of_order_ack` means only that Tessera sent an OutOfOrderAck because the
+//! `report_ack_action` uses the spec's words. Its `direction` is `recv` for `cumulative_covered`
+//! (the peer's Ack) and `send` for `nak_resend` (Tessera resent the saved bytes) and
+//! `out_of_order_ack`. `out_of_order_ack` means only that Tessera sent an OutOfOrderAck because the
 //! NAKed report sequence was no longer retained (after a covering cumulative Ack, for example). An
 //! inbound OutOfOrderAck names the server's sequence space and is never a report action.
 //!
 //! `report_position` compares the datagram of the report's LAST fragment with the first `0x6F`'s
-//! datagrams (§9.3.12: ALL fragments first in earlier datagrams). `same_datagram` (the spec's
-//! `same_datagram_before_6F` and `same_datagram_after_6F`) and `later_datagram` must never happen:
-//! each blob goes in datagrams of its own, in queue order, and the report is queued before
-//! `Connected`. They are named so a live log would show a breach.
+//! datagrams (§9.3.12: ALL fragments first in earlier datagrams). `earlier_datagram`, `no_6F` and
+//! `omitted` are the spec's words. Engineering choices (spec silent): `same_datagram` stands for
+//! both of the spec's `same_datagram_before_6F` and `same_datagram_after_6F`, because the driver
+//! sees datagram sequences, not the order of siblings inside one datagram (an alias the remediation
+//! §32 audit accepted); `later_datagram` is the value remediation §32 fix 6 asks the spec to add;
+//! `undecided` is written at a close that came before the report's decision. `same_datagram` and
+//! `later_datagram` must never happen: each blob goes in datagrams of its own, in queue order, and
+//! the report is queued before any `0x6F`. They are named so a live log would show a breach.
+//!
+//! `first_149_after_report` counts a login `0x149` only when it was read in a later driver pass
+//! than the flush that put the report on the wire, and calls it `after_6f` only when the first
+//! `0x6F` was flushed in an earlier pass too: a `0x149` read in the same pass as the `0x6C` that
+//! decided the report left the server before the report could reach it.
 //!
 //! [`ReportOmission`]: crate::resource_report::ReportOmission
 
@@ -108,10 +119,45 @@ pub struct ReportEvidence {
     selection_sent: bool,
     /// A selection arrived while the report was undecided, and waited for its decision.
     selection_held: bool,
+    /// The report's datagrams were flushed to the socket by an earlier driver pass.
+    report_on_wire: bool,
+    /// The first `0x6F`'s datagrams were flushed to the socket by an earlier driver pass.
+    selection_on_wire: bool,
     /// The first `0x149` after the report.
     first_149: First149,
-    /// The one summary line was written (at the referral or the close).
-    summarised: bool,
+    /// The summary points already written ([`SummaryPoint`] bits).
+    summarised: u8,
+}
+
+/// Where a summary line is written: each at most once, so at most three lines per login.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SummaryPoint {
+    /// The valid referral, before the login retires.
+    Referral,
+    /// The retiring login connection's own close, which releases what it still kept.
+    LoginClose,
+    /// The session's end, which releases what is still kept.
+    Close,
+}
+
+impl SummaryPoint {
+    /// The evidence word (`at`).
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Referral => "referral",
+            Self::LoginClose => "login_close",
+            Self::Close => "close",
+        }
+    }
+
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Referral => 1,
+            Self::LoginClose => 2,
+            Self::Close => 4,
+        }
+    }
 }
 
 impl ReportEvidence {
@@ -159,13 +205,21 @@ impl ReportEvidence {
         Some(position)
     }
 
+    /// The driver pass flushed what was queued to the socket: a report and a first `0x6F` queued
+    /// before it are now on the wire, for the `0x149`s read in later passes.
+    pub fn flushed(&mut self) {
+        self.report_on_wire |= !self.sequences.is_empty();
+        self.selection_on_wire |= self.selection_sent;
+    }
+
     /// A `0x149` arrived on the login connection: `Some` with the new value the first time one
-    /// arrives after the report was sent, for its one evidence line.
+    /// arrives after the report was on the wire ([`Self::flushed`]), for its one evidence line. One
+    /// read in the pass that queued the report is not after it and is not counted.
     pub fn note_149(&mut self) -> Option<First149> {
-        if self.sequences.is_empty() || self.first_149 != First149::None {
+        if !self.report_on_wire || self.first_149 != First149::None {
             return None;
         }
-        self.first_149 = if self.selection_sent {
+        self.first_149 = if self.selection_on_wire {
             First149::After6F
         } else {
             First149::AfterReportBefore6F
@@ -184,14 +238,17 @@ impl ReportEvidence {
     pub fn position_label(&self, status: ReportStatus) -> &'static str {
         match (status, self.position) {
             (ReportStatus::Sent, Some(p)) => p.label(),
-            (ReportStatus::Sent, None) => "no_6f_yet",
-            _ => "not_sent",
+            (ReportStatus::Sent, None) => "no_6F",
+            (ReportStatus::Omitted(_), _) => "omitted",
+            (ReportStatus::Undecided, _) => "undecided",
         }
     }
 
-    /// Whether the summary line is still to be written; `true` once.
-    pub fn take_summary(&mut self) -> bool {
-        !std::mem::replace(&mut self.summarised, true)
+    /// Whether the summary line of `at` is still to be written; `true` once per point.
+    pub fn take_summary(&mut self, at: SummaryPoint) -> bool {
+        let first = self.summarised & at.bit() == 0;
+        self.summarised |= at.bit();
+        first
     }
 }
 
@@ -257,6 +314,16 @@ pub fn ack_action_label(action: Option<KeptBlobAction>) -> &'static str {
     action.map_or("none", KeptBlobAction::label)
 }
 
+/// The `direction` of a `report_ack_action` line (§9.3.11): the peer's cumulative Ack was received;
+/// a NAK resend and an OutOfOrderAck are what Tessera sent.
+#[must_use]
+pub const fn ack_action_direction(action: KeptBlobAction) -> &'static str {
+    match action {
+        KeptBlobAction::CoveredByCumulativeAck => "recv",
+        KeptBlobAction::NakResend | KeptBlobAction::OutOfOrderAck => "send",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,7 +368,8 @@ mod tests {
     #[test]
     fn the_position_is_the_first_selection_only() {
         let mut e = ReportEvidence::default();
-        assert_eq!(e.position_label(ReportStatus::Sent), "no_6f_yet");
+        assert_eq!(e.position_label(ReportStatus::Sent), "no_6F");
+        assert_eq!(e.position_label(ReportStatus::Undecided), "undecided");
         e.sent(&[4]);
         assert_eq!(
             e.selection_sent(&[9]),
@@ -311,7 +379,7 @@ mod tests {
         assert_eq!(e.position_label(ReportStatus::Sent), "earlier_datagram");
         assert_eq!(
             e.position_label(ReportStatus::Omitted(ReportOmission::NotRead)),
-            "not_sent"
+            "omitted"
         );
         // A first 0x6F before any report has no position, and a later report gets none either.
         let mut f = ReportEvidence::default();
@@ -321,21 +389,34 @@ mod tests {
     }
 
     /// §9.3.12 "expected FIRST observable": the first `0x149` after the report is placed once, before
-    /// or after the first `0x6F`; one before the report is not counted.
+    /// or after the first `0x6F`; one before the report, or read before its flush, is not counted.
     #[test]
     fn the_first_149_after_the_report_is_placed_once() {
         let mut e = ReportEvidence::default();
         assert_eq!(e.note_149(), None, "before the report");
         e.sent(&[4, 5]);
+        assert_eq!(e.note_149(), None, "queued, not yet on the wire");
+        e.flushed();
         assert_eq!(e.note_149(), Some(First149::AfterReportBefore6F));
         assert_eq!(e.note_149(), None, "only the first");
         e.selection_sent(&[6]);
+        e.flushed();
         assert_eq!(e.note_149(), None);
         assert_eq!(e.first_149().label(), "after_report_before_6f");
 
         let mut late = ReportEvidence::default();
         late.sent(&[4]);
+        late.flushed();
         late.selection_sent(&[6]);
+        assert_eq!(
+            late.note_149(),
+            Some(First149::AfterReportBefore6F),
+            "the 0x6F queued in this pass is not on the wire yet"
+        );
+        let mut late = ReportEvidence::default();
+        late.sent(&[4]);
+        late.selection_sent(&[6]);
+        late.flushed();
         assert_eq!(late.note_149(), Some(First149::After6F));
         assert_eq!(late.first_149().label(), "after_6f");
         assert_eq!(ReportEvidence::default().first_149().label(), "none");
@@ -350,10 +431,15 @@ mod tests {
     }
 
     #[test]
-    fn the_summary_is_written_once() {
+    fn each_summary_point_is_written_once() {
         let mut e = ReportEvidence::default();
-        assert!(e.take_summary());
-        assert!(!e.take_summary());
+        assert!(e.take_summary(SummaryPoint::Referral));
+        assert!(!e.take_summary(SummaryPoint::Referral));
+        assert!(e.take_summary(SummaryPoint::LoginClose));
+        assert!(!e.take_summary(SummaryPoint::LoginClose));
+        assert!(e.take_summary(SummaryPoint::Close));
+        assert!(!e.take_summary(SummaryPoint::Close));
+        assert_eq!(SummaryPoint::LoginClose.label(), "login_close");
     }
 
     #[test]
@@ -377,6 +463,16 @@ mod tests {
             "mount_mismatch"
         );
         assert_eq!(ack_action_label(None), "none");
+        assert_eq!(
+            ack_action_direction(KeptBlobAction::CoveredByCumulativeAck),
+            "recv"
+        );
+        assert_eq!(ack_action_direction(KeptBlobAction::NakResend), "send");
+        assert_eq!(ack_action_direction(KeptBlobAction::OutOfOrderAck), "send");
+        assert_eq!(
+            ack_action_label(Some(KeptBlobAction::CoveredByCumulativeAck)),
+            "cumulative_covered"
+        );
         assert_eq!(
             ack_action_label(Some(KeptBlobAction::OutOfOrderAck)),
             "out_of_order_ack"

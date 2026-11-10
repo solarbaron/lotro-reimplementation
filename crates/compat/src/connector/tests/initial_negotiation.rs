@@ -1105,8 +1105,8 @@ fn vector_25_a_requeue_restores_the_first_queue_deadline() {
     assert_refused(&mut d, UnsupportedNegotiation::QueueDeadline);
 }
 
-/// Labelled choice (C8, pending writer answer to remediation §32 fix 2) at the driver: queued at 0,
-/// ready at 20, queued at 40 and ready at 70 with no `0xDD`. The post-queue `0xDD` deadline starts
+/// The choice labelled at `Negotiation::ready_before_request` (§32 fix 2), at the driver: queued at
+/// 0, ready at 20, queued at 40 and ready at 70 with no `0xDD`. The post-queue `0xDD` deadline starts
 /// at the first ready status (20 + 30), does not run out inside the queue window, and is reinstated
 /// at 70, where it has passed: the login fails at once with the `0xDD` deadline, not at 100.
 #[test]
@@ -1124,6 +1124,36 @@ fn a_requeue_reinstates_the_post_queue_request_deadline() {
     let _ = d.take_events();
     world.deliver(queue1(&mut login, 0x130, &ready), LOGIN_SERVER);
     d.step(70.0, true, &go);
+    assert_refused(&mut d, UnsupportedNegotiation::RequestDeadline);
+}
+
+/// The same choice (labelled at `Negotiation::ready_before_request`, §32 fix 2) when the ready
+/// status at 70 and a valid `N = 0` `0xDD` arrive in ONE pass: the reinstated deadline is checked
+/// at the ready status, so the attempt fails with the `0xDD` deadline and no `0xEC` goes out.
+#[test]
+fn a_request_in_the_same_pass_as_an_expired_ready_sends_no_advertisement() {
+    let (world, mut d, mut login) = connected();
+    let (queued, ready) = queue_statuses();
+    world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
+    d.step(0.5, true, &go);
+    world.deliver(queue1(&mut login, 0x130, &ready), LOGIN_SERVER);
+    d.step(20.0, true, &go);
+    world.deliver(queue1(&mut login, 0x130, &queued), LOGIN_SERVER);
+    d.step(40.0, true, &go);
+    slow_server(&world, &mut d, &mut login, 45.0, 69.0);
+    assert!(!d.ended());
+    let _ = d.take_events();
+    world.take_sent();
+    world.deliver(queue1(&mut login, 0x130, &ready), LOGIN_SERVER);
+    world.deliver(
+        queue1(&mut login, 0xDD, &install_request(RULE, &[])),
+        LOGIN_SERVER,
+    );
+    d.step(70.0, true, &go);
+    assert!(
+        !opcodes(&sent_packets(&world)).contains(&0xEC),
+        "no advertisement after the deadline passed"
+    );
     assert_refused(&mut d, UnsupportedNegotiation::RequestDeadline);
 }
 

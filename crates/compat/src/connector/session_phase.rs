@@ -281,7 +281,7 @@ use crate::play::movement::{MoveStep, PredictedState, wire_heading};
 use crate::session::{
     BindPlan, BindPorts, ClientVersionMessage, CodecUuids, ConnectionState, ControlMessage,
     DEFAULT_MAX_CONTAINER_DEPTH, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
-    DisconnectReason as LinkEnd, EVIDENCE_TARGET, LogonOutcome, MAX_DATAGRAM_BUF,
+    DisconnectReason as LinkEnd, EVIDENCE_TARGET, KeptBlobFate, LogonOutcome, MAX_DATAGRAM_BUF,
     OPCODE_BATCH_CONTAINER, OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS,
     OPCODE_SINGLE_WRAPPER, ReassembledBlob, ReassemblyCounts, SessionConnection, SessionError,
     SessionEvent, SessionMultiplexer, UdpDatagramTransport, dispatch_message,
@@ -315,7 +315,8 @@ use super::pending_world::{
     ReportStatus, Stored, withheld_before_f4, withheld_summary,
 };
 use super::report_evidence::{
-    ReportEvidence, ack_action_label, decision_label, omission_label, reason_label,
+    ReportEvidence, SummaryPoint, ack_action_direction, ack_action_label, decision_label,
+    omission_label, reason_label,
 };
 use crate::resource_report::ReportOmission;
 pub use crate::resource_report::{OPCODE_RESOURCE_SET_REPORT, RESOURCE_REPORT_DESTINATION};
@@ -1228,6 +1229,12 @@ pub struct SessionDriver<N: ConnectorNet> {
     /// transport transitions are logged as they come, each one (bounded by construction in the
     /// session layer, [`SessionConnection::take_watched_transitions`]).
     report_evidence: ReportEvidence,
+    /// The login transport's latest fate of the report and how many of its records it still
+    /// retained, read at every [`Self::log_report_fate`] until a close released them, so a summary
+    /// written after the login connection closed or is gone still has them.
+    report_fate: (Option<KeptBlobFate>, usize),
+    /// A close (the retiring login's or the session's) released the report's records.
+    report_released: bool,
     schema: SchemaView,
     stage: Stage,
     characters: Vec<(u64, String)>,
@@ -1558,6 +1565,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             advertisement: Some(advertisement),
             resource_report,
             report_evidence: ReportEvidence::default(),
+            report_fate: (None, 0),
+            report_released: false,
             schema: start.schema,
             stage: Stage::Login,
             characters: Vec::new(),
@@ -1825,7 +1834,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if self.ended {
             return;
         }
-        self.log_report_summary("close");
+        self.log_report_summary(SummaryPoint::Close);
         if matches!(self.stage, Stage::InWorld { .. }) {
             self.log_world_end();
         }
@@ -1854,7 +1863,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return;
         }
         self.counters.unsupported_results = self.counters.unsupported_results.saturating_add(1);
-        self.log_report_summary("close");
+        self.log_report_summary(SummaryPoint::Close);
         self.sync_initial();
         tracing::info!(reason = why, "official session: ended");
         if self.stage == Stage::Login && !self.login.in_handshake() {
@@ -1987,6 +1996,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return read_any || self.events.len() != before;
         }
         self.flush(now);
+        if !self.send_failed {
+            // What this pass queued is on the wire: a `0x149` read from the next pass on came
+            // after it (`first_149_after_report`).
+            self.report_evidence.flushed();
+        }
         self.end_on_send_failure(now);
         self.report_waiting(now);
         read_any || self.events.len() != before
@@ -2840,8 +2854,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if let Some(l) = l {
             l.close_dump(&format!("{reason:?}"));
         }
-        // §9.3.9: nothing the retiring login connection does decides the session's end.
+        // §9.3.9: nothing the retiring login connection does decides the session's end. Its close
+        // releases the report it still kept (§9.3.12), which its own summary line records.
         if !world && (self.world.is_some() || self.login_referred) {
+            if self.login_referred {
+                self.log_report_summary(SummaryPoint::LoginClose);
+            }
             return;
         }
         // §9.3.12 "Old-install rejection": a non-fatal TransportError carrying either login-refusal
@@ -2962,7 +2980,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 // bounded transport-only Ack/NAK/clock/flow goes on while the world connection
                 // lives, on the shared socket (§9.3.12 "Login transport lifetime").
                 self.login_referred = true;
-                self.log_report_summary("referral");
+                self.log_report_summary(SummaryPoint::Referral);
                 if let Some(c) = self.login.mux.connection_mut(self.login.conn) {
                     c.retire();
                 }
@@ -3211,7 +3229,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     /// After a ready status brought the stage back to `AwaitDD`: the `0xDD` held from the queue, if
     /// any, is the first valid one now and sends `0xEC` once (§9.3.9 status rule, Vector 25,
-    /// `Negotiation::ready_before_request`).
+    /// `Negotiation::ready_before_request`). The ready branches then check the reinstated
+    /// post-queue `0xDD` deadline at once ([`Self::initial_deadline`]), so a `0xDD` later in the
+    /// same pass never answers a deadline that has already passed (the labelled §32 fix 2 choice
+    /// in `Negotiation::ready_before_request`); a held one has moved the stage on already.
     fn release_held_request(&mut self, now: f64) {
         let Some((request, recipient)) = self.initial.take_held_request() else {
             return;
@@ -3341,6 +3362,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     if self.initial.version_accepted(now) {
                         self.initial_step("version accepted", now);
                         self.release_held_request(now);
+                        self.initial_deadline(now);
                     } else {
                         self.sync_initial();
                     }
@@ -3374,6 +3396,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     if self.initial.queue_ready(now) {
                         self.initial_step("queue ready", now);
                         self.release_held_request(now);
+                        self.initial_deadline(now);
                     } else {
                         self.sync_initial();
                     }
@@ -4649,14 +4672,20 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// Every transition of what the login connection's transport did with each report-bearing
-    /// datagram since the last call (§9.3.11 item-13 row): one evidence line each, the action before
-    /// and after and whether the record is still retained. Not rate-limited: the session layer
-    /// bounds the transitions by construction ([`SessionConnection::take_watched_transitions`]).
+    /// datagram since the last call (§9.3.11 item-13 row): one evidence line each, with its
+    /// direction (`recv` for the peer's covering Ack, `send` for Tessera's NAK resend or
+    /// OutOfOrderAck), the action before and after and whether the record is still retained. Not
+    /// rate-limited: the session layer bounds the transitions by construction
+    /// ([`SessionConnection::take_watched_transitions`]). Repeated NAK resends of one record are one
+    /// transition; their count is in each summary line ([`Self::log_report_summary`]).
     fn log_report_fate(&mut self) {
         let Some(connection) = self.login.mux.connection_mut(self.login.conn) else {
             return;
         };
         let transitions = connection.take_watched_transitions();
+        if !self.report_released && connection.watched_fate().is_some() {
+            self.report_fate = (connection.watched_fate(), connection.watched_retained());
+        }
         if !self.evidence_log {
             return;
         }
@@ -4664,7 +4693,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             evidence!(
                 self.evidence_log,
                 info,
-                direction = "recv",
+                direction = ack_action_direction(t.to),
                 event_kind = "resource-set report",
                 report_sequence = t.sequence,
                 report_datagram = t.datagram,
@@ -4692,24 +4721,29 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// The report's one summary line, at the referral or the close, whichever comes first: the
-    /// decision, its first sequence, the transport's latest action (`none` when the peer did nothing
-    /// with it), how many of its datagrams are still retained, its position against the first
+    /// The report's summary line at `at`: once at the referral, once at the retiring login
+    /// connection's own close and once at the session's close, so at most three per login. Each
+    /// has the decision, its first sequence, the transport's latest action (`none` when the peer did
+    /// nothing with it), the NAK resends and OutOfOrderAcks so far, how many of its datagrams were
+    /// still retained (at a close: what that close released), its position against the first
     /// `0x6F`, whether a selection was held for it and where the first `0x149` after it arrived.
-    /// Transitions after a summary at the referral still get their own lines.
-    fn log_report_summary(&mut self, at: &'static str) {
+    /// Transitions between the summaries get their own lines.
+    fn log_report_summary(&mut self, at: SummaryPoint) {
         self.log_report_fate();
-        if !self.evidence_log || !self.report_evidence.take_summary() {
+        let (fate, retained) = self.report_fate;
+        if matches!(at, SummaryPoint::LoginClose | SummaryPoint::Close) {
+            // The close releases what was still retained; a later summary has none left.
+            self.report_fate.1 = 0;
+            self.report_released = true;
+        }
+        if !self.evidence_log || !self.report_evidence.take_summary(at) {
             return;
         }
         let status = self.resource_report.status();
-        let connection = self.login.mux.connection(self.login.conn);
-        let fate = connection.and_then(SessionConnection::watched_fate);
-        let retained = connection.map_or(0, SessionConnection::watched_retained);
         evidence!(
             self.evidence_log,
             info,
-            at,
+            at = at.label(),
             report_decision = decision_label(status),
             report_reason = reason_label(status),
             report_omission = omission_label(status),
@@ -5439,7 +5473,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// application flush, no drain and a local close at once; nothing on a connection still in its
     /// handshake. No ticket refresh starts after this, and a running one is stopped.
     pub fn begin_shutdown(&mut self, now: f64) {
-        self.log_report_summary("close");
+        self.log_report_summary(SummaryPoint::Close);
         self.log_login_end("cancelled", now);
         self.log_entry_end("cancelled");
         self.ended = true;
@@ -5461,7 +5495,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// could be sent): every connection is closed locally and the chat client dropped. A
     /// connection still in its handshake logs its counts once, at `now`.
     pub fn abandon(&mut self, now: f64) {
-        self.log_report_summary("close");
+        self.log_report_summary(SummaryPoint::Close);
         self.log_login_end("network right revoked", now);
         self.log_entry_end("network right revoked");
         self.ended = true;

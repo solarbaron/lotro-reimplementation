@@ -5942,11 +5942,11 @@ pub enum KeptBlobAction {
 }
 
 impl KeptBlobAction {
-    /// A neutral word for an evidence line.
+    /// The `report_ack_action` word of `official-session.md` §9.3.11's item-13 row.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::CoveredByCumulativeAck => "covered_by_cumulative_ack",
+            Self::CoveredByCumulativeAck => "cumulative_covered",
             Self::NakResend => "nak_resend",
             Self::OutOfOrderAck => "out_of_order_ack",
         }
@@ -5976,7 +5976,7 @@ pub struct KeptBlobFate {
 pub const MAX_WATCHED_SEQUENCES: usize = 8;
 
 /// Most transitions a watched record can make: none to `nak_resend`, to `out_of_order_ack` once the
-/// record is gone, to `covered_by_cumulative_ack` (once), and to `out_of_order_ack` again. A repeat
+/// record is gone, to `cumulative_covered` (once), and to `out_of_order_ack` again. A repeat
 /// of the same action is no transition, a covered record is never resent, and the cover is noted
 /// once, so this bounds the queue by construction.
 const MAX_TRANSITIONS_PER_RECORD: usize = 4;

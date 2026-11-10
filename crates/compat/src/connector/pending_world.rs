@@ -1297,11 +1297,10 @@ mod tests {
         assert_eq!(omitted.len(), WITHHELD_BEFORE_F4.len());
     }
 
-    /// §9.3.9 and Vector 24: only an explicit 0x40 to an announced nonlocal target deletes; an
-    /// unannounced ID deletes nothing and leaves no tombstone, and the `0x90`'s own ID is the driver's
-    /// Vector 24 pending extension: `0x92`(X), an explicit `0x40`(X) and then `0x98`(X) for an
-    /// unannounced nonlocal X: the `0x40` deletes the raw pending `0x92` with no tombstone, and the
-    /// `0x98` spawns a new incarnation WITHOUT that old property.
+    /// §9.3.9 and the Vector 24 pending extension: `0x92`(X), an explicit `0x40`(X) and then
+    /// `0x98`(X) for an unannounced nonlocal X: the `0x40` deletes all raw-key pending data of X with
+    /// no tombstone, and the `0x98` spawns a new incarnation WITHOUT that old property. The default
+    /// recipient, the local player, an announced and a despawned key are never forgotten this way.
     #[test]
     fn an_explicit_despawn_of_an_unannounced_id_forgets_its_raw_data() {
         let mut p = PendingWorld::default();
@@ -1338,7 +1337,10 @@ mod tests {
         assert_eq!(q.entities(), 2);
     }
 
-    /// Unsupported, never a deletion here; a despawn record answers so a repeat is counted as blocked.
+    /// §9.3.9 and Vector 24: only an explicit `0x40` to an announced nonlocal target despawns; the
+    /// default recipient and the `0x90`'s own ID never do (the driver handles those), an unresolved
+    /// ID is no despawn here (see `forget_unannounced`), and a despawn record answers so a repeat is
+    /// counted as blocked.
     #[test]
     fn only_an_explicit_resolved_target_despawns() {
         let mut p = PendingWorld::default();

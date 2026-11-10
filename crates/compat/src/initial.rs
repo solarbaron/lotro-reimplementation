@@ -1503,8 +1503,8 @@ mod tests {
         );
     }
 
-    /// Labelled choice (C8, pending writer answer to remediation §32 fix 2): queued at 0, ready at 20,
-    /// queued at 40 and ready at 70 with no `0xDD`: the post-queue DD deadline (20 + 30) is suspended
+    /// The choice labelled at [`Negotiation::ready_before_request`] (§32 fix 2): queued at 0, ready
+    /// at 20, queued at 40 and ready at 70 with no `0xDD`: the post-queue DD deadline (20 + 30) is suspended
     /// while queued and reinstated with its first origin at 70, where it has passed, so the login fails
     /// at once with the DD deadline; it never runs out inside the queue window, and 70 starts nothing
     /// new.
@@ -1563,8 +1563,8 @@ mod tests {
     }
 
     /// Vector 25 ("Historical 12F→12C, then ready without DD"): after an actual `0x12C` a ready status
-    /// enters the list wait with no `0xEC`; a `0xDD` while queued on that path is not held (labelled
-    /// choice, C8, pending writer answer to remediation §32 fix 3).
+    /// enters the list wait with no `0xEC`; a `0xDD` while queued on that path is not held (the choice
+    /// labelled at [`Negotiation::request_not_wanted`], §32 fix 3).
     #[test]
     fn vector_25_the_historical_path_enters_the_list_wait_without_ec() {
         let mut n = Negotiation::new();
@@ -1655,8 +1655,8 @@ mod tests {
     /// §9.3.9 `Queued130` row and Vector 25 ("Valid N=0 DD while Queued130, then ready"): a valid
     /// `0xDD` that arrives while queued is held, and the ready status that brings back `AwaitDD`
     /// releases it as the first valid `0xDD`, once; a later `0xDD` while queued only updates the
-    /// word. After an actual `0x12C` nothing is held (labelled choice, C8, pending writer answer to
-    /// remediation §32 fix 3).
+    /// word. After an actual `0x12C` nothing is held (the choice labelled at
+    /// [`Negotiation::request_not_wanted`], §32 fix 3).
     #[test]
     fn a_request_while_queued_is_held_for_the_ready_status() {
         let rules: [fn(&mut Negotiation, f64) -> bool; 2] =

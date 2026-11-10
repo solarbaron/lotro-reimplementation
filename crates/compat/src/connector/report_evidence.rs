@@ -10,7 +10,7 @@
 //! | Field | Values |
 //! |---|---|
 //! | `report_decision` | `sent`, `omitted` (with `report_omission`, a [`ReportOmission`] label), `undecided` |
-//! | `report_reason` | `eligible`, `withdrawn`, `missing_route`, `malformed_mapper`, `cycle_or_depth`, `ambiguous_name`, `invalid_configuration`, `dictionary_mismatch`, `mount_mismatch`, `resource_bound`, `encoding_or_send_failure` |
+//! | `report_reason` | `none` (undecided), `eligible`, `withdrawn`, `missing_route`, `malformed_mapper`, `cycle_or_depth`, `ambiguous_name`, `invalid_configuration`, `dictionary_mismatch`, `mount_mismatch`, `resource_bound`, `encoding_or_send_failure` |
 //! | `report_sequence` | the private sequence of one report-bearing datagram: one record per datagram |
 //! | `report_ack_action` | `cumulative_covered`, `nak_resend`, `out_of_order_ack`, `none` (with `direction`, `report_ack_from` and `report_retained`) |
 //! | `report_position` | `earlier_datagram`, `same_datagram`, `later_datagram`, `no_6F`, `omitted`, `undecided` |
@@ -33,10 +33,15 @@
 //! `later_datagram` must never happen: each blob goes in datagrams of its own, in queue order, and
 //! the report is queued before any `0x6F`. They are named so a live log would show a breach.
 //!
-//! `first_149_after_report` counts a login `0x149` only when it was read in a later driver pass
+//! Engineering choice (spec silent): `first_149_after_report` counts a login `0x149` only when it was read in a later driver pass
 //! than the flush that put the report on the wire, and calls it `after_6f` only when the first
 //! `0x6F` was flushed in an earlier pass too: a `0x149` read in the same pass as the `0x6C` that
 //! decided the report left the server before the report could reach it.
+//!
+//! Engineering choices (spec silent), beyond the §9.3.11 row: `report_reason="none"` for a report
+//! not yet decided; the extra fields `report_ack_from`, `report_retained`, `report_datagram(s)` and
+//! `login_retiring`; and up to three summary lines (`at=referral`, `at=login_close`, `at=close`), so
+//! the report's fate stays visible after the referral and after the login's own close.
 //!
 //! [`ReportOmission`]: crate::resource_report::ReportOmission
 
@@ -271,8 +276,8 @@ pub const fn omission_label(status: ReportStatus) -> &'static str {
     }
 }
 
-/// The `report_reason` category of `status` (`official-session.md` §9.3.11 item-13 row). The
-/// grouping of Tessera's omission kinds into the spec's categories is an engineering choice; the
+/// The `report_reason` category of `status` (`official-session.md` §9.3.11 item-13 row). `none`
+/// for an undecided report is an engineering choice (spec silent). The grouping of Tessera's omission kinds into the spec's categories is an engineering choice; the
 /// finer kind stays in `report_omission`.
 #[must_use]
 pub const fn reason_label(status: ReportStatus) -> &'static str {

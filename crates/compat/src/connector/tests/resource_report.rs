@@ -417,8 +417,9 @@ fn a_selection_in_the_reports_tick_goes_in_a_later_datagram() {
     assert!(decided.contains("selection_held=true"), "{decided}");
 }
 
-/// §9.3.12 and remediation §32 fix 13: any omission releases a held selection at once, a late
-/// encoding or enqueue one too, and the decision line says the selection was held.
+/// §9.3.12 and the labelled choice of `SessionDriver::resource_report` (C8, pending writer answer
+/// to remediation §32 fix 13): any omission releases a held selection at once, a late encoding or
+/// enqueue one too, and the decision line says the selection was held.
 #[test]
 fn a_late_omission_releases_a_held_selection() {
     let ((), logs) = logs_of(|| {

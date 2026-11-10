@@ -5978,7 +5978,8 @@ pub const MAX_WATCHED_SEQUENCES: usize = 8;
 /// Most transitions a watched record can make: none to `nak_resend`, to `out_of_order_ack` once the
 /// record is gone, to `cumulative_covered` (once), and to `out_of_order_ack` again. A repeat
 /// of the same action is no transition, a covered record is never resent, and the cover is noted
-/// once, so this bounds the queue by construction.
+/// once, so this bounds the queue by construction. Engineering choice (spec silent): a transition
+/// past the bound would be dropped, which the construction above makes unreachable.
 const MAX_TRANSITIONS_PER_RECORD: usize = 4;
 
 /// One change of what the transport did with one record (one datagram) of the watched blob
@@ -7779,7 +7780,7 @@ impl SessionConnection {
 
     /// The transitions of the watched blob's records since the last call, oldest first: every
     /// change of a record's action, never overwritten (`official-session.md` §9.3.11 item-13 row).
-    /// Bounded by construction (at most four per record).
+    /// Bounded by construction (at most four per record, `MAX_TRANSITIONS_PER_RECORD`).
     pub fn take_watched_transitions(&mut self) -> Vec<KeptBlobTransition> {
         self.watched
             .as_mut()

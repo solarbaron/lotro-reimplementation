@@ -4549,7 +4549,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// cumulative Ack covers them or the login closes, resent on a NAK and never on a timer, also
     /// after the referral ([`SessionConnection::send_blob_watched`], [`SessionConnection::retire`]).
     /// An omission (preflight, encoding or enqueue), withholds the whole report under item 5, the
-    /// login goes on, and a held selection goes at once ([`Self::send_entry`]). The log line names
+    /// login goes on, and a held selection goes at once ([`Self::send_entry`]). Labelled choice (C8,
+    /// pending writer answer to remediation §32 fix 13): a late encoding or enqueue omission releases
+    /// the held selection too. The log line names
     /// the outcome and a kind only, never a key, label, mask or DID; the evidence lines add the
     /// private sequence of every report-bearing datagram. A second call does nothing.
     fn resource_report(&mut self, now: f64) {

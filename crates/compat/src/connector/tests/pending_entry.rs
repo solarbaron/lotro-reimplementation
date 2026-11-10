@@ -1038,8 +1038,9 @@ fn in_world_a_later_session_start_is_counted_and_skipped() {
 
 /// Vector 24: an explicit `0x40` to the `0x90`'s ID is required-progress Unsupported and deletes
 /// nothing; one to an unannounced other ID deletes the pending data kept under that raw key, takes no
-/// tombstone and is counted and skipped (the pending extension: `0x89`(X), `0x40`(X), `0x98`(X)
-/// starts a clean incarnation).
+/// tombstone and is counted and skipped. The vector's pending extension uses `0x92`(X), `0x40`(X),
+/// `0x98`(X); this driver test uses `0x89`(X) for the pending data, and the `0x92` case itself is
+/// the unit test in `pending_world.rs`.
 #[test]
 fn vector_24_despawns_of_the_player_and_of_an_unannounced_id() {
     const X: u64 = 0x0100_0000_0000_0999;
